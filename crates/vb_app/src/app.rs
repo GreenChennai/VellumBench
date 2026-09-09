@@ -1744,6 +1744,21 @@ impl VellumApp {
     }
 
     fn handle_canvas_input(&mut self, response: &egui::Response, ctx: egui::Context, rect: Rect) {
+        // 单击创建(Rect/Ellipse 工具下单击 = 默认尺寸形状;处理单帧合并的合成拖拽)
+        if response.clicked() && matches!(self.tool, Tool::Rect | Tool::Ellipse) {
+            if let Some(p) = response.interact_pointer_pos() {
+                let pl = p - rect.min;
+                let (wx, wy) = self.camera.screen_to_world(pl.x as f64, pl.y as f64);
+                self.create_shape(Geom {
+                    x: (wx - 60.0).round(),
+                    y: (wy - 40.0).round(),
+                    w: 120.0,
+                    h: 80.0,
+                });
+                self.status = "已创建对象(单击默认尺寸)".into();
+                return;
+            }
+        }
         // 光标世界坐标(指针先转画布本地)
         if let Some(p) = response.hover_pos() {
             let pl = p - rect.min;
@@ -2102,57 +2117,12 @@ impl VellumApp {
                     let (sx, sy) = self.camera.screen_to_world(start.x as f64, start.y as f64);
                     let (cx, cy) = self.camera.screen_to_world(cur.x as f64, cur.y as f64);
                     let g = vb_tools::drag_rect_geom(sx, sy, cx, cy, shift, alt);
-                    if g.w >= 2.0 && g.h >= 2.0 {
-                        let sid = self.doc.alloc_sid();
-                        let kind = NodeKind::Box;
-                        let mut n = vb_doc::model::Node::new(
-                            kind,
-                            format!("矩形 {}", sid.as_str()),
-                            sid.clone(),
-                        );
-                        n.geom = g;
-                        if self.tool == Tool::Ellipse {
-                            n.style.push(vb_css::Decl {
-                                prop: "border-radius".into(),
-                                value: "50%".into(),
-                                important: false,
-                            });
-                        }
-                        n.style.push(vb_css::Decl {
-                            prop: "background-color".into(),
-                            value: "#d4d4d4".into(),
-                            important: false,
-                        });
-                        n.style.push(vb_css::Decl {
-                            prop: "border".into(),
-                            value: "1px solid #1a1a1a".into(),
-                            important: false,
-                        });
-                        let (wx, wy) = (g.x, g.y);
-                        let ab = self
-                            .artboard_at_world(wx, wy)
-                            .or(self.doc.artboards.first().copied())
-                            .unwrap();
-                        let ab_sid = self.doc.nodes.get(ab).unwrap().sid.as_str().to_string();
-                        let ab_len = self.doc.nodes.get(ab).unwrap().children.len();
-                        self.drag = Drag::None;
-                        let tree = vb_doc::model::NodeTree {
-                            node: n,
-                            children: vec![],
-                        };
-                        self.exec(Command::Insert {
-                            parent_sid: ab_sid,
-                            index: ab_len,
-                            tree,
-                        });
-                        self.selection = vec![sid.as_str().to_string()];
-                        self.status = "已创建对象".into();
-                    }
+                    self.create_shape(g);
                 }
                 Drag::MoveObj {
                     sid,
-                    start_geom,
                     moved,
+                    start_geom,
                     ..
                 } => {
                     if moved {
@@ -2677,4 +2647,48 @@ fn start_watcher(project: Option<&std::path::Path>) -> Option<std::sync::mpsc::R
         .ok()?;
     std::mem::forget(watcher); // v0.1:与 App 同生命周期
     Some(rx)
+}
+
+impl VellumApp {
+    /// 在指定几何处创建 Box 形状(矩形/椭圆由当前工具决定),可撤销。
+    fn create_shape(&mut self, g: Geom) {
+        let sid = self.doc.alloc_sid();
+        let mut n =
+            vb_doc::model::Node::new(NodeKind::Box, format!("矩形 {}", sid.as_str()), sid.clone());
+        n.geom = g;
+        if self.tool == Tool::Ellipse {
+            n.style.push(vb_css::Decl {
+                prop: "border-radius".into(),
+                value: "50%".into(),
+                important: false,
+            });
+        }
+        n.style.push(vb_css::Decl {
+            prop: "background-color".into(),
+            value: "#d4d4d4".into(),
+            important: false,
+        });
+        n.style.push(vb_css::Decl {
+            prop: "border".into(),
+            value: "1px solid #1a1a1a".into(),
+            important: false,
+        });
+        let ab = self
+            .artboard_at_world(g.x, g.y)
+            .or(self.doc.artboards.first().copied())
+            .unwrap();
+        let ab_sid = self.doc.nodes.get(ab).unwrap().sid.as_str().to_string();
+        let ab_len = self.doc.nodes.get(ab).unwrap().children.len();
+        let tree = vb_doc::model::NodeTree {
+            node: n,
+            children: vec![],
+        };
+        self.exec(Command::Insert {
+            parent_sid: ab_sid,
+            index: ab_len,
+            tree,
+        });
+        self.selection = vec![sid.as_str().to_string()];
+        self.status = "已创建对象".into();
+    }
 }
