@@ -83,7 +83,10 @@ impl NodeKind {
     }
 
     pub fn is_container(&self) -> bool {
-        matches!(self, NodeKind::Artboard | NodeKind::Layer | NodeKind::Group | NodeKind::Box)
+        matches!(
+            self,
+            NodeKind::Artboard | NodeKind::Layer | NodeKind::Group | NodeKind::Box
+        )
     }
 }
 
@@ -98,7 +101,12 @@ pub struct Geom {
 
 impl Default for Geom {
     fn default() -> Self {
-        Self { x: 0.0, y: 0.0, w: 100.0, h: 100.0 }
+        Self {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 100.0,
+        }
     }
 }
 
@@ -165,7 +173,10 @@ impl Node {
 
     /// 取 CSS 属性值(精确匹配属性名)。
     pub fn style_get(&self, prop: &str) -> Option<&str> {
-        self.style.iter().find(|d| d.prop == prop).map(|d| d.value.as_str())
+        self.style
+            .iter()
+            .find(|d| d.prop == prop)
+            .map(|d| d.value.as_str())
     }
 
     /// 设置/更新 CSS 属性(已存在则替换,否则追加)。
@@ -232,10 +243,18 @@ impl Document {
     /// 无画板空文档(导入器用;编辑器「新建」走 [`Document::new`])。
     pub fn new_empty(title: &str, lang: &str) -> Document {
         let mut nodes = SlotMap::with_key();
-        let root = nodes.insert(Node::new(NodeKind::Layer, "__root__", StableId::from_seed(0)));
+        let root = nodes.insert(Node::new(
+            NodeKind::Layer,
+            "__root__",
+            StableId::from_seed(0),
+        ));
         Document {
             rev: 0,
-            meta: Meta { title: title.to_string(), lang: lang.to_string(), output: OutputMode::default() },
+            meta: Meta {
+                title: title.to_string(),
+                lang: lang.to_string(),
+                output: OutputMode::default(),
+            },
             nodes,
             root,
             artboards: Vec::new(),
@@ -281,12 +300,20 @@ impl Document {
 
     /// 按 sid 查 NodeId。
     pub fn find_by_sid(&self, sid: &str) -> Option<NodeId> {
-        self.nodes.iter().find(|(_, n)| n.sid.as_str() == sid).map(|(id, _)| id)
+        self.nodes
+            .iter()
+            .find(|(_, n)| n.sid.as_str() == sid)
+            .map(|(id, _)| id)
     }
 
     pub fn new_artboard(&mut self, name: &str, w: f64, h: f64) -> NodeId {
         let mut n = Node::new(NodeKind::Artboard, name, self.alloc_sid());
-        n.geom = Geom { x: 0.0, y: 0.0, w, h };
+        n.geom = Geom {
+            x: 0.0,
+            y: 0.0,
+            w,
+            h,
+        };
         let id = self.nodes.insert(n);
         self.nodes.get_mut(self.root).unwrap().children.push(id);
         self.nodes.get_mut(id).unwrap().parent = Some(self.root);
@@ -296,7 +323,10 @@ impl Document {
 
     /// 画板内所有节点的世界坐标 bbox(画板偏移 + 本地坐标;扁平模型,v0.1 无旋转累积)。
     pub fn artboard_origin(&self, artboard: NodeId) -> (f64, f64) {
-        self.nodes.get(artboard).map(|n| (n.geom.x, n.geom.y)).unwrap_or((0.0, 0.0))
+        self.nodes
+            .get(artboard)
+            .map(|n| (n.geom.x, n.geom.y))
+            .unwrap_or((0.0, 0.0))
     }
 
     /// 节点相对其画板原点的 bbox。
@@ -351,7 +381,7 @@ impl Document {
     /// 返回 (原父级中的位置, 子树快照)。
     pub fn extract_subtree(&mut self, sid: &str) -> Option<(usize, NodeTree)> {
         let id = self.find_by_sid(sid)?;
-        let parent = self.nodes.get(id)?.parent?;
+        let _parent = self.nodes.get(id)?.parent?;
         let index = self.detach(id)?;
         let mut sids = Vec::new();
         self.subtree(id, &mut sids);
@@ -363,7 +393,12 @@ impl Document {
     }
 
     /// 把树插回指定父级(sid 寻址版,给命令 revert 用)。
-    pub fn insert_tree_at(&mut self, tree: &NodeTree, parent_sid: &str, index: usize) -> Option<NodeId> {
+    pub fn insert_tree_at(
+        &mut self,
+        tree: &NodeTree,
+        parent_sid: &str,
+        index: usize,
+    ) -> Option<NodeId> {
         let parent = self.find_by_sid(parent_sid)?;
         let mut created = Vec::new();
         Some(tree.insert_into(self, parent, index, &mut created))
@@ -389,7 +424,10 @@ impl NodeTree {
             .iter()
             .filter_map(|&c| {
                 // 只跟随自己名下的孩子(parent 指回自己)
-                doc.nodes.get(c).filter(|n| n.parent == Some(id)).and_then(|_| NodeTree::from_document(doc, c))
+                doc.nodes
+                    .get(c)
+                    .filter(|n| n.parent == Some(id))
+                    .and_then(|_| NodeTree::from_document(doc, c))
             })
             .collect();
         let mut t = NodeTree { node, children };
@@ -403,12 +441,21 @@ impl NodeTree {
 
     /// 按 sid 取出一个直接子树(从本树移除)。
     pub fn take_child(&mut self, sid: &str) -> Option<NodeTree> {
-        let pos = self.children.iter().position(|c| c.node.sid.as_str() == sid)?;
+        let pos = self
+            .children
+            .iter()
+            .position(|c| c.node.sid.as_str() == sid)?;
         Some(self.children.remove(pos))
     }
 
     /// 把整棵树种回文档(新 NodeId,原 sid);返回创建的根 NodeId。
-    pub fn insert_into(&self, doc: &mut Document, parent: NodeId, index: usize, created: &mut Vec<NodeId>) -> NodeId {
+    pub fn insert_into(
+        &self,
+        doc: &mut Document,
+        parent: NodeId,
+        index: usize,
+        created: &mut Vec<NodeId>,
+    ) -> NodeId {
         let mut n = self.node.clone();
         n.parent = Some(parent);
         n.children = Vec::new();

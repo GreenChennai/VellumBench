@@ -24,7 +24,9 @@ const ARTBOARD_CLASSES: &[&str] = &["vb-artboard", "vs-artboard", "vsm-artboard"
 const LAYER_CLASSES: &[&str] = &["vb-layer", "vs-layer", "vsm-layer"];
 const GROUP_CLASSES: &[&str] = &["vb-group", "vs-group", "vsm-group"];
 /// 无法建模为可编辑对象的标签 → 冻结块 / 透传。
-const FROZEN_TAGS: &[&str] = &["svg", "iframe", "video", "audio", "canvas", "object", "embed", "template", "map", "math"];
+const FROZEN_TAGS: &[&str] = &[
+    "svg", "iframe", "video", "audio", "canvas", "object", "embed", "template", "map", "math",
+];
 
 pub struct ImportResult {
     pub doc: Document,
@@ -38,11 +40,17 @@ pub fn import_project(path: &Path) -> Result<ImportResult> {
     let (project_dir, html_path) = if path.is_dir() {
         let p = path.join("index.html");
         if !p.exists() {
-            return Err(VbError::Parse(format!("目录中无 index.html: {}", path.display())));
+            return Err(VbError::Parse(format!(
+                "目录中无 index.html: {}",
+                path.display()
+            )));
         }
         (path.to_path_buf(), p)
     } else {
-        (path.parent().unwrap_or(Path::new(".")).to_path_buf(), path.to_path_buf())
+        (
+            path.parent().unwrap_or(Path::new(".")).to_path_buf(),
+            path.to_path_buf(),
+        )
     };
     let html = std::fs::read_to_string(&html_path)?;
     import_html(&html, &project_dir)
@@ -65,7 +73,9 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
     }
     if let Some(head) = dom.head() {
         for child in &head.children {
-            let Some(el) = child.as_element() else { continue };
+            let Some(el) = child.as_element() else {
+                continue;
+            };
             match el.name.as_str() {
                 "title" => {
                     title = collect_text(child);
@@ -80,7 +90,11 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
                 "link" => {
                     let rel = el.attr("rel").unwrap_or("");
                     let href = el.attr("href").unwrap_or("");
-                    if rel.eq_ignore_ascii_case("stylesheet") && !href.is_empty() && !href.starts_with("http") && !href.starts_with("//") {
+                    if rel.eq_ignore_ascii_case("stylesheet")
+                        && !href.is_empty()
+                        && !href.starts_with("http")
+                        && !href.starts_with("//")
+                    {
                         let css_path = project_dir.join(href.trim_start_matches("./"));
                         match std::fs::read_to_string(&css_path) {
                             Ok(t) => css_texts.push(t),
@@ -120,14 +134,15 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
 
     let doc_title = doc.meta.title.clone();
 
-    let body = dom.body().ok_or_else(|| VbError::Parse("无 <body>".into()))?;
+    let body = dom
+        .body()
+        .ok_or_else(|| VbError::Parse("无 <body>".into()))?;
     let mut importer = NodeImporter {
         doc: &mut doc,
         sheet: &sheet,
         warnings: &mut warnings,
         tag_counter: Default::default(),
         pending_comment: None,
-        body_children_count: body.children.iter().filter(|c| c.as_element().is_some()).count(),
         matched_classes: Default::default(),
     };
 
@@ -152,7 +167,11 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
 
     if artboard_nodes.is_empty() {
         // 无画板标记:整个 body 内容收进一个合成画板
-        let name = if doc_title.is_empty() { "画板 1".to_string() } else { doc_title.clone() };
+        let name = if doc_title.is_empty() {
+            "画板 1".to_string()
+        } else {
+            doc_title.clone()
+        };
         let ab = importer.doc.doc_new_artboard(&name);
         for child in loose {
             importer.build_into(ab, child);
@@ -168,7 +187,9 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
             }
         }
         importer.doc.node_mut(ab).unwrap().geom.h = maxb;
-        importer.warnings.push("未找到 vb-artboard 画板标记:已合成单一画板".to_string());
+        importer
+            .warnings
+            .push("未找到 vb-artboard 画板标记:已合成单一画板".to_string());
     } else if !loose.is_empty() {
         let first = artboard_nodes[0];
         for child in loose {
@@ -186,13 +207,33 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
     // 孤儿类规则(没有任何元素使用)也必须保留,否则丢失(unknown 保底语义)
     for (cls, decls) in &sheet.class_rules {
         if !matched.contains(cls) {
-            let body = decls.iter().map(|d| d.to_css()).collect::<Vec<_>>().join("; ");
+            let body = decls
+                .iter()
+                .map(|d| d.to_css())
+                .collect::<Vec<_>>()
+                .join("; ");
             doc.raw_css.push(format!(".{cls} {{{body}}}"));
         }
     }
 
+    // 画板纵向堆叠(HTML 中画板按文档流排列;编辑器画布需要显式且互不重叠的位置)
+    {
+        let mut y = 0.0f64;
+        for &ab in &doc.artboards {
+            let h = doc.nodes.get(ab).map(|n| n.geom.h).unwrap_or(600.0);
+            if let Some(n) = doc.nodes.get_mut(ab) {
+                n.geom.y = y;
+            }
+            y += h + 80.0;
+        }
+    }
+
     // body 内的 script 等透传已在 build 时进入 trailing_raw
-    Ok(ImportResult { doc, warnings, project_dir: project_dir.to_path_buf() })
+    Ok(ImportResult {
+        doc,
+        warnings,
+        project_dir: project_dir.to_path_buf(),
+    })
 }
 
 type NodeIdT = crate::model::NodeId;
@@ -267,20 +308,18 @@ pub fn parse_stylesheet(text: &str) -> Stylesheet {
     let n = chars.len();
     let mut i = 0usize;
 
-    let skip_ws_and_comments = |i: &mut usize| {
-        loop {
-            while *i < n && chars[*i].is_whitespace() {
+    let skip_ws_and_comments = |i: &mut usize| loop {
+        while *i < n && chars[*i].is_whitespace() {
+            *i += 1;
+        }
+        if *i + 1 < n && chars[*i] == '/' && chars[*i + 1] == '*' {
+            *i += 2;
+            while *i + 1 < n && !(chars[*i] == '*' && chars[*i + 1] == '/') {
                 *i += 1;
             }
-            if *i + 1 < n && chars[*i] == '/' && chars[*i + 1] == '*' {
-                *i += 2;
-                while *i + 1 < n && !(chars[*i] == '*' && chars[*i + 1] == '/') {
-                    *i += 1;
-                }
-                *i = (*i + 2).min(n);
-            } else {
-                break;
-            }
+            *i = (*i + 2).min(n);
+        } else {
+            break;
         }
     };
 
@@ -428,13 +467,23 @@ struct NodeImporter<'a> {
     warnings: &'a mut Vec<String>,
     tag_counter: std::collections::HashMap<String, u32>,
     pending_comment: Option<String>,
-    body_children_count: usize,
+
     ///79c16709:51fa73b08fc77684 class(5b64513f89c4521956de586b7528)
     matched_classes: std::collections::BTreeSet<String>,
 }
 
 impl<'a> NodeImporter<'a> {
-    fn new_artboard_named(&mut self, name: &str, geom: Geom, classes: Vec<String>, attrs: std::collections::BTreeMap<String, String>, style: Vec<Decl>, comment: Option<String>, sid: vb_common::StableId) -> NodeIdT {
+    #[allow(clippy::too_many_arguments)]
+    fn new_artboard_named(
+        &mut self,
+        name: &str,
+        geom: Geom,
+        classes: Vec<String>,
+        attrs: std::collections::BTreeMap<String, String>,
+        style: Vec<Decl>,
+        comment: Option<String>,
+        sid: vb_common::StableId,
+    ) -> NodeIdT {
         let mut n = Node::new(NodeKind::Artboard, name, sid);
         n.geom = geom;
         n.classes = classes;
@@ -455,10 +504,7 @@ impl<'a> NodeImporter<'a> {
             self.matched_classes.insert(c.to_string());
         }
         let class_rule_decls = self.merged_class_decls(el);
-        let inline = el
-            .attr("style")
-            .map(|s| parse_decls(s))
-            .unwrap_or_default();
+        let inline = el.attr("style").map(parse_decls).unwrap_or_default();
         let style = merge_decls(class_rule_decls, inline);
         let get = |p: &str| style.iter().find(|d| d.prop == p).map(|d| d.value.clone());
         let w = vb_common::units::parse_px(get("width").as_deref().unwrap_or("")).unwrap_or(1440.0);
@@ -481,7 +527,20 @@ impl<'a> NodeImporter<'a> {
             .collect();
         let (attrs, sid) = split_attrs(el, self.doc);
         let comment = self.pending_comment.take();
-        let id = self.new_artboard_named(&name, Geom { x: 0.0, y: 0.0, w, h }, classes, attrs, style, comment, sid);
+        let id = self.new_artboard_named(
+            &name,
+            Geom {
+                x: 0.0,
+                y: 0.0,
+                w,
+                h,
+            },
+            classes,
+            attrs,
+            style,
+            comment,
+            sid,
+        );
         for child in &el_node.children {
             self.build_into(id, child);
         }
@@ -492,7 +551,10 @@ impl<'a> NodeImporter<'a> {
         let mut out = Vec::new();
         for c in el.class_list() {
             // 标记类的规则是导出器样板(基规则),由导出层重建,不吸收进节点样式
-            if ARTBOARD_CLASSES.contains(&c) || LAYER_CLASSES.contains(&c) || GROUP_CLASSES.contains(&c) {
+            if ARTBOARD_CLASSES.contains(&c)
+                || LAYER_CLASSES.contains(&c)
+                || GROUP_CLASSES.contains(&c)
+            {
                 continue;
             }
             out.extend(self.sheet.decls_for_class(c));
@@ -509,7 +571,14 @@ impl<'a> NodeImporter<'a> {
             NodeData::Text(t) => {
                 if !t.trim().is_empty() {
                     let sid = self.doc.alloc_sid();
-                    let mut n = Node::new(NodeKind::Text { text: t.clone(), mode: TextMode::Point }, "文本", sid);
+                    let mut n = Node::new(
+                        NodeKind::Text {
+                            text: t.clone(),
+                            mode: TextMode::Point,
+                        },
+                        "文本",
+                        sid,
+                    );
                     n.tag = "#text".to_string();
                     self.attach(parent, n);
                 }
@@ -527,14 +596,12 @@ impl<'a> NodeImporter<'a> {
                     return;
                 }
                 let id = self.build_node(node, parent);
-                if id.is_some() {
-                    if !has_explicit_position(node, self.sheet) {
-                        if let Some(el2) = node.as_element() {
-                            self.warnings.push(format!(
-                                "元素 <{}> 无 left/top 定位(流式页面),已摆到 (0,0)",
-                                el2.name
-                            ));
-                        }
+                if id.is_some() && !has_explicit_position(node, self.sheet) {
+                    if let Some(el2) = node.as_element() {
+                        self.warnings.push(format!(
+                            "元素 <{}> 无 left/top 定位(流式页面),已摆到 (0,0)",
+                            el2.name
+                        ));
                     }
                 }
             }
@@ -566,7 +633,7 @@ impl<'a> NodeImporter<'a> {
             self.matched_classes.insert(c.to_string());
         }
         let class_rule_decls = self.merged_class_decls(el);
-        let inline = el.attr("style").map(|s| parse_decls(s)).unwrap_or_default();
+        let inline = el.attr("style").map(parse_decls).unwrap_or_default();
         let style = merge_decls(class_rule_decls, inline);
 
         let (attrs, sid) = split_attrs(el, self.doc);
@@ -593,7 +660,10 @@ impl<'a> NodeImporter<'a> {
         } else {
             let has_element_children = node.children.iter().any(|c| c.as_element().is_some());
             let all_text = collect_text(node);
-            if !has_element_children && !all_text.trim().is_empty() && !matches!(el.name.as_str(), "div" | "section" | "li" | "ul" | "form") {
+            if !has_element_children
+                && !all_text.trim().is_empty()
+                && !matches!(el.name.as_str(), "div" | "section" | "li" | "ul" | "form")
+            {
                 kind = NodeKind::Text {
                     text: all_text.trim().to_string(),
                     mode: TextMode::Point,
@@ -618,8 +688,10 @@ impl<'a> NodeImporter<'a> {
         let get = |p: &str| style.iter().find(|d| d.prop == p).map(|d| d.value.clone());
         let px = |v: &Option<String>| v.as_deref().and_then(vb_common::units::parse_px);
         let x = px(&get("left")).unwrap_or(0.0);
-        let y = px(&get("top")).or_else(|| px(&get("margin-top"))).unwrap_or(0.0);
-        let w = px(&get("width")).unwrap_or_else(|| match kind {
+        let y = px(&get("top"))
+            .or_else(|| px(&get("margin-top")))
+            .unwrap_or(0.0);
+        let w = px(&get("width")).unwrap_or(match kind {
             NodeKind::Text { .. } => 200.0,
             _ => 100.0,
         });
@@ -649,7 +721,12 @@ impl<'a> NodeImporter<'a> {
         let id = self.attach(parent, n);
 
         // 容器:递归子节点
-        if self.doc.node(id).map(|n| n.kind.is_container()).unwrap_or(false) {
+        if self
+            .doc
+            .node(id)
+            .map(|n| n.kind.is_container())
+            .unwrap_or(false)
+        {
             let children: Vec<&HtmlNode> = node.children.iter().collect();
             for c in children {
                 self.build_into(id, c);
@@ -664,7 +741,10 @@ fn prettify_class(c: &str) -> String {
     let mut out = String::new();
     for (i, part) in c.split(['-', '_']).filter(|p| !p.is_empty()).enumerate() {
         let mut ch = part.chars();
-        let first = ch.next().map(|f| f.to_uppercase().to_string()).unwrap_or_default();
+        let first = ch
+            .next()
+            .map(|f| f.to_uppercase().to_string())
+            .unwrap_or_default();
         if i > 0 {
             out.push(' ');
         }
@@ -679,7 +759,13 @@ fn prettify_class(c: &str) -> String {
 }
 
 /// 拆分属性:data-vb-id → sid;data-vb-name → 名称;class/style 拿走;其余保留。
-fn split_attrs(el: &Element, doc: &mut Document) -> (std::collections::BTreeMap<String, String>, vb_common::StableId) {
+fn split_attrs(
+    el: &Element,
+    doc: &mut Document,
+) -> (
+    std::collections::BTreeMap<String, String>,
+    vb_common::StableId,
+) {
     let mut attrs = std::collections::BTreeMap::new();
     let mut sid: Option<vb_common::StableId> = None;
     for (k, v) in &el.attrs {
@@ -696,13 +782,21 @@ fn split_attrs(el: &Element, doc: &mut Document) -> (std::collections::BTreeMap<
 }
 
 fn has_explicit_position(node: &HtmlNode, sheet: &Stylesheet) -> bool {
-    let Some(el) = node.as_element() else { return false };
-    if el.attr("style").map(|s| s.contains("left") || s.contains("top")).unwrap_or(false) {
+    let Some(el) = node.as_element() else {
+        return false;
+    };
+    if el
+        .attr("style")
+        .map(|s| s.contains("left") || s.contains("top"))
+        .unwrap_or(false)
+    {
         return true;
     }
     for c in el.class_list() {
         for (_, decls) in &sheet.class_rules {
-            if decls.iter().any(|d| d.prop == "left" || d.prop == "top") && simple_class_selector(&format!(".{c}")) == Some(c.to_string()) {
+            if decls.iter().any(|d| d.prop == "left" || d.prop == "top")
+                && simple_class_selector(&format!(".{c}")) == Some(c.to_string())
+            {
                 return true;
             }
         }

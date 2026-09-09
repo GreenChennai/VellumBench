@@ -37,7 +37,10 @@ impl StableId {
         if s.is_empty() || s.len() > 16 {
             return None;
         }
-        if !s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+        if !s
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        {
             return None;
         }
         Some(Self(s.to_string()))
@@ -97,11 +100,10 @@ mod tests {
         for _ in 0..10_000 {
             let id = alloc.alloc();
             assert_eq!(id.as_str().len(), 6);
-            assert!(
-                id.as_str()
-                    .chars()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
-            );
+            assert!(id
+                .as_str()
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
             assert!(seen.insert(id.as_str().to_string()), "collision: {id}");
         }
         assert_eq!(StableId::from_seed(0), StableId::from_seed(0));

@@ -3,17 +3,14 @@
 //! 视觉范围 v0.1:纯色/线性/径向渐变填充、圆角矩形、椭圆、描边、透明度、位图;
 //! 文本按 ADR-0017 画占位条;冻结块画灰色占位框 —— 两者均产生 warnings。
 
-
-
-
 use tiny_skia::{
-    Color, FillRule, Paint, Path as SkPath, PathBuilder, Pixmap, PremultipliedColorU8, Shader,
-    SpreadMode, Stroke, Transform,
+    Color, FillRule, Paint, Path as SkPath, PathBuilder, Pixmap, Shader, SpreadMode, Stroke,
+    Transform,
 };
 
 use crate::encode::{DrawItem, DrawKind, DrawList, FillDef};
 
-const KAPPA: f32 = 0.552_284_75;
+const KAPPA: f32 = 0.552_284_8;
 
 pub struct CpuRenderResult {
     pub png: Vec<u8>,
@@ -43,7 +40,9 @@ pub fn render_png(
         draw_item(&mut pixmap, item, scale, tf, project_dir, &mut warnings);
     }
 
-    let png = pixmap.encode_png().map_err(|e| format!("PNG 编码失败: {e}"))?;
+    let png = pixmap
+        .encode_png()
+        .map_err(|e| format!("PNG 编码失败: {e}"))?;
     Ok(CpuRenderResult { png, warnings })
 }
 
@@ -75,7 +74,9 @@ fn draw_item(
     match item.kind {
         DrawKind::FrozenPlaceholder => {
             warnings.push("冻结块以灰色占位渲染(浏览器引擎导出可获真值)".to_string());
-            if let Some(path) = rect_path(x, y, iw, ih, item.radii.map(|r| r.min(32.0)), item.ellipse) {
+            if let Some(path) =
+                rect_path(x, y, iw, ih, item.radii.map(|r| r.min(32.0)), item.ellipse)
+            {
                 fill_color(pixmap, &path, [0.85, 0.83, 0.8, 1.0], item.opacity, tf);
             }
         }
@@ -95,7 +96,8 @@ fn draw_item(
             }
             if !drew {
                 warnings.push(format!("图片缺失或未解码:{src}(画红框占位)"));
-                if let Some(path) = rect_path(x + 1.0, y + 1.0, iw - 2.0, ih - 2.0, [0.0; 4], false) {
+                if let Some(path) = rect_path(x + 1.0, y + 1.0, iw - 2.0, ih - 2.0, [0.0; 4], false)
+                {
                     stroke_color(pixmap, &path, [0.9, 0.3, 0.3, 1.0], 2.0, item.opacity, tf);
                 }
             }
@@ -114,7 +116,9 @@ fn draw_item(
                                 SpreadMode::Pad,
                                 Transform::identity(),
                             ) {
-                                Some(shader) => fill_shader(pixmap, &shape, shader, item.opacity, tf),
+                                Some(shader) => {
+                                    fill_shader(pixmap, &shape, shader, item.opacity, tf)
+                                }
                                 None => warnings.push("线性渐变非法(已跳过)".into()),
                             }
                         }
@@ -123,7 +127,7 @@ fn draw_item(
                                 (x + iw * *cx as f64) as f32,
                                 (y + ih * *cy as f64) as f32,
                             );
-                            let radius = ((iw * iw + ih * ih) as f64).sqrt() as f32 / 2.0;
+                            let radius = (iw * iw + ih * ih).sqrt() as f32 / 2.0;
                             match tiny_skia::RadialGradient::new(
                                 center,
                                 0.0,
@@ -133,7 +137,9 @@ fn draw_item(
                                 SpreadMode::Pad,
                                 Transform::identity(),
                             ) {
-                                Some(shader) => fill_shader(pixmap, &shape, shader, item.opacity, tf),
+                                Some(shader) => {
+                                    fill_shader(pixmap, &shape, shader, item.opacity, tf)
+                                }
                                 None => warnings.push("径向渐变非法(已跳过)".into()),
                             }
                         }
@@ -171,7 +177,14 @@ fn draw_item(
 }
 
 fn shape_for(item: &DrawItem, x: f64, y: f64, w: f64, h: f64) -> Option<SkPath> {
-    rect_path(x, y, w, h, item.radii.map(|r| r.min(w.min(h) / 2.0)), item.ellipse)
+    rect_path(
+        x,
+        y,
+        w,
+        h,
+        item.radii.map(|r| r.min(w.min(h) / 2.0)),
+        item.ellipse,
+    )
 }
 
 /// 圆角矩形 / 椭圆路径。
@@ -200,7 +213,14 @@ fn rect_path(x: f64, y: f64, w: f64, h: f64, radii: [f64; 4], ellipse: bool) -> 
         pb.line_to(x + w, y + h - br);
         if br > 0.0 {
             let k = KAPPA * br;
-            pb.cubic_to(x + w, y + h - br + k, x + w - br + k, y + h, x + w - br, y + h);
+            pb.cubic_to(
+                x + w,
+                y + h - br + k,
+                x + w - br + k,
+                y + h,
+                x + w - br,
+                y + h,
+            );
         }
         pb.line_to(x + bl, y + h);
         if bl > 0.0 {
@@ -226,25 +246,56 @@ fn fill_color(pixmap: &mut Pixmap, path: &SkPath, color: [f32; 4], opacity: f32,
 
 /// 颜色 × 不透明度(tiny-skia 0.12 无 Paint::opacity,乘进 alpha)。
 fn with_alpha(color: [f32; 4], opacity: f32) -> Color {
-    Color::from_rgba(color[0], color[1], color[2], color[3] * opacity.clamp(0.0, 1.0))
-        .unwrap_or(Color::BLACK)
+    Color::from_rgba(
+        color[0],
+        color[1],
+        color[2],
+        color[3] * opacity.clamp(0.0, 1.0),
+    )
+    .unwrap_or(Color::BLACK)
 }
 
 fn fill_shader(pixmap: &mut Pixmap, path: &SkPath, shader: Shader, _opacity: f32, tf: Transform) {
-    let mut paint = Paint::default();
-    paint.shader = shader;
-    paint.anti_alias = true;
+    let paint = Paint {
+        shader,
+        anti_alias: true,
+        ..Paint::default()
+    };
     pixmap.fill_path(path, &paint, FillRule::Winding, tf, None);
 }
 
-fn stroke_color(pixmap: &mut Pixmap, path: &SkPath, color: [f32; 4], width: f32, opacity: f32, tf: Transform) {
+fn stroke_color(
+    pixmap: &mut Pixmap,
+    path: &SkPath,
+    color: [f32; 4],
+    width: f32,
+    opacity: f32,
+    tf: Transform,
+) {
     let mut paint = Paint::default();
     paint.set_color(with_alpha(color, opacity));
     paint.anti_alias = true;
-    pixmap.stroke_path(path, &paint, &Stroke { width, ..Stroke::default() }, tf, None);
+    pixmap.stroke_path(
+        path,
+        &paint,
+        &Stroke {
+            width,
+            ..Stroke::default()
+        },
+        tf,
+        None,
+    );
 }
 
-fn draw_bitmap(pixmap: &mut Pixmap, path: &std::path::Path, x: f64, y: f64, w: f64, h: f64, scale: f32) -> Result<(), String> {
+fn draw_bitmap(
+    pixmap: &mut Pixmap,
+    path: &std::path::Path,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    scale: f32,
+) -> Result<(), String> {
     let img = image::open(path).map_err(|e| e.to_string())?;
     let rgba = img.to_rgba8();
     let dw = ((w * scale as f64).round() as u32).max(1);

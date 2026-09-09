@@ -20,6 +20,7 @@ pub fn export_artboard_png(
 }
 
 /// 命名模板展开(设计文档 07 篇 §六):`{doc} {artboard} {scale} {ext} {index} {width} {height}`。
+#[allow(clippy::too_many_arguments)]
 pub fn expand_name_template(
     template: &str,
     doc_name: &str,

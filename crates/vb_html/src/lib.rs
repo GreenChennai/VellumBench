@@ -25,11 +25,56 @@ pub const RAWTEXT_TAGS: &[&str] = &["script", "style", "pre", "textarea"];
 
 /// 块级元素:序列化时独立成行。
 pub const BLOCK_TAGS: &[&str] = &[
-    "html", "head", "body", "div", "section", "article", "aside", "header", "footer", "nav",
-    "main", "p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "dl", "dt", "dd", "table",
-    "thead", "tbody", "tfoot", "tr", "td", "th", "form", "fieldset", "blockquote", "figure",
-    "figcaption", "hr", "address", "details", "summary", "dialog", "template", "script", "style",
-    "link", "meta", "title", "pre", "textarea", "button",
+    "html",
+    "head",
+    "body",
+    "div",
+    "section",
+    "article",
+    "aside",
+    "header",
+    "footer",
+    "nav",
+    "main",
+    "p",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "ul",
+    "ol",
+    "li",
+    "dl",
+    "dt",
+    "dd",
+    "table",
+    "thead",
+    "tbody",
+    "tfoot",
+    "tr",
+    "td",
+    "th",
+    "form",
+    "fieldset",
+    "blockquote",
+    "figure",
+    "figcaption",
+    "hr",
+    "address",
+    "details",
+    "summary",
+    "dialog",
+    "template",
+    "script",
+    "style",
+    "link",
+    "meta",
+    "title",
+    "pre",
+    "textarea",
+    "button",
 ];
 
 /// 属性输出顺序档位:class → id → data-vb-id → data-vb-name → 其余(源顺序,稳定)。
@@ -94,7 +139,9 @@ impl Element {
     }
 
     pub fn class_list(&self) -> Vec<&str> {
-        self.attr("class").map(|c| c.split_whitespace().collect()).unwrap_or_default()
+        self.attr("class")
+            .map(|c| c.split_whitespace().collect())
+            .unwrap_or_default()
     }
 
     pub fn is_void(&self) -> bool {
@@ -112,15 +159,27 @@ impl Element {
 
 impl HtmlNode {
     pub fn element(name: &str, attrs: Vec<(String, String)>) -> HtmlNode {
-        HtmlNode { data: NodeData::Element(Element { name: name.to_string(), attrs }), children: Vec::new() }
+        HtmlNode {
+            data: NodeData::Element(Element {
+                name: name.to_string(),
+                attrs,
+            }),
+            children: Vec::new(),
+        }
     }
 
     pub fn text(t: impl Into<String>) -> HtmlNode {
-        HtmlNode { data: NodeData::Text(t.into()), children: Vec::new() }
+        HtmlNode {
+            data: NodeData::Text(t.into()),
+            children: Vec::new(),
+        }
     }
 
     pub fn raw(html: impl Into<String>) -> HtmlNode {
-        HtmlNode { data: NodeData::Raw(html.into()), children: Vec::new() }
+        HtmlNode {
+            data: NodeData::Raw(html.into()),
+            children: Vec::new(),
+        }
     }
 
     pub fn as_element(&self) -> Option<&Element> {
@@ -169,11 +228,17 @@ impl HtmlDom {
     }
 
     pub fn body(&self) -> Option<&HtmlNode> {
-        self.root.children.iter().find(|n| matches!(&n.data, NodeData::Element(e) if e.name == "body"))
+        self.root
+            .children
+            .iter()
+            .find(|n| matches!(&n.data, NodeData::Element(e) if e.name == "body"))
     }
 
     pub fn head(&self) -> Option<&HtmlNode> {
-        self.root.children.iter().find(|n| matches!(&n.data, NodeData::Element(e) if e.name == "head"))
+        self.root
+            .children
+            .iter()
+            .find(|n| matches!(&n.data, NodeData::Element(e) if e.name == "head"))
     }
 
     /// canonical 序列化(纯函数,L1 幂等的来源)。
@@ -198,15 +263,18 @@ pub fn canonicalize(html: &str) -> String {
 fn convert(h: &Handle) -> HtmlNode {
     match &h.data {
         Rd::Document => HtmlNode::element("#document", vec![]),
-        Rd::Doctype { name, .. } => {
-            HtmlNode { data: NodeData::Doctype(name.to_string()), children: vec![] }
-        }
-        Rd::Comment { contents } => {
-            HtmlNode { data: NodeData::Comment(contents.to_string()), children: vec![] }
-        }
-        Rd::Text { contents } => {
-            HtmlNode { data: NodeData::Text(contents.borrow().to_string()), children: vec![] }
-        }
+        Rd::Doctype { name, .. } => HtmlNode {
+            data: NodeData::Doctype(name.to_string()),
+            children: vec![],
+        },
+        Rd::Comment { contents } => HtmlNode {
+            data: NodeData::Comment(contents.to_string()),
+            children: vec![],
+        },
+        Rd::Text { contents } => HtmlNode {
+            data: NodeData::Text(contents.borrow().to_string()),
+            children: vec![],
+        },
         Rd::ProcessingInstruction { .. } => HtmlNode::text(""),
         Rd::Element { name, attrs, .. } => {
             let attr_list: Vec<(String, String)> = attrs
@@ -214,7 +282,7 @@ fn convert(h: &Handle) -> HtmlNode {
                 .iter()
                 .map(|a| (a.name.local.to_string(), a.value.to_string()))
                 .collect();
-            let mut node = HtmlNode::element(&name.local.to_string(), attr_list);
+            let mut node = HtmlNode::element(name.local.as_ref(), attr_list);
             for c in h.children.borrow().iter() {
                 node.children.push(convert(c));
             }
@@ -272,9 +340,7 @@ fn collapse_ws(s: &str) -> String {
 fn canonical_attrs(el: &Element) -> Vec<(String, String)> {
     let mut idx: Vec<usize> = (0..el.attrs.len()).collect();
     idx.sort_by_key(|&i| (attr_rank(&el.attrs[i].0), i));
-    idx.into_iter()
-        .map(|i| el.attrs[i].clone())
-        .collect()
+    idx.into_iter().map(|i| el.attrs[i].clone()).collect()
 }
 
 fn write_attrs(el: &Element, out: &mut String) {
@@ -296,7 +362,14 @@ fn can_inline(node: &HtmlNode) -> bool {
                 NodeData::Comment(_) => true,
                 NodeData::Raw(_) => false,
                 NodeData::Doctype(_) => false,
-                NodeData::Element(ce) => !ce.is_block() && can_inline(c) && ce.name != "script" && ce.name != "style" && ce.name != "pre" && ce.name != "textarea",
+                NodeData::Element(ce) => {
+                    !ce.is_block()
+                        && can_inline(c)
+                        && ce.name != "script"
+                        && ce.name != "style"
+                        && ce.name != "pre"
+                        && ce.name != "textarea"
+                }
             })
         }
         _ => true,
@@ -373,11 +446,7 @@ fn write_node(node: &HtmlNode, indent: usize, out: &mut String) {
             }
         }
         NodeData::Comment(c) => {
-            if c.contains('\n') {
-                out.push_str(&format!("{pad}<!--{c}-->\n"));
-            } else {
-                out.push_str(&format!("{pad}<!--{c}-->\n"));
-            }
+            out.push_str(&format!("{pad}<!--{c}-->\n"));
         }
         NodeData::Text(t) => {
             let t = collapse_ws(t);
@@ -400,7 +469,8 @@ fn write_node(node: &HtmlNode, indent: usize, out: &mut String) {
                 out.push_str(&e.name);
                 write_attrs(e, out);
                 out.push('>');
-                // 内容逐字节保留(单行则贴 tag,多行独立)
+                // 内容逐字节保留(verbatim):任何装饰性换行/缩进都会在下次
+                // 解析时进入内容,破坏 L1 幂等 —— 因此闭合标签紧跟内容。
                 let inner: String = node
                     .children
                     .iter()
@@ -409,16 +479,7 @@ fn write_node(node: &HtmlNode, indent: usize, out: &mut String) {
                         _ => None,
                     })
                     .collect();
-                if inner.contains('\n') {
-                    out.push('\n');
-                    out.push_str(&inner);
-                    if !inner.ends_with('\n') {
-                        out.push('\n');
-                    }
-                    out.push_str(&pad);
-                } else {
-                    out.push_str(&inner);
-                }
+                out.push_str(&inner);
                 out.push_str(&format!("</{}>\n", e.name));
                 return;
             }
@@ -507,7 +568,7 @@ mod tests {
     fn text_escaping_roundtrip() {
         let src = r#"<html><body><p>A &amp; B &lt;tag&gt; "q"</p></body></html>"#;
         let out = canonicalize(src);
-        assert!(out.contains(r"A &amp; B &lt;tag&gt; &quot;q&quot;"));
+        assert!(out.contains(r#"A &amp; B &lt;tag&gt; "q""#));
         let twice = canonicalize(&out);
         assert_eq!(out, twice);
     }
@@ -517,7 +578,10 @@ mod tests {
         // 行内内容必须在行内序列化,词间空白保留单空格
         let src = r#"<html><body><p>Hello <b>world</b>!</p></body></html>"#;
         let out = canonicalize(src);
-        assert!(out.contains("<p>Hello <b>world</b> !</p>") || out.contains("<p>Hello <b>world</b>!</p>"));
+        assert!(
+            out.contains("<p>Hello <b>world</b> !</p>")
+                || out.contains("<p>Hello <b>world</b>!</p>")
+        );
         let twice = canonicalize(&out);
         assert_eq!(out, twice);
     }

@@ -18,7 +18,11 @@ pub struct Camera {
 
 impl Default for Camera {
     fn default() -> Self {
-        Self { pan_x: 0.0, pan_y: 0.0, zoom: 1.0 }
+        Self {
+            pan_x: 0.0,
+            pan_y: 0.0,
+            zoom: 1.0,
+        }
     }
 }
 
@@ -71,10 +75,12 @@ pub fn hit_test(doc: &Document, artboard: NodeId, wx: f64, wy: f64) -> Option<No
 fn hit_children(doc: &Document, ids: &[NodeId], wx: f64, wy: f64) -> Option<NodeId> {
     for &id in ids.iter().rev() {
         let Some(n) = doc.nodes.get(id) else { continue };
-        if n.hidden || n.locked {
+        if n.hidden || n.locked || n.tag == "#text" {
             continue;
         }
-        let Some(bb) = abs_bbox(doc, id) else { continue };
+        let Some(bb) = abs_bbox(doc, id) else {
+            continue;
+        };
         if !bb.contains((wx, wy)) {
             continue;
         }
@@ -91,7 +97,9 @@ fn hit_children(doc: &Document, ids: &[NodeId], wx: f64, wy: f64) -> Option<Node
 /// 框选:**相交即选中**(AI 语义,设计文档 02 篇 §5.1)。
 pub fn marquee_select(doc: &Document, artboard: NodeId, rect: Rect) -> Vec<NodeId> {
     let mut out = Vec::new();
-    let Some(ab) = doc.nodes.get(artboard) else { return out };
+    let Some(ab) = doc.nodes.get(artboard) else {
+        return out;
+    };
     for &c in &ab.children {
         collect_intersect(doc, c, rect, &mut out);
     }
@@ -100,7 +108,7 @@ pub fn marquee_select(doc: &Document, artboard: NodeId, rect: Rect) -> Vec<NodeI
 
 fn collect_intersect(doc: &Document, id: NodeId, rect: Rect, out: &mut Vec<NodeId>) {
     let Some(n) = doc.nodes.get(id) else { return };
-    if n.hidden || n.locked {
+    if n.hidden || n.locked || n.tag == "#text" {
         return;
     }
     let Some(bb) = abs_bbox(doc, id) else { return };
@@ -129,8 +137,8 @@ pub fn constrain_axis(dx: f64, dy: f64, shift: bool) -> (f64, f64) {
 pub fn drag_rect_geom(sx: f64, sy: f64, cx: f64, cy: f64, shift: bool, alt: bool) -> Geom {
     let (mut x0, mut y0) = (sx, sy);
     let (mut x1, mut y1) = (cx, cy);
-    let (mut w) = (x1 - x0).abs();
-    let (mut h) = (y1 - y0).abs();
+    let mut w = (x1 - x0).abs();
+    let mut h = (y1 - y0).abs();
     if shift {
         let s = w.max(h);
         w = s;
@@ -175,6 +183,7 @@ mod tests {
     use super::*;
     use vb_doc::model::{Document, Node, NodeKind};
 
+    #[allow(dead_code)]
     fn add_box(doc: &mut Document, parent: NodeId, x: f64, y: f64, w: f64, h: f64) -> NodeId {
         let sid = doc.alloc_sid();
         let mut n = Node::new(NodeKind::Box, "盒", sid);
@@ -187,7 +196,11 @@ mod tests {
 
     #[test]
     fn camera_zoom_at_keeps_cursor_point() {
-        let mut cam = Camera { pan_x: 40.0, pan_y: 0.0, zoom: 1.0 };
+        let mut cam = Camera {
+            pan_x: 40.0,
+            pan_y: 0.0,
+            zoom: 1.0,
+        };
         let (sx, sy) = (300.0, 200.0);
         let (wx, wy) = cam.screen_to_world(sx, sy);
         cam.zoom_at(sx, sy, 2.0);

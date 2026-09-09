@@ -11,7 +11,6 @@ use vb_html::{HtmlDom, HtmlNode, NodeData};
 
 use crate::model::{Document, Node, NodeId, NodeKind, OutputMode};
 use crate::Result;
-use crate::VbError;
 
 pub struct ExportResult {
     /// (相对路径, 内容)
@@ -46,7 +45,11 @@ fn finalize_classes(doc: &mut Document) {
         };
         if node.classes.is_empty() {
             let slug = slugify(&node.name);
-            let base = if slug.is_empty() { format!("vb-el-{}", node.sid.as_str()) } else { slug };
+            let base = if slug.is_empty() {
+                format!("vb-el-{}", node.sid.as_str())
+            } else {
+                slug
+            };
             node.classes.push(base);
         }
         let primary = node.classes[0].clone();
@@ -82,12 +85,18 @@ pub fn write_project(doc: &Document, dir: &Path) -> Result<Vec<std::path::PathBu
 fn render_html(doc: &mut Document, css: &str) -> String {
     let mut html_el = HtmlNode::element("html", vec![("lang".into(), doc.meta.lang.clone())]);
     let mut head = HtmlNode::element("head", vec![]);
-    head.children.push(HtmlNode::element("meta", vec![("charset".into(), "UTF-8".into())]));
+    head.children.push(HtmlNode::element(
+        "meta",
+        vec![("charset".into(), "UTF-8".into())],
+    ));
     head.children.push(HtmlNode::element(
         "meta",
         vec![
             ("name".into(), "viewport".into()),
-            ("content".into(), "width=device-width, initial-scale=1.0".into()),
+            (
+                "content".into(),
+                "width=device-width, initial-scale=1.0".into(),
+            ),
         ],
     ));
     if !doc.meta.title.is_empty() {
@@ -120,7 +129,10 @@ fn render_html(doc: &mut Document, css: &str) -> String {
     for ab in artboard_ids {
         if let Some(n) = doc.nodes.get(ab) {
             if let Some(c) = &n.comment_before {
-                body.children.push(HtmlNode { data: NodeData::Comment(c.clone()), children: vec![] });
+                body.children.push(HtmlNode {
+                    data: NodeData::Comment(c.clone()),
+                    children: vec![],
+                });
             }
             let n = n.clone();
             body.children.push(render_node(doc, ab, &n));
@@ -133,7 +145,11 @@ fn render_html(doc: &mut Document, css: &str) -> String {
 
     html_el.children.push(head);
     html_el.children.push(body);
-    let dom = HtmlDom { doctype: Some("html".into()), leading_comments: vec![], root: html_el };
+    let dom = HtmlDom {
+        doctype: Some("html".into()),
+        leading_comments: vec![],
+        root: html_el,
+    };
     dom.serialize()
 }
 
@@ -185,7 +201,11 @@ fn render_node(doc: &mut Document, id: NodeId, node: &Node) -> HtmlNode {
                     classes.insert(0, m.to_string());
                 }
             }
-            let tag = if node.tag == "#frozen" || node.tag.is_empty() { "div" } else { node.tag.as_str() };
+            let tag = if node.tag == "#frozen" || node.tag.is_empty() {
+                "div"
+            } else {
+                node.tag.as_str()
+            };
             let mut attrs: Vec<(String, String)> = vec![("class".into(), classes.join(" "))];
             if let Some(id_attr) = node.attrs.get("id") {
                 attrs.push(("id".into(), id_attr.clone()));
@@ -206,7 +226,10 @@ fn render_node(doc: &mut Document, id: NodeId, node: &Node) -> HtmlNode {
             for &c in &child_ids {
                 if let Some(cn) = doc.nodes.get(c) {
                     if let Some(cm) = &cn.comment_before {
-                        el.children.push(HtmlNode { data: NodeData::Comment(cm.clone()), children: vec![] });
+                        el.children.push(HtmlNode {
+                            data: NodeData::Comment(cm.clone()),
+                            children: vec![],
+                        });
                     }
                     let cn = cn.clone();
                     el.children.push(render_node(doc, c, &cn));
@@ -221,7 +244,11 @@ fn render_node(doc: &mut Document, id: NodeId, node: &Node) -> HtmlNode {
 
 fn geom_decls(node: &Node, is_artboard: bool) -> Vec<vb_css::Decl> {
     let mut d = Vec::new();
-    let decl = |p: &str, v: String| vb_css::Decl { prop: p.into(), value: v, important: false };
+    let decl = |p: &str, v: String| vb_css::Decl {
+        prop: p.into(),
+        value: v,
+        important: false,
+    };
     if !is_artboard {
         d.push(decl("position", "absolute".into()));
     }
@@ -281,7 +308,10 @@ fn render_css(doc: &Document) -> String {
         {
             let mut kept: Vec<vb_css::Decl> = Vec::with_capacity(decls.len());
             for d in decls.into_iter() {
-                if let Some(existing) = kept.iter_mut().find(|e: &&mut vb_css::Decl| e.prop == d.prop) {
+                if let Some(existing) = kept
+                    .iter_mut()
+                    .find(|e: &&mut vb_css::Decl| e.prop == d.prop)
+                {
                     *existing = d;
                 } else {
                     kept.push(d);

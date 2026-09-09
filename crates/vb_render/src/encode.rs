@@ -110,13 +110,20 @@ fn px(v: &str) -> Option<f64> {
 
 /// 解析 `linear-gradient(135deg, #a 0, #b 60%)` → (angle_css, stops)。
 pub fn parse_linear_gradient(doc: &Document, value: &str) -> Option<(f64, Vec<GradientStop>)> {
-    let inner = value.trim().strip_prefix("linear-gradient(")?.strip_suffix(')')?;
+    let inner = value
+        .trim()
+        .strip_prefix("linear-gradient(")?
+        .strip_suffix(')')?;
     let parts = vb_css_split_top_level(inner, ',');
     let mut angle = 180.0f64; // CSS 默认 to bottom
     let mut stops_raw: Vec<&str> = Vec::new();
     for (i, p) in parts.iter().enumerate() {
         let t = p.trim();
-        if i == 0 && (t.ends_with("deg") || t.ends_with("turn") || !t.starts_with('#') && !t.contains('(')) {
+        if i == 0
+            && (t.ends_with("deg")
+                || t.ends_with("turn")
+                || !t.starts_with('#') && !t.contains('('))
+        {
             if let Some(d) = t.strip_suffix("deg") {
                 angle = d.trim().parse().unwrap_or(180.0);
                 continue;
@@ -130,7 +137,9 @@ pub fn parse_linear_gradient(doc: &Document, value: &str) -> Option<(f64, Vec<Gr
         // "color pos" 或纯 "color"
         let mut segs = s.split_whitespace();
         let color_tok = segs.next().unwrap_or("");
-        let Some(color) = parse_color_rgba_resolved(doc, color_tok) else { continue };
+        let Some(color) = parse_color_rgba_resolved(doc, color_tok) else {
+            continue;
+        };
         let pos = segs
             .next()
             .and_then(|p| {
@@ -138,7 +147,11 @@ pub fn parse_linear_gradient(doc: &Document, value: &str) -> Option<(f64, Vec<Gr
                     .and_then(|v| v.parse::<f32>().ok())
                     .map(|v| v / 100.0)
             })
-            .unwrap_or(if n <= 1 { 0.0 } else { i as f32 / (n - 1) as f32 });
+            .unwrap_or(if n <= 1 {
+                0.0
+            } else {
+                i as f32 / (n - 1) as f32
+            });
         stops.push(GradientStop { pos, color });
     }
     if stops.len() < 2 {
@@ -149,7 +162,10 @@ pub fn parse_linear_gradient(doc: &Document, value: &str) -> Option<(f64, Vec<Gr
 
 /// 解析 `radial-gradient(circle at 35% 35%, #a 0, #b 70%)`。
 pub fn parse_radial_gradient(doc: &Document, value: &str) -> Option<(f32, f32, Vec<GradientStop>)> {
-    let inner = value.trim().strip_prefix("radial-gradient(")?.strip_suffix(')')?;
+    let inner = value
+        .trim()
+        .strip_prefix("radial-gradient(")?
+        .strip_suffix(')')?;
     let parts = vb_css_split_top_level(inner, ',');
     let mut cx = 0.5f32;
     let mut cy = 0.5f32;
@@ -161,10 +177,18 @@ pub fn parse_radial_gradient(doc: &Document, value: &str) -> Option<(f32, f32, V
             if let Some(at) = t.find("at") {
                 let pos = t[at + 2..].trim();
                 let mut it = pos.split_whitespace();
-                if let Some(x) = it.next().and_then(|v| v.strip_suffix('%')).and_then(|v| v.parse::<f32>().ok()) {
+                if let Some(x) = it
+                    .next()
+                    .and_then(|v| v.strip_suffix('%'))
+                    .and_then(|v| v.parse::<f32>().ok())
+                {
                     cx = x / 100.0;
                 }
-                if let Some(y) = it.next().and_then(|v| v.strip_suffix('%')).and_then(|v| v.parse::<f32>().ok()) {
+                if let Some(y) = it
+                    .next()
+                    .and_then(|v| v.strip_suffix('%'))
+                    .and_then(|v| v.parse::<f32>().ok())
+                {
                     cy = y / 100.0;
                 }
             }
@@ -177,11 +201,21 @@ pub fn parse_radial_gradient(doc: &Document, value: &str) -> Option<(f32, f32, V
     for (i, s) in stops_raw.iter().enumerate() {
         let mut segs = s.split_whitespace();
         let color_tok = segs.next().unwrap_or("");
-        let Some(color) = parse_color_rgba_resolved(doc, color_tok) else { continue };
+        let Some(color) = parse_color_rgba_resolved(doc, color_tok) else {
+            continue;
+        };
         let pos = segs
             .next()
-            .and_then(|p| p.strip_suffix('%').and_then(|v| v.parse::<f32>().ok()).map(|v| v / 100.0))
-            .unwrap_or(if n <= 1 { 0.0 } else { i as f32 / (n - 1) as f32 });
+            .and_then(|p| {
+                p.strip_suffix('%')
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .map(|v| v / 100.0)
+            })
+            .unwrap_or(if n <= 1 {
+                0.0
+            } else {
+                i as f32 / (n - 1) as f32
+            });
         stops.push(GradientStop { pos, color });
     }
     if stops.is_empty() {
@@ -195,7 +229,10 @@ fn parse_fill(doc: &Document, node: &Node) -> Option<FillDef> {
     if let Some(bgi) = bg_image {
         if bgi.starts_with("linear-gradient") {
             if let Some((angle, stops)) = parse_linear_gradient(doc, bgi) {
-                return Some(FillDef::LinearGradient { angle_css: angle, stops });
+                return Some(FillDef::LinearGradient {
+                    angle_css: angle,
+                    stops,
+                });
             }
         }
         if bgi.starts_with("radial-gradient") {
@@ -228,10 +265,14 @@ fn parse_radii(node: &Node) -> [f64; 4] {
 }
 
 fn parse_border(doc: &Document, node: &Node) -> Option<BorderDef> {
-    let width = node
-        .style_get("border-width")
-        .and_then(px)
-        .or_else(|| node.style_get("border").and_then(|b| b.split_whitespace().find(|t| t.ends_with("px") || t.parse::<f64>().is_ok())).and_then(px))?;
+    let width = node.style_get("border-width").and_then(px).or_else(|| {
+        node.style_get("border")
+            .and_then(|b| {
+                b.split_whitespace()
+                    .find(|t| t.ends_with("px") || t.parse::<f64>().is_ok())
+            })
+            .and_then(px)
+    })?;
     // width 为 0 时不画
     if width <= 0.0 {
         return None;
@@ -246,8 +287,10 @@ fn parse_border(doc: &Document, node: &Node) -> Option<BorderDef> {
         .style_get("border-color")
         .and_then(|v| parse_color_rgba_resolved(doc, v))
         .or_else(|| {
-            node.style_get("border")
-                .and_then(|b| b.split_whitespace().find_map(|t| parse_color_rgba_resolved(doc, t)))
+            node.style_get("border").and_then(|b| {
+                b.split_whitespace()
+                    .find_map(|t| parse_color_rgba_resolved(doc, t))
+            })
         })
         .unwrap_or([0.0, 0.0, 0.0, 1.0]);
     Some(BorderDef { width, color })
@@ -255,7 +298,10 @@ fn parse_border(doc: &Document, node: &Node) -> Option<BorderDef> {
 
 /// 编码单个画板为 DrawList。
 pub fn encode_artboard(doc: &Document, artboard: NodeId) -> Result<DrawList, VbError> {
-    let ab = doc.nodes.get(artboard).ok_or(VbError::NoSuchNode("artboard".into()))?;
+    let ab = doc
+        .nodes
+        .get(artboard)
+        .ok_or(VbError::NoSuchNode("artboard".into()))?;
     if !matches!(ab.kind, NodeKind::Artboard) {
         return Err(VbError::Unsupported("目标不是画板".into()));
     }
@@ -264,7 +310,24 @@ pub fn encode_artboard(doc: &Document, artboard: NodeId) -> Result<DrawList, VbE
         .and_then(|v| parse_color_rgba_resolved(doc, v))
         .or_else(|| ab.fill_color().map(|c| c.to_rgb_f32()))
         .unwrap_or([1.0, 1.0, 1.0, 1.0]);
-    let mut list = DrawList { w: ab.geom.w, h: ab.geom.h, background, items: Vec::new() };
+    let mut list = DrawList {
+        w: ab.geom.w,
+        h: ab.geom.h,
+        background,
+        items: Vec::new(),
+    };
+    // 画板自身底色(GPU 画布据此画出画板矩形)
+    list.items.push(crate::DrawItem {
+        rect: [0.0, 0.0, ab.geom.w, ab.geom.h],
+        ellipse: false,
+        radii: [0.0; 4],
+        fill: Some(FillDef::Solid(background)),
+        border: None,
+        opacity: 1.0,
+        kind: crate::DrawKind::Box,
+        label: None,
+        src: None,
+    });
     let children = ab.children.clone();
     for c in children {
         encode_node(doc, c, 0.0, 0.0, 1.0, &mut list);
@@ -272,15 +335,25 @@ pub fn encode_artboard(doc: &Document, artboard: NodeId) -> Result<DrawList, VbE
     Ok(list)
 }
 
-fn encode_node(doc: &Document, id: NodeId, off_x: f64, off_y: f64, opacity: f32, list: &mut DrawList) {
-    let Some(node) = doc.nodes.get(id) else { return };
+fn encode_node(
+    doc: &Document,
+    id: NodeId,
+    off_x: f64,
+    off_y: f64,
+    opacity: f32,
+    list: &mut DrawList,
+) {
+    let Some(node) = doc.nodes.get(id) else {
+        return;
+    };
     if node.hidden {
         return;
     }
-    let op = opacity * node
-        .style_get("opacity")
-        .and_then(|v| v.parse::<f32>().ok())
-        .unwrap_or(1.0);
+    let op = opacity
+        * node
+            .style_get("opacity")
+            .and_then(|v| v.parse::<f32>().ok())
+            .unwrap_or(1.0);
     let x = off_x + node.geom.x;
     let y = off_y + node.geom.y;
     let w = node.geom.w;
@@ -309,7 +382,9 @@ fn encode_node(doc: &Document, id: NodeId, off_x: f64, off_y: f64, opacity: f32,
                     let fs = node.style_get("font-size").and_then(px).unwrap_or(16.0);
                     let bold = node
                         .style_get("font-weight")
-                        .map(|w| w == "bold" || w == "700" || w == "600" || w == "800" || w == "900")
+                        .map(|w| {
+                            w == "bold" || w == "700" || w == "600" || w == "800" || w == "900"
+                        })
                         .unwrap_or(matches!(node.tag.as_str(), "h1" | "h2" | "h3"));
                     Some(TextHint {
                         text: text.clone(),

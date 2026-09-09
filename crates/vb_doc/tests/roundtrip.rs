@@ -3,7 +3,6 @@
 //! - **L0 不损坏**:导入 → 不编辑 → 导出,关键内容全部保留。
 //! - **L1 幂等**:导入 → 导出 → 再导入 → 再导出,两次输出字节相同。
 
-use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use vb_doc::export::render_project;
@@ -12,6 +11,7 @@ use vb_doc::Document;
 
 /// 导入 → 导出(落盘)→ 再导入 → 再导出;返回两次导出的文件表。
 /// 走真实目录,保证外链 CSS 在第二次导入时可见(与 Agent/浏览器看到的一致)。
+#[allow(clippy::type_complexity)]
 fn roundtrip(html: &str) -> (Vec<(String, String)>, Vec<(String, String)>) {
     static SEQ: AtomicU32 = AtomicU32::new(0);
     let dir = std::env::temp_dir().join(format!(
@@ -103,7 +103,11 @@ fn l1_idempotent_simple() {
     let src = simple_page("<style>\n{SIMPLE_CSS}\n</style>\n");
     let src = src.replace("{SIMPLE_CSS}", SIMPLE_CSS);
     let (f1, f2) = roundtrip(&src);
-    assert_eq!(find(&f1, "index.html"), find(&f2, "index.html"), "HTML 必须幂等");
+    assert_eq!(
+        find(&f1, "index.html"),
+        find(&f2, "index.html"),
+        "HTML 必须幂等"
+    );
     assert_eq!(css(&f1), css(&f2), "CSS 必须幂等");
 }
 
@@ -179,13 +183,25 @@ fn script_svg_media_hover_preserved() {
     assert_eq!(find(&f1, "index.html"), find(&f2, "index.html"));
     let html = find(&f1, "index.html");
     let css_out = css(&f1);
-    assert!(html.contains("console.log(\"保留我\", 1 < 2);"), "脚本逐字保留");
-    assert!(html.contains("M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"), "SVG 冻结块保留");
+    assert!(
+        html.contains("console.log(\"保留我\", 1 < 2);"),
+        "脚本逐字保留"
+    );
+    assert!(
+        html.contains("M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"),
+        "SVG 冻结块保留"
+    );
     assert!(html.contains("data-vb-id=\"bbbbbb\""));
     let _ = FROZEN_CSS;
-    assert!(css_out.contains("@media (max-width: 768px)"), "@media 原样保留");
+    assert!(
+        css_out.contains("@media (max-width: 768px)"),
+        "@media 原样保留"
+    );
     assert!(css_out.contains(".card:hover"), "伪类选择器原样保留");
-    assert!(css_out.contains("backdrop-filter: blur(8px)"), "unknown 属性保留");
+    assert!(
+        css_out.contains("backdrop-filter: blur(8px)"),
+        "unknown 属性保留"
+    );
     assert!(css_out.contains("box-shadow: 0 2px 8px #00000026;"));
 }
 
@@ -218,7 +234,10 @@ fn text_mixed_and_attrs_preserved() {
     assert_eq!(find(&f1, "index.html"), find(&f2, "index.html"));
     let html = find(&f1, "index.html");
     assert!(html.contains("Hello <b"), "行内起点");
-    assert!(html.contains("world</b>!"), "行内元素与后续文本间的无空白边界保留");
+    assert!(
+        html.contains("world</b>!"),
+        "行内元素与后续文本间的无空白边界保留"
+    );
     assert!(html.contains("href=\"/buy\""));
     assert!(html.contains("aria-label=\"立即购买\""));
     assert!(html.contains("<!-- 页面说明注释 -->"));

@@ -80,17 +80,23 @@ fn draw_item(scene: &mut Scene, item: &DrawItem) {
             FillDef::Solid(c) => Some(Brush::Solid(to_color(*c, item.opacity))),
             FillDef::LinearGradient { angle_css, stops } => {
                 let (start_pt, end_pt) = crate::cpu::gradient_line(*angle_css, w, h);
-                Some(Brush::Gradient(Gradient::new_linear(
-                    vello::kurbo::Point::new(start_pt.x as f64 + x, start_pt.y as f64 + y),
-                    vello::kurbo::Point::new(end_pt.x as f64 + x, end_pt.y as f64 + y),
-                ).with_stops(to_stops(stops, item.opacity))))
+                Some(Brush::Gradient(
+                    Gradient::new_linear(
+                        vello::kurbo::Point::new(start_pt.x as f64 + x, start_pt.y as f64 + y),
+                        vello::kurbo::Point::new(end_pt.x as f64 + x, end_pt.y as f64 + y),
+                    )
+                    .with_stops(to_stops(stops, item.opacity)),
+                ))
             }
             FillDef::RadialGradient { cx, cy, stops } => {
                 let radius = ((w * w + h * h) as f32).sqrt() / 2.0;
-                Some(Brush::Gradient(Gradient::new_radial(
-                    vello::kurbo::Point::new(x + w * *cx as f64, y + h * *cy as f64),
-                    radius,
-                ).with_stops(to_stops(stops, item.opacity))))
+                Some(Brush::Gradient(
+                    Gradient::new_radial(
+                        vello::kurbo::Point::new(x + w * *cx as f64, y + h * *cy as f64),
+                        radius,
+                    )
+                    .with_stops(to_stops(stops, item.opacity)),
+                ))
             }
         };
         if let Some(b) = brush {
@@ -102,9 +108,7 @@ fn draw_item(scene: &mut Scene, item: &DrawItem) {
             let stroke = vello::kurbo::Stroke::new(border.width.max(1.0));
             let brush = Brush::Solid(to_color(border.color, item.opacity));
             match &shape {
-                ShapeKind::Ellipse(e) => {
-                    scene.stroke(&stroke, Affine::IDENTITY, &brush, None, e)
-                }
+                ShapeKind::Ellipse(e) => scene.stroke(&stroke, Affine::IDENTITY, &brush, None, e),
                 ShapeKind::Rect(r) => scene.stroke(&stroke, Affine::IDENTITY, &brush, None, r),
             };
         }
@@ -113,7 +117,19 @@ fn draw_item(scene: &mut Scene, item: &DrawItem) {
 
 fn fill_shape(scene: &mut Scene, shape: &ShapeKind, brush: &Brush) {
     match shape {
-        ShapeKind::Ellipse(e) => scene.fill(vello::peniko::Fill::NonZero, Affine::IDENTITY, brush, None, e),
-        ShapeKind::Rect(r) => scene.fill(vello::peniko::Fill::NonZero, Affine::IDENTITY, brush, None, r),
+        ShapeKind::Ellipse(e) => scene.fill(
+            vello::peniko::Fill::NonZero,
+            Affine::IDENTITY,
+            brush,
+            None,
+            e,
+        ),
+        ShapeKind::Rect(r) => scene.fill(
+            vello::peniko::Fill::NonZero,
+            Affine::IDENTITY,
+            brush,
+            None,
+            r,
+        ),
     };
 }

@@ -4,7 +4,6 @@
 
 use std::path::{Path, PathBuf};
 
-use vb_doc::export::render_project;
 use vb_doc::import::import_project;
 use vb_render::cpu;
 
@@ -17,7 +16,6 @@ fn repo_root() -> PathBuf {
         .unwrap()
         .to_path_buf()
 }
-
 
 #[test]
 fn cpu_render_landing_hero_png() {
@@ -81,7 +79,11 @@ fn export_project_writes_files() {
     let dir = std::env::temp_dir().join(format!("vb-export-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("index.html"), "<!DOCTYPE html>\n<html><body></body></html>").unwrap();
+    std::fs::write(
+        dir.join("index.html"),
+        "<!DOCTYPE html>\n<html><body></body></html>",
+    )
+    .unwrap();
 
     let r = import_project(&dir).unwrap();
     let written = vb_doc::export::write_project(&r.doc, &dir).unwrap();

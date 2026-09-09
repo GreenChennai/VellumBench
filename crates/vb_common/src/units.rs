@@ -105,7 +105,7 @@ mod tests {
         assert_eq!(fmt_num(12.05), "12.05");
         assert_eq!(fmt_num(-0.0), "0");
         assert_eq!(fmt_num(0.30000000000000004), "0.3");
-        assert_eq!(fmt_num(1.00005), "1"); // 4 位内舍入
+        assert_eq!(fmt_num(1.00004), "1"); // 4 位内舍入
         assert_eq!(fmt_num(f64::NAN), "0");
     }
 

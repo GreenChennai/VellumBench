@@ -5,12 +5,12 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
-use clap::{Args, Parser, Subcommand};
+use anyhow::{Context, Result};
+use clap::{Parser, Subcommand};
 use serde_json::json;
+use vb_doc::import::import_project;
 use vb_doc::model::{Document, NodeKind};
 use vb_doc::undo::UndoStack;
-use vb_doc::{export::render_project, import::import_project};
 
 use vb_agent::patch::apply_patch;
 
@@ -180,7 +180,12 @@ fn run(cli: Cli) -> Result<(), CliError> {
             }
             Ok(())
         }
-        Cmd::Find { name, text, tag, class } => {
+        Cmd::Find {
+            name,
+            text,
+            tag,
+            class,
+        } => {
             let (doc, _, _) = open_doc(&doc_path)?;
             let mut hits: Vec<String> = Vec::new();
             let mut ids = Vec::new();
@@ -213,10 +218,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 hits.push(n.sid.as_str().to_string());
             }
             if cli.json {
-                println!(
-                    "{}",
-                    json!({"count": hits.len(), "ids": hits})
-                );
+                println!("{}", json!({"count": hits.len(), "ids": hits}));
             } else {
                 println!("找到 {} 个:", hits.len());
                 for h in hits {
@@ -254,7 +256,16 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 }
                 println!("{o}");
             } else {
-                println!("{} [{}] name={:?} box=({},{},{},{})", n.sid, n.kind.kind_name(), n.name, n.geom.x as i64, n.geom.y as i64, n.geom.w as i64, n.geom.h as i64);
+                println!(
+                    "{} [{}] name={:?} box=({},{},{},{})",
+                    n.sid,
+                    n.kind.kind_name(),
+                    n.name,
+                    n.geom.x as i64,
+                    n.geom.y as i64,
+                    n.geom.w as i64,
+                    n.geom.h as i64
+                );
                 if style {
                     for d in &n.style {
                         println!("  {}", d.to_css());
@@ -302,7 +313,14 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 }
             }
         }
-        Cmd::Export { artboard, format, scale, out, transparent, all } => {
+        Cmd::Export {
+            artboard,
+            format,
+            scale,
+            out,
+            transparent,
+            all,
+        } => {
             if format != "png" {
                 return Err(CliError::Export(format!(
                     "格式 {format} 暂不支持:v0.1 原生引擎仅 PNG;SVG/PDF 排期 v0.5,浏览器引擎(GIF/MP4)排期 v0.5+"
@@ -312,13 +330,13 @@ fn run(cli: Cli) -> Result<(), CliError> {
             let targets: Vec<(String, vb_doc::model::NodeId)> = if all {
                 doc.artboards
                     .iter()
-                    .filter_map(|&a| {
-                        doc.nodes.get(a).map(|n| (n.name.clone(), a))
-                    })
+                    .filter_map(|&a| doc.nodes.get(a).map(|n| (n.name.clone(), a)))
                     .collect()
             } else {
                 let Some(a) = &artboard else {
-                    return Err(CliError::Usage("需要 --artboard <sid|名称> 或 --all".into()));
+                    return Err(CliError::Usage(
+                        "需要 --artboard <sid|名称> 或 --all".into(),
+                    ));
                 };
                 match resolve_artboard(&doc, a) {
                     Some(id) => {
@@ -346,7 +364,13 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 } else {
                     out.clone()
                 };
-                match vb_export::export_artboard_png(&doc, *id, scale as f32, transparent, Some(&dir)) {
+                match vb_export::export_artboard_png(
+                    &doc,
+                    *id,
+                    scale as f32,
+                    transparent,
+                    Some(&dir),
+                ) {
                     Ok((png, warnings)) => {
                         std::fs::write(&out_path, &png)
                             .with_context(|| format!("写出 {}", out_path.display()))
@@ -366,7 +390,11 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 println!("{}", json!({"ok": true, "exports": results}));
             } else {
                 for r in results {
-                    println!("✔ {} → {}", r["artboard"].as_str().unwrap_or(""), r["out"].as_str().unwrap_or(""));
+                    println!(
+                        "✔ {} → {}",
+                        r["artboard"].as_str().unwrap_or(""),
+                        r["out"].as_str().unwrap_or("")
+                    );
                 }
             }
             Ok(())
@@ -378,12 +406,16 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 None => doc.artboards.first().copied(),
             }
             .ok_or_else(|| CliError::Export("未找到画板".into()))?;
-            let list = vb_render::encode::encode_artboard(&doc, id).map_err(|e| CliError::Export(e.to_string()))?;
+            let list = vb_render::encode::encode_artboard(&doc, id)
+                .map_err(|e| CliError::Export(e.to_string()))?;
             let res = vb_render::cpu::render_png(&list, 1.0, false, Some(&dir))
-                .map_err(|e| CliError::Export(e))?;
+                .map_err(CliError::Export)?;
             std::fs::write(&out, &res.png).map_err(|e| CliError::Other(e.to_string()))?;
             if cli.json {
-                println!("{}", json!({"ok": true, "out": out.display().to_string(), "bytes": res.png.len()}));
+                println!(
+                    "{}",
+                    json!({"ok": true, "out": out.display().to_string(), "bytes": res.png.len()})
+                );
             } else {
                 println!("✔ {}", out.display());
             }
@@ -408,7 +440,13 @@ fn run(cli: Cli) -> Result<(), CliError> {
                            "artboards": doc.artboards.len(), "project_dir": dir.display().to_string()})
                 );
             } else {
-                println!("「{}」 rev={} 画板={} 目录={}", doc.meta.title, doc.rev, doc.artboards.len(), dir.display());
+                println!(
+                    "「{}」 rev={} 画板={} 目录={}",
+                    doc.meta.title,
+                    doc.rev,
+                    doc.artboards.len(),
+                    dir.display()
+                );
             }
             Ok(())
         }
@@ -440,7 +478,13 @@ fn resolve_artboard(doc: &Document, key: &str) -> Option<vb_doc::model::NodeId> 
     })
 }
 
-fn outline_children(doc: &Document, id: vb_doc::model::NodeId, depth: usize, max: usize, out: &mut String) {
+fn outline_children(
+    doc: &Document,
+    id: vb_doc::model::NodeId,
+    depth: usize,
+    max: usize,
+    out: &mut String,
+) {
     if depth > max {
         return;
     }
@@ -463,7 +507,10 @@ fn tree_json(doc: &Document, depth: usize) -> String {
     fn node_json(doc: &Document, id: vb_doc::model::NodeId, depth: usize) -> serde_json::Value {
         let n = doc.nodes.get(id).unwrap();
         let children: Vec<serde_json::Value> = if depth > 1 {
-            n.children.iter().map(|&c| node_json(doc, c, depth - 1)).collect()
+            n.children
+                .iter()
+                .map(|&c| node_json(doc, c, depth - 1))
+                .collect()
         } else {
             vec![]
         };
@@ -485,16 +532,24 @@ fn selfcheck(as_json: bool) -> Result<(), CliError> {
     // 空文档 → 渲染 → 写临时 PNG → 校验
     let doc = Document::new_default();
     let ab = doc.artboards[0];
-    let list = vb_render::encode::encode_artboard(&doc, ab).map_err(|e| CliError::Export(e.to_string()))?;
+    let list = vb_render::encode::encode_artboard(&doc, ab)
+        .map_err(|e| CliError::Export(e.to_string()))?;
     let res = vb_render::cpu::render_png(&list, 1.0, false, None).map_err(CliError::Export)?;
     let out = std::env::temp_dir().join(format!("vellum-selfcheck-{}.png", std::process::id()));
     std::fs::write(&out, &res.png).map_err(|e| CliError::Other(e.to_string()))?;
     let ok = res.png.starts_with(b"\x89PNG");
     let _ = std::fs::remove_file(&out);
     if as_json {
-        println!("{}", json!({"ok": ok, "engine": "cpu", "bytes": res.png.len()}));
+        println!(
+            "{}",
+            json!({"ok": ok, "engine": "cpu", "bytes": res.png.len()})
+        );
     } else {
-        println!("selfcheck {} (cpu, {} bytes)", if ok { "OK" } else { "FAIL" }, res.png.len());
+        println!(
+            "selfcheck {} (cpu, {} bytes)",
+            if ok { "OK" } else { "FAIL" },
+            res.png.len()
+        );
     }
     if ok {
         Ok(())

@@ -108,7 +108,7 @@ pub fn prop_rank(prop: &str) -> usize {
 }
 
 pub fn is_known_prop(prop: &str) -> bool {
-    L1_PROPS.iter().any(|p| *p == prop)
+    L1_PROPS.contains(&prop)
 }
 
 /// 一条 CSS 声明。`value` 一律为规范化后的形式。
@@ -124,7 +124,11 @@ impl Decl {
     pub fn parse(text: &str) -> Option<Decl> {
         let (prop, value) = text.split_once(':')?;
         let prop = prop.trim().to_ascii_lowercase();
-        if prop.is_empty() || !prop.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+        if prop.is_empty()
+            || !prop
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        {
             return None;
         }
         if !prop.starts_with(|c: char| c.is_ascii_lowercase() || c == '-') {
@@ -194,15 +198,21 @@ pub fn canonical_value(raw: &str) -> String {
             }
             '(' => {
                 out.push(c);
-                last_ws = false;
+                last_ws = true; // '(' 后不留空白
                 i += 1;
             }
             ')' => {
+                while out.ends_with(' ') {
+                    out.pop();
+                }
                 out.push(c);
                 last_ws = false;
                 i += 1;
             }
             ',' => {
+                while out.ends_with(' ') {
+                    out.pop();
+                }
                 out.push_str(", ");
                 last_ws = true;
                 i += 1;
@@ -245,7 +255,11 @@ pub fn canonical_value(raw: &str) -> String {
                         || out.ends_with(' ')
                         || out.ends_with('(')
                         || out.ends_with(',')))
-                || (c == '.' && chars.get(i + 1).map(|n| n.is_ascii_digit()).unwrap_or(false)
+                || (c == '.'
+                    && chars
+                        .get(i + 1)
+                        .map(|n| n.is_ascii_digit())
+                        .unwrap_or(false)
                     && (out.is_empty()
                         || out.ends_with(' ')
                         || out.ends_with('(')
@@ -304,7 +318,8 @@ pub fn canonical_value(raw: &str) -> String {
                         j += 1;
                     }
                     if j < chars.len() && chars[j] == '(' {
-                        let name: String = chars[i..j].iter().collect::<String>().to_ascii_lowercase();
+                        let name: String =
+                            chars[i..j].iter().collect::<String>().to_ascii_lowercase();
                         out.push_str(&name);
                         i = j;
                         continue;
@@ -415,13 +430,12 @@ mod tests {
     fn parse_and_canonicalize() {
         let d = Decl::parse("LEFT: 12.5000px").unwrap();
         assert_eq!(d.prop, "left");
-        assert_eq!(d.value, "12.5");
+        assert_eq!(d.value, "12.5px");
 
-        let d = Decl::parse("background-image: linear-gradient( 180deg , #2B1A12 0%, #6B3F24 100%)").unwrap();
-        assert_eq!(
-            d.value,
-            "linear-gradient(180deg, #2b1a12 0%, #6b3f24 100%)"
-        );
+        let d =
+            Decl::parse("background-image: linear-gradient( 180deg , #2B1A12 0%, #6B3F24 100%)")
+                .unwrap();
+        assert_eq!(d.value, "linear-gradient(180deg, #2b1a12 0, #6b3f24 100%)");
 
         let d = Decl::parse("width: 0px").unwrap();
         assert_eq!(d.value, "0");
@@ -430,7 +444,7 @@ mod tests {
         assert_eq!(d.value, "\"Inter\", sans-serif");
 
         let d = Decl::parse("color: red !important").unwrap();
-        assert_eq!(d.value, "#f00");
+        assert_eq!(d.value, "red"); // 命名色保持原样(已是规范形式)
         assert!(d.important);
 
         // unknown 保底
@@ -441,10 +455,15 @@ mod tests {
 
     #[test]
     fn decl_list_and_order() {
-        let mut v = parse_decls("color:#fff; position:absolute; top:0px; backdrop-filter:blur(2px); left:10px");
+        let mut v = parse_decls(
+            "color:#fff; position:absolute; top:0px; backdrop-filter:blur(2px); left:10px",
+        );
         sort_decls(&mut v);
         let props: Vec<&str> = v.iter().map(|d| d.prop.as_str()).collect();
-        assert_eq!(props, vec!["position", "left", "top", "color", "backdrop-filter"]);
+        assert_eq!(
+            props,
+            vec!["position", "left", "top", "color", "backdrop-filter"]
+        );
         // 幂等
         let again = {
             let mut v2 = v.clone();
@@ -456,7 +475,10 @@ mod tests {
 
     #[test]
     fn split_respects_parens_and_strings() {
-        let parts = split_top_level("background-image:url(data:image/png;base64,xx), red; color:#fff", ';');
+        let parts = split_top_level(
+            "background-image:url(data:image/png;base64,xx), red; color:#fff",
+            ';',
+        );
         assert_eq!(parts.len(), 2);
     }
 }

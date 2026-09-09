@@ -10,9 +10,24 @@ pub struct Rgba {
 }
 
 impl Rgba {
-    pub const TRANSPARENT: Rgba = Rgba { r: 0, g: 0, b: 0, a: 0 };
-    pub const WHITE: Rgba = Rgba { r: 255, g: 255, b: 255, a: 255 };
-    pub const BLACK: Rgba = Rgba { r: 0, g: 0, b: 0, a: 255 };
+    pub const TRANSPARENT: Rgba = Rgba {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 0,
+    };
+    pub const WHITE: Rgba = Rgba {
+        r: 255,
+        g: 255,
+        b: 255,
+        a: 255,
+    };
+    pub const BLACK: Rgba = Rgba {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
 
     pub const fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
         Self { r, g, b, a }
@@ -174,10 +189,15 @@ mod tests {
         assert_eq!(parse_color("#f00").unwrap().to_shortest_hex(), "#f00");
         assert_eq!(parse_color("#ff5a1f").unwrap().to_shortest_hex(), "#ff5a1f");
         assert_eq!(
-            parse_color("rgba(0, 168, 112, 0.5)").unwrap().to_shortest_hex(),
+            parse_color("rgba(0, 168, 112, 0.5)")
+                .unwrap()
+                .to_shortest_hex(),
             "#00a87080"
         );
-        assert_eq!(parse_color("rgb(100%, 0%, 0%)").unwrap().to_shortest_hex(), "#f00");
+        assert_eq!(
+            parse_color("rgb(100%, 0%, 0%)").unwrap().to_shortest_hex(),
+            "#f00"
+        );
         assert_eq!(parse_color("orange").unwrap().to_shortest_hex(), "#ffa500");
     }
 

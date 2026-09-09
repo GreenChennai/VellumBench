@@ -4,7 +4,6 @@
 //! 命令路径,天然获得可撤销、可回放、一致性(08 篇 §十)。
 
 use vb_common::units::parse_px;
-use vb_css::parse_decls;
 use vb_doc::commands::Command;
 use vb_doc::model::{Document, Geom, Node, NodeKind, NodeTree, TextMode};
 use vb_doc::VbError;
@@ -42,7 +41,11 @@ pub enum PatchOp {
         attrs: std::collections::BTreeMap<String, String>,
     },
     #[serde(rename = "move")]
-    Move { id: String, parent: String, index: usize },
+    Move {
+        id: String,
+        parent: String,
+        index: usize,
+    },
     #[serde(rename = "set_box")]
     SetBox {
         id: String,
@@ -60,7 +63,11 @@ pub enum PatchOp {
     #[serde(rename = "delete")]
     Delete { id: String },
     #[serde(rename = "group")]
-    Group { ids: Vec<String>, #[serde(default)] name: Option<String> },
+    Group {
+        ids: Vec<String>,
+        #[serde(default)]
+        name: Option<String>,
+    },
     #[serde(rename = "ungroup")]
     Ungroup { id: String },
     #[serde(rename = "align")]
@@ -146,7 +153,10 @@ pub fn apply_patch(
     for op in &req.ops {
         cmds.extend(compile_op(doc, op)?);
     }
-    let mut outcome = PatchOutcome { rev: doc.rev, ..Default::default() };
+    let mut outcome = PatchOutcome {
+        rev: doc.rev,
+        ..Default::default()
+    };
     for c in &cmds {
         collect_affected(c, &mut outcome);
     }
@@ -183,22 +193,46 @@ fn style_map_to_decls(css: &std::collections::BTreeMap<String, String>) -> Vec<v
 fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<Vec<Command>, PatchError> {
     let sid_str = |s: &str| s.to_string();
     Ok(match op {
-        PatchOp::Insert { parent, index, node } => {
-            let pid = doc.find_by_sid(parent).ok_or_else(|| PatchError::Op(format!("parent {parent} 不存在")))?;
+        PatchOp::Insert {
+            parent,
+            index,
+            node,
+        } => {
+            let pid = doc
+                .find_by_sid(parent)
+                .ok_or_else(|| PatchError::Op(format!("parent {parent} 不存在")))?;
             let mut n = build_node_from_spec(node, doc)?;
             // 容器子级坐标:相对画板累积由宿主保证;插入位置
             let idx = index.unwrap_or(doc.nodes.get(pid).unwrap().children.len());
             if let Some(b) = node.r#box {
-                n.geom = Geom { x: b.x, y: b.y, w: b.w, h: b.h };
+                n.geom = Geom {
+                    x: b.x,
+                    y: b.y,
+                    w: b.w,
+                    h: b.h,
+                };
             }
-            let tree = NodeTree { node: n, children: vec![] };
-            vec![Command::Insert { parent_sid: sid_str(parent), index: idx, tree }]
+            let tree = NodeTree {
+                node: n,
+                children: vec![],
+            };
+            vec![Command::Insert {
+                parent_sid: sid_str(parent),
+                index: idx,
+                tree,
+            }]
         }
         PatchOp::SetText { id, text } => {
-            vec![Command::SetText { sid: sid_str(id), new: text.clone(), old: None }]
+            vec![Command::SetText {
+                sid: sid_str(id),
+                new: text.clone(),
+                old: None,
+            }]
         }
         PatchOp::SetStyle { id, css } => {
-            let nid = doc.find_by_sid(id).ok_or_else(|| PatchError::Op(format!("{id} 不存在")))?;
+            let nid = doc
+                .find_by_sid(id)
+                .ok_or_else(|| PatchError::Op(format!("{id} 不存在")))?;
             let mut style = doc.nodes.get(nid).unwrap().style.clone();
             for d in style_map_to_decls(css) {
                 if let Some(existing) = style.iter_mut().find(|e| e.prop == d.prop) {
@@ -207,16 +241,26 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<Vec<Command>, PatchErr
                     style.push(d);
                 }
             }
-            vec![Command::SetStyle { sid: sid_str(id), new: style, old: None }]
+            vec![Command::SetStyle {
+                sid: sid_str(id),
+                new: style,
+                old: None,
+            }]
         }
         PatchOp::SetAttr { id, attrs } => {
-            let nid = doc.find_by_sid(id).ok_or_else(|| PatchError::Op(format!("{id} 不存在")))?;
+            let nid = doc
+                .find_by_sid(id)
+                .ok_or_else(|| PatchError::Op(format!("{id} 不存在")))?;
             let mut merged = doc.nodes.get(nid).unwrap().attrs.clone();
             for (k, v) in attrs {
                 merged.insert(k.clone(), v.clone());
             }
             let new: Vec<(String, String)> = merged.into_iter().collect();
-            vec![Command::SetAttrs { sid: sid_str(id), new, old: None }]
+            vec![Command::SetAttrs {
+                sid: sid_str(id),
+                new,
+                old: None,
+            }]
         }
         PatchOp::Move { id, parent, index } => {
             vec![Command::Move {
@@ -228,14 +272,25 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<Vec<Command>, PatchErr
         }
         PatchOp::SetBox { id, box_ } => vec![Command::SetGeom {
             sid: sid_str(id),
-            new: Geom { x: box_.x, y: box_.y, w: box_.w, h: box_.h },
+            new: Geom {
+                x: box_.x,
+                y: box_.y,
+                w: box_.w,
+                h: box_.h,
+            },
             old: None,
         }],
         PatchOp::Rename { id, name } => {
-            vec![Command::Rename { sid: sid_str(id), new: name.clone(), old: None }]
+            vec![Command::Rename {
+                sid: sid_str(id),
+                new: name.clone(),
+                old: None,
+            }]
         }
         PatchOp::Duplicate { id, offset } => {
-            let nid = doc.find_by_sid(id).ok_or_else(|| PatchError::Op(format!("{id} 不存在")))?;
+            let nid = doc
+                .find_by_sid(id)
+                .ok_or_else(|| PatchError::Op(format!("{id} 不存在")))?;
             let src = doc.nodes.get(nid).unwrap().clone();
             let mut copy = src.clone();
             copy.sid = doc.alloc_sid_for_dup();
@@ -253,11 +308,21 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<Vec<Command>, PatchErr
                 .and_then(|p| doc.nodes.get(p))
                 .map(|p| p.sid.as_str().to_string())
                 .ok_or_else(|| PatchError::Op("duplicate 需要有父级的节点".into()))?;
-            let tree = NodeTree { node: copy, children: vec![] };
-            vec![Command::Insert { parent_sid, index: usize::MAX, tree }]
+            let tree = NodeTree {
+                node: copy,
+                children: vec![],
+            };
+            vec![Command::Insert {
+                parent_sid,
+                index: usize::MAX,
+                tree,
+            }]
         }
         PatchOp::Delete { id } => {
-            vec![Command::Delete { target_sid: sid_str(id), captured: None }]
+            vec![Command::Delete {
+                target_sid: sid_str(id),
+                captured: None,
+            }]
         }
         PatchOp::Group { ids, name } => {
             let group_sid = doc.alloc_sid_for_dup().as_str().to_string();
@@ -269,25 +334,44 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<Vec<Command>, PatchErr
             }]
         }
         PatchOp::Ungroup { id } => {
-            vec![Command::Ungroup { group_sid: sid_str(id), captured: None }]
+            vec![Command::Ungroup {
+                group_sid: sid_str(id),
+                captured: None,
+            }]
         }
         PatchOp::Align { ids, mode, to } => {
             let _ = to; // v0.1:对齐到画板(selection 集合的公共画板)
             align_cmds(doc, ids, mode)?
         }
         PatchOp::Order { id, to } => {
-            let nid = doc.find_by_sid(id).ok_or_else(|| PatchError::Op(format!("{id} 不存在")))?;
+            let nid = doc
+                .find_by_sid(id)
+                .ok_or_else(|| PatchError::Op(format!("{id} 不存在")))?;
             let parent = doc.nodes.get(nid).unwrap().parent.unwrap();
             let len = doc.nodes.get(parent).unwrap().children.len();
             let new_index = match to.as_str() {
                 "front" => len.saturating_sub(1),
                 "back" => 0,
                 "forward" => {
-                    let cur = doc.nodes.get(parent).unwrap().children.iter().position(|&c| c == nid).unwrap_or(0);
+                    let cur = doc
+                        .nodes
+                        .get(parent)
+                        .unwrap()
+                        .children
+                        .iter()
+                        .position(|&c| c == nid)
+                        .unwrap_or(0);
                     (cur + 1).min(len - 1)
                 }
                 "backward" => {
-                    let cur = doc.nodes.get(parent).unwrap().children.iter().position(|&c| c == nid).unwrap_or(0);
+                    let cur = doc
+                        .nodes
+                        .get(parent)
+                        .unwrap()
+                        .children
+                        .iter()
+                        .position(|&c| c == nid)
+                        .unwrap_or(0);
                     cur.saturating_sub(1)
                 }
                 other => return Err(PatchError::Op(format!("未知 order 目标:{other}"))),
@@ -300,12 +384,21 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<Vec<Command>, PatchErr
             }]
         }
         PatchOp::SetToken { name, value } => {
-            vec![Command::SetToken { name: name.clone(), new: value.clone(), old: None }]
+            vec![Command::SetToken {
+                name: name.clone(),
+                new: value.clone(),
+                old: None,
+            }]
         }
         PatchOp::NewArtboard { name, w, h, after } => {
             let sid = doc.alloc_sid_for_dup();
             let mut n = Node::new(NodeKind::Artboard, name.clone(), sid);
-            n.geom = Geom { x: 0.0, y: 0.0, w: *w, h: *h };
+            n.geom = Geom {
+                x: 0.0,
+                y: 0.0,
+                w: *w,
+                h: *h,
+            };
             // 画板纵向排布:放到现有画板最下方
             let y = doc
                 .artboards
@@ -317,7 +410,14 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<Vec<Command>, PatchErr
             let index = match after {
                 Some(a_sid) => doc
                     .find_by_sid(a_sid)
-                    .and_then(|aid| doc.nodes.get(doc.root).unwrap().children.iter().position(|&c| c == aid))
+                    .and_then(|aid| {
+                        doc.nodes
+                            .get(doc.root)
+                            .unwrap()
+                            .children
+                            .iter()
+                            .position(|&c| c == aid)
+                    })
                     .map(|p| p + 1)
                     .unwrap_or(usize::MAX),
                 None => usize::MAX,
@@ -325,7 +425,10 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<Vec<Command>, PatchErr
             vec![Command::Insert {
                 parent_sid: doc.nodes.get(doc.root).unwrap().sid.as_str().to_string(),
                 index,
-                tree: NodeTree { node: n, children: vec![] },
+                tree: NodeTree {
+                    node: n,
+                    children: vec![],
+                },
             }]
         }
     })
@@ -335,7 +438,9 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<Vec<Command>, PatchErr
 fn align_cmds(doc: &Document, ids: &[String], mode: &str) -> Result<Vec<Command>, PatchError> {
     let mut geoms: Vec<(String, Geom)> = Vec::new();
     for id in ids {
-        let nid = doc.find_by_sid(id).ok_or_else(|| PatchError::Op(format!("{id} 不存在")))?;
+        let nid = doc
+            .find_by_sid(id)
+            .ok_or_else(|| PatchError::Op(format!("{id} 不存在")))?;
         geoms.push((id.clone(), doc.nodes.get(nid).unwrap().geom));
     }
     if geoms.is_empty() {
@@ -343,8 +448,14 @@ fn align_cmds(doc: &Document, ids: &[String], mode: &str) -> Result<Vec<Command>
     }
     let min_x = geoms.iter().map(|(_, g)| g.x).fold(f64::INFINITY, f64::min);
     let min_y = geoms.iter().map(|(_, g)| g.y).fold(f64::INFINITY, f64::min);
-    let max_r = geoms.iter().map(|(_, g)| g.x + g.w).fold(f64::NEG_INFINITY, f64::max);
-    let max_b = geoms.iter().map(|(_, g)| g.y + g.h).fold(f64::NEG_INFINITY, f64::max);
+    let max_r = geoms
+        .iter()
+        .map(|(_, g)| g.x + g.w)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let max_b = geoms
+        .iter()
+        .map(|(_, g)| g.y + g.h)
+        .fold(f64::NEG_INFINITY, f64::max);
     let center_x = (min_x + max_r) / 2.0;
     let center_y = (min_y + max_b) / 2.0;
 
@@ -378,7 +489,10 @@ fn build_node_from_spec(spec: &InsertNodeSpec, doc: &mut Document) -> Result<Nod
     let mut n = match &spec.text {
         Some(t) => {
             let mut n = Node::new(
-                NodeKind::Text { text: t.clone(), mode: TextMode::Point },
+                NodeKind::Text {
+                    text: t.clone(),
+                    mode: TextMode::Point,
+                },
                 name,
                 sid,
             );
@@ -398,7 +512,12 @@ fn build_node_from_spec(spec: &InsertNodeSpec, doc: &mut Document) -> Result<Nod
         n.attrs = attrs.clone();
     }
     // 默认几何
-    n.geom = Geom { x: 0.0, y: 0.0, w: 100.0, h: 40.0 };
+    n.geom = Geom {
+        x: 0.0,
+        y: 0.0,
+        w: 100.0,
+        h: 40.0,
+    };
     // style 中的几何键由导出层重建;此处直接读取(先取值后改字段,避免借用冲突)
     let get = |p: &str, style: &[vb_css::Decl]| -> Option<f64> {
         style
@@ -444,11 +563,18 @@ fn collect_affected(cmd: &Command, out: &mut PatchOutcome) {
         | Command::SetAttrs { sid, .. }
         | Command::Rename { sid, .. }
         | Command::SetFlags { sid, .. } => out.changed_ids.push(sid.clone()),
-        Command::Group { member_sids, group_sid, .. } => {
+        Command::Group {
+            member_sids,
+            group_sid,
+            ..
+        } => {
             out.changed_ids.push(group_sid.clone());
             out.changed_ids.extend(member_sids.clone());
         }
-        Command::Ungroup { group_sid, captured } => {
+        Command::Ungroup {
+            group_sid,
+            captured,
+        } => {
             out.changed_ids.push(group_sid.clone());
             if let Some((_, tree)) = captured {
                 for c in &tree.children {

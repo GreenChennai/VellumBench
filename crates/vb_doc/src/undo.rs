@@ -22,14 +22,25 @@ pub struct UndoStack {
 
 impl UndoStack {
     pub fn new() -> Self {
-        Self { undo: Vec::new(), redo: Vec::new(), last_merge: None, merging_enabled: true }
+        Self {
+            undo: Vec::new(),
+            redo: Vec::new(),
+            last_merge: None,
+            merging_enabled: true,
+        }
     }
 
     /// 应用并入栈。返回是否实际应用。
     pub fn push(&mut self, doc: &mut Document, mut cmd: Command) -> Result<ChangeSet> {
-        let key = if self.merging_enabled { cmd.merge_target() } else { None };
+        let key = if self.merging_enabled {
+            cmd.merge_target()
+        } else {
+            None
+        };
         let mergeable = match (&key, &self.last_merge) {
-            (Some((k, t)), Some((lk, lt, at))) => k == lk && t == lt && at.elapsed() <= MERGE_WINDOW,
+            (Some((k, t)), Some((lk, lt, at))) => {
+                k == lk && t == lt && at.elapsed() <= MERGE_WINDOW
+            }
             _ => false,
         };
         let cs = if mergeable {
@@ -46,7 +57,7 @@ impl UndoStack {
         };
         if mergeable {
             if let Some((k, t)) = &key {
-                self.last_merge = Some((k.clone(), t.clone(), Instant::now()));
+                self.last_merge = Some((*k, t.clone(), Instant::now()));
             }
         }
         self.redo.clear();
@@ -55,7 +66,9 @@ impl UndoStack {
     }
 
     pub fn undo(&mut self, doc: &mut Document) -> Result<Option<String>> {
-        let Some(mut cmd) = self.undo.pop() else { return Ok(None) };
+        let Some(mut cmd) = self.undo.pop() else {
+            return Ok(None);
+        };
         cmd.revert(doc)?;
         self.redo.push(cmd);
         self.last_merge = None;
@@ -64,7 +77,9 @@ impl UndoStack {
     }
 
     pub fn redo(&mut self, doc: &mut Document) -> Result<Option<String>> {
-        let Some(mut cmd) = self.redo.pop() else { return Ok(None) };
+        let Some(mut cmd) = self.redo.pop() else {
+            return Ok(None);
+        };
         cmd.apply(doc)?;
         self.undo.push(cmd);
         self.last_merge = None;

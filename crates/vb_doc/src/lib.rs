@@ -15,7 +15,7 @@ pub mod import;
 pub mod model;
 pub mod undo;
 
-pub use commands::{ChangeSet, Command, CmdKind};
+pub use commands::{ChangeSet, CmdKind, Command};
 pub use model::{Document, Node, NodeKind, NodeSlot, OutputMode, TextMode};
 pub use undo::UndoStack;
 
