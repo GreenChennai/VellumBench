@@ -1,0 +1,98 @@
+# Vellum Bench 命令表(v0.1 子集)
+# 单一真相:菜单 / 快捷键 / 面板 / Agent CLI 共用。
+# expose_to_agent: 可通过 `vellum-cli patch {"op":"run","command":...}` 执行
+- id: file.new
+  label: 新建
+  keys: { win: "Ctrl+N" }
+  undoable: false
+  expose_to_agent: true
+- id: file.open
+  label: 打开
+  keys: { win: "Ctrl+O" }
+  undoable: false
+  expose_to_agent: false
+- id: file.save
+  label: 存储
+  keys: { win: "Ctrl+S" }
+  undoable: false
+  expose_to_agent: true
+- id: file.export_png
+  label: 导出 PNG
+  keys: { win: "Ctrl+E" }
+  undoable: false
+  expose_to_agent: true
+- id: edit.undo
+  label: 撤销
+  keys: { win: "Ctrl+Z" }
+  undoable: false
+  expose_to_agent: true
+- id: edit.redo
+  label: 重做
+  keys: { win: "Ctrl+Shift+Z" }
+  undoable: false
+  expose_to_agent: true
+- id: object.group
+  label: 编组
+  keys: { win: "Ctrl+G" }
+  undoable: true
+  expose_to_agent: true
+- id: object.ungroup
+  label: 取消编组
+  keys: { win: "Ctrl+Shift+G" }
+  undoable: true
+  expose_to_agent: true
+- id: object.delete
+  label: 删除
+  keys: { win: "Delete" }
+  undoable: true
+  expose_to_agent: true
+- id: object.transform_again
+  label: 再次变换
+  keys: { win: "Ctrl+D" }
+  undoable: true
+  expose_to_agent: true
+- id: view.zoom_in
+  label: 放大
+  keys: { win: "Ctrl++" }
+  undoable: false
+  expose_to_agent: false
+- id: view.zoom_out
+  label: 缩小
+  keys: { win: "Ctrl+-" }
+  undoable: false
+  expose_to_agent: false
+- id: view.fit
+  label: 适合窗口
+  keys: { win: "Ctrl+0" }
+  undoable: false
+  expose_to_agent: false
+- id: view.actual_size
+  label: 实际大小
+  keys: { win: "Ctrl+1" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.select
+  label: 选择工具
+  keys: { win: "V" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.direct_select
+  label: 直接选择工具
+  keys: { win: "A" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.rect
+  label: 矩形工具
+  keys: { win: "M" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.ellipse
+  label: 椭圆工具
+  keys: { win: "L" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.hand
+  label: 抓手工具
+  keys: { win: "H" }
+  undoable: false
+  expose_to_agent: false

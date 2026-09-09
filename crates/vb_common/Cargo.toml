@@ -1,0 +1,11 @@
+[package]
+name = "vb_common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Vellum Bench 共享基础:几何、单位、角度约定、稳定 id、颜色"
+
+[dependencies]
+kurbo = { workspace = true }
+serde = { workspace = true }

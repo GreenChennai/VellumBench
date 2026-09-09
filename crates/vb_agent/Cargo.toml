@@ -1,0 +1,24 @@
+[package]
+name = "vb_agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Vellum Bench Agent 协作:CLI / patch 事务 / 文件监听(v0.6 MCP)"
+
+[[bin]]
+name = "vellum-cli"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+vb_common = { workspace = true }
+vb_doc = { workspace = true }
+vb_render = { path = "../vb_render" }
+vb_export = { path = "../vb_export" }
+clap = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

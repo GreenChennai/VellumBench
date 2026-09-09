@@ -1,0 +1,11 @@
+[package]
+name = "vb_tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Vellum Bench 工具状态机(选择/矩形/钢笔…,产出可逆命令)"
+
+[dependencies]
+vb_common = { workspace = true }
+vb_doc = { workspace = true }

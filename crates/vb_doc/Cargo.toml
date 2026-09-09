@@ -1,0 +1,15 @@
+[package]
+name = "vb_doc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Vellum Bench 场景图、命令模式 Undo、HTML 导入导出(核心 crate,可无头测试)"
+
+[dependencies]
+vb_common = { workspace = true }
+vb_css = { workspace = true }
+vb_html = { workspace = true }
+kurbo = { workspace = true }
+slotmap = { workspace = true }
+thiserror = { workspace = true }

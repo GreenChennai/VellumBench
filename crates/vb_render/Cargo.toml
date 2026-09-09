@@ -1,0 +1,11 @@
+[package]
+name = "vb_render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Vellum Bench 渲染:绘制指令编码 + CPU 光栅(CLI/CI)+ Vello GPU(画布)"
+
+[dependencies]
+vb_common = { workspace = true }
+vb_doc = { workspace = true }

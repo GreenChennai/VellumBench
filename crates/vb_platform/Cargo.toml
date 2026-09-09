@@ -1,0 +1,9 @@
+[package]
+name = "vb_platform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Vellum Bench 占位 crate(v0.x 后续填充)"
+
+[dependencies]

@@ -1,0 +1,12 @@
+# Generated
+/target/
+**/*.rs.bk
+Cargo.lock.orig
+
+# vbdoc runtime state
+*.vbdoc.autosave/
+.vb-export-tmp*/
+
+# OS
+Thumbs.db
+.DS_Store
