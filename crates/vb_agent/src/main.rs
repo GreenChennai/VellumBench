@@ -325,7 +325,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             // 浏览器引擎格式(PDF/GIF/MP4)走 WPI 桥
             if matches!(fmt.as_str(), "pdf" | "gif" | "mp4") {
                 let (doc, _, dir) = open_doc(&doc_path)?;
-                let ab_id = match &artboard {
+                let _ab_id = match &artboard {
                     Some(a) => resolve_artboard(&doc, a),
                     None => doc.artboards.first().copied(),
                 }

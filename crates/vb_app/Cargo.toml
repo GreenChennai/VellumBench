@@ -29,3 +29,4 @@ egui = "0.35.0"
 vello = "0.10"
 wgpu = "29"
 vb_css.workspace = true
+notify = "8.2.0"

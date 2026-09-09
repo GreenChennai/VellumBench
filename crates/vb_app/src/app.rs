@@ -93,6 +93,12 @@ pub struct VellumApp {
     export_format: usize,
     export_scale: u32,
     export_transparent: bool,
+    /// 上次保存/导入时的 rev(外部修改判定:磁盘变了但 rev 未动 → 自动采用)
+    saved_rev: u64,
+    /// 文件监听事件通道(Agent/外部编辑器改 HTML → 热重载,v0.6)
+    watcher_rx: Option<std::sync::mpsc::Receiver<()>>,
+    /// 抑制自身保存触发的重载
+    last_self_write: Option<std::time::Instant>,
 }
 
 struct GpuCanvas {
@@ -123,7 +129,7 @@ impl VellumApp {
             None => (Document::new_default(), None),
         };
 
-        Self {
+        let mut app = Self {
             doc,
             undo: UndoStack::new(),
             camera: Camera::default(),
@@ -149,7 +155,12 @@ impl VellumApp {
             export_format: 0,
             export_scale: 2,
             export_transparent: false,
-        }
+            saved_rev: 0,
+            watcher_rx: None,
+            last_self_write: None,
+        };
+        app.watcher_rx = start_watcher(project.as_deref());
+        app
     }
 
     // ---------- 命令执行 ----------
@@ -206,6 +217,8 @@ impl VellumApp {
         match vb_doc::export::write_project(&self.doc, &dir) {
             Ok(files) => {
                 self.doc.rev += 1;
+                self.saved_rev = self.doc.rev;
+                self.last_self_write = Some(std::time::Instant::now());
                 self.status = format!(
                     "已保存 {} → {}",
                     files
@@ -217,6 +230,42 @@ impl VellumApp {
                 );
             }
             Err(e) => self.status = format!("保存失败:{e}"),
+        }
+    }
+
+    /// 轮询文件监听(去抖 300ms;Agent 场景默认自动采用外部修改)。
+    fn poll_watcher(&mut self) {
+        let Some(rx) = &self.watcher_rx else {
+            return;
+        };
+        if rx.try_recv().is_err() {
+            return;
+        }
+        while rx.try_recv().is_ok() {}
+        if self
+            .last_self_write
+            .map(|t| t.elapsed() < std::time::Duration::from_millis(800))
+            .unwrap_or(false)
+        {
+            return; // 自己刚写盘,不算外部修改
+        }
+        let Some(dir) = self.project_dir.clone() else {
+            return;
+        };
+        if self.doc.rev == self.saved_rev {
+            match vb_doc::import::import_project(&dir) {
+                Ok(r) => {
+                    let n = r.doc.artboards.len();
+                    self.doc = r.doc;
+                    self.undo = UndoStack::new();
+                    self.selection.clear();
+                    self.saved_rev = self.doc.rev;
+                    self.status = format!("检测到外部修改,已自动采用(Agent 热重载,{n} 画板)");
+                }
+                Err(e) => self.status = format!("热重载失败:{e}"),
+            }
+        } else {
+            self.status = "检测到磁盘修改,但本地有未保存编辑(未自动采用;先 Ctrl+S 或撤销)".into();
         }
     }
 
@@ -323,8 +372,12 @@ impl VellumApp {
             1 => match vb_export::export_artboard_svg(&self.doc, ab, scale) {
                 Ok(svg) => match std::fs::write(&out, &svg) {
                     Ok(()) => {
-                        self.status =
-                            format!("导出 SVG {} @{}x({} KB)", out.display(), scale, svg.len() / 1024);
+                        self.status = format!(
+                            "导出 SVG {} @{}x({} KB)",
+                            out.display(),
+                            scale,
+                            svg.len() / 1024
+                        );
                     }
                     Err(e) => self.status = format!("写文件失败:{e}"),
                 },
@@ -356,7 +409,9 @@ impl VellumApp {
                         self.status = format!(
                             "浏览器引擎导出 {}({} KB){}",
                             res.out.display(),
-                            std::fs::metadata(&res.out).map(|m| m.len() / 1024).unwrap_or(0),
+                            std::fs::metadata(&res.out)
+                                .map(|m| m.len() / 1024)
+                                .unwrap_or(0),
                             if res.warnings.is_empty() {
                                 String::new()
                             } else {
@@ -458,6 +513,7 @@ impl eframe::App for VellumApp {
             }
         }
 
+        self.poll_watcher();
         self.handle_shortcuts(ui.ctx());
         self.top_menu(ui);
         self.right_panel(ui);
@@ -498,31 +554,31 @@ impl eframe::App for VellumApp {
                 let mut commit = false;
                 let mut cancel = false;
                 egui::Window::new(format!("编辑文本 — {win_title}"))
-                .open(&mut open)
-                .collapsible(false)
-                .show(ui.ctx(), |ui| {
-                    ui.add(
-                        egui::TextEdit::multiline(&mut text)
-                            .desired_width(420.0)
-                            .desired_rows(3),
-                    );
-                    ui.horizontal(|ui| {
-                        if ui.button("提交 (Ctrl+Enter)").clicked() {
+                    .open(&mut open)
+                    .collapsible(false)
+                    .show(ui.ctx(), |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut text)
+                                .desired_width(420.0)
+                                .desired_rows(3),
+                        );
+                        ui.horizontal(|ui| {
+                            if ui.button("提交 (Ctrl+Enter)").clicked() {
+                                commit = true;
+                            }
+                            if ui.button("取消 (Esc)").clicked() {
+                                cancel = true;
+                            }
+                        });
+                        if ui.ctx().input(|i| {
+                            i.key_pressed(Key::Enter) && (i.modifiers.ctrl || i.modifiers.command)
+                        }) {
                             commit = true;
                         }
-                        if ui.button("取消 (Esc)").clicked() {
+                        if ui.ctx().input(|i| i.key_pressed(Key::Escape)) {
                             cancel = true;
                         }
                     });
-                    if ui.ctx().input(|i| {
-                        i.key_pressed(Key::Enter) && (i.modifiers.ctrl || i.modifiers.command)
-                    }) {
-                        commit = true;
-                    }
-                    if ui.ctx().input(|i| i.key_pressed(Key::Escape)) {
-                        cancel = true;
-                    }
-                });
                 if commit {
                     self.exec(Command::SetText {
                         sid: sid.clone(),
@@ -592,10 +648,7 @@ impl eframe::App for VellumApp {
                         ui.checkbox(&mut self.export_transparent, "透明背景");
                     }
                     ui.separator();
-                    ui.label(format!(
-                        "目标:当前画板({})",
-                        self.active_artboard_name()
-                    ));
+                    ui.label(format!("目标:当前画板({})", self.active_artboard_name()));
                     if ui.button("导出").clicked() {
                         self.run_export_dialog();
                         self.show_export = false;
@@ -676,12 +729,16 @@ impl VellumApp {
                     (Key::CloseBracket, true) => {
                         let d = if shift { 10001 } else { 1 };
                         let sids = self.selection.clone();
-                        for s in sids { self.reorder(&s, d); }
+                        for s in sids {
+                            self.reorder(&s, d);
+                        }
                     }
                     (Key::OpenBracket, true) => {
                         let d = if shift { -10001 } else { -1 };
                         let sids = self.selection.clone();
-                        for s in sids { self.reorder(&s, d); }
+                        for s in sids {
+                            self.reorder(&s, d);
+                        }
                     }
                     (Key::Escape, _) => {
                         self.selection.clear();
@@ -782,12 +839,28 @@ impl VellumApp {
 
     /// 5c425e8f8c036574:delta=+1 524d79fb4e005c42(z 5e8f5347),-1 540e79fb;front/back 7528 00b110000
     fn reorder(&mut self, sid: &str, delta: i32) {
-        let Some(nid) = self.doc.find_by_sid(sid) else { return };
-        let Some(parent) = self.doc.nodes.get(nid).and_then(|n| n.parent) else { return };
+        let Some(nid) = self.doc.find_by_sid(sid) else {
+            return;
+        };
+        let Some(parent) = self.doc.nodes.get(nid).and_then(|n| n.parent) else {
+            return;
+        };
         let len = self.doc.nodes.get(parent).unwrap().children.len();
-        let cur = self.doc.nodes.get(parent).unwrap().children.iter().position(|&c| c == nid).unwrap_or(0);
+        let cur = self
+            .doc
+            .nodes
+            .get(parent)
+            .unwrap()
+            .children
+            .iter()
+            .position(|&c| c == nid)
+            .unwrap_or(0);
         let new_index = if delta.abs() >= 10000 {
-            if delta > 0 { len - 1 } else { 0 }
+            if delta > 0 {
+                len - 1
+            } else {
+                0
+            }
         } else {
             (cur as i32 + delta).clamp(0, len as i32 - 1) as usize
         };
@@ -803,7 +876,8 @@ impl VellumApp {
         });
     }
 
-    fn transform_again(&mut self) {        let Some((dx, dy)) = self.last_move_delta else {
+    fn transform_again(&mut self) {
+        let Some((dx, dy)) = self.last_move_delta else {
             self.status = "没有可再次的变换(先移动一次)".into();
             return;
         };
@@ -939,11 +1013,8 @@ impl VellumApp {
                     if ui.small_button("+ 新建").clicked() {
                         let name = format!("画板 {}", self.doc.artboards.len() + 1);
                         let sid = self.doc.alloc_sid();
-                        let mut n = vb_doc::model::Node::new(
-                            NodeKind::Artboard,
-                            name.clone(),
-                            sid.clone(),
-                        );
+                        let mut n =
+                            vb_doc::model::Node::new(NodeKind::Artboard, name.clone(), sid.clone());
                         n.geom = Geom {
                             x: 0.0,
                             y: 0.0,
@@ -987,7 +1058,8 @@ impl VellumApp {
                                 continue;
                             };
                             let (sid, name) = (n.sid.as_str().to_string(), n.name.clone());
-                            let selected = self.selection.last().map(|s| s == &sid).unwrap_or(false);
+                            let selected =
+                                self.selection.last().map(|s| s == &sid).unwrap_or(false);
                             if i > 0 {
                                 ui.separator();
                             }
@@ -1150,7 +1222,11 @@ impl VellumApp {
                         };
                         let ab_sid = abn.sid.as_str().to_string();
                         let ab_name = abn.name.clone();
-                        let ab_sel = self.selection.last().map(|s| s.as_str() == ab_sid).unwrap_or(false);
+                        let ab_sel = self
+                            .selection
+                            .last()
+                            .map(|s| s.as_str() == ab_sid)
+                            .unwrap_or(false);
                         let kids = abn.children.clone();
 
                         // 画板行(可重命名)
@@ -1450,8 +1526,11 @@ impl VellumApp {
             if alt_down {
                 if let Some(p) = response.hover_pos() {
                     let pl = p - rect.min;
-                    self.camera
-                        .zoom_at(pl.x as f64, pl.y as f64, (-(scroll.y as f64) / 400.0).exp());
+                    self.camera.zoom_at(
+                        pl.x as f64,
+                        pl.y as f64,
+                        (-(scroll.y as f64) / 400.0).exp(),
+                    );
                 }
             } else {
                 self.camera.pan_y += scroll.y as f64;
@@ -1527,7 +1606,8 @@ impl VellumApp {
             let p = p0 - rect.min; // 画布本地
 
             // --- 1) 手柄/旋转命中(单选优先) ---
-            if let (Some((bbox, sid)), true) = (sel_bbox_screen.clone(), self.tool == Tool::Select) {
+            if let (Some((bbox, sid)), true) = (sel_bbox_screen.clone(), self.tool == Tool::Select)
+            {
                 // 角外圈 → 旋转
                 const RING: f32 = 14.0;
                 let corners = [
@@ -1580,10 +1660,7 @@ impl VellumApp {
             match self.tool {
                 Tool::Hand => {
                     self.drag = Drag::Pan {
-                        start_pan: vec2(
-                            self.camera.pan_x as f32,
-                            self.camera.pan_y as f32,
-                        ),
+                        start_pan: vec2(self.camera.pan_x as f32, self.camera.pan_y as f32),
                     };
                 }
                 Tool::Select => {
@@ -1654,12 +1731,19 @@ impl VellumApp {
                 } => {
                     let dx = (p.x - start.x) as f64 / self.camera.zoom;
                     let dy = (p.y - start.y) as f64 / self.camera.zoom;
-                    Some((sid.clone(), resize_geom(*start_geom, *handle, dx, dy, shift, alt)))
+                    Some((
+                        sid.clone(),
+                        resize_geom(*start_geom, *handle, dx, dy, shift, alt),
+                    ))
                 }
                 _ => None,
             };
             if let Some((sid, g)) = resize_update {
-                self.exec(Command::SetGeom { sid, new: g, old: None });
+                self.exec(Command::SetGeom {
+                    sid,
+                    new: g,
+                    old: None,
+                });
                 if let Drag::Resize { moved, .. } = &mut self.drag {
                     *moved = true;
                 }
@@ -1683,12 +1767,13 @@ impl VellumApp {
                 let sid = sid.clone();
                 if let Some(nid) = self.doc.find_by_sid(&sid) {
                     let mut style = self.doc.nodes.get(nid).unwrap().style.clone();
-                    style = set_style_prop(
-                        style,
-                        "transform",
-                        &format!("rotate({}deg)", fmt_deg(deg)),
-                    );
-                    self.exec(Command::SetStyle { sid, new: style, old: None });
+                    style =
+                        set_style_prop(style, "transform", &format!("rotate({}deg)", fmt_deg(deg)));
+                    self.exec(Command::SetStyle {
+                        sid,
+                        new: style,
+                        old: None,
+                    });
                     if let Drag::Rotate { moved, .. } = &mut self.drag {
                         *moved = true;
                     }
@@ -1716,7 +1801,15 @@ impl VellumApp {
                         vb_tools::constrain_axis(nx - start_geom.x, ny - start_geom.y, shift);
                     nx = (start_geom.x + dx).round();
                     ny = (start_geom.y + dy).round();
-                    Some((sid.clone(), Geom { x: nx, y: ny, w: start_geom.w, h: start_geom.h }))
+                    Some((
+                        sid.clone(),
+                        Geom {
+                            x: nx,
+                            y: ny,
+                            w: start_geom.w,
+                            h: start_geom.h,
+                        },
+                    ))
                 }
                 _ => None,
             };
@@ -1734,8 +1827,15 @@ impl VellumApp {
                         self.smart_guides = lines;
                     }
                 }
-                self.exec(Command::SetGeom { sid: sid.clone(), new: g, old: None });
-                if let Drag::MoveObj { moved, start_geom, .. } = &mut self.drag {
+                self.exec(Command::SetGeom {
+                    sid: sid.clone(),
+                    new: g,
+                    old: None,
+                });
+                if let Drag::MoveObj {
+                    moved, start_geom, ..
+                } = &mut self.drag
+                {
                     *moved = true;
                     self.last_move_delta = Some((g.x - start_geom.x, g.y - start_geom.y));
                 }
@@ -1775,8 +1875,11 @@ impl VellumApp {
                     if g.w >= 2.0 && g.h >= 2.0 {
                         let sid = self.doc.alloc_sid();
                         let kind = NodeKind::Box;
-                        let mut n =
-                            vb_doc::model::Node::new(kind, format!("矩形 {}", sid.as_str()), sid.clone());
+                        let mut n = vb_doc::model::Node::new(
+                            kind,
+                            format!("矩形 {}", sid.as_str()),
+                            sid.clone(),
+                        );
                         n.geom = g;
                         if self.tool == Tool::Ellipse {
                             n.style.push(vb_css::Decl {
@@ -1803,8 +1906,15 @@ impl VellumApp {
                         let ab_sid = self.doc.nodes.get(ab).unwrap().sid.as_str().to_string();
                         let ab_len = self.doc.nodes.get(ab).unwrap().children.len();
                         self.drag = Drag::None;
-                        let tree = vb_doc::model::NodeTree { node: n, children: vec![] };
-                        self.exec(Command::Insert { parent_sid: ab_sid, index: ab_len, tree });
+                        let tree = vb_doc::model::NodeTree {
+                            node: n,
+                            children: vec![],
+                        };
+                        self.exec(Command::Insert {
+                            parent_sid: ab_sid,
+                            index: ab_len,
+                            tree,
+                        });
                         self.selection = vec![sid.as_str().to_string()];
                         self.status = "已创建对象".into();
                     }
@@ -1905,7 +2015,8 @@ impl VellumApp {
                 .iter()
                 .copied()
                 .min_by(|a, b| {
-                    (*a - c).abs()
+                    (*a - c)
+                        .abs()
                         .partial_cmp(&(*b - c).abs())
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
@@ -1917,7 +2028,8 @@ impl VellumApp {
                 .iter()
                 .copied()
                 .min_by(|a, b| {
-                    (*a - c).abs()
+                    (*a - c)
+                        .abs()
                         .partial_cmp(&(*b - c).abs())
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
@@ -2216,14 +2328,7 @@ fn hit_handle(p: egui::Pos2, bbox: Rect) -> Option<u8> {
 }
 
 /// 缩放几何:handle 决定动哪条边;Shift 等比(角手柄);Alt 从中心。
-fn resize_geom(
-    g0: Geom,
-    handle: u8,
-    dx: f64,
-    dy: f64,
-    shift: bool,
-    alt: bool,
-) -> Geom {
+fn resize_geom(g0: Geom, handle: u8, dx: f64, dy: f64, shift: bool, alt: bool) -> Geom {
     let (mut x0, mut y0) = (g0.x, g0.y);
     let (mut x1, mut y1) = (g0.x + g0.w, g0.y + g0.h);
     let west = matches!(handle, 6 | 7 | 0);
@@ -2286,7 +2391,11 @@ fn resize_geom(
                 4 => (g0.x, g0.y),
                 _ => (g0.x + g0.w, g0.y),
             };
-            x0 = if matches!(handle, 6 | 7 | 0) { ax - w } else { ax };
+            x0 = if matches!(handle, 6 | 7 | 0) {
+                ax - w
+            } else {
+                ax
+            };
             y0 = if matches!(handle, 0..=2) { ay - h } else { ay };
         }
         x1 = x0 + w;
@@ -2307,10 +2416,35 @@ fn parse_rotate_deg(v: &str) -> Option<f64> {
     let i = v.find("rotate(")? + "rotate(".len();
     let rest = &v[i..];
     let end = rest.find(')')?;
-    rest[..end].trim().trim_end_matches("deg").trim().parse().ok()
+    rest[..end]
+        .trim()
+        .trim_end_matches("deg")
+        .trim()
+        .parse()
+        .ok()
 }
 
 /// 角度输出格式化(去尾 0)。
 fn fmt_deg(deg: f64) -> String {
     vb_common::units::fmt_num((deg * 10.0).round() / 10.0)
+}
+
+/// 启动项目目录文件监听(v0.6:Agent/外部编辑改 HTML → 画布热重载)。
+fn start_watcher(project: Option<&std::path::Path>) -> Option<std::sync::mpsc::Receiver<()>> {
+    use notify::Watcher;
+    let dir = project?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut watcher =
+        notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+            if res.is_ok() {
+                // 去抖由主循环做(200ms 窗口)
+                let _ = tx.send(());
+            }
+        })
+        .ok()?;
+    watcher
+        .watch(dir, notify::RecursiveMode::NonRecursive)
+        .ok()?;
+    std::mem::forget(watcher); // v0.1:与 App 同生命周期
+    Some(rx)
 }

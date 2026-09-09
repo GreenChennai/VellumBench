@@ -19,8 +19,7 @@ pub fn export_artboard_png(
     transparent: bool,
     project_dir: Option<&Path>,
 ) -> Result<(Vec<u8>, Vec<String>), String> {
-    let list = vb_render::encode::encode_artboard(doc, artboard)
-        .map_err(|e| e.to_string())?;
+    let list = vb_render::encode::encode_artboard(doc, artboard).map_err(|e| e.to_string())?;
     let res = vb_render::cpu::render_png(&list, scale, transparent, project_dir)?;
     Ok((res.png, res.warnings))
 }
@@ -31,8 +30,7 @@ pub fn export_artboard_svg(
     artboard: vb_doc::model::NodeId,
     scale: u32,
 ) -> Result<String, String> {
-    let list =
-        vb_render::encode::encode_artboard(doc, artboard).map_err(|e| e.to_string())?;
+    let list = vb_render::encode::encode_artboard(doc, artboard).map_err(|e| e.to_string())?;
     Ok(svg::render_svg(&list, scale))
 }
 
@@ -48,8 +46,7 @@ pub fn expand_name_template(
     width: u32,
     height: u32,
 ) -> String {
-    let safe =
-        |s: &str| s.replace(['\\', '/', ':', '*', '?', '"', '<', '>', '|', ' '], "-");
+    let safe = |s: &str| s.replace(['\\', '/', ':', '*', '?', '"', '<', '>', '|', ' '], "-");
     template
         .replace("{doc}", &safe(doc_name))
         .replace("{artboard}", &safe(artboard_name))

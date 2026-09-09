@@ -130,19 +130,7 @@ fn draw_item(scene: &mut Scene, item: &DrawItem) {
 
 fn fill_shape(scene: &mut Scene, shape: &ShapeKind, brush: &Brush, tf: Affine) {
     match shape {
-        ShapeKind::Ellipse(e) => scene.fill(
-            vello::peniko::Fill::NonZero,
-            tf,
-            brush,
-            None,
-            e,
-        ),
-        ShapeKind::Rect(r) => scene.fill(
-            vello::peniko::Fill::NonZero,
-            tf,
-            brush,
-            None,
-            r,
-        ),
+        ShapeKind::Ellipse(e) => scene.fill(vello::peniko::Fill::NonZero, tf, brush, None, e),
+        ShapeKind::Rect(r) => scene.fill(vello::peniko::Fill::NonZero, tf, brush, None, r),
     };
 }

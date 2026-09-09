@@ -10,10 +10,7 @@ pub fn render_svg(list: &DrawList, scale: u32) -> String {
     let w = list.w * scale as f64;
     let h = list.h * scale as f64;
     let mut out = String::with_capacity(64 * 1024);
-    let _ = writeln!(
-        out,
-        r#"<?xml version="1.0" encoding="UTF-8"?>"#
-    );
+    let _ = writeln!(out, r#"<?xml version="1.0" encoding="UTF-8"?>"#);
     let _ = writeln!(
         out,
         r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">"#
@@ -26,7 +23,10 @@ pub fn render_svg(list: &DrawList, scale: u32) -> String {
         if let Some(FillDef::LinearGradient { angle_css, stops }) = &item.fill {
             let (sp, ep) = vb_render::cpu::gradient_line(*angle_css, item.rect[2], item.rect[3]);
             let (sx, sy, ex, ey) = (sp.x as u32, sp.y as u32, ep.x as u32, ep.y as u32);
-            let _ = write!(defs, r#"  <linearGradient id="g{i}" x1="{sx}" y1="{sy}" x2="{ex}" y2="{ey}">"#);
+            let _ = write!(
+                defs,
+                r#"  <linearGradient id="g{i}" x1="{sx}" y1="{sy}" x2="{ex}" y2="{ey}">"#
+            );
             defs.push('\n');
             for s in stops {
                 let (r, g, b) = to_255(s.color);

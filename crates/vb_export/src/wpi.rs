@@ -101,9 +101,7 @@ pub fn export_via_wpi(
         if req.transparent {
             cmd.arg("--transparent");
         }
-        let output = cmd
-            .output()
-            .map_err(|e| format!("WPI 进程启动失败:{e}"))?;
+        let output = cmd.output().map_err(|e| format!("WPI 进程启动失败:{e}"))?;
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         for line in stdout.lines().chain(stderr.lines()) {

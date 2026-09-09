@@ -10,6 +10,10 @@ description = "Vellum Bench Agent 协作:CLI / patch 事务 / 文件监听(v0.6 
 name = "vellum-cli"
 path = "src/main.rs"
 
+[[bin]]
+name = "vellum-mcp"
+path = "src/bin/vellum-mcp.rs"
+
 [lib]
 path = "src/lib.rs"
 
@@ -24,3 +28,4 @@ anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+notify = "8.2.0"
