@@ -7,5 +7,9 @@ repository.workspace = true
 description = "Vellum Bench 渲染:绘制指令编码 + CPU 光栅(CLI/CI)+ Vello GPU(画布)"
 
 [dependencies]
+image.workspace = true
+tiny-skia = "0.12.0"
 vb_common = { workspace = true }
+vb_css = { workspace = true }
 vb_doc = { workspace = true }
+vello = "0.10.0"
