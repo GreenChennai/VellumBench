@@ -54,6 +54,8 @@ pub enum PatchOp {
     },
     #[serde(rename = "rename")]
     Rename { id: String, name: String },
+    #[serde(rename = "set_tag")]
+    SetTag { id: String, tag: String },
     #[serde(rename = "duplicate")]
     Duplicate {
         id: String,
@@ -284,6 +286,13 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<Vec<Command>, PatchErr
             vec![Command::Rename {
                 sid: sid_str(id),
                 new: name.clone(),
+                old: None,
+            }]
+        }
+        PatchOp::SetTag { id, tag } => {
+            vec![Command::SetTag {
+                sid: sid_str(id),
+                new: tag.clone(),
                 old: None,
             }]
         }
@@ -562,6 +571,7 @@ fn collect_affected(cmd: &Command, out: &mut PatchOutcome) {
         | Command::SetText { sid, .. }
         | Command::SetAttrs { sid, .. }
         | Command::Rename { sid, .. }
+        | Command::SetTag { sid, .. }
         | Command::SetFlags { sid, .. } => out.changed_ids.push(sid.clone()),
         Command::Group {
             member_sids,

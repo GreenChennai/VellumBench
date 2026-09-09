@@ -4,25 +4,31 @@
 
 **HTML 是文档格式,不是编译产物。** 任何人和任何 Agent 都能继续改输出文件。Vellum Bench 把「Agent 出草稿 → 人类像画矢量图一样精修 → HTML 回到 Agent 继续迭代」变成一个无限循环。
 
-## 状态(v0.1.0 骨架版)
+## 状态(v0.5+ · 路线图推进中)
 
 按 [路线图 0→1](docs/design/11-路线图-0到1.md) 推进,当前完成:
 
 | 模块 | 状态 |
 |---|---|
 | 工程骨架(12 crate workspace,依赖方向受控) | ✅ |
-| `vb_doc` 场景图 + 命令模式 Undo/Redo | ✅ |
+| `vb_doc` 场景图 + 命令模式 Undo/Redo(sid 寻址) | ✅ |
 | `vb_css` L1 白名单属性表 + 值规范化 | ✅ |
-| `vb_html` 忠实解析 + canonical 序列化(往返) | ✅ |
-| HTML 导入 → 场景图 → 导出(幂等) | ✅ |
-| `vellum-cli` Agent CLI(tree/find/get/patch/export) | ✅ |
-| CPU 原生 PNG 导出(离屏,无 GPU 依赖) | ✅ |
-| `vb_app` GUI:Vulkan(wgpu)+Vello 画布 + egui 面板 | ✅ |
-| 选择/矩形工具、Alt 复制、Shift 约束、再次变换 | ✅ |
-| Parley 中文文本渲染(v0.2) | ⏳ |
-| 钢笔/渐变批注者/智能参考线(v0.3-0.4) | ⏳ |
-| WPI 浏览器真值导出(v0.5+) | ⏳ |
-| MCP Server(v0.6) | ⏳ |
+| `vb_html` 忠实解析 + canonical 序列化(L0/L1 往返幂等) | ✅ |
+| HTML 导入 → 场景图 → 导出(多画板纵向堆叠) | ✅ |
+| `vellum-cli`:tree/find/get/**patch(14 ops 事务+乐观锁)**/export/save/batch | ✅ |
+| **vellum-mcp**:MCP stdio Server(10 工具,JSON-RPC 2.0) | ✅ |
+| 原生导出:**PNG @1x-4x + SVG 矢量(真实文本)** | ✅ |
+| **WPI 浏览器引擎桥:PDF/GIF/MP4**(系统 Edge/Chrome) | ✅ |
+| GUI:Vulkan(wgpu 29)+Vello 画布,130+ FPS | ✅ |
+| 选择/矩形/椭圆、**Alt 复制、Shift 约束、框选(相交即选)** | ✅ |
+| **8 手柄缩放(Shift 等比/Alt 中心)+ 角外圈旋转(15° 吸附)** | ✅ |
+| **智能参考线**(边/中心对齐兄弟与画板,6px 屏幕阈值,品红) | ✅ |
+| 双击文本编辑、画板管理(新建/删除/改名)、层序(Ctrl+[/]) | ✅ |
+| 设计令牌面板(CSS 变量改一处全站生效)、语义标签、链接/aria、flex 布局 | ✅ |
+| **文件监听热重载**(Agent 改 HTML → 画布 3s 内更新) | ✅ |
+| Parley 中文文本管线(v0.2 优先项;画布文本为 egui 近似,见 ADR-0017) | ⏳ |
+| 钢笔/路径布尔(v0.4)、响应式断点/伪类编辑(v0.7 后半) | ⏳ |
+| 组件/时间轴/CRDT(1→100) | ⏳ |
 
 ## 构建
 

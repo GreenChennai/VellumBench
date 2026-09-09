@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use serde_json::json;
+use serde_json::{json, Value};
 use vb_doc::import::import_project;
 use vb_doc::model::{Document, NodeKind};
 use vb_doc::undo::UndoStack;
@@ -31,6 +31,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// 数据驱动批量(v1.4):CSV 行 × ops 模板(支持 {列名} 占位)→ 事务 patch
+    Batch {
+        /// CSV 文件(首行为表头)
+        #[arg(long)]
+        csv: PathBuf,
+        /// ops 模板 JSON:{"ops":[...]} 中字符串值支持 {列名} 占位符
+        #[arg(long)]
+        template: PathBuf,
+    },
     /// 树形大纲(轻量,Agent 首选)
     Tree {
         #[arg(long, default_value_t = 8)]
@@ -157,6 +166,77 @@ fn run(cli: Cli) -> Result<(), CliError> {
 
     match cli.command {
         Cmd::Selfcheck => selfcheck(cli.json),
+        Cmd::Batch { csv, template } => {
+            let (mut doc, mut undo, _) = open_doc(&doc_path)?;
+            // 解析 CSV(首行表头;支持带引号字段)
+            let csv_text = std::fs::read_to_string(&csv)
+                .with_context(|| format!("读取 {}", csv.display()))
+                .map_err(|e| CliError::Other(format!("{e:#}")))?;
+            let mut rows: Vec<Vec<String>> = Vec::new();
+            for line in csv_text.lines() {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                let mut fields = Vec::new();
+                let mut cur = String::new();
+                let mut in_q = false;
+                let mut chars = line.chars().peekable();
+                while let Some(c) = chars.next() {
+                    match c {
+                        '"' if in_q && chars.peek() == Some(&'"') => {
+                            cur.push('"');
+                            chars.next();
+                        }
+                        '"' => in_q = !in_q,
+                        ',' if !in_q => fields.push(std::mem::take(&mut cur)),
+                        c => cur.push(c),
+                    }
+                }
+                fields.push(cur);
+                rows.push(fields);
+            }
+            if rows.len() < 2 {
+                return Err(CliError::Usage("CSV 至少需要表头 + 1 行数据".into()));
+            }
+            let headers = rows[0].clone();
+            let tpl = std::fs::read_to_string(&template)
+                .with_context(|| format!("读取 {}", template.display()))
+                .map_err(|e| CliError::Other(format!("{e:#}")))?;
+
+            // 逐行展开模板:{列名} 占位符替换(含索引 {row})
+            let mut all_ops: Vec<Value> = Vec::new();
+            for (ri, row) in rows[1..].iter().enumerate() {
+                let mut expanded = tpl.clone();
+                for (ci, h) in headers.iter().enumerate() {
+                    let v = row.get(ci).map(String::as_str).unwrap_or("");
+                    expanded = expanded.replace(&format!("{{{h}}}"), v);
+                }
+                expanded = expanded.replace("{row}", &(ri + 1).to_string());
+                let ops: Value = serde_json::from_str(&expanded)
+                    .with_context(|| format!("第 {ri} 行展开后解析失败"))
+                    .map_err(|e| CliError::Other(format!("{e:#}")))?;
+                if let Some(arr) = ops.get("ops").and_then(|v| v.as_array()) {
+                    all_ops.extend(arr.iter().cloned());
+                }
+            }
+            let req = vb_agent::PatchRequest {
+                base_rev: None,
+                ops: serde_json::from_value(Value::Array(all_ops))
+                    .map_err(|e| CliError::Usage(format!("展开后的 ops 非法:{e}")))?,
+            };
+            let outcome = apply_patch(&mut doc, &mut undo, &req)
+                .map_err(|e| CliError::Usage(format!("{e}")))?;
+            save_doc(&mut doc, &doc_path)?;
+            if cli.json {
+                println!(
+                    "{}",
+                    json!({"ok": true, "rows": rows.len() - 1, "rev": outcome.rev, "changed_ids": outcome.changed_ids})
+                );
+            } else {
+                println!("✔ 批量完成:{} 行 → rev {}", rows.len() - 1, outcome.rev);
+            }
+            Ok(())
+        }
         Cmd::Tree { depth } => {
             let (doc, _, _) = open_doc(&doc_path)?;
             let mut out = String::new();

@@ -1205,6 +1205,175 @@ impl VellumApp {
                                 old: None,
                             });
                         }
+
+                        // --- v0.7 网页能力 ---
+                        ui.separator();
+                        ui.heading("网页");
+                        let (cur_tag, attrs, style2) = {
+                            let n = self.doc.nodes.get(nid).unwrap();
+                            (n.tag.clone(), n.attrs.clone(), n.style.clone())
+                        };
+                        // 语义标签
+                        const TAGS: [&str; 16] = [
+                            "div", "section", "header", "nav", "main", "footer", "article",
+                            "aside", "h1", "h2", "h3", "p", "span", "a", "button", "li",
+                        ];
+                        let mut tag_sel = cur_tag.clone();
+                        egui::ComboBox::from_id_salt("tag_sel")
+                            .selected_text(format!("标签: {tag_sel}"))
+                            .show_ui(ui, |ui| {
+                                for t in TAGS {
+                                    ui.selectable_value(&mut tag_sel, t.to_string(), t);
+                                }
+                            });
+                        if tag_sel != cur_tag && tag_sel != "#text" {
+                            self.exec(Command::SetTag {
+                                sid: sid.clone(),
+                                new: tag_sel,
+                                old: None,
+                            });
+                        }
+                        // 链接与无障碍
+                        let mut href = attrs.get("href").cloned().unwrap_or_default();
+                        let mut aria = attrs.get("aria-label").cloned().unwrap_or_default();
+                        ui.horizontal(|ui| {
+                            ui.label("链接");
+                            if ui
+                                .add_sized([160.0, 18.0], egui::TextEdit::singleline(&mut href))
+                                .lost_focus()
+                            {
+                                let mut merged = attrs.clone();
+                                if href.is_empty() {
+                                    merged.remove("href");
+                                } else {
+                                    merged.insert("href".into(), href.clone());
+                                }
+                                self.exec(Command::SetAttrs {
+                                    sid: sid.clone(),
+                                    new: merged.into_iter().collect(),
+                                    old: None,
+                                });
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("aria ");
+                            if ui
+                                .add_sized([160.0, 18.0], egui::TextEdit::singleline(&mut aria))
+                                .lost_focus()
+                            {
+                                let mut merged = attrs.clone();
+                                if aria.is_empty() {
+                                    merged.remove("aria-label");
+                                } else {
+                                    merged.insert("aria-label".into(), aria.clone());
+                                }
+                                self.exec(Command::SetAttrs {
+                                    sid: sid.clone(),
+                                    new: merged.into_iter().collect(),
+                                    old: None,
+                                });
+                            }
+                        });
+                        // 自动布局(flex)
+                        ui.collapsing("自动布局", |ui| {
+                            let get = |p: &str| {
+                                style2
+                                    .iter()
+                                    .find(|d| d.prop == p)
+                                    .map(|d| d.value.clone())
+                                    .unwrap_or_default()
+                            };
+                            let mut display = {
+                                let d = get("display");
+                                if d.is_empty() {
+                                    "block".to_string()
+                                } else {
+                                    d
+                                }
+                            };
+                            let mut gap = get("gap")
+                                .trim_end_matches("px")
+                                .parse::<f64>()
+                                .unwrap_or(0.0);
+                            let mut justify = {
+                                let j = get("justify-content");
+                                if j.is_empty() {
+                                    "flex-start".to_string()
+                                } else {
+                                    j
+                                }
+                            };
+                            let mut align = {
+                                let a = get("align-items");
+                                if a.is_empty() {
+                                    "stretch".to_string()
+                                } else {
+                                    a
+                                }
+                            };
+                            egui::ComboBox::from_id_salt("disp")
+                                .selected_text(format!("display: {display}"))
+                                .show_ui(ui, |ui| {
+                                    for v in ["block", "flex", "inline-flex", "none"] {
+                                        ui.selectable_value(&mut display, v.to_string(), v);
+                                    }
+                                });
+                            ui.horizontal(|ui| {
+                                ui.label("间距");
+                                if ui
+                                    .add(
+                                        egui::DragValue::new(&mut gap)
+                                            .speed(1.0)
+                                            .range(0.0..=200.0),
+                                    )
+                                    .changed()
+                                {
+                                    self.exec(Command::SetStyle {
+                                        sid: sid.clone(),
+                                        new: set_style_prop(
+                                            style2.clone(),
+                                            "gap",
+                                            &format!("{}px", gap as i64),
+                                        ),
+                                        old: None,
+                                    });
+                                }
+                            });
+                            egui::ComboBox::from_id_salt("jc")
+                                .selected_text(format!("主轴: {justify}"))
+                                .show_ui(ui, |ui| {
+                                    for v in [
+                                        "flex-start",
+                                        "center",
+                                        "flex-end",
+                                        "space-between",
+                                        "space-around",
+                                    ] {
+                                        ui.selectable_value(&mut justify, v.to_string(), v);
+                                    }
+                                });
+                            egui::ComboBox::from_id_salt("ai")
+                                .selected_text(format!("交叉轴: {align}"))
+                                .show_ui(ui, |ui| {
+                                    for v in ["stretch", "center", "flex-start", "flex-end"] {
+                                        ui.selectable_value(&mut align, v.to_string(), v);
+                                    }
+                                });
+                            // display/gap 改动即写(display=flex 时自动补 justify/align)
+                            if display != get("display") {
+                                let mut st = set_style_prop(style2.clone(), "display", &display);
+                                if display == "flex" {
+                                    st = set_style_prop(st, "justify-content", &justify);
+                                    st = set_style_prop(st, "align-items", &align);
+                                }
+                                self.exec(Command::SetStyle {
+                                    sid: sid.clone(),
+                                    new: st,
+                                    old: None,
+                                });
+                            }
+                        });
+
                         ui.separator();
                     }
                 } else {
@@ -1318,6 +1487,67 @@ impl VellumApp {
                         ui.separator();
                     }
                 });
+
+                // --- 设计令牌(v0.7:CSS 变量,改一处全站生效) ---
+                ui.heading("设计令牌");
+                ui.horizontal(|ui| {
+                    let mut add: Option<(String, String)> = None;
+                    if ui.small_button("+ 令牌").clicked() {
+                        add = Some((
+                            format!("brand-{}", self.doc.tokens.len() + 1),
+                            "#888888".into(),
+                        ));
+                    }
+                    if let Some((n, v)) = add {
+                        self.exec(Command::SetToken {
+                            name: n,
+                            new: v,
+                            old: None,
+                        });
+                    }
+                });
+                let tokens = self.doc.tokens.clone();
+                for (i, (name, value)) in tokens.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        let mut v = value.clone();
+                        if vb_common::color::parse_color(value).is_some() {
+                            if let Some(c) = vb_common::color::parse_color(value) {
+                                let mut col = Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a);
+                                if ui.color_edit_button_srgba(&mut col).changed() {
+                                    let [r, g, b, a] = col.to_array();
+                                    self.exec(Command::SetToken {
+                                        name: name.clone(),
+                                        new: vb_common::Rgba::new(r, g, b, a).to_shortest_hex(),
+                                        old: None,
+                                    });
+                                }
+                            }
+                        }
+                        let resp =
+                            ui.add_sized([70.0, 18.0], egui::Label::new(format!("--{name}")));
+                        let _ = resp;
+                        if ui
+                            .add_sized([110.0, 18.0], egui::TextEdit::singleline(&mut v))
+                            .lost_focus()
+                            && v != *value
+                        {
+                            self.exec(Command::SetToken {
+                                name: name.clone(),
+                                new: v,
+                                old: None,
+                            });
+                        }
+                        if ui.small_button("🗑").clicked() {
+                            // 删除令牌 = SetToken 到空再移除(v0.1:直接移除,可撤销)
+                            self.exec(Command::SetToken {
+                                name: name.clone(),
+                                new: String::new(),
+                                old: None,
+                            });
+                        }
+                        let _ = i;
+                    });
+                }
 
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                     ui.separator();
