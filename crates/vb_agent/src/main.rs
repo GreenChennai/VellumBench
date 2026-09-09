@@ -321,9 +321,54 @@ fn run(cli: Cli) -> Result<(), CliError> {
             transparent,
             all,
         } => {
-            if format != "png" {
+            let fmt = format.to_ascii_lowercase();
+            // 浏览器引擎格式(PDF/GIF/MP4)走 WPI 桥
+            if matches!(fmt.as_str(), "pdf" | "gif" | "mp4") {
+                let (doc, _, dir) = open_doc(&doc_path)?;
+                let ab_id = match &artboard {
+                    Some(a) => resolve_artboard(&doc, a),
+                    None => doc.artboards.first().copied(),
+                }
+                .ok_or_else(|| CliError::Export("未找到画板".into()))?;
+                let wpi_dir = std::path::PathBuf::from(vb_export::wpi::DEFAULT_WPI_DIR);
+                let wpi_fmt = match fmt.as_str() {
+                    "pdf" => vb_export::wpi::WpiFormat::Pdf,
+                    "gif" => vb_export::wpi::WpiFormat::Gif,
+                    _ => vb_export::wpi::WpiFormat::Mp4,
+                };
+                let req = vb_export::wpi::WpiExportRequest {
+                    format: wpi_fmt,
+                    scale: if scale >= 4 {
+                        4
+                    } else if scale >= 2 {
+                        2
+                    } else {
+                        1
+                    },
+                    width: 1920,
+                    transparent,
+                    out: out.clone(),
+                    max_wait: 20.0,
+                };
+                let res = vb_export::wpi::export_via_wpi(&doc, &dir, &req, &wpi_dir)
+                    .map_err(CliError::Export)?;
+                if cli.json {
+                    println!(
+                        "{}",
+                        json!({"ok": true, "engine": "wpi", "out": res.out.display().to_string(), "warnings": res.warnings})
+                    );
+                } else {
+                    println!("✔ 浏览器引擎 → {}", res.out.display());
+                    for w in &res.warnings {
+                        eprintln!("⚠ {w}");
+                    }
+                }
+                return Ok(());
+            }
+            let is_svg = fmt == "svg";
+            if !is_svg && fmt != "png" {
                 return Err(CliError::Export(format!(
-                    "格式 {format} 暂不支持:v0.1 原生引擎仅 PNG;SVG/PDF 排期 v0.5,浏览器引擎(GIF/MP4)排期 v0.5+"
+                    "未知格式 {format}:支持 png | svg | pdf | gif | mp4"
                 )));
             }
             let (doc, _, dir) = open_doc(&doc_path)?;
@@ -347,6 +392,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 }
             };
             let template = vb_export::DEFAULT_TEMPLATE;
+            let ext = if is_svg { "svg" } else { "png" };
             let mut results = Vec::new();
             for (i, (name, id)) in targets.iter().enumerate() {
                 let file_name = vb_export::expand_name_template(
@@ -354,7 +400,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                     &doc.meta.title,
                     name,
                     scale,
-                    "png",
+                    ext,
                     i + 1,
                     0,
                     0,
@@ -364,6 +410,18 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 } else {
                     out.clone()
                 };
+                if is_svg {
+                    let svg = vb_export::export_artboard_svg(&doc, *id, scale)
+                        .map_err(CliError::Export)?;
+                    std::fs::write(&out_path, &svg)
+                        .with_context(|| format!("写出 {}", out_path.display()))
+                        .map_err(|e| CliError::Other(format!("{e:#}")))?;
+                    results.push(json!({
+                        "artboard": name, "out": out_path.display().to_string(),
+                        "bytes": svg.len(),
+                    }));
+                    continue;
+                }
                 match vb_export::export_artboard_png(
                     &doc,
                     *id,

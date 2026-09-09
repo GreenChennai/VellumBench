@@ -89,6 +89,10 @@ pub struct VellumApp {
     gpu: Option<GpuCanvas>,
     frame_times: std::collections::VecDeque<f32>,
     show_about: bool,
+    show_export: bool,
+    export_format: usize,
+    export_scale: u32,
+    export_transparent: bool,
 }
 
 struct GpuCanvas {
@@ -141,6 +145,10 @@ impl VellumApp {
             gpu: None,
             frame_times: std::collections::VecDeque::new(),
             show_about: false,
+            show_export: false,
+            export_format: 0,
+            export_scale: 2,
+            export_transparent: false,
         }
     }
 
@@ -228,6 +236,136 @@ impl VellumApp {
                     self.status = format!("已打开 {}(画板 {n})", dir.display());
                 }
                 Err(e) => self.status = format!("打开失败:{e}"),
+            }
+        }
+    }
+
+    /// 当前活动画板(含选区的画板,否则第一个)。
+    fn active_artboard(&self) -> Option<vb_doc::model::NodeId> {
+        self.selection
+            .first()
+            .and_then(|sid| self.doc.find_by_sid(sid))
+            .and_then(|nid| {
+                let mut p = Some(nid);
+                loop {
+                    match p {
+                        Some(id) => {
+                            let n = self.doc.nodes.get(id).unwrap();
+                            if matches!(n.kind, NodeKind::Artboard) {
+                                break Some(id);
+                            }
+                            p = n.parent;
+                        }
+                        None => break None,
+                    }
+                }
+            })
+            .or(self.doc.artboards.first().copied())
+    }
+
+    fn active_artboard_name(&self) -> String {
+        self.active_artboard()
+            .and_then(|a| self.doc.nodes.get(a).map(|n| n.name.clone()))
+            .unwrap_or_else(|| "无".into())
+    }
+
+    /// 导出对话框执行(v0.5 双引擎)。
+    fn run_export_dialog(&mut self) {
+        let Some(dir) = self.project_dir.clone() else {
+            self.status = "先保存项目(选一个目录)再导出".into();
+            self.save_project();
+            return;
+        };
+        let Some(ab) = self.active_artboard() else {
+            return;
+        };
+        let name = self.doc.nodes.get(ab).unwrap().name.clone();
+        let scale = self.export_scale;
+        let fmt = self.export_format;
+        let out_name = vb_export::expand_name_template(
+            vb_export::DEFAULT_TEMPLATE,
+            &self.doc.meta.title,
+            &name,
+            scale,
+            match fmt {
+                0 => "png",
+                1 => "svg",
+                2 => "pdf",
+                3 => "gif",
+                _ => "mp4",
+            },
+            1,
+            0,
+            0,
+        );
+        let out = dir.join(out_name);
+        match fmt {
+            0 => match vb_export::export_artboard_png(
+                &self.doc,
+                ab,
+                scale as f32,
+                self.export_transparent,
+                Some(&dir),
+            ) {
+                Ok((png, _warnings)) => match std::fs::write(&out, &png) {
+                    Ok(()) => {
+                        self.status = format!(
+                            "导出 {} @{}x({} KB)",
+                            out.display(),
+                            scale,
+                            png.len() / 1024
+                        );
+                    }
+                    Err(e) => self.status = format!("写文件失败:{e}"),
+                },
+                Err(e) => self.status = format!("导出失败:{e}"),
+            },
+            1 => match vb_export::export_artboard_svg(&self.doc, ab, scale) {
+                Ok(svg) => match std::fs::write(&out, &svg) {
+                    Ok(()) => {
+                        self.status =
+                            format!("导出 SVG {} @{}x({} KB)", out.display(), scale, svg.len() / 1024);
+                    }
+                    Err(e) => self.status = format!("写文件失败:{e}"),
+                },
+                Err(e) => self.status = format!("导出失败:{e}"),
+            },
+            browser_fmt => {
+                let wpi_dir = std::path::PathBuf::from(vb_export::wpi::DEFAULT_WPI_DIR);
+                let wpi_fmt = match browser_fmt {
+                    2 => vb_export::wpi::WpiFormat::Pdf,
+                    3 => vb_export::wpi::WpiFormat::Gif,
+                    _ => vb_export::wpi::WpiFormat::Mp4,
+                };
+                let req = vb_export::wpi::WpiExportRequest {
+                    format: wpi_fmt,
+                    scale: if scale >= 4 {
+                        4
+                    } else if scale >= 2 {
+                        2
+                    } else {
+                        1
+                    },
+                    width: 1920,
+                    transparent: self.export_transparent,
+                    out,
+                    max_wait: 20.0,
+                };
+                match vb_export::wpi::export_via_wpi(&self.doc, &dir, &req, &wpi_dir) {
+                    Ok(res) => {
+                        self.status = format!(
+                            "浏览器引擎导出 {}({} KB){}",
+                            res.out.display(),
+                            std::fs::metadata(&res.out).map(|m| m.len() / 1024).unwrap_or(0),
+                            if res.warnings.is_empty() {
+                                String::new()
+                            } else {
+                                format!(";{} 条警告", res.warnings.len())
+                            }
+                        );
+                    }
+                    Err(e) => self.status = format!("WPI 导出失败:{e}"),
+                }
             }
         }
     }
@@ -400,6 +538,71 @@ impl eframe::App for VellumApp {
                 self.editing_text = None;
             }
         }
+
+        // 导出对话框(v0.5:双引擎)
+        if self.show_export {
+            let mut open = self.show_export;
+            egui::Window::new("导出")
+                .open(&mut open)
+                .collapsible(false)
+                .show(ui.ctx(), |ui| {
+                    const FORMATS: [&str; 5] = [
+                        "PNG @N(原生)",
+                        "SVG 矢量(原生)",
+                        "PDF(浏览器/WPI)",
+                        "GIF(浏览器/WPI)",
+                        "MP4(浏览器/WPI)",
+                    ];
+                    ui.horizontal(|ui| {
+                        ui.label("格式");
+                        let mut f = self.export_format;
+                        let label = FORMATS[f].to_string();
+                        ui.add(egui::Slider::new(&mut f, 0..=4).text(label));
+                        self.export_format = f;
+                    });
+                    if self.export_format == 0 || self.export_format == 1 {
+                        ui.horizontal(|ui| {
+                            ui.label("倍率");
+                            for s in [1u32, 2, 3, 4] {
+                                if ui
+                                    .selectable_label(self.export_scale == s, format!("@{s}x"))
+                                    .clicked()
+                                {
+                                    self.export_scale = s;
+                                }
+                            }
+                        });
+                    } else {
+                        ui.horizontal(|ui| {
+                            ui.label("倍率");
+                            for s in [1u32, 2, 4] {
+                                if ui
+                                    .selectable_label(self.export_scale == s, format!("@{s}x"))
+                                    .clicked()
+                                {
+                                    self.export_scale = s;
+                                }
+                            }
+                            if self.export_scale == 3 {
+                                self.export_scale = 2;
+                            }
+                        });
+                    }
+                    if self.export_format == 0 {
+                        ui.checkbox(&mut self.export_transparent, "透明背景");
+                    }
+                    ui.separator();
+                    ui.label(format!(
+                        "目标:当前画板({})",
+                        self.active_artboard_name()
+                    ));
+                    if ui.button("导出").clicked() {
+                        self.run_export_dialog();
+                        self.show_export = false;
+                    }
+                });
+            self.show_export = open;
+        }
     }
 }
 
@@ -443,6 +646,7 @@ impl VellumApp {
                         let _ = self.undo.redo(&mut self.doc);
                     }
                     (Key::S, true) => self.save_project(),
+                    (Key::E, true) if shift => self.show_export = true,
                     (Key::E, true) => self.export_current_artboard_png(),
                     (Key::O, true) => self.open_project(),
                     (Key::N, true) => {
@@ -647,6 +851,9 @@ impl VellumApp {
                     }
                     if ui.button("导出当前画板 PNG @2x Ctrl+E").clicked() {
                         self.export_current_artboard_png();
+                    }
+                    if ui.button("导出… Ctrl+Shift+E").clicked() {
+                        self.show_export = true;
                     }
                     ui.separator();
                     if ui.button("退出").clicked() {
@@ -1553,7 +1760,7 @@ impl VellumApp {
                             .map(|id| self.doc.nodes.get(id).unwrap().sid.as_str().to_string())
                             .collect();
                         if shift {
-                            sids.extend(self.selection.drain(..));
+                            sids.append(&mut self.selection);
                         }
                         self.selection = sids;
                         if !self.selection.is_empty() {
@@ -2019,10 +2226,10 @@ fn resize_geom(
 ) -> Geom {
     let (mut x0, mut y0) = (g0.x, g0.y);
     let (mut x1, mut y1) = (g0.x + g0.w, g0.y + g0.h);
-    let west = matches!(handle, 0 | 6 | 7);
-    let east = matches!(handle, 2 | 3 | 4);
-    let north = matches!(handle, 0 | 1 | 2);
-    let south = matches!(handle, 4 | 5 | 6);
+    let west = matches!(handle, 6 | 7 | 0);
+    let east = matches!(handle, 2..=4);
+    let north = matches!(handle, 0..=2);
+    let south = matches!(handle, 4..=6);
     let corner = matches!(handle, 0 | 2 | 4 | 6);
 
     if west {
@@ -2079,8 +2286,8 @@ fn resize_geom(
                 4 => (g0.x, g0.y),
                 _ => (g0.x + g0.w, g0.y),
             };
-            x0 = if matches!(handle, 0 | 6 | 7) { ax - w } else { ax };
-            y0 = if matches!(handle, 0 | 1 | 2) { ay - h } else { ay };
+            x0 = if matches!(handle, 6 | 7 | 0) { ax - w } else { ax };
+            y0 = if matches!(handle, 0..=2) { ay - h } else { ay };
         }
         x1 = x0 + w;
         y1 = y0 + h;
