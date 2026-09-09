@@ -35,8 +35,18 @@ pub fn render_png(
         pixmap.fill(Color::from_rgba(r, g, b, a).unwrap_or(Color::WHITE));
     }
 
-    let tf = Transform::from_scale(scale, scale);
+    let base = Transform::from_scale(scale, scale);
     for item in &list.items {
+        let tf = if item.rot.abs() > 1e-9 {
+            let [x, y, w, h] = item.rect;
+            let (cx, cy) = ((x + w / 2.0) * scale as f64, (y + h / 2.0) * scale as f64);
+            let rot = Transform::from_rotate(item.rot as f32);
+            let to_c = Transform::from_translate(cx as f32, cy as f32);
+            let from_c = Transform::from_translate(-cx as f32, -cy as f32);
+            base.post_concat(to_c).post_concat(rot).post_concat(from_c)
+        } else {
+            base
+        };
         draw_item(&mut pixmap, item, scale, tf, project_dir, &mut warnings);
     }
 

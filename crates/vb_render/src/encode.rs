@@ -61,6 +61,21 @@ pub struct DrawItem {
     pub label: Option<TextHint>,
     /// 图像 src(解码用)。
     pub src: Option<String>,
+    /// 旋转(CSS 顺时针度数,绕 rect 中心)。
+    pub rot: f64,
+}
+
+/// 解析 transform 中的 rotate(θdeg) → 度(CSS 顺时针;引擎共用)。
+pub fn parse_rotate_deg(v: &str) -> Option<f64> {
+    let i = v.find("rotate(")? + "rotate(".len();
+    let rest = &v[i..];
+    let end = rest.find(')')?;
+    rest[..end]
+        .trim()
+        .trim_end_matches("deg")
+        .trim()
+        .parse()
+        .ok()
 }
 
 #[derive(Debug, Clone)]
@@ -327,6 +342,7 @@ pub fn encode_artboard(doc: &Document, artboard: NodeId) -> Result<DrawList, VbE
         kind: crate::DrawKind::Box,
         label: None,
         src: None,
+        rot: 0.0,
     });
     let children = ab.children.clone();
     for c in children {
@@ -402,6 +418,10 @@ fn encode_node(
                 NodeKind::Image { src } => Some(src.clone()),
                 _ => None,
             },
+            rot: node
+                .style_get("transform")
+                .and_then(parse_rotate_deg)
+                .unwrap_or(0.0),
         });
     }
     let children = node.children.clone();

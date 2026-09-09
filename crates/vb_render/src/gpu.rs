@@ -59,15 +59,28 @@ fn shape_of(item: &DrawItem) -> ShapeKind {
     ))
 }
 
+fn item_tf(item: &DrawItem) -> Affine {
+    let [x, y, w, h] = item.rect;
+    if item.rot.abs() > 1e-9 {
+        let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+        Affine::translate((cx, cy))
+            * Affine::rotate(item.rot.to_radians())
+            * Affine::translate((-cx, -cy))
+    } else {
+        Affine::IDENTITY
+    }
+}
+
 fn draw_item(scene: &mut Scene, item: &DrawItem) {
     let [x, y, w, h] = item.rect;
     if w <= 0.0 || h <= 0.0 {
         return;
     }
+    let tf = item_tf(item);
     if item.kind == DrawKind::Image || item.kind == DrawKind::FrozenPlaceholder {
         let shape = shape_of(item);
         let brush = Brush::Solid(to_color([0.85, 0.83, 0.8, 1.0], item.opacity));
-        fill_shape(scene, &shape, &brush);
+        fill_shape(scene, &shape, &brush, tf);
         return;
     }
     if item.kind == DrawKind::Text {
@@ -100,7 +113,7 @@ fn draw_item(scene: &mut Scene, item: &DrawItem) {
             }
         };
         if let Some(b) = brush {
-            fill_shape(scene, &shape, &b);
+            fill_shape(scene, &shape, &b, tf);
         }
     }
     if let Some(border) = &item.border {
@@ -108,25 +121,25 @@ fn draw_item(scene: &mut Scene, item: &DrawItem) {
             let stroke = vello::kurbo::Stroke::new(border.width.max(1.0));
             let brush = Brush::Solid(to_color(border.color, item.opacity));
             match &shape {
-                ShapeKind::Ellipse(e) => scene.stroke(&stroke, Affine::IDENTITY, &brush, None, e),
-                ShapeKind::Rect(r) => scene.stroke(&stroke, Affine::IDENTITY, &brush, None, r),
+                ShapeKind::Ellipse(e) => scene.stroke(&stroke, tf, &brush, None, e),
+                ShapeKind::Rect(r) => scene.stroke(&stroke, tf, &brush, None, r),
             };
         }
     }
 }
 
-fn fill_shape(scene: &mut Scene, shape: &ShapeKind, brush: &Brush) {
+fn fill_shape(scene: &mut Scene, shape: &ShapeKind, brush: &Brush, tf: Affine) {
     match shape {
         ShapeKind::Ellipse(e) => scene.fill(
             vello::peniko::Fill::NonZero,
-            Affine::IDENTITY,
+            tf,
             brush,
             None,
             e,
         ),
         ShapeKind::Rect(r) => scene.fill(
             vello::peniko::Fill::NonZero,
-            Affine::IDENTITY,
+            tf,
             brush,
             None,
             r,
