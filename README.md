@@ -37,7 +37,7 @@
 
 | 缺口 | 现状(代码实测) | 计划 |
 |---|---|---|
-| **工具集** | **6 / 13** —— Select/Rect/Ellipse/Line/Zoom/Hand;钢笔、直接选择、剪刀等在 P4 | P4 |
+| **工具集** | **8 / 13** —— Select/DirectSelect/Rect/Ellipse/Line/**Pen**/Zoom/Hand;剪刀、路径查找器在 P4 后半 | P4 后半 |
 | **快捷键** | **注册表 53 命令 / 46 键位绑定**(`commands.yaml` 36 条已同步);02 篇目标 ~120 | P3 剩余批次 |
 | **剪贴板** | ✅ 已实现 —— Ctrl+C/X/V + 就地粘贴 Ctrl+F(内部剪贴板,事务粘贴) | 完成 |
 | **对齐** | ✅ 已实现 —— 6 快捷键 + 属性面板按钮组(单选对齐画板/多选对齐集合) | 完成 |
@@ -47,7 +47,7 @@
 | `vb_layout` / `vb_platform` | **空壳 crate** | P4 / P5 |
 | `i18n/` `assets/fonts/` | 仍为空(字体走系统 fallback 链) | P5 |
 | Parley 中文文本管线 | 未接入依赖(画布文本为 egui 近似,见 [ADR-0017](docs/adr/0017-canvas-text-approximation-v01.md)) | 待定 |
-| 钢笔 / 路径布尔 | 见 [ADR-0012](docs/adr/0012-path-boolean-pending-spike.md)(待 Spike 结论) | P4 |
+| 路径布尔 / 剪刀 | 见 [ADR-0012](docs/adr/0012-path-boolean-pending-spike.md)(待 Spike 结论);钢笔直线段版已落地(平滑手柄待补) | P4 后半 |
 | 响应式断点 / 伪类编辑 | 未开始 | P3 后半 |
 | **门禁 4/5/6/7** | 渲染快照(`vello_cpu`)、性能基准(B1–B6)、i18n 双语扫描、输出校验(W3C + prettier) **均未落地**(14 篇 §7.1 共列 9 项,`ci.ps1` 已自动化的只有 5 项) | P5 |
 | 组件 / 时间轴 / CRDT | 未开始(1→100) | 不承诺档期 |
