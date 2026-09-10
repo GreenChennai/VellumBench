@@ -1,0 +1,53 @@
+:root { --vb-accent: #2f6fed; --vb-ink: #22303f; }
+.vb-artboard { position: relative; overflow: hidden; }
+.page { width: 794px; height: 1123px; background-color: #fff; }
+.side { position: absolute; left: 0px; top: 0px; width: 260px; height: 1123px; background-color: #f2f6fc; }
+.name { position: absolute; left: 300px; top: 80px; width: 400px; height: 60px; font-size: 44px; font-weight: 700; color: #22303f; }
+.role { position: absolute; left: 300px; top: 150px; width: 400px; height: 36px; font-size: 18px; color: #5b6b7b; }
+.contact { position: absolute; left: 300px; top: 200px; width: 420px; height: 30px; font-size: 14px; color: #7a8a99; }
+.sec { position: absolute; left: 300px; top: 280px; width: 300px; height: 34px; font-size: 20px; font-weight: 600; color: #2f6fed; }
+.item { position: absolute; left: 300px; top: 340px; width: 420px; height: 120px; background-color: #f7f9fc; border-radius: 10px; }
+.item2 { position: absolute; left: 300px; top: 480px; width: 420px; height: 120px; background-color: #f7f9fc; border-radius: 10px; }
+.it { position: absolute; left: 20px; top: 16px; width: 380px; height: 30px; font-size: 16px; font-weight: 600; color: #22303f; }
+.id2 { position: absolute; left: 20px; top: 52px; width: 380px; height: 48px; font-size: 13px; color: #5b6b7b; }
+
+.item2 {
+  position: absolute;
+  left: 300px;
+  top: 480px;
+  width: 420px;
+  height: 120px;
+  padding: 16px 20px;
+  border-radius: 10px;
+  background-color: #f7f9fc;
+}
+
+.it2 {
+  position: absolute;
+  left: 320px;
+  top: 496px;
+  width: 380px;
+  height: 30px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #22303f;
+}
+
+.id3 {
+  position: absolute;
+  left: 320px;
+  top: 532px;
+  width: 380px;
+  height: 48px;
+  font-size: 13px;
+  color: #5b6b7b;
+}
+
+.side-accent {
+  position: absolute;
+  left: 0px;
+  top: 0px;
+  width: 8px;
+  height: 1123px;
+  background-color: var(--vb-accent);
+}

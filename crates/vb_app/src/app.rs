@@ -2774,6 +2774,13 @@ impl VellumApp {
                 if let Some(ab) = self.artboard_at_world(wx, wy) {
                     if let Some(nid) = vb_tools::hit_test(&self.doc, ab, wx, wy) {
                         let n = self.doc.nodes.get(nid).unwrap();
+                        // P4.3 隔离模式:双击编组进入(06 篇 §4.3)
+                        if matches!(n.kind, NodeKind::Group) {
+                            self.isolate = Some(nid);
+                            self.selection.clear();
+                            self.status = format!("隔离模式:{}(Esc 退出)", n.name);
+                            return;
+                        }
                         if matches!(n.kind, NodeKind::Text { .. }) {
                             self.editing_text = Some(n.sid.as_str().to_string());
                             self.status = format!("编辑文本:{}(Ctrl+Enter 提交,Esc 取消)", n.name);
