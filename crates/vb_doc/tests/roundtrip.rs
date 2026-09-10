@@ -2,54 +2,14 @@
 //!
 //! - **L0 不损坏**:导入 → 不编辑 → 导出,关键内容全部保留。
 //! - **L1 幂等**:导入 → 导出 → 再导入 → 再导出,两次输出字节相同。
+//!
+//! 本文件是"带明确断言的定点语料";通用语料库(逐文件跑 L0+L1)见 `corpus.rs`。
 
-use std::sync::atomic::{AtomicU32, Ordering};
+mod common;
 
+use common::{css, find, roundtrip};
 use vb_doc::export::render_project;
-use vb_doc::import::import_project;
 use vb_doc::Document;
-
-/// 导入 → 导出(落盘)→ 再导入 → 再导出;返回两次导出的文件表。
-/// 走真实目录,保证外链 CSS 在第二次导入时可见(与 Agent/浏览器看到的一致)。
-#[allow(clippy::type_complexity)]
-fn roundtrip(html: &str) -> (Vec<(String, String)>, Vec<(String, String)>) {
-    static SEQ: AtomicU32 = AtomicU32::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "vb-rt-{}-{}",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("index.html"), html).unwrap();
-
-    let r1 = import_project(&dir).unwrap();
-    let out1 = render_project(&r1.doc);
-    for (rel, content) in &out1.files {
-        let p = dir.join(rel);
-        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-        std::fs::write(&p, content).unwrap();
-    }
-
-    let r2 = import_project(&dir).unwrap();
-    let out2 = render_project(&r2.doc);
-
-    let result = (out1.files, out2.files);
-    let _ = std::fs::remove_dir_all(&dir);
-    result
-}
-
-fn find(files: &[(String, String)], path: &str) -> String {
-    files
-        .iter()
-        .find(|(p, _)| p == path)
-        .map(|(_, c)| c.clone())
-        .unwrap_or_else(|| panic!("缺少 {path}"))
-}
-
-fn css(files: &[(String, String)]) -> String {
-    find(files, "styles/main.css")
-}
 
 // ---------- 语料 1:基础落地页(外链 CSS 形态的导入源) ----------
 

@@ -1,0 +1,5 @@
+# L0 期望片段(每行一个,必须出现在导出结果里)
+# 关键回归:div/section 内的行内文本段(#text)必须在 HTML 里保留正文
+Hello <b
+world</b>!
+中文与 ASCII 混排

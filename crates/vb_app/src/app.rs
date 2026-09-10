@@ -7,14 +7,20 @@
 use std::path::PathBuf;
 
 use egui::{
-    pos2, vec2, Align2, Color32, CursorIcon, FontData, FontDefinitions, FontId, Key, Margin,
-    PointerButton, Rect, Sense, Stroke, Vec2,
+    pos2, vec2, Align2, Color32, FontId, Key, Margin, PointerButton, Rect, Sense, Stroke, Vec2,
 };
 use vb_doc::commands::Command;
 use vb_doc::model::{Document, Geom, NodeKind};
 use vb_doc::undo::UndoStack;
 use vb_render::encode::encode_artboard;
 use vb_tools::Camera;
+
+use crate::shortcuts::{self, InputContext};
+use vb_ui::components::{icon_button, PanelTabs, ToolButton};
+use vb_ui::cursor as vbcursor;
+use vb_ui::fonts as vb_fonts;
+use vb_ui::icons::{self, Name};
+use vb_ui::theme::{self, semantic, Tokens};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
@@ -79,6 +85,12 @@ pub struct VellumApp {
     cursor_world: (f64, f64),
     grid_on: bool,
     smart_guides_on: bool,
+    /// 轮廓模式(线框):`Mod+Y`(02 篇 §四-视图)
+    outline_mode: bool,
+    /// 当前主题(true=深色)。P2.7 支持浅色。
+    theme_dark: bool,
+    /// 右侧面板当前 Tab(P2.6)。
+    panel_tab: usize,
     /// 本帧吸附参考线(画板本地坐标的线段 [x0,y0,x1,y1]),每帧清空
     smart_guides: Vec<[f64; 4]>,
     /// 双击文本编辑中的 sid
@@ -108,8 +120,8 @@ struct GpuCanvas {
 
 impl VellumApp {
     pub fn new(cc: &eframe::CreationContext<'_>, project: Option<PathBuf>) -> Self {
-        setup_fonts(&cc.egui_ctx);
-        setup_dark_theme(&cc.egui_ctx);
+        let fonts_report = vb_fonts::install(&cc.egui_ctx);
+        log::info!("字体安装: {}", fonts_report.summary());
 
         let (doc, project_dir) = match &project {
             Some(p) => match vb_doc::import::import_project(p) {
@@ -141,6 +153,9 @@ impl VellumApp {
             cursor_world: (0.0, 0.0),
             grid_on: true,
             smart_guides_on: true,
+            outline_mode: false,
+            theme_dark: true,
+            panel_tab: 0,
             smart_guides: Vec::new(),
             editing_text: None,
             status:
@@ -504,6 +519,8 @@ impl VellumApp {
 
 impl eframe::App for VellumApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        // 主题逐帧应用(幂等;P2.7 支持 深/浅 切换)
+        theme::apply(ui.ctx(), self.theme_dark);
         // FPS 统计
         let dt = ui.ctx().input(|i| i.stable_dt);
         if dt > 0.0 {
@@ -516,9 +533,13 @@ impl eframe::App for VellumApp {
         self.poll_watcher();
         self.handle_shortcuts(ui.ctx());
         self.top_menu(ui);
-        self.right_panel(ui);
+        // <1200px 自动折叠右侧面板(P2.6 验收项)
+        if ui.ctx().viewport_rect().width() >= vb_ui::theme::space::COLLAPSE_BELOW {
+            self.right_panel(ui);
+        }
         self.status_bar(ui, frame);
         self.canvas(ui, frame);
+        self.floating_toolbar(ui.ctx());
 
         if self.show_about {
             let mut open = self.show_about;
@@ -663,107 +684,200 @@ impl eframe::App for VellumApp {
 
 impl VellumApp {
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        self.space_down = ctx.input(|i| i.key_down(Key::Space));
-        if ctx.input(|i| i.key_pressed(Key::Space)) {
-            ctx.set_cursor_icon(CursorIcon::Grab);
+        // 输入上下文栈(02 篇 §一):只有栈顶上下文消费按键。
+        // 文本编辑 / 输入框聚焦 → TextEdit,工具键与 Delete 一律不生效(B1 修复)。
+        let top = self.input_context(ctx);
+        self.space_down = top != InputContext::TextEdit && ctx.input(|i| i.key_down(Key::Space));
+        if self.space_down && ctx.input(|i| i.key_pressed(Key::Space)) {
+            ctx.set_cursor_icon(vbcursor::PAN);
         }
 
-        let (mods, events): (egui::Modifiers, Vec<egui::Event>) =
-            ctx.input(|i| (i.modifiers, i.events.clone()));
-        let ctrl = mods.ctrl || mods.command;
-        let alt = mods.alt;
-        let shift = mods.shift;
+        // 本帧按下的键(含修饰键)。遍历**全部**事件(旧实现只看第一个,方向键连按会丢)。
+        let pressed: Vec<(Key, bool, bool, bool)> = ctx.input(|i| {
+            i.events
+                .iter()
+                .filter_map(|e| match e {
+                    egui::Event::Key {
+                        key,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } => Some((
+                        *key,
+                        modifiers.ctrl || modifiers.command,
+                        modifiers.shift,
+                        modifiers.alt,
+                    )),
+                    _ => None,
+                })
+                .collect()
+        });
 
-        for ev in &events {
-            if let egui::Event::Key {
-                key, pressed: true, ..
-            } = ev
-            {
-                match (*key, ctrl) {
-                    (Key::V, false) => self.tool = Tool::Select,
-                    (Key::M, false) => self.tool = Tool::Rect,
-                    (Key::L, false) => self.tool = Tool::Ellipse,
-                    (Key::H, false) => self.tool = Tool::Hand,
-                    (Key::Z, true) => {
-                        let label = if shift {
-                            self.undo.redo(&mut self.doc).ok().flatten()
-                        } else {
-                            self.undo.undo(&mut self.doc).ok().flatten()
-                        };
-                        self.status = match label {
-                            Some(l) => format!("{}:{l}", if shift { "重做" } else { "撤销" }),
-                            None => "没有可撤销/重做的操作".into(),
-                        };
-                    }
-                    (Key::Y, true) => {
-                        let _ = self.undo.redo(&mut self.doc);
-                    }
-                    (Key::S, true) => self.save_project(),
-                    (Key::E, true) if shift => self.show_export = true,
-                    (Key::E, true) => self.export_current_artboard_png(),
-                    (Key::O, true) => self.open_project(),
-                    (Key::N, true) => {
-                        self.doc = Document::new_default();
-                        self.undo = UndoStack::new();
-                        self.selection.clear();
-                        self.project_dir = None;
-                        self.fit_view();
-                        self.status = "新建文档(1440×900)".into();
-                    }
-                    (Key::G, true) if shift => self.ungroup_selection(),
-                    (Key::G, true) => self.group_selection(),
-                    (Key::D, true) => self.transform_again(),
-                    (Key::A, true) if !alt => {
-                        // 全选(当前画板)
-                        if let Some(&ab) = self.doc.artboards.first() {
-                            let kids = self.doc.nodes.get(ab).unwrap().children.clone();
-                            self.selection = kids
-                                .into_iter()
-                                .filter(|id| {
-                                    self.doc.nodes.get(*id).map(|n| !n.locked).unwrap_or(false)
-                                })
-                                .map(|id| self.doc.nodes.get(id).unwrap().sid.as_str().to_string())
-                                .collect();
-                        }
-                    }
-                    (Key::CloseBracket, true) => {
-                        let d = if shift { 10001 } else { 1 };
-                        let sids = self.selection.clone();
-                        for s in sids {
-                            self.reorder(&s, d);
-                        }
-                    }
-                    (Key::OpenBracket, true) => {
-                        let d = if shift { -10001 } else { -1 };
-                        let sids = self.selection.clone();
-                        for s in sids {
-                            self.reorder(&s, d);
-                        }
-                    }
-                    (Key::Escape, _) => {
-                        self.selection.clear();
-                        if !matches!(self.drag, Drag::None) {
-                            self.drag = Drag::None;
-                            self.status = "已取消".into();
-                        }
-                    }
-                    (Key::Delete, _) | (Key::Backspace, _) => self.delete_selection(),
-                    _ => {}
+        for (key, ctrl, shift, alt) in pressed {
+            let Some(sc) = shortcuts::lookup(key, ctrl, shift) else {
+                continue;
+            };
+            // 上下文守卫:栈顶不允许 → 不消费(交给输入框 / 面板自行处理)
+            if !shortcuts::fires_in(sc, top) {
+                continue;
+            }
+            self.run_command(sc.id, shift, alt);
+        }
+    }
+
+    /// 当前输入上下文(栈顶)。02 篇 §一 / 14 篇 §4.1。
+    fn input_context(&self, ctx: &egui::Context) -> InputContext {
+        if self.editing_text.is_some() || ctx.egui_wants_keyboard_input() {
+            return InputContext::TextEdit;
+        }
+        if !matches!(self.drag, Drag::None) {
+            return InputContext::Tool;
+        }
+        InputContext::Canvas
+    }
+
+    /// 命令派发单一入口(快捷键 / 菜单 / 未来的命令面板共用)。
+    ///
+    /// `id` 必须出现在 `shortcuts::IMPLEMENTED_IDS` 中(有测试把关)。
+    /// `_alt` 为修饰键上下文预留(当前无命令依赖 Alt 分支:Alt 语义由
+    /// 画布拖动层直接处理,见 02 篇 §二 四大灵魂手势)。
+    fn run_command(&mut self, id: &str, shift: bool, _alt: bool) {
+        debug_assert!(
+            shortcuts::is_implemented(id),
+            "命令 {id} 未在 shortcuts::IMPLEMENTED_IDS 中声明"
+        );
+        match id {
+            // ── 文件 ──
+            "file.new" => {
+                self.doc = Document::new_default();
+                self.undo = UndoStack::new();
+                self.selection.clear();
+                self.project_dir = None;
+                self.fit_view();
+                self.status = "新建文档(1440×900)".into();
+            }
+            "file.open" => self.open_project(),
+            "file.save" => self.save_project(),
+            "file.export_dialog" => self.show_export = true,
+            "file.export_repeat" => self.export_current_artboard_png(),
+            // ── 编辑 ──
+            "edit.undo" | "edit.redo" => {
+                let redo = id == "edit.redo";
+                let label = if redo {
+                    self.undo.redo(&mut self.doc).ok().flatten()
+                } else {
+                    self.undo.undo(&mut self.doc).ok().flatten()
+                };
+                self.status = match label {
+                    Some(l) => format!("{}:{l}", if redo { "重做" } else { "撤销" }),
+                    None => "没有可撤销/重做的操作".into(),
+                };
+            }
+            "edit.select_all" => {
+                if let Some(&ab) = self.doc.artboards.first() {
+                    let kids = self.doc.nodes.get(ab).unwrap().children.clone();
+                    self.selection = kids
+                        .into_iter()
+                        .filter(|id| self.doc.nodes.get(*id).map(|n| !n.locked).unwrap_or(false))
+                        .map(|id| self.doc.nodes.get(id).unwrap().sid.as_str().to_string())
+                        .collect();
+                    self.status = format!("已全选 {} 个对象", self.selection.len());
                 }
             }
+            // ── 对象 ──
+            "object.group" => self.group_selection(),
+            "object.ungroup" => self.ungroup_selection(),
+            "object.transform_again" => self.transform_again(),
+            "object.bring_forward" => self.reorder_selection(1),
+            "object.bring_to_front" => self.reorder_selection(10001),
+            "object.send_backward" => self.reorder_selection(-1),
+            "object.send_to_back" => self.reorder_selection(-10001),
+            "object.delete" => self.delete_selection(),
+            // ── 视图(B2:菜单显示的加速键在此真正落地) ──
+            "view.zoom_in" | "view.zoom_out" => {
+                let f = if id == "view.zoom_in" { 1.25 } else { 0.8 };
+                if let Some(r) = self.canvas_rect {
+                    self.camera
+                        .zoom_at(r.center().x as f64, r.center().y as f64, f);
+                }
+                self.status = format!("缩放 {}%", (self.camera.zoom * 100.0) as i64);
+            }
+            "view.fit" => {
+                self.fit_view();
+                self.status = format!("适合窗口 {}%", (self.camera.zoom * 100.0) as i64);
+            }
+            "view.actual_size" => {
+                self.camera.zoom = 1.0;
+                self.status = "实际大小 100%".into();
+            }
+            "view.outline" => {
+                self.outline_mode = !self.outline_mode;
+                self.status = if self.outline_mode {
+                    "轮廓模式:开(Mod+Y)".into()
+                } else {
+                    "轮廓模式:关(Mod+Y)".into()
+                };
+            }
+            "view.toggle_grid" => {
+                self.grid_on = !self.grid_on;
+                self.status = format!("网格:{}", if self.grid_on { "显示" } else { "隐藏" });
+            }
+            "view.toggle_theme" => {
+                self.theme_dark = !self.theme_dark;
+                self.status = if self.theme_dark {
+                    "主题:深色"
+                } else {
+                    "主题:浅色"
+                }
+                .into();
+            }
+            "view.toggle_smart_guides" => {
+                self.smart_guides_on = !self.smart_guides_on;
+                self.smart_guides.clear();
+                self.status = format!(
+                    "智能参考线:{}",
+                    if self.smart_guides_on { "开" } else { "关" }
+                );
+            }
+            // ── 工具箱 ──
+            "tool.select" => self.tool = Tool::Select,
+            "tool.rect" => self.tool = Tool::Rect,
+            "tool.ellipse" => self.tool = Tool::Ellipse,
+            "tool.hand" => self.tool = Tool::Hand,
+            // ── 画布 ──
+            "canvas.nudge_left" | "canvas.nudge_right" | "canvas.nudge_up"
+            | "canvas.nudge_down" => {
+                let key = match id {
+                    "canvas.nudge_left" => Key::ArrowLeft,
+                    "canvas.nudge_right" => Key::ArrowRight,
+                    "canvas.nudge_up" => Key::ArrowUp,
+                    _ => Key::ArrowDown,
+                };
+                self.arrow_nudge(key, false, shift);
+            }
+            "canvas.cancel" => {
+                self.selection.clear();
+                if !matches!(self.drag, Drag::None) {
+                    self.drag = Drag::None;
+                    self.status = "已取消".into();
+                }
+            }
+            // ── 应用级(无键位,仅菜单) ──
+            "app.about" => self.show_about = true,
+            "app.quit" => std::process::exit(0),
+            other => {
+                debug_assert!(false, "命令 {other} 未在 run_command 中实现");
+                log::warn!("未实现的命令:{other}");
+                self.status = format!("命令未实现:{other}");
+            }
         }
-        if let Some((k, _)) = ctx.input(|i| {
-            i.events.iter().find_map(|e| match e {
-                egui::Event::Key {
-                    key,
-                    pressed: true,
-                    modifiers,
-                    ..
-                } => Some((*key, *modifiers)),
-                _ => None,
-            })
-        }) {
-            self.arrow_nudge(k, ctrl, shift);
+    }
+
+    /// 按层序调整当前选区(`Mod+[`/`]` 与菜单共用)。
+    fn reorder_selection(&mut self, delta: i32) {
+        let sids = self.selection.clone();
+        for s in sids {
+            self.reorder(&s, delta);
         }
     }
 
@@ -908,98 +1022,131 @@ impl VellumApp {
     fn top_menu(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("menu").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
+                // 点击的菜单项先收集,菜单全部渲染完再派发(避免借用冲突)。
+                // 键位文本一律查 `shortcuts` 注册表,禁止在 label 里手写(B2 根治)。
+                let mut fired: Option<&'static str> = None;
+
                 ui.menu_button("文件", |ui| {
-                    if ui.button("新建 Ctrl+N").clicked() {
-                        self.doc = Document::new_default();
-                        self.undo = UndoStack::new();
-                        self.selection.clear();
-                        self.project_dir = None;
-                        self.fit_view();
-                    }
-                    if ui.button("打开项目… Ctrl+O").clicked() {
-                        self.open_project();
-                    }
-                    ui.separator();
-                    if ui.button("保存 Ctrl+S").clicked() {
-                        self.save_project();
-                    }
-                    if ui.button("导出当前画板 PNG @2x Ctrl+E").clicked() {
-                        self.export_current_artboard_png();
-                    }
-                    if ui.button("导出… Ctrl+Shift+E").clicked() {
-                        self.show_export = true;
-                    }
-                    ui.separator();
-                    if ui.button("退出").clicked() {
-                        std::process::exit(0);
+                    for item in shortcuts::MENU_FILE {
+                        if menu_item_button(ui, item, true).clicked() {
+                            fired = Some(item.id);
+                            ui.close();
+                        }
                     }
                 });
+
                 ui.menu_button("编辑", |ui| {
-                    let undo_label =
-                        format!("撤销 {} Ctrl+Z", self.undo.undo_label().unwrap_or(""));
-                    if ui
-                        .add_enabled(self.undo.can_undo(), egui::Button::new(undo_label))
-                        .clicked()
-                    {
-                        let _ = self.undo.undo(&mut self.doc);
-                    }
-                    let redo_label =
-                        format!("重做 {} Ctrl+Shift+Z", self.undo.redo_label().unwrap_or(""));
-                    if ui
-                        .add_enabled(self.undo.can_redo(), egui::Button::new(redo_label))
-                        .clicked()
-                    {
-                        let _ = self.undo.redo(&mut self.doc);
-                    }
-                    ui.separator();
-                    if ui.button("编组 Ctrl+G").clicked() {
-                        self.group_selection();
-                    }
-                    if ui.button("取消编组 Ctrl+Shift+G").clicked() {
-                        self.ungroup_selection();
+                    for item in shortcuts::MENU_EDIT {
+                        // 撤销/重做显示"会撤销什么",与 AI 一致
+                        let extra = match item.id {
+                            "edit.undo" => self.undo.undo_label().unwrap_or("").to_string(),
+                            "edit.redo" => self.undo.redo_label().unwrap_or("").to_string(),
+                            _ => String::new(),
+                        };
+                        let enabled = match item.id {
+                            "edit.undo" => self.undo.can_undo(),
+                            "edit.redo" => self.undo.can_redo(),
+                            _ => true,
+                        };
+                        if menu_item_button_with(ui, item, extra.as_str(), enabled).clicked() {
+                            fired = Some(item.id);
+                            ui.close();
+                        }
                     }
                 });
+
+                ui.menu_button("对象", |ui| {
+                    for item in shortcuts::MENU_OBJECT {
+                        if menu_item_button(ui, item, true).clicked() {
+                            fired = Some(item.id);
+                            ui.close();
+                        }
+                    }
+                });
+
                 ui.menu_button("视图", |ui| {
-                    if ui.button("放大 Ctrl++").clicked() {
-                        if let Some(r) = self.canvas_rect {
-                            self.camera
-                                .zoom_at(r.center().x as f64, r.center().y as f64, 1.25);
+                    for item in shortcuts::MENU_VIEW {
+                        match item.id {
+                            // 三个开关:复选呈现,但状态由命令派发统一改写
+                            "view.toggle_grid"
+                            | "view.toggle_smart_guides"
+                            | "view.outline"
+                            | "view.toggle_theme" => {
+                                let mut cur = match item.id {
+                                    "view.toggle_grid" => self.grid_on,
+                                    "view.toggle_smart_guides" => self.smart_guides_on,
+                                    "view.toggle_theme" => !self.theme_dark,
+                                    _ => self.outline_mode,
+                                };
+                                ui.horizontal(|ui| {
+                                    if ui.checkbox(&mut cur, item.label).changed() {
+                                        fired = Some(item.id);
+                                    }
+                                    if let Some(k) = shortcuts::key_text_for(item.id) {
+                                        ui.weak(k);
+                                    }
+                                });
+                            }
+                            _ => {
+                                if menu_item_button(ui, item, true).clicked() {
+                                    fired = Some(item.id);
+                                    ui.close();
+                                }
+                            }
                         }
                     }
-                    if ui.button("缩小 Ctrl+-").clicked() {
-                        if let Some(r) = self.canvas_rect {
-                            self.camera
-                                .zoom_at(r.center().x as f64, r.center().y as f64, 0.8);
-                        }
-                    }
-                    if ui.button("适合窗口 Ctrl+0").clicked() {
-                        self.fit_view();
-                    }
-                    if ui.button("实际大小 Ctrl+1").clicked() {
-                        self.camera.zoom = 1.0;
-                    }
-                    ui.separator();
-                    ui.checkbox(&mut self.grid_on, "显示网格");
                 });
+
                 ui.menu_button("帮助", |ui| {
-                    if ui.button("关于").clicked() {
-                        self.show_about = true;
+                    for item in shortcuts::MENU_HELP {
+                        if menu_item_button(ui, item, true).clicked() {
+                            fired = Some(item.id);
+                            ui.close();
+                        }
                     }
                 });
-                ui.separator();
-                // 工具条
-                for (t, icon) in [
-                    (Tool::Select, "➤ 选择"),
-                    (Tool::Rect, "▭ 矩形"),
-                    (Tool::Ellipse, "◯ 椭圆"),
-                    (Tool::Hand, "✋ 抓手"),
-                ] {
-                    if ui.selectable_label(self.tool == t, icon).clicked() {
-                        self.tool = t;
-                    }
+
+                if let Some(id) = fired {
+                    self.run_command(id, false, false);
                 }
             });
         });
+    }
+
+    /// 底部浮动工具条(P2.6):圆角 12、不透明度 0.96、底部居中锚定。
+    fn floating_toolbar(&mut self, ctx: &egui::Context) {
+        egui::Area::new(egui::Id::new("vb-floating-toolbar"))
+            .anchor(egui::Align2::CENTER_BOTTOM, [0.0, -vb_ui::theme::space::S3])
+            .order(egui::Order::Middle)
+            .show(ctx, |ui| {
+                let t = Tokens::get(self.theme_dark);
+                egui::Frame::canvas(ui.style())
+                    .fill(t.bg_raised.gamma_multiply(0.96))
+                    .stroke(Stroke::new(1.0, t.border))
+                    .corner_radius(vb_ui::theme::radius::xl())
+                    .inner_margin(vb_ui::theme::space::S3)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = vb_ui::theme::space::S2;
+                            for (tool, icon, label, key) in [
+                                (Tool::Select, Name::ToolSelect, "选择", "V"),
+                                (Tool::Rect, Name::ToolRect, "矩形", "M"),
+                                (Tool::Ellipse, Name::ToolEllipse, "椭圆", "L"),
+                                (Tool::Hand, Name::ToolHand, "抓手", "H"),
+                            ] {
+                                if ToolButton::new(icon, label)
+                                    .shortcut(key)
+                                    .with_label()
+                                    .active(self.tool == tool)
+                                    .ui(ui)
+                                    .clicked()
+                                {
+                                    self.tool = tool;
+                                }
+                            }
+                        });
+                    });
+            });
     }
 
     fn right_panel(&mut self, ui: &mut egui::Ui) {
@@ -1007,548 +1154,620 @@ impl VellumApp {
             .default_size(280.0)
             .resizable(true)
             .show(ui, |ui| {
-                // --- 画板管理(v0.5) ---
-                ui.horizontal(|ui| {
-                    ui.heading("画板");
-                    if ui.small_button("+ 新建").clicked() {
-                        let name = format!("画板 {}", self.doc.artboards.len() + 1);
-                        let sid = self.doc.alloc_sid();
-                        let mut n =
-                            vb_doc::model::Node::new(NodeKind::Artboard, name.clone(), sid.clone());
-                        n.geom = Geom {
-                            x: 0.0,
-                            y: 0.0,
-                            w: 1440.0,
-                            h: 900.0,
-                        };
-                        // 纵向堆到最下方
-                        n.geom.y = self
-                            .doc
-                            .artboards
-                            .iter()
-                            .filter_map(|&a| self.doc.nodes.get(a).map(|n| n.geom.y + n.geom.h))
-                            .fold(0.0f64, f64::max)
-                            + 80.0;
-                        let root_sid = self
-                            .doc
-                            .nodes
-                            .get(self.doc.root)
-                            .unwrap()
-                            .sid
-                            .as_str()
-                            .to_string();
-                        let tree = vb_doc::model::NodeTree {
-                            node: n,
-                            children: vec![],
-                        };
-                        self.exec(Command::Insert {
-                            parent_sid: root_sid,
-                            index: usize::MAX,
-                            tree,
-                        });
-                        self.status = format!("已新建 {}(Shift+O 画板工具 v0.5)", name);
-                    }
-                });
-                egui::ScrollArea::horizontal().show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        let mut delete: Option<String> = None;
-                        let mut select: Option<String> = None;
-                        for (i, &ab) in self.doc.artboards.clone().iter().enumerate() {
-                            let Some(n) = self.doc.nodes.get(ab) else {
-                                continue;
-                            };
-                            let (sid, name) = (n.sid.as_str().to_string(), n.name.clone());
-                            let selected =
-                                self.selection.last().map(|s| s == &sid).unwrap_or(false);
-                            if i > 0 {
-                                ui.separator();
-                            }
-                            if ui
-                                .selectable_label(selected, &name)
-                                .on_hover_text("点击选中画板(可在图层树重命名)")
-                                .clicked()
-                            {
-                                select = Some(sid.clone());
-                            }
-                            if self.doc.artboards.len() > 1 && ui.small_button("🗑").clicked() {
-                                delete = Some(sid.clone());
-                            }
-                        }
-                        if let Some(sid) = delete {
-                            self.exec(Command::Delete {
-                                target_sid: sid,
-                                captured: None,
-                            });
-                            self.selection.clear();
-                            self.status = "画板已删除".into();
-                        }
-                        if let Some(sid) = select {
-                            self.selection = vec![sid];
-                        }
-                    });
-                });
-                ui.separator();
-
-                ui.heading("属性");
-                ui.separator();
-
-                // --- 选中对象的属性(先取快照,避免借用冲突) ---
-                let sid = self.selection.last().cloned();
-                if let Some(sid) = sid {
-                    if let Some(nid) = self.doc.find_by_sid(&sid) {
-                        let (mut g, mut hidden, mut locked) = {
-                            let n = self.doc.nodes.get(nid).unwrap();
-                            (n.geom, n.hidden, n.locked)
-                        };
-                        let style_snapshot = self.doc.nodes.get(nid).unwrap().style.clone();
-                        let cur_fill = vb_css_resolve_fill(&style_snapshot);
-                        let mut col = cur_fill
-                            .map(|c| Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a))
-                            .unwrap_or(Color32::WHITE);
-                        let mut radius = style_snapshot
-                            .iter()
-                            .find(|d| d.prop == "border-radius")
-                            .and_then(|d| d.value.trim_end_matches("px").parse::<f64>().ok())
-                            .unwrap_or(0.0);
-                        let mut op = style_snapshot
-                            .iter()
-                            .find(|d| d.prop == "opacity")
-                            .and_then(|d| d.value.parse::<f64>().ok())
-                            .unwrap_or(1.0);
-
-                        egui::Grid::new("props_grid")
-                            .num_columns(4)
-                            .spacing([6.0, 4.0])
-                            .show(ui, |ui| {
-                                ui.label("X");
-                                if ui.add(egui::DragValue::new(&mut g.x).speed(1.0)).changed() {
-                                    self.apply_geom(&sid, g);
-                                }
-                                ui.label("W");
-                                if ui.add(egui::DragValue::new(&mut g.w).speed(1.0)).changed() {
-                                    self.apply_geom(&sid, g);
-                                }
-                                ui.label("Y");
-                                if ui.add(egui::DragValue::new(&mut g.y).speed(1.0)).changed() {
-                                    self.apply_geom(&sid, g);
-                                }
-                                ui.label("H");
-                                if ui.add(egui::DragValue::new(&mut g.h).speed(1.0)).changed() {
-                                    self.apply_geom(&sid, g);
-                                }
-                                ui.end_row();
-                            });
-
-                        ui.horizontal(|ui| {
-                            ui.label("填充");
-                            if ui.color_edit_button_srgba(&mut col).changed() {
-                                let [r, gg, b, a] = col.to_array();
-                                self.exec(Command::SetStyle {
-                                    sid: sid.clone(),
-                                    new: set_style_prop(
-                                        style_snapshot.clone(),
-                                        "background-color",
-                                        &vb_common::Rgba::new(r, gg, b, a).to_shortest_hex(),
-                                    ),
-                                    old: None,
-                                });
-                            }
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("圆角");
-                            if ui
-                                .add(
-                                    egui::DragValue::new(&mut radius)
-                                        .speed(1.0)
-                                        .range(0.0..=200.0),
-                                )
-                                .changed()
-                            {
-                                self.exec(Command::SetStyle {
-                                    sid: sid.clone(),
-                                    new: set_style_prop(
-                                        style_snapshot.clone(),
-                                        "border-radius",
-                                        &format!("{}px", radius as i64),
-                                    ),
-                                    old: None,
-                                });
-                            }
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("不透明度");
-                            if ui
-                                .add(egui::DragValue::new(&mut op).speed(0.01).range(0.0..=1.0))
-                                .changed()
-                            {
-                                let v = format!("{}", (op * 100.0).round() / 100.0);
-                                self.exec(Command::SetStyle {
-                                    sid: sid.clone(),
-                                    new: set_style_prop(style_snapshot.clone(), "opacity", &v),
-                                    old: None,
-                                });
-                            }
-                        });
-                        if ui.checkbox(&mut hidden, "隐藏").changed() {
-                            self.exec(Command::SetFlags {
-                                sid: sid.clone(),
-                                hidden: Some(hidden),
-                                locked: None,
-                                old: None,
-                            });
-                        }
-                        if ui.checkbox(&mut locked, "锁定").changed() {
-                            self.exec(Command::SetFlags {
-                                sid: sid.clone(),
-                                hidden: None,
-                                locked: Some(locked),
-                                old: None,
-                            });
-                        }
-
-                        // --- v0.7 网页能力 ---
-                        ui.separator();
-                        ui.heading("网页");
-                        let (cur_tag, attrs, style2) = {
-                            let n = self.doc.nodes.get(nid).unwrap();
-                            (n.tag.clone(), n.attrs.clone(), n.style.clone())
-                        };
-                        // 语义标签
-                        const TAGS: [&str; 16] = [
-                            "div", "section", "header", "nav", "main", "footer", "article",
-                            "aside", "h1", "h2", "h3", "p", "span", "a", "button", "li",
-                        ];
-                        let mut tag_sel = cur_tag.clone();
-                        egui::ComboBox::from_id_salt("tag_sel")
-                            .selected_text(format!("标签: {tag_sel}"))
-                            .show_ui(ui, |ui| {
-                                for t in TAGS {
-                                    ui.selectable_value(&mut tag_sel, t.to_string(), t);
-                                }
-                            });
-                        if tag_sel != cur_tag && tag_sel != "#text" {
-                            self.exec(Command::SetTag {
-                                sid: sid.clone(),
-                                new: tag_sel,
-                                old: None,
-                            });
-                        }
-                        // 链接与无障碍
-                        let mut href = attrs.get("href").cloned().unwrap_or_default();
-                        let mut aria = attrs.get("aria-label").cloned().unwrap_or_default();
-                        ui.horizontal(|ui| {
-                            ui.label("链接");
-                            if ui
-                                .add_sized([160.0, 18.0], egui::TextEdit::singleline(&mut href))
-                                .lost_focus()
-                            {
-                                let mut merged = attrs.clone();
-                                if href.is_empty() {
-                                    merged.remove("href");
-                                } else {
-                                    merged.insert("href".into(), href.clone());
-                                }
-                                self.exec(Command::SetAttrs {
-                                    sid: sid.clone(),
-                                    new: merged.into_iter().collect(),
-                                    old: None,
-                                });
-                            }
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("aria ");
-                            if ui
-                                .add_sized([160.0, 18.0], egui::TextEdit::singleline(&mut aria))
-                                .lost_focus()
-                            {
-                                let mut merged = attrs.clone();
-                                if aria.is_empty() {
-                                    merged.remove("aria-label");
-                                } else {
-                                    merged.insert("aria-label".into(), aria.clone());
-                                }
-                                self.exec(Command::SetAttrs {
-                                    sid: sid.clone(),
-                                    new: merged.into_iter().collect(),
-                                    old: None,
-                                });
-                            }
-                        });
-                        // 自动布局(flex)
-                        ui.collapsing("自动布局", |ui| {
-                            let get = |p: &str| {
-                                style2
-                                    .iter()
-                                    .find(|d| d.prop == p)
-                                    .map(|d| d.value.clone())
-                                    .unwrap_or_default()
-                            };
-                            let mut display = {
-                                let d = get("display");
-                                if d.is_empty() {
-                                    "block".to_string()
-                                } else {
-                                    d
-                                }
-                            };
-                            let mut gap = get("gap")
-                                .trim_end_matches("px")
-                                .parse::<f64>()
-                                .unwrap_or(0.0);
-                            let mut justify = {
-                                let j = get("justify-content");
-                                if j.is_empty() {
-                                    "flex-start".to_string()
-                                } else {
-                                    j
-                                }
-                            };
-                            let mut align = {
-                                let a = get("align-items");
-                                if a.is_empty() {
-                                    "stretch".to_string()
-                                } else {
-                                    a
-                                }
-                            };
-                            egui::ComboBox::from_id_salt("disp")
-                                .selected_text(format!("display: {display}"))
-                                .show_ui(ui, |ui| {
-                                    for v in ["block", "flex", "inline-flex", "none"] {
-                                        ui.selectable_value(&mut display, v.to_string(), v);
-                                    }
-                                });
-                            ui.horizontal(|ui| {
-                                ui.label("间距");
-                                if ui
-                                    .add(
-                                        egui::DragValue::new(&mut gap)
-                                            .speed(1.0)
-                                            .range(0.0..=200.0),
-                                    )
-                                    .changed()
-                                {
-                                    self.exec(Command::SetStyle {
-                                        sid: sid.clone(),
-                                        new: set_style_prop(
-                                            style2.clone(),
-                                            "gap",
-                                            &format!("{}px", gap as i64),
-                                        ),
-                                        old: None,
-                                    });
-                                }
-                            });
-                            egui::ComboBox::from_id_salt("jc")
-                                .selected_text(format!("主轴: {justify}"))
-                                .show_ui(ui, |ui| {
-                                    for v in [
-                                        "flex-start",
-                                        "center",
-                                        "flex-end",
-                                        "space-between",
-                                        "space-around",
-                                    ] {
-                                        ui.selectable_value(&mut justify, v.to_string(), v);
-                                    }
-                                });
-                            egui::ComboBox::from_id_salt("ai")
-                                .selected_text(format!("交叉轴: {align}"))
-                                .show_ui(ui, |ui| {
-                                    for v in ["stretch", "center", "flex-start", "flex-end"] {
-                                        ui.selectable_value(&mut align, v.to_string(), v);
-                                    }
-                                });
-                            // display/gap 改动即写(display=flex 时自动补 justify/align)
-                            if display != get("display") {
-                                let mut st = set_style_prop(style2.clone(), "display", &display);
-                                if display == "flex" {
-                                    st = set_style_prop(st, "justify-content", &justify);
-                                    st = set_style_prop(st, "align-items", &align);
-                                }
-                                self.exec(Command::SetStyle {
-                                    sid: sid.clone(),
-                                    new: st,
-                                    old: None,
-                                });
-                            }
-                        });
-
-                        ui.separator();
-                    }
-                } else {
-                    ui.colored_label(egui::Color32::GRAY, "未选中对象");
-                    ui.label("V 点选 / 拖框选 · M 画矩形 · L 画椭圆");
-                    ui.separator();
+                // Tab 条(P2.6):属性 / 图层 / 令牌
+                {
+                    let at = &mut self.panel_tab;
+                    PanelTabs::new(&["属性", "图层", "令牌"], at).ui(ui);
                 }
+                match self.panel_tab {
+                    0 => {
+                        // 属性(含选中对象的网页能力)
+                        ui.heading("属性");
+                        ui.separator();
 
-                // --- 图层列表(全部画板;含层序调整) ---
-                ui.heading("图层");
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    for &ab in self.doc.artboards.clone().iter() {
-                        let Some(abn) = self.doc.nodes.get(ab) else {
-                            continue;
-                        };
-                        let ab_sid = abn.sid.as_str().to_string();
-                        let ab_name = abn.name.clone();
-                        let ab_sel = self
-                            .selection
-                            .last()
-                            .map(|s| s.as_str() == ab_sid)
-                            .unwrap_or(false);
-                        let kids = abn.children.clone();
+                        // --- 选中对象的属性(先取快照,避免借用冲突) ---
+                        let sid = self.selection.last().cloned();
+                        if let Some(sid) = sid {
+                            if let Some(nid) = self.doc.find_by_sid(&sid) {
+                                let (mut g, mut hidden, mut locked) = {
+                                    let n = self.doc.nodes.get(nid).unwrap();
+                                    (n.geom, n.hidden, n.locked)
+                                };
+                                let style_snapshot = self.doc.nodes.get(nid).unwrap().style.clone();
+                                let cur_fill = vb_css_resolve_fill(&style_snapshot);
+                                let mut col = cur_fill
+                                    .map(|c| Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a))
+                                    .unwrap_or(Color32::WHITE);
+                                let mut radius = style_snapshot
+                                    .iter()
+                                    .find(|d| d.prop == "border-radius")
+                                    .and_then(|d| {
+                                        d.value.trim_end_matches("px").parse::<f64>().ok()
+                                    })
+                                    .unwrap_or(0.0);
+                                let mut op = style_snapshot
+                                    .iter()
+                                    .find(|d| d.prop == "opacity")
+                                    .and_then(|d| d.value.parse::<f64>().ok())
+                                    .unwrap_or(1.0);
 
-                        // 画板行(可重命名)
-                        ui.horizontal(|ui| {
-                            let selected = ab_sel;
-                            let mut name = ab_name.clone();
-                            if ui
-                                .selectable_label(selected, format!("📁 {name}"))
-                                .clicked()
-                            {
-                                self.selection = vec![ab_sid.clone()];
-                            }
-                            let resp = ui.add_sized(
-                                [100.0, 18.0],
-                                egui::TextEdit::singleline(&mut name).interactive(true),
-                            );
-                            if resp.lost_focus() && name != ab_name {
-                                self.exec(Command::Rename {
-                                    sid: ab_sid.clone(),
-                                    new: name,
-                                    old: None,
-                                });
-                            }
-                        });
-                        // 子行(自顶向下)
-                        for &c in kids.iter().rev() {
-                            let Some(n) = self.doc.nodes.get(c) else {
-                                continue;
-                            };
-                            let row_sid = n.sid.as_str().to_string();
-                            let row_kind = kind_icon(&n.kind);
-                            let orig_name = n.name.clone();
-                            let selected = self
-                                .selection
-                                .last()
-                                .map(|s| s.as_str() == row_sid)
-                                .unwrap_or(false);
-                            let mut name = orig_name.clone();
-                            let mut hidden = n.hidden;
-                            let mut locked = n.locked;
-                            ui.horizontal(|ui| {
-                                ui.label("    ");
-                                let eye = if hidden { "≠" } else { "👁" };
-                                let lock = if locked { "🔒" } else { "" };
-                                if ui
-                                    .selectable_label(selected, format!("{eye} {lock} {row_kind}"))
-                                    .clicked()
-                                {
-                                    self.selection = vec![row_sid.clone()];
-                                }
-                                let resp = ui.add_sized(
-                                    [110.0, 18.0],
-                                    egui::TextEdit::singleline(&mut name).interactive(true),
-                                );
-                                if resp.lost_focus() && name != orig_name {
-                                    self.exec(Command::Rename {
-                                        sid: row_sid.clone(),
-                                        new: name,
-                                        old: None,
+                                egui::Grid::new("props_grid")
+                                    .num_columns(4)
+                                    .spacing([6.0, 4.0])
+                                    .show(ui, |ui| {
+                                        ui.label("X");
+                                        if ui
+                                            .add(egui::DragValue::new(&mut g.x).speed(1.0))
+                                            .changed()
+                                        {
+                                            self.apply_geom(&sid, g);
+                                        }
+                                        ui.label("W");
+                                        if ui
+                                            .add(egui::DragValue::new(&mut g.w).speed(1.0))
+                                            .changed()
+                                        {
+                                            self.apply_geom(&sid, g);
+                                        }
+                                        ui.label("Y");
+                                        if ui
+                                            .add(egui::DragValue::new(&mut g.y).speed(1.0))
+                                            .changed()
+                                        {
+                                            self.apply_geom(&sid, g);
+                                        }
+                                        ui.label("H");
+                                        if ui
+                                            .add(egui::DragValue::new(&mut g.h).speed(1.0))
+                                            .changed()
+                                        {
+                                            self.apply_geom(&sid, g);
+                                        }
+                                        ui.end_row();
                                     });
-                                }
-                                if ui.small_button("👁").clicked() {
-                                    hidden = !hidden;
+
+                                ui.horizontal(|ui| {
+                                    ui.label("填充");
+                                    if ui.color_edit_button_srgba(&mut col).changed() {
+                                        let [r, gg, b, a] = col.to_array();
+                                        self.exec(Command::SetStyle {
+                                            sid: sid.clone(),
+                                            new: set_style_prop(
+                                                style_snapshot.clone(),
+                                                "background-color",
+                                                &vb_common::Rgba::new(r, gg, b, a)
+                                                    .to_shortest_hex(),
+                                            ),
+                                            old: None,
+                                        });
+                                    }
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("圆角");
+                                    if ui
+                                        .add(
+                                            egui::DragValue::new(&mut radius)
+                                                .speed(1.0)
+                                                .range(0.0..=200.0),
+                                        )
+                                        .changed()
+                                    {
+                                        self.exec(Command::SetStyle {
+                                            sid: sid.clone(),
+                                            new: set_style_prop(
+                                                style_snapshot.clone(),
+                                                "border-radius",
+                                                &format!("{}px", radius as i64),
+                                            ),
+                                            old: None,
+                                        });
+                                    }
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("不透明度");
+                                    if ui
+                                        .add(
+                                            egui::DragValue::new(&mut op)
+                                                .speed(0.01)
+                                                .range(0.0..=1.0),
+                                        )
+                                        .changed()
+                                    {
+                                        let v = format!("{}", (op * 100.0).round() / 100.0);
+                                        self.exec(Command::SetStyle {
+                                            sid: sid.clone(),
+                                            new: set_style_prop(
+                                                style_snapshot.clone(),
+                                                "opacity",
+                                                &v,
+                                            ),
+                                            old: None,
+                                        });
+                                    }
+                                });
+                                if ui.checkbox(&mut hidden, "隐藏").changed() {
                                     self.exec(Command::SetFlags {
-                                        sid: row_sid.clone(),
+                                        sid: sid.clone(),
                                         hidden: Some(hidden),
                                         locked: None,
                                         old: None,
                                     });
                                 }
-                                if ui.small_button("🔒").clicked() {
-                                    locked = !locked;
+                                if ui.checkbox(&mut locked, "锁定").changed() {
                                     self.exec(Command::SetFlags {
-                                        sid: row_sid.clone(),
+                                        sid: sid.clone(),
                                         hidden: None,
                                         locked: Some(locked),
                                         old: None,
                                     });
                                 }
-                                // 层序:↑ = 前移一层(列表自顶向下 = z 序从高到低)
-                                if ui.small_button("↑").clicked() {
-                                    self.reorder(&row_sid, 1);
-                                }
-                                if ui.small_button("↓").clicked() {
-                                    self.reorder(&row_sid, -1);
-                                }
-                            });
-                        }
-                        ui.separator();
-                    }
-                });
 
-                // --- 设计令牌(v0.7:CSS 变量,改一处全站生效) ---
-                ui.heading("设计令牌");
-                ui.horizontal(|ui| {
-                    let mut add: Option<(String, String)> = None;
-                    if ui.small_button("+ 令牌").clicked() {
-                        add = Some((
-                            format!("brand-{}", self.doc.tokens.len() + 1),
-                            "#888888".into(),
-                        ));
-                    }
-                    if let Some((n, v)) = add {
-                        self.exec(Command::SetToken {
-                            name: n,
-                            new: v,
-                            old: None,
-                        });
-                    }
-                });
-                let tokens = self.doc.tokens.clone();
-                for (i, (name, value)) in tokens.iter().enumerate() {
-                    ui.horizontal(|ui| {
-                        let mut v = value.clone();
-                        if vb_common::color::parse_color(value).is_some() {
-                            if let Some(c) = vb_common::color::parse_color(value) {
-                                let mut col = Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a);
-                                if ui.color_edit_button_srgba(&mut col).changed() {
-                                    let [r, g, b, a] = col.to_array();
-                                    self.exec(Command::SetToken {
-                                        name: name.clone(),
-                                        new: vb_common::Rgba::new(r, g, b, a).to_shortest_hex(),
+                                // --- v0.7 网页能力 ---
+                                ui.separator();
+                                ui.heading("网页");
+                                let (cur_tag, attrs, style2) = {
+                                    let n = self.doc.nodes.get(nid).unwrap();
+                                    (n.tag.clone(), n.attrs.clone(), n.style.clone())
+                                };
+                                // 语义标签
+                                const TAGS: [&str; 16] = [
+                                    "div", "section", "header", "nav", "main", "footer", "article",
+                                    "aside", "h1", "h2", "h3", "p", "span", "a", "button", "li",
+                                ];
+                                let mut tag_sel = cur_tag.clone();
+                                egui::ComboBox::from_id_salt("tag_sel")
+                                    .selected_text(format!("标签: {tag_sel}"))
+                                    .show_ui(ui, |ui| {
+                                        for t in TAGS {
+                                            ui.selectable_value(&mut tag_sel, t.to_string(), t);
+                                        }
+                                    });
+                                if tag_sel != cur_tag && tag_sel != "#text" {
+                                    self.exec(Command::SetTag {
+                                        sid: sid.clone(),
+                                        new: tag_sel,
                                         old: None,
                                     });
                                 }
-                            }
-                        }
-                        let resp =
-                            ui.add_sized([70.0, 18.0], egui::Label::new(format!("--{name}")));
-                        let _ = resp;
-                        if ui
-                            .add_sized([110.0, 18.0], egui::TextEdit::singleline(&mut v))
-                            .lost_focus()
-                            && v != *value
-                        {
-                            self.exec(Command::SetToken {
-                                name: name.clone(),
-                                new: v,
-                                old: None,
-                            });
-                        }
-                        if ui.small_button("🗑").clicked() {
-                            // 删除令牌 = SetToken 到空再移除(v0.1:直接移除,可撤销)
-                            self.exec(Command::SetToken {
-                                name: name.clone(),
-                                new: String::new(),
-                                old: None,
-                            });
-                        }
-                        let _ = i;
-                    });
-                }
+                                // 链接与无障碍
+                                let mut href = attrs.get("href").cloned().unwrap_or_default();
+                                let mut aria = attrs.get("aria-label").cloned().unwrap_or_default();
+                                ui.horizontal(|ui| {
+                                    ui.label("链接");
+                                    if ui
+                                        .add_sized(
+                                            [160.0, 18.0],
+                                            egui::TextEdit::singleline(&mut href),
+                                        )
+                                        .lost_focus()
+                                    {
+                                        let mut merged = attrs.clone();
+                                        if href.is_empty() {
+                                            merged.remove("href");
+                                        } else {
+                                            merged.insert("href".into(), href.clone());
+                                        }
+                                        self.exec(Command::SetAttrs {
+                                            sid: sid.clone(),
+                                            new: merged.into_iter().collect(),
+                                            old: None,
+                                        });
+                                    }
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("aria ");
+                                    if ui
+                                        .add_sized(
+                                            [160.0, 18.0],
+                                            egui::TextEdit::singleline(&mut aria),
+                                        )
+                                        .lost_focus()
+                                    {
+                                        let mut merged = attrs.clone();
+                                        if aria.is_empty() {
+                                            merged.remove("aria-label");
+                                        } else {
+                                            merged.insert("aria-label".into(), aria.clone());
+                                        }
+                                        self.exec(Command::SetAttrs {
+                                            sid: sid.clone(),
+                                            new: merged.into_iter().collect(),
+                                            old: None,
+                                        });
+                                    }
+                                });
+                                // 自动布局(flex)
+                                ui.collapsing("自动布局", |ui| {
+                                    let get = |p: &str| {
+                                        style2
+                                            .iter()
+                                            .find(|d| d.prop == p)
+                                            .map(|d| d.value.clone())
+                                            .unwrap_or_default()
+                                    };
+                                    let mut display = {
+                                        let d = get("display");
+                                        if d.is_empty() {
+                                            "block".to_string()
+                                        } else {
+                                            d
+                                        }
+                                    };
+                                    let mut gap = get("gap")
+                                        .trim_end_matches("px")
+                                        .parse::<f64>()
+                                        .unwrap_or(0.0);
+                                    let mut justify = {
+                                        let j = get("justify-content");
+                                        if j.is_empty() {
+                                            "flex-start".to_string()
+                                        } else {
+                                            j
+                                        }
+                                    };
+                                    let mut align = {
+                                        let a = get("align-items");
+                                        if a.is_empty() {
+                                            "stretch".to_string()
+                                        } else {
+                                            a
+                                        }
+                                    };
+                                    egui::ComboBox::from_id_salt("disp")
+                                        .selected_text(format!("display: {display}"))
+                                        .show_ui(ui, |ui| {
+                                            for v in ["block", "flex", "inline-flex", "none"] {
+                                                ui.selectable_value(&mut display, v.to_string(), v);
+                                            }
+                                        });
+                                    ui.horizontal(|ui| {
+                                        ui.label("间距");
+                                        if ui
+                                            .add(
+                                                egui::DragValue::new(&mut gap)
+                                                    .speed(1.0)
+                                                    .range(0.0..=200.0),
+                                            )
+                                            .changed()
+                                        {
+                                            self.exec(Command::SetStyle {
+                                                sid: sid.clone(),
+                                                new: set_style_prop(
+                                                    style2.clone(),
+                                                    "gap",
+                                                    &format!("{}px", gap as i64),
+                                                ),
+                                                old: None,
+                                            });
+                                        }
+                                    });
+                                    egui::ComboBox::from_id_salt("jc")
+                                        .selected_text(format!("主轴: {justify}"))
+                                        .show_ui(ui, |ui| {
+                                            for v in [
+                                                "flex-start",
+                                                "center",
+                                                "flex-end",
+                                                "space-between",
+                                                "space-around",
+                                            ] {
+                                                ui.selectable_value(&mut justify, v.to_string(), v);
+                                            }
+                                        });
+                                    egui::ComboBox::from_id_salt("ai")
+                                        .selected_text(format!("交叉轴: {align}"))
+                                        .show_ui(ui, |ui| {
+                                            for v in ["stretch", "center", "flex-start", "flex-end"]
+                                            {
+                                                ui.selectable_value(&mut align, v.to_string(), v);
+                                            }
+                                        });
+                                    // display/gap 改动即写(display=flex 时自动补 justify/align)
+                                    if display != get("display") {
+                                        let mut st =
+                                            set_style_prop(style2.clone(), "display", &display);
+                                        if display == "flex" {
+                                            st = set_style_prop(st, "justify-content", &justify);
+                                            st = set_style_prop(st, "align-items", &align);
+                                        }
+                                        self.exec(Command::SetStyle {
+                                            sid: sid.clone(),
+                                            new: st,
+                                            old: None,
+                                        });
+                                    }
+                                });
 
+                                ui.separator();
+                            }
+                        } else {
+                            ui.colored_label(egui::Color32::GRAY, "未选中对象");
+                            ui.label("V 点选 / 拖框选 · M 画矩形 · L 画椭圆");
+                            ui.separator();
+                        }
+                    }
+                    1 => {
+                        // --- 画板管理(v0.5) ---
+                        ui.horizontal(|ui| {
+                            ui.heading("画板");
+                            if ui.small_button("+ 新建").clicked() {
+                                let name = format!("画板 {}", self.doc.artboards.len() + 1);
+                                let sid = self.doc.alloc_sid();
+                                let mut n = vb_doc::model::Node::new(
+                                    NodeKind::Artboard,
+                                    name.clone(),
+                                    sid.clone(),
+                                );
+                                n.geom = Geom {
+                                    x: 0.0,
+                                    y: 0.0,
+                                    w: 1440.0,
+                                    h: 900.0,
+                                };
+                                // 纵向堆到最下方
+                                n.geom.y = self
+                                    .doc
+                                    .artboards
+                                    .iter()
+                                    .filter_map(|&a| {
+                                        self.doc.nodes.get(a).map(|n| n.geom.y + n.geom.h)
+                                    })
+                                    .fold(0.0f64, f64::max)
+                                    + 80.0;
+                                let root_sid = self
+                                    .doc
+                                    .nodes
+                                    .get(self.doc.root)
+                                    .unwrap()
+                                    .sid
+                                    .as_str()
+                                    .to_string();
+                                let tree = vb_doc::model::NodeTree {
+                                    node: n,
+                                    children: vec![],
+                                };
+                                self.exec(Command::Insert {
+                                    parent_sid: root_sid,
+                                    index: usize::MAX,
+                                    tree,
+                                });
+                                self.status = format!("已新建 {}(Shift+O 画板工具 v0.5)", name);
+                            }
+                        });
+                        egui::ScrollArea::horizontal().show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                let mut delete: Option<String> = None;
+                                let mut select: Option<String> = None;
+                                for (i, &ab) in self.doc.artboards.clone().iter().enumerate() {
+                                    let Some(n) = self.doc.nodes.get(ab) else {
+                                        continue;
+                                    };
+                                    let (sid, name) = (n.sid.as_str().to_string(), n.name.clone());
+                                    let selected =
+                                        self.selection.last().map(|s| s == &sid).unwrap_or(false);
+                                    if i > 0 {
+                                        ui.separator();
+                                    }
+                                    if ui
+                                        .selectable_label(selected, &name)
+                                        .on_hover_text("点击选中画板(可在图层树重命名)")
+                                        .clicked()
+                                    {
+                                        select = Some(sid.clone());
+                                    }
+                                    if self.doc.artboards.len() > 1
+                                        && ui.small_button("🗑").clicked()
+                                    {
+                                        delete = Some(sid.clone());
+                                    }
+                                }
+                                if let Some(sid) = delete {
+                                    self.exec(Command::Delete {
+                                        target_sid: sid,
+                                        captured: None,
+                                    });
+                                    self.selection.clear();
+                                    self.status = "画板已删除".into();
+                                }
+                                if let Some(sid) = select {
+                                    self.selection = vec![sid];
+                                }
+                            });
+                        });
+                        ui.separator();
+
+                        // --- 图层列表(全部画板;含层序调整) ---
+                        ui.heading("图层");
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            for &ab in self.doc.artboards.clone().iter() {
+                                let Some(abn) = self.doc.nodes.get(ab) else {
+                                    continue;
+                                };
+                                let ab_sid = abn.sid.as_str().to_string();
+                                let ab_name = abn.name.clone();
+                                let ab_sel = self
+                                    .selection
+                                    .last()
+                                    .map(|s| s.as_str() == ab_sid)
+                                    .unwrap_or(false);
+                                let kids = abn.children.clone();
+
+                                // 画板行(可重命名)
+                                ui.horizontal(|ui| {
+                                    let selected = ab_sel;
+                                    let mut name = ab_name.clone();
+                                    if ui
+                                        .selectable_label(selected, format!("📁 {name}"))
+                                        .clicked()
+                                    {
+                                        self.selection = vec![ab_sid.clone()];
+                                    }
+                                    let resp = ui.add_sized(
+                                        [100.0, 18.0],
+                                        egui::TextEdit::singleline(&mut name).interactive(true),
+                                    );
+                                    if resp.lost_focus() && name != ab_name {
+                                        self.exec(Command::Rename {
+                                            sid: ab_sid.clone(),
+                                            new: name,
+                                            old: None,
+                                        });
+                                    }
+                                });
+                                // 子行(自顶向下)
+                                for &c in kids.iter().rev() {
+                                    let Some(n) = self.doc.nodes.get(c) else {
+                                        continue;
+                                    };
+                                    let row_sid = n.sid.as_str().to_string();
+                                    let row_kind = kind_icon(&n.kind);
+                                    let orig_name = n.name.clone();
+                                    let selected = self
+                                        .selection
+                                        .last()
+                                        .map(|s| s.as_str() == row_sid)
+                                        .unwrap_or(false);
+                                    let mut name = orig_name.clone();
+                                    let mut hidden = n.hidden;
+                                    let mut locked = n.locked;
+                                    ui.horizontal(|ui| {
+                                        ui.label("    ");
+                                        ui.label(icons::rich(row_kind, 12.0));
+                                        if hidden {
+                                            ui.label(icons::rich(Name::Hidden, 12.0));
+                                        }
+                                        if locked {
+                                            ui.label(icons::rich(Name::Locked, 12.0));
+                                        }
+                                        if ui.selectable_label(selected, &name).clicked() {
+                                            self.selection = vec![row_sid.clone()];
+                                        }
+                                        let resp = ui.add_sized(
+                                            [110.0, 18.0],
+                                            egui::TextEdit::singleline(&mut name).interactive(true),
+                                        );
+                                        if resp.lost_focus() && name != orig_name {
+                                            self.exec(Command::Rename {
+                                                sid: row_sid.clone(),
+                                                new: name,
+                                                old: None,
+                                            });
+                                        }
+                                        let eye_tip = if hidden {
+                                            "显示(取消隐藏)"
+                                        } else {
+                                            "隐藏"
+                                        };
+                                        if icon_button(
+                                            ui,
+                                            if hidden { Name::Hidden } else { Name::Visible },
+                                            eye_tip,
+                                        )
+                                        .clicked()
+                                        {
+                                            hidden = !hidden;
+                                            self.exec(Command::SetFlags {
+                                                sid: row_sid.clone(),
+                                                hidden: Some(hidden),
+                                                locked: None,
+                                                old: None,
+                                            });
+                                        }
+                                        let lock_tip = if locked { "解锁" } else { "锁定" };
+                                        if icon_button(
+                                            ui,
+                                            if locked { Name::Locked } else { Name::Unlocked },
+                                            lock_tip,
+                                        )
+                                        .clicked()
+                                        {
+                                            locked = !locked;
+                                            self.exec(Command::SetFlags {
+                                                sid: row_sid.clone(),
+                                                hidden: None,
+                                                locked: Some(locked),
+                                                old: None,
+                                            });
+                                        }
+                                        // 层序:↑ = 前移一层(列表自顶向下 = z 序从高到低)
+                                        if icon_button(ui, Name::MoveUp, "前移一层").clicked() {
+                                            self.reorder(&row_sid, 1);
+                                        }
+                                        if icon_button(ui, Name::MoveDown, "后移一层").clicked()
+                                        {
+                                            self.reorder(&row_sid, -1);
+                                        }
+                                    });
+                                }
+                                ui.separator();
+                            }
+                        });
+                    }
+                    _ => {
+                        // --- 设计令牌(v0.7:CSS 变量,改一处全站生效) ---
+                        ui.heading("设计令牌");
+                        ui.horizontal(|ui| {
+                            let mut add: Option<(String, String)> = None;
+                            if ui.small_button("+ 令牌").clicked() {
+                                add = Some((
+                                    format!("brand-{}", self.doc.tokens.len() + 1),
+                                    "#888888".into(), // vb-token-ok: 新令牌默认值(文档内容,非 UI 皮肤)
+                                ));
+                            }
+                            if let Some((n, v)) = add {
+                                self.exec(Command::SetToken {
+                                    name: n,
+                                    new: v,
+                                    old: None,
+                                });
+                            }
+                        });
+                        let tokens = self.doc.tokens.clone();
+                        for (i, (name, value)) in tokens.iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                let mut v = value.clone();
+                                if vb_common::color::parse_color(value).is_some() {
+                                    if let Some(c) = vb_common::color::parse_color(value) {
+                                        let mut col =
+                                            Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a);
+                                        if ui.color_edit_button_srgba(&mut col).changed() {
+                                            let [r, g, b, a] = col.to_array();
+                                            self.exec(Command::SetToken {
+                                                name: name.clone(),
+                                                new: vb_common::Rgba::new(r, g, b, a)
+                                                    .to_shortest_hex(),
+                                                old: None,
+                                            });
+                                        }
+                                    }
+                                }
+                                let resp = ui
+                                    .add_sized([70.0, 18.0], egui::Label::new(format!("--{name}")));
+                                let _ = resp;
+                                if ui
+                                    .add_sized([110.0, 18.0], egui::TextEdit::singleline(&mut v))
+                                    .lost_focus()
+                                    && v != *value
+                                {
+                                    self.exec(Command::SetToken {
+                                        name: name.clone(),
+                                        new: v,
+                                        old: None,
+                                    });
+                                }
+                                if ui.small_button("🗑").clicked() {
+                                    // 删除令牌 = SetToken 到空再移除(v0.1:直接移除,可撤销)
+                                    self.exec(Command::SetToken {
+                                        name: name.clone(),
+                                        new: String::new(),
+                                        old: None,
+                                    });
+                                }
+                                let _ = i;
+                            });
+                        }
+                    }
+                }
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                     ui.separator();
                     if !self.frame_times.is_empty() {
@@ -1588,6 +1807,10 @@ impl VellumApp {
                 ));
                 ui.separator();
                 ui.label(format!("选中 {}", self.selection.len()));
+                if self.outline_mode {
+                    ui.separator();
+                    ui.label("轮廓");
+                }
                 ui.separator();
                 ui.label(format!("rev {} · {}", self.doc.rev, backend));
                 ui.separator();
@@ -1602,7 +1825,7 @@ impl VellumApp {
 impl VellumApp {
     fn canvas(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         egui::CentralPanel::default()
-            .frame(egui::Frame::canvas(ui.style()).fill(Color32::from_rgb(0x14, 0x14, 0x14)))
+            .frame(egui::Frame::canvas(ui.style()).fill(Tokens::get(self.theme_dark).bg_canvas))
             .show(ui, |ui| {
                 let Some(rect) = self
                     .canvas_rect
@@ -1618,19 +1841,23 @@ impl VellumApp {
 
                 // 网格画在最底层
                 if self.grid_on {
-                    draw_grid(&painter, rect, &self.camera);
+                    draw_grid(&painter, rect, &self.camera, self.theme_dark);
                 }
 
                 // 渲染画布内容(GPU,画板背景会盖住网格)
-                self.render_canvas_gpu(frame, rect);
-
-                if let Some(tex_id) = self.tex_id() {
-                    painter.image(
-                        tex_id,
-                        rect,
-                        Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                        Color32::WHITE,
-                    );
+                if self.outline_mode {
+                    // 轮廓模式(Mod+Y):不画实体,只勾勒每个对象的绝对边界
+                    self.draw_outline_mode(&painter, rect);
+                } else {
+                    self.render_canvas_gpu(frame, rect);
+                    if let Some(tex_id) = self.tex_id() {
+                        painter.image(
+                            tex_id,
+                            rect,
+                            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                            Color32::WHITE,
+                        );
+                    }
                 }
                 self.draw_artboards(&painter, rect.min.to_vec2());
                 self.draw_overlays(&painter, rect);
@@ -1794,12 +2021,38 @@ impl VellumApp {
         // 平移:中键 或 Space+左键 或 抓手工具
         let pan_wanted = self.space_down || self.tool == Tool::Hand;
         if pan_wanted {
-            ctx.set_cursor_icon(CursorIcon::Grab);
+            ctx.set_cursor_icon(vbcursor::PAN);
+        }
+
+        // 手柄悬停光标(P2.8):非平移态下,指针落在选中对象手柄上给方向光标,
+        // 旋转圈在角外侧(见下方 Drag::Rotate 命中区)。
+        if !pan_wanted && self.tool == Tool::Select {
+            if let Some(p) = response.hover_pos() {
+                'outer: for sid in &self.selection {
+                    let Some(nid) = self.doc.find_by_sid(sid) else {
+                        continue;
+                    };
+                    let Some(bb) = vb_tools::abs_bbox(&self.doc, nid) else {
+                        continue;
+                    };
+                    let (sx, sy) = self.camera.world_to_screen(bb.x0, bb.y0);
+                    let (ex, ey) = self.camera.world_to_screen(bb.x1, bb.y1);
+                    let r = Rect::from_min_max(
+                        pos2(sx as f32 + rect.min.x, sy as f32 + rect.min.y),
+                        pos2(ex as f32 + rect.min.x, ey as f32 + rect.min.y),
+                    );
+                    if let Some(h) = hit_handle(p, r) {
+                        ctx.set_cursor_icon(vbcursor::for_handle(h));
+                        break 'outer;
+                    }
+                }
+            }
         }
 
         if response.dragged_by(PointerButton::Middle)
             || (pan_wanted && response.dragged_by(PointerButton::Primary))
         {
+            ctx.set_cursor_icon(vbcursor::PANNING);
             if let Drag::Pan { start_pan } = self.drag {
                 self.camera.pan_x = start_pan.x as f64 + (response.drag_delta().x) as f64;
                 self.camera.pan_y = start_pan.y as f64 + (response.drag_delta().y) as f64;
@@ -2240,6 +2493,7 @@ impl VellumApp {
     }
 
     fn draw_artboards(&self, painter: &egui::Painter, origin: egui::Vec2) {
+        let t = Tokens::get(self.theme_dark);
         for &ab in &self.doc.artboards {
             let Some(n) = self.doc.nodes.get(ab) else {
                 continue;
@@ -2255,7 +2509,7 @@ impl VellumApp {
             painter.rect_stroke(
                 r,
                 0.0,
-                Stroke::new(1.0, Color32::from_rgb(0x3d, 0x3d, 0x3d)),
+                Stroke::new(1.0, t.border),
                 egui::StrokeKind::Outside,
             );
             painter.text(
@@ -2263,12 +2517,65 @@ impl VellumApp {
                 Align2::LEFT_BOTTOM,
                 &n.name,
                 FontId::proportional(11.0),
-                Color32::from_rgb(0x8a, 0x8a, 0x8a),
+                t.text_3,
             );
         }
     }
 
+    /// 轮廓模式(线框,`Mod+Y`):不画填充,只勾勒每个对象的绝对边界。
+    ///
+    /// AI 的轮廓模式用于查看结构关系与重叠顺序;这里是等价的最小实现
+    /// (路径级轮廓待 P4 钢笔/矢量落地后替换)。
+    fn draw_outline_mode(&self, painter: &egui::Painter, viewport: Rect) {
+        let t = Tokens::get(self.theme_dark);
+        let origin = viewport.min.to_vec2();
+        let ab_stroke = Stroke::new(1.0, t.border_strong);
+        let node_stroke = Stroke::new(1.0, t.border);
+        let mut ids = Vec::new();
+        for &ab in &self.doc.artboards {
+            // 画板本身
+            if let Some(an) = self.doc.nodes.get(ab) {
+                let (x0, y0) = self.camera.world_to_screen(an.geom.x, an.geom.y);
+                let (x1, y1) = self
+                    .camera
+                    .world_to_screen(an.geom.x + an.geom.w, an.geom.y + an.geom.h);
+                painter.rect_stroke(
+                    Rect::from_min_max(
+                        pos2(x0 as f32 + origin.x, y0 as f32 + origin.y),
+                        pos2(x1 as f32 + origin.x, y1 as f32 + origin.y),
+                    ),
+                    0.0,
+                    ab_stroke,
+                    egui::StrokeKind::Middle,
+                );
+            }
+            self.doc.subtree(ab, &mut ids);
+        }
+        for id in ids {
+            let Some(n) = self.doc.nodes.get(id) else {
+                continue;
+            };
+            if n.hidden || n.tag == "#text" || matches!(n.kind, NodeKind::Artboard) {
+                continue;
+            }
+            let Some(bb) = vb_tools::abs_bbox(&self.doc, id) else {
+                continue;
+            };
+            let (sx, sy) = self.camera.world_to_screen(bb.x0, bb.y0);
+            let (ex, ey) = self.camera.world_to_screen(bb.x1, bb.y1);
+            let r = Rect::from_min_max(
+                pos2(sx as f32 + origin.x, sy as f32 + origin.y),
+                pos2(ex as f32 + origin.x, ey as f32 + origin.y),
+            );
+            if !r.intersects(viewport) {
+                continue;
+            }
+            painter.rect_stroke(r, 0.0, node_stroke, egui::StrokeKind::Middle);
+        }
+    }
+
     fn draw_overlays(&self, painter: &egui::Painter, viewport: Rect) {
+        let t = Tokens::get(self.theme_dark);
         let origin = viewport.min.to_vec2();
         // 智能参考线(品红,与 AI 同色)
         for l in &self.smart_guides {
@@ -2279,6 +2586,8 @@ impl VellumApp {
                     pos2(x0 as f32 + origin.x, y0 as f32 + origin.y),
                     pos2(x1 as f32 + origin.x, y1 as f32 + origin.y),
                 ],
+                // 智能参考线品红是**语义色**(AI 品红,02/03 篇钉死),深/浅主题共用同一个值;
+                // vb-token-ok:不参与令牌化,P2 只把它挪进 vb_ui::theme 的 const
                 Stroke::new(1.0, Color32::from_rgb(0xff, 0x00, 0xff)),
             );
         }
@@ -2318,7 +2627,8 @@ impl VellumApp {
                         .style_get("color")
                         .and_then(vb_common::color::parse_color)
                         .map(|c| Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a))
-                        .unwrap_or(Color32::from_rgb(0x20, 0x20, 0x20));
+                        // HTML 规范的默认文字色(文档内容,非 UI 皮肤)
+                        .unwrap_or(Color32::from_rgb(0x20, 0x20, 0x20)); // vb-token-ok: 文档内容默认色,非 UI 皮肤
                     let px_size = (fs * self.camera.zoom) as f32;
                     painter.text(
                         pos2(r.left() + 2.0, r.top() + 2.0),
@@ -2329,13 +2639,13 @@ impl VellumApp {
                     );
                 }
                 NodeKind::Frozen { .. } => {
-                    painter.rect_filled(r, 4.0, Color32::from_rgba_unmultiplied(200, 195, 185, 60));
+                    painter.rect_filled(r, 4.0, semantic::frozen_fill(self.theme_dark));
                     painter.text(
                         pos2(r.left() + 6.0, r.top() + 4.0),
                         Align2::LEFT_TOP,
-                        "❄ 冻结块",
+                        "冻结块",
                         FontId::proportional(11.0),
-                        Color32::from_rgb(0x8a, 0x8a, 0x8a),
+                        t.text_3,
                     );
                 }
                 _ => {}
@@ -2359,7 +2669,7 @@ impl VellumApp {
             painter.rect_stroke(
                 r,
                 0.0,
-                Stroke::new(1.0, Color32::from_rgb(0x33, 0x99, 0xff)),
+                Stroke::new(1.0, semantic::SELECT_BOX),
                 egui::StrokeKind::Outside,
             );
             for hx in [r.left(), r.center().x, r.right()] {
@@ -2368,7 +2678,7 @@ impl VellumApp {
                         painter.rect_filled(
                             Rect::from_center_size(pos2(hx, hy), vec2(6.0, 6.0)),
                             1.0,
-                            Color32::from_rgb(0x33, 0x99, 0xff),
+                            semantic::SELECT_BOX,
                         );
                     }
                 }
@@ -2379,11 +2689,11 @@ impl VellumApp {
         match &self.drag {
             Drag::Marquee { start, cur } => {
                 let r = Rect::from_two_pos(pos2(start.x, start.y), pos2(cur.x, cur.y));
-                painter.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(51, 153, 255, 24));
+                painter.rect_filled(r, 0.0, semantic::MARQUEE_FILL);
                 painter.rect_stroke(
                     r,
                     0.0,
-                    Stroke::new(1.0, Color32::from_rgb(0x33, 0x99, 0xff)),
+                    Stroke::new(1.0, semantic::SELECT_BOX),
                     egui::StrokeKind::Middle,
                 );
             }
@@ -2392,7 +2702,7 @@ impl VellumApp {
                 painter.rect_stroke(
                     r,
                     0.0,
-                    Stroke::new(1.0, Color32::from_rgb(0x8a, 0x8a, 0x8a)),
+                    Stroke::new(1.0, t.border_strong),
                     egui::StrokeKind::Middle,
                 );
             }
@@ -2403,17 +2713,45 @@ impl VellumApp {
 
 // ---------- 辅助 ----------
 
-fn kind_icon(kind: &NodeKind) -> &'static str {
+/// 菜单项按钮:标签 + 右侧键位文本(键位一律查 `shortcuts` 注册表)。
+fn menu_item_button(
+    ui: &mut egui::Ui,
+    item: &shortcuts::MenuItem,
+    enabled: bool,
+) -> egui::Response {
+    menu_item_button_with(ui, item, "", enabled)
+}
+
+/// 同上,`extra` 为附在标签后的补充文本(如"撤销"后面的会撤销什么)。
+fn menu_item_button_with(
+    ui: &mut egui::Ui,
+    item: &shortcuts::MenuItem,
+    extra: &str,
+    enabled: bool,
+) -> egui::Response {
+    let label = if extra.is_empty() {
+        item.label.to_string()
+    } else {
+        format!("{} {}", item.label, extra)
+    };
+    let btn = match shortcuts::key_text_for(item.id) {
+        Some(k) => egui::Button::new(label).shortcut_text(k),
+        None => egui::Button::new(label),
+    };
+    ui.add_enabled(enabled, btn)
+}
+
+fn kind_icon(kind: &NodeKind) -> Name {
     match kind {
-        NodeKind::Artboard => "▣",
-        NodeKind::Layer => "📁",
-        NodeKind::Group => "📁",
-        NodeKind::Box => "▢",
-        NodeKind::Text { .. } => "T",
-        NodeKind::Image { .. } => "🖼",
-        NodeKind::Vector => "✎",
-        NodeKind::Slice => "✂",
-        NodeKind::Frozen { .. } => "❄",
+        NodeKind::Artboard => Name::KindArtboard,
+        NodeKind::Layer => Name::KindLayer,
+        NodeKind::Group => Name::KindGroup,
+        NodeKind::Box => Name::KindBox,
+        NodeKind::Text { .. } => Name::KindText,
+        NodeKind::Image { .. } => Name::KindImage,
+        NodeKind::Vector => Name::KindVector,
+        NodeKind::Slice => Name::KindSlice,
+        NodeKind::Frozen { .. } => Name::KindFrozen,
     }
 }
 
@@ -2431,12 +2769,12 @@ fn set_style_prop(style: Vec<vb_css::Decl>, prop: &str, value: &str) -> Vec<vb_c
     s
 }
 
-fn draw_grid(painter: &egui::Painter, rect: Rect, cam: &Camera) {
+fn draw_grid(painter: &egui::Painter, rect: Rect, cam: &Camera, dark: bool) {
     let step = 64.0 * cam.zoom as f32;
     if step < 8.0 {
         return;
     }
-    let color = Color32::from_rgb(0x3a, 0x3a, 0x3a);
+    let color = semantic::guide_grid(dark);
     let start_x = (rect.left() / step).floor() * step;
     let start_y = (rect.top() / step).floor() * step;
     let mut x = start_x;
@@ -2455,45 +2793,6 @@ fn draw_grid(painter: &egui::Painter, rect: Rect, cam: &Camera) {
         );
         y += step;
     }
-}
-
-fn setup_fonts(ctx: &egui::Context) {
-    let mut fonts = FontDefinitions::default();
-    for candidate in [
-        "C:\\Windows\\Fonts\\simhei.ttf",
-        "C:\\Windows\\Fonts\\msyh.ttc",
-        "C:\\Windows\\Fonts\\simsun.ttc",
-    ] {
-        if let Ok(bytes) = std::fs::read(candidate) {
-            fonts
-                .font_data
-                .insert("vb-cjk".into(), FontData::from_owned(bytes).into());
-            for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-                fonts
-                    .families
-                    .get_mut(&family)
-                    .unwrap()
-                    .push("vb-cjk".into());
-            }
-            break;
-        }
-    }
-    ctx.set_fonts(fonts);
-}
-
-fn setup_dark_theme(ctx: &egui::Context) {
-    // 设计文档 03 篇 §七 深色令牌(应用到全部主题,本应用只用深色)
-    ctx.all_styles_mut(|style| {
-        let vs = &mut style.visuals;
-        vs.panel_fill = Color32::from_rgb(0x2a, 0x2a, 0x2a);
-        vs.window_fill = Color32::from_rgb(0x2a, 0x2a, 0x2a);
-        vs.extreme_bg_color = Color32::from_rgb(0x1e, 0x1e, 0x1e);
-        vs.faint_bg_color = Color32::from_rgb(0x24, 0x24, 0x24);
-        vs.selection.bg_fill = Color32::from_rgb(0x2e, 0x86, 0xff);
-        vs.selection.stroke = Stroke::new(1.0, Color32::from_rgb(0x2e, 0x86, 0xff));
-        vs.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(0x3d, 0x3d, 0x3d));
-        vs.widgets.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(0x2e, 0x86, 0xff));
-    });
 }
 
 const _: Margin = Margin::ZERO;
@@ -2665,7 +2964,7 @@ impl VellumApp {
         }
         n.style.push(vb_css::Decl {
             prop: "background-color".into(),
-            value: "#d4d4d4".into(),
+            value: "#d4d4d4".into(), // vb-token-ok: 新建形状默认填充(文档内容,非 UI 皮肤)
             important: false,
         });
         n.style.push(vb_css::Decl {

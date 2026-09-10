@@ -48,6 +48,7 @@ anyhow = "1"
 log = "0.4"
 env_logger = "0.11"
 pollster = "0.4"
+iconflow = { version = "1.0", default-features = false, features = ["pack-lucide"] }
 
 [profile.release]
 lto = "thin"

@@ -43,6 +43,12 @@ fn finalize_classes(doc: &mut Document) {
             Some(n) => n,
             None => continue,
         };
+        // `#text`(行内文本段)在 HTML 里被内联进父元素正文,没有 class 属性可挂,
+        // 因此不得为它生成占位类——否则导出的 CSS 会带上一条无人引用的规则,
+        // 二次导入时被判为"孤儿类规则"塞进 raw_css,破坏 L1 幂等。
+        if node.tag == "#text" {
+            continue;
+        }
         if node.classes.is_empty() {
             let slug = slugify(&node.name);
             let base = if slug.is_empty() {
@@ -292,6 +298,10 @@ fn render_css(doc: &Document) -> String {
 
     for node in ordered {
         let is_ab = matches!(node.kind, NodeKind::Artboard);
+        // `#text` 没有 class 属性(见 finalize_classes),自然也不该有 CSS 规则。
+        if node.tag == "#text" {
+            continue;
+        }
         if node.classes.is_empty() {
             continue;
         }

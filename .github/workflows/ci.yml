@@ -6,19 +6,18 @@ on:
   pull_request:
 
 jobs:
-  windows:
+  gates:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Format
-        run: cargo fmt --all --check
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: Tests
-        run: cargo test --workspace
-      - name: CLI selfcheck (headless, no GPU/browser)
-        run: |
-          cargo run -p vb_agent --bin vellum-cli -- selfcheck --json
+      # 门禁只有一处定义(tools/ci.ps1),本地与 CI 保证同源。
+      # 覆盖:1 格式 · 2 Lint · 3 测试(含 20 个往返语料 + 命令全变体可逆性 +
+      #       门禁 9 快捷键注册表自检)· 4 Agent selfcheck · 8 硬编码颜色棘轮
+      - name: Quality gates
+        shell: pwsh
+        run: ./tools/ci.ps1
+        env:
+          RUST_BACKTRACE: "1"

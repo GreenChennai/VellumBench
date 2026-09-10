@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>变换</title>
+  <style>
+
+.ab { width: 1200px; height: 800px; background-color: #ffffff; }
+.rot { position: absolute; left: 300px; top: 300px; width: 240px; height: 120px; background-color: #ff5a1f; transform: rotate(-15deg); transform-origin: center center; }
+.flip { position: absolute; left: 700px; top: 300px; width: 240px; height: 120px; background-color: #0d99ff; transform: rotate(0deg) scale(-1, 1); }
+
+  </style>
+</head>
+<body>
+  <section class="vb-artboard ab" data-vb-id="210001" data-vb-name="画板">
+    <div class="rot" data-vb-id="210002" data-vb-name="旋转块"></div>
+    <div class="flip" data-vb-id="210003" data-vb-name="镜像块"></div>
+  </section>
+</body>
+</html>

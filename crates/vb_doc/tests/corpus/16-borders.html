@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>边框</title>
+  <style>
+
+.ab { width: 1200px; height: 600px; background-color: #ffffff; }
+.solid { position: absolute; left: 40px; top: 40px; width: 240px; height: 120px; border-width: 2px; border-style: solid; border-color: #0d99ff; border-radius: 6px; }
+.dashed { position: absolute; left: 320px; top: 40px; width: 240px; height: 120px; border-top-width: 1px; border-right-width: 1px; border-bottom-width: 1px; border-left-width: 1px; border-style: dashed; border-color: #adb5bd; }
+.pill { position: absolute; left: 600px; top: 40px; width: 240px; height: 120px; border-top-left-radius: 60px; border-top-right-radius: 60px; border-bottom-right-radius: 60px; border-bottom-left-radius: 60px; background-color: #ffe8d9; }
+
+  </style>
+</head>
+<body>
+  <section class="vb-artboard ab" data-vb-id="200001" data-vb-name="画板">
+    <div class="solid" data-vb-id="200002" data-vb-name="实线框"></div>
+    <div class="dashed" data-vb-id="200003" data-vb-name="虚线框"></div>
+    <div class="pill" data-vb-id="200004" data-vb-name="胶囊"></div>
+  </section>
+</body>
+</html>

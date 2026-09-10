@@ -1,0 +1,146 @@
+{
+  "$schema": "https://design-tokens.github.io/community-group/format/",
+  "$description": "Vellum Bench UI 设计令牌 — 设计侧单一真相。与 crates/vb_ui/src/theme.rs 必须保持一致（CI 校验）。命名空间 --vb-ui-* 为界面主题，与文档令牌 --vb-brand-* 严格分离。",
+  "meta": {
+    "version": "0.1.0",
+    "source_of_truth_for": "docs/design/14-下一阶段迭代方案-UI重制与AI心智对齐.md §3.2",
+    "generated_for": "crates/vb_ui/src/theme.rs"
+  },
+
+  "color": {
+    "dark": {
+      "bg-canvas":        { "value": "#1C1C1E", "desc": "画板外画布底",             "egui": "visuals.extreme_bg_color" },
+      "bg-panel":         { "value": "#2C2C2E", "desc": "面板/工具条底",             "egui": "visuals.panel_fill" },
+      "bg-raised":        { "value": "#3A3A3C", "desc": "弹出层/下拉/Tab 选中",      "egui": "visuals.window_fill" },
+      "bg-input":         { "value": "#38383A", "desc": "输入框/数值框底",           "egui": "visuals.widgets.inactive.weak_bg_fill" },
+      "bg-hover":         { "value": "#48484A", "desc": "悬停底",                   "egui": "visuals.widgets.hovered.weak_bg_fill" },
+      "bg-active":        { "value": "#545457", "desc": "按下底",                   "egui": "visuals.widgets.active.weak_bg_fill" },
+      "border":           { "value": "#3F3F42", "desc": "分隔线/控件描边",           "egui": "visuals.widgets.inactive.bg_stroke" },
+      "border-strong":    { "value": "#545457", "desc": "焦点环/面板边界",           "egui": "visuals.widgets.hovered.bg_stroke" },
+      "text":             { "value": "#FFFFFF", "desc": "主文字",                    "egui": "visuals.override_text_color" },
+      "text-2":           { "value": "#B8B8BD", "desc": "次文字/标签",               "egui": "visuals.weak_text_color" },
+      "text-3":           { "value": "#7A7A80", "desc": "占位/无/禁用",              "egui": "visuals.weak_text_alpha 派生" },
+      "accent":           { "value": "#0D99FF", "desc": "选中/激活/焦点",            "egui": "visuals.selection.bg_fill" },
+      "accent-hover":     { "value": "#3AAEFF", "desc": "accent 悬停",               "egui": "—" },
+      "accent-dim":       { "value": "rgba(13,153,255,0.16)", "desc": "选中行底/Tab 选中底", "egui": "—" },
+      "danger":           { "value": "#F24822", "desc": "删除/溢出标记",              "egui": "visuals.error_fg_color" },
+      "warn":             { "value": "#FFC700", "desc": "冻结块警告/缺字体",          "egui": "visuals.warn_fg_color" },
+      "success":          { "value": "#14AE5C", "desc": "保存成功/导出完成",          "egui": "—" }
+    },
+    "light": {
+      "bg-canvas":        { "value": "#F5F5F5", "egui": "visuals.extreme_bg_color" },
+      "bg-panel":         { "value": "#FFFFFF", "egui": "visuals.panel_fill" },
+      "bg-raised":        { "value": "#FFFFFF", "desc": "需额外加 window_shadow", "egui": "visuals.window_fill" },
+      "bg-input":         { "value": "#F0F0F0", "egui": "visuals.widgets.inactive.weak_bg_fill" },
+      "bg-hover":         { "value": "#E8E8E8", "egui": "visuals.widgets.hovered.weak_bg_fill" },
+      "bg-active":        { "value": "#DEDEDE", "egui": "visuals.widgets.active.weak_bg_fill" },
+      "border":           { "value": "#E6E6E6", "egui": "visuals.widgets.inactive.bg_stroke" },
+      "border-strong":    { "value": "#C9C9C9", "egui": "visuals.widgets.hovered.bg_stroke" },
+      "text":             { "value": "#1E1E1E", "egui": "visuals.override_text_color" },
+      "text-2":           { "value": "#6B6B6B", "egui": "visuals.weak_text_color" },
+      "text-3":           { "value": "#9B9B9B", "egui": "visuals.weak_text_alpha 派生" },
+      "accent":           { "value": "#0D99FF", "desc": "两套主题共用品牌色", "egui": "visuals.selection.bg_fill" },
+      "accent-dim":       { "value": "rgba(13,153,255,0.12)", "egui": "—" },
+      "danger":           { "value": "#F24822", "egui": "visuals.error_fg_color" },
+      "warn":             { "value": "#B58200", "desc": "浅底需加深保对比", "egui": "visuals.warn_fg_color" },
+      "success":          { "value": "#0E7C42", "egui": "—" }
+    },
+    "semantic": {
+      "$note": "跨主题语义色。不随主题大幅变化，浅色下仅微调以保对比度。禁止当装饰色使用。",
+      "guide-smart":      { "value": "#FF00FF", "light": "#E000E0", "desc": "智能参考线（AI 品红）", "immutable": true },
+      "select-box":       { "value": "#0D99FF", "desc": "边界框/8 手柄" },
+      "hover-box":        { "value": "rgba(13,153,255,0.6)", "desc": "悬停对象轮廓" },
+      "guide-grid":       { "value": "#3A3A3A", "light": "#DADADA", "desc": "网格线" },
+      "snap-threshold":   { "value": "6px", "desc": "吸附阈值，屏幕空间，不随缩放变化", "unit": "screen-px" },
+      "handle-hit-radius":{ "value": "6px", "desc": "手柄命中半径，屏幕空间", "unit": "screen-px" }
+    }
+  },
+
+  "space": {
+    "$note": "4 为基数。禁止 5/7/10/15/20 这类值。",
+    "1": { "value": "2px" },
+    "2": { "value": "4px" },
+    "3": { "value": "6px" },
+    "4": { "value": "8px" },
+    "5": { "value": "12px" },
+    "6": { "value": "16px" },
+    "8": { "value": "24px" },
+    "9": { "value": "32px" }
+  },
+
+  "radius": {
+    "$note": "egui 默认 2px 是'业余感'三大来源之一。全局提至 6px。",
+    "sm": { "value": "4px", "egui": "CornerRadius::same(4)" },
+    "md": { "value": "6px", "egui": "CornerRadius::same(6)", "use": "按钮/Tab/下拉/输入框" },
+    "lg": { "value": "8px", "egui": "CornerRadius::same(8)", "use": "面板内卡片/分组块/menu" },
+    "xl": { "value": "12px", "egui": "CornerRadius::same(12)", "use": "底部工具条/浮层/window" }
+  },
+
+  "stroke": {
+    "hairline": { "value": "1px" },
+    "focus":    { "value": "1.5px" },
+    "canvas-select": { "value": "1px", "color": "{color.semantic.select-box}" }
+  },
+
+  "font": {
+    "family": {
+      "latin":  { "value": "Inter", "license": "SIL OFL 1.1", "weights": ["Regular", "Medium", "SemiBold"] },
+      "cjk":    { "value": "MiSans", "fallback": "Source Han Sans SC", "license": "免费商用 / OFL" },
+      "mono":   { "value": "JetBrains Mono", "license": "SIL OFL 1.1" },
+      "icon":   { "value": "Lucide", "license": "ISC", "integrated_via": "iconflow 1.0" }
+    },
+    "fallback_chain": ["Inter", "MiSans", "system-cjk"],
+    "egui_families": ["vb-ui-regular", "vb-ui-medium", "vb-ui-semibold", "vb-mono", "vb-icon"],
+    "size": {
+      "caption":       { "size": "11px", "line_height": "16px", "weight": 400, "style": "Small",     "use": "状态栏/tooltip 副行" },
+      "label":         { "size": "12px", "line_height": "18px", "weight": 500, "style": "Small",     "use": "字段标签/图层行" },
+      "body":          { "size": "13px", "line_height": "20px", "weight": 400, "style": "Body",      "use": "默认正文/输入内容" },
+      "body-strong":   { "size": "13px", "line_height": "20px", "weight": 600, "style": "Button",    "use": "面板分组标题/选中项" },
+      "title":         { "size": "15px", "line_height": "22px", "weight": 600, "style": "Heading",   "use": "对话框标题" },
+      "mono":          { "size": "12px", "line_height": "18px", "weight": 400, "style": "Monospace", "use": "十六进制/代码视图" }
+    }
+  },
+
+  "motion": {
+    "$note": "绝不做的动效：画布元素入场动画、按钮弹跳、粒子效果。工具软件里这些是减速带。",
+    "instant": { "value": "0ms",   "use": "画布缩放/平移/拖动", "impl": "直接赋值，不走动画" },
+    "hover":   { "value": "80ms",  "use": "悬停变色",           "impl": "Style.animation_time = 0.08" },
+    "state":   { "value": "120ms", "use": "选中/开关/展开收起",   "impl": "ctx.animate_bool_with_time(id, v, 0.12)" },
+    "popup":   { "value": "150ms", "use": "下拉/tooltip 淡入",   "impl": "egui 内建" },
+    "panel":   { "value": "200ms", "use": "面板折叠/Tab 切换",    "impl": "ctx.animate_value_with_time(id, v, 0.20)" }
+  },
+
+  "layout": {
+    "menu-bar":        { "height": "32px" },
+    "control-panel":   { "height": "40px", "desc": "AI 招牌：随工具/选区变化" },
+    "toolbox":         { "width_single": "44px", "width_double": "64px", "icon": "24px" },
+    "floating-toolbar":{ "height": "40px", "radius": "{radius.xl}", "opacity": 0.96, "desc": "Figma UI3 标志性设计，保留浮动" },
+    "right-dock":      { "width_default": "280px", "width_min": "240px", "width_max": "420px", "collapsed": "40px" },
+    "status-bar":      { "height": "28px" },
+    "ruler":           { "height": "20px" },
+    "min-window":      { "value": "1024x640" },
+    "collapse-below":  { "value": "1200px", "desc": "低于此宽度右侧坞自动折叠为图标条" },
+    "row-height":      { "layer": "24px", "list_item": "24px" }
+  },
+
+  "cursor": {
+    "canvas-default": "Default",
+    "hover-object":   "PointingHand",
+    "handle-corner":  "ResizeNwSe | ResizeNeSw",
+    "handle-edge":    "ResizeHorizontal | ResizeVertical",
+    "handle-rotate":  "ResizeNwSe(兜底, egui 不支持自定义光标)",
+    "pan":            "Grab -> Grabbing",
+    "zoom":           "ZoomIn | ZoomOut",
+    "pen":            "Crosshair",
+    "text":           "Text",
+    "locked":         "NotAllowed"
+  },
+
+  "known_egui_constraints": [
+    "FontId 只有 family+size，无字重 → 每个字重需注册独立 FontFamily（vb-ui-regular/medium/semibold）",
+    "不支持自定义光标图片 → 旋转光标只能用最接近的内置图标 + 视觉提示兜底",
+    "无合成层 → 做不了多层阴影 + 背景模糊的玻璃质感，不做",
+    "ImeComposition.legacy_visuals 在 Windows 默认 true → 中文优先建议显式设 false 并实测",
+    "visuals.widgets.*.expansion 默认 > 0，产生立体感 → 必须归零"
+  ]
+}

@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>CSS 变量</title>
+  <style>
+
+:root { --vb-brand-1: #ff5a1f; --vb-ink: #1e1e1e; }
+.ab { width: 1440px; height: 900px; background-color: #ffffff; }
+.bar { position: absolute; left: 0px; top: 0px; width: 1440px; height: 64px; background-color: var(--vb-brand-1); }
+.ink { position: absolute; left: 40px; top: 120px; width: 400px; height: 40px; color: var(--vb-ink); font-size: 28px; }
+
+  </style>
+</head>
+<body>
+  <section class="vb-artboard ab" data-vb-id="1c0001" data-vb-name="画板">
+    <div class="bar" data-vb-id="1c0002" data-vb-name="品牌条"></div>
+    <div class="ink" data-vb-id="1c0003" data-vb-name="正文">品牌色由令牌控制</div>
+  </section>
+</body>
+</html>

@@ -1,5 +1,6 @@
 //! `vb_app` — Vellum Bench 桌面应用(ADR-0015:eframe 宿主 + Vello 画布纹理合成)。
 
 pub mod app;
+pub mod shortcuts;
 
-pub use app::VellumApp;
+pub use app::{Tool, VellumApp};

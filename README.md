@@ -4,31 +4,49 @@
 
 **HTML 是文档格式,不是编译产物。** 任何人和任何 Agent 都能继续改输出文件。Vellum Bench 把「Agent 出草稿 → 人类像画矢量图一样精修 → HTML 回到 Agent 继续迭代」变成一个无限循环。
 
-## 状态(v0.5+ · 路线图推进中)
+## 状态(以代码为唯一真相)
 
-按 [路线图 0→1](docs/design/11-路线图-0到1.md) 推进,当前完成:
+> 版本里程碑归 [`docs/design/`](docs/design/) 管,不在 README 里声明。
+> 本表**只写代码可验证的事实**;每个数值的核对命令见 [13 篇 §四「状态表真相」](docs/design/13-ADR与风险登记.md)。
+
+### 已落地 ✅
 
 | 模块 | 状态 |
 |---|---|
 | 工程骨架(12 crate workspace,依赖方向受控) | ✅ |
-| `vb_doc` 场景图 + 命令模式 Undo/Redo(sid 寻址) | ✅ |
+| `vb_doc` 场景图 + 命令模式 Undo/Redo(sid 寻址,14 个 Command 变体) | ✅ |
 | `vb_css` L1 白名单属性表 + 值规范化 | ✅ |
 | `vb_html` 忠实解析 + canonical 序列化(L0/L1 往返幂等) | ✅ |
 | HTML 导入 → 场景图 → 导出(多画板纵向堆叠) | ✅ |
-| `vellum-cli`:tree/find/get/**patch(14 ops 事务+乐观锁)**/export/save/batch | ✅ |
-| **vellum-mcp**:MCP stdio Server(10 工具,JSON-RPC 2.0) | ✅ |
-| 原生导出:**PNG @1x-4x + SVG 矢量(真实文本)** | ✅ |
-| **WPI 浏览器引擎桥:PDF/GIF/MP4**(系统 Edge/Chrome) | ✅ |
-| GUI:Vulkan(wgpu 29)+Vello 画布,130+ FPS | ✅ |
-| 选择/矩形/椭圆、**Alt 复制、Shift 约束、框选(相交即选)** | ✅ |
-| **8 手柄缩放(Shift 等比/Alt 中心)+ 角外圈旋转(15° 吸附)** | ✅ |
-| **智能参考线**(边/中心对齐兄弟与画板,6px 屏幕阈值,品红) | ✅ |
-| 双击文本编辑、画板管理(新建/删除/改名)、层序(Ctrl+[/]) | ✅ |
+| **输入上下文栈 + 快捷键注册表**(单一真相:菜单键位文本 / 派发 / 冲突自检同源) | ✅ |
+| `vellum-cli`:**10 个子命令** + `patch` 的 **16 种 op**(事务 + `base_rev` 乐观锁) | ✅ |
+| **vellum-mcp**:MCP stdio Server(**10 工具**,JSON-RPC 2.0) | ✅ |
+| 原生导出:**PNG @1x-4x + SVG 矢量(真实文本)**;WPI 桥:PDF/GIF/MP4(系统 Edge/Chrome) | ✅ |
+| GUI:Vulkan(wgpu 29)+ Vello 画布 | ✅ |
+| 选择/矩形/椭圆/抓手、**Alt 复制、Shift 约束、框选(相交即选)** | ✅ |
+| **8 手柄缩放(Shift 等比/Alt 中心)+ 角外圈旋转** | ✅ |
+| **智能参考线**(边/中心对齐兄弟与画板,品红) | ✅ |
+| 双击文本编辑、画板管理(新建/删除/改名)、层序(`Mod+[` / `Mod+]`) | ✅ |
 | 设计令牌面板(CSS 变量改一处全站生效)、语义标签、链接/aria、flex 布局 | ✅ |
-| **文件监听热重载**(Agent 改 HTML → 画布 3s 内更新) | ✅ |
-| Parley 中文文本管线(v0.2 优先项;画布文本为 egui 近似,见 ADR-0017) | ⏳ |
-| 钢笔/路径布尔(v0.4)、响应式断点/伪类编辑(v0.7 后半) | ⏳ |
-| 组件/时间轴/CRDT(1→100) | ⏳ |
+| **文件监听热重载**(Agent 改 HTML → 画布更新,基于 `notify`) | ✅ |
+| **往返语料库 20 例**(L0 无损坏 / L1 字节幂等) | ✅ |
+| **质量门禁 5 项**(`pwsh tools/ci.ps1` 一键:格式 / clippy `-D warnings` / 全量测试 / Agent 无头自检 / 硬编码颜色棘轮) | ✅ |
+
+### 未落地 ⏳ —— 别按「已完成」读
+
+| 缺口 | 现状(代码实测) | 计划 |
+|---|---|---|
+| **工具集** | **4 / 13** —— 仅 Select/Rect/Ellipse/Hand;钢笔、剪刀、路径查找器等全缺 | P4 |
+| **快捷键** | **34 条绑定**(`commands.yaml` 仅 19 条);02 篇目标 ~120,尚未与 Illustrator 逐条对齐 | P3 |
+| **剪贴板** | **零实现** —— 无复制 / 剪切 / 粘贴 | P3 |
+| **主题** | 仅 1 套深色,颜色为硬编码字面量(门禁 8 基线 **24** 处,目标 0) | P2 |
+| `vb_ui` / `vb_layout` / `vb_platform` | **空壳 crate**(4 / 4 / 1 行) | P2 / P4 |
+| `tests/` `i18n/` `assets/` | 三个目录**均为空** | P5 |
+| Parley 中文文本管线 | 未接入依赖(画布文本为 egui 近似,见 [ADR-0017](docs/adr/0017-canvas-text-approximation-v01.md)) | 待定 |
+| 钢笔 / 路径布尔 | 见 [ADR-0012](docs/adr/0012-path-boolean-pending-spike.md)(待 Spike 结论) | P4 |
+| 响应式断点 / 伪类编辑 | 未开始 | P3 后半 |
+| **门禁 4/5/6/7** | 渲染快照(`vello_cpu`)、性能基准(B1–B6)、i18n 双语扫描、输出校验(W3C + prettier) **均未落地**(14 篇 §7.1 共列 9 项,`ci.ps1` 已自动化的只有 5 项) | P5 |
+| 组件 / 时间轴 / CRDT | 未开始(1→100) | 不承诺档期 |
 
 ## 构建
 
@@ -43,7 +61,7 @@ target/release/vellum-cli.exe --doc examples/landing/index.html tree --json
 ## 快速体验(Agent 闭环)
 
 ```bash
-vellum-cli --doc examples/landing/index.html outline --json
+vellum-cli --doc examples/landing/index.html tree --json
 vellum-cli --doc examples/landing/index.html find --name "主标题" --json
 vellum-cli --doc examples/landing/index.html patch ops.json   # set_text / set_style / move ...
 vellum-cli --doc examples/landing/index.html export --artboard hero --format png --scale 2 --out hero@2x.png

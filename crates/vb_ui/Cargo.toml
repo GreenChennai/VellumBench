@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Vellum Bench 占位 crate(v0.x 后续填充)"
+description = "Vellum Bench 界面层：设计令牌、主题、字体、图标与通用组件"
 
 [dependencies]
+egui = "0.35.0"
+iconflow = { version = "1.0", features = ["pack-lucide"] }
+
+[dev-dependencies]
+serde_json.workspace = true

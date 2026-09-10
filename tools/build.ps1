@@ -1,4 +1,4 @@
-# 打包脚本(设计文档 09 篇 §十):release 构建 + 归档 + 冒烟
+﻿# 打包脚本(设计文档 09 篇 §十):release 构建 + 归档 + 冒烟
 # 用法:powershell -File tools/build.ps1 [-SkipSmoke]
 param(
     [switch]$SkipSmoke

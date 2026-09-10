@@ -1,0 +1,5 @@
+# L0 期望片段(每行一个,必须出现在导出结果里)
+品牌色由令牌控制
+--vb-brand-1
+--vb-ink
+background-color: var(--vb-brand-1);

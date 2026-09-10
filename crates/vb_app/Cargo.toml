@@ -29,4 +29,5 @@ egui = "0.35.0"
 vello = "0.10"
 wgpu = "29"
 vb_css.workspace = true
+vb_ui = { path = "../vb_ui" }
 notify = "8.2.0"

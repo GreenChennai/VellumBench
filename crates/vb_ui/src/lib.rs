@@ -1,4 +1,22 @@
-//! `vb_ui` — egui 面板库(属性/图层/对齐/渐变/描边…,v0.3 落地)。
+//! `vb_ui` — 设计令牌、字体、图标、组件与光标系统。
 //!
-//! v0.1 的最小属性/图层/状态面板暂居 `vb_app`,后续按设计文档 03 篇
-//! 拆分为独立面板 crate(依赖方向:vb_ui ──▶ vb_doc,禁止反向)。
+//! P2 视觉重制（设计文档 14 篇 §3）的地基层：
+//! - [`theme`]：深/浅双主题设计令牌 + egui 样式注入
+//! - [`fonts`]：Inter → MiSans → 系统 CJK 五族字体 fallback 链
+//! - [`icons`]：Lucide 图标语义名映射（iconflow，pack-lucide）
+//! - [`components`]：ToolButton / NumField / ColorField / SectionHeader /
+//!   PanelTabs / LayerRow 六个组件 + 文本助手
+//! - [`cursor`]：工具/手柄 → 系统光标映射
+//!
+//! 依赖方向：vb_ui 不依赖 vb_app，可被 vb_app 与 vb_agent 复用。
+
+pub mod components;
+pub mod cursor;
+pub mod fonts;
+pub mod icons;
+pub mod theme;
+
+pub use components::{
+    caption, icon_button, label, mono, strong, ColorField, LayerRow, LayerRowResponse, NumField,
+    PanelTabs, SectionHeader, ToolButton,
+};

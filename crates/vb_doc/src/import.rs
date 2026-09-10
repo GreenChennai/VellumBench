@@ -351,16 +351,14 @@ pub fn parse_stylesheet(text: &str) -> Stylesheet {
                 i += 1;
             }
             let block: String = chars[start..i.min(n)].iter().collect();
-            if block.trim_start().starts_with("@media") {
-                // @media 内的简单类规则也提取(平铺应用到节点);整块同时保留 raw
-                sheet.raw_blocks.push(block.trim().to_string());
-                let inner = extract_braces_inner(&block);
-                let sub = parse_stylesheet(&inner);
-                sheet.class_rules.extend(sub.class_rules);
-                sheet.root_vars.extend(sub.root_vars);
-            } else {
-                sheet.raw_blocks.push(block.trim().to_string());
-            }
+            // at-rule(@media/@supports/@keyframes…)一律作为**冻结块**逐字保留。
+            //
+            // 早期实现把 @media 内部的简单类规则"平铺"到节点样式上,这有两个问题:
+            // ① 语义错误:媒体查询只在特定断点生效,平铺会让默认画布显示出断点样式;
+            // ② 破坏 L1 幂等:raw 块在导出时排在节点规则之前,二次导入后
+            //    `merged_class_decls` 的"首个规则生效"顺序被改写,导出结果随之漂移。
+            // 详见 04 篇 §四(冻结块)与 15 篇 P1 执行记录。
+            sheet.raw_blocks.push(block.trim().to_string());
             continue;
         }
         // 普通规则:selector { body }
@@ -409,13 +407,6 @@ pub fn parse_stylesheet(text: &str) -> Stylesheet {
         }
     }
     sheet
-}
-
-/// 提取首个顶层 `{...}` 内部文本。
-fn extract_braces_inner(block: &str) -> String {
-    let start = block.find('{').map(|p| p + 1).unwrap_or(0);
-    let end = block.rfind('}').unwrap_or(block.len());
-    block[start..end].to_string()
 }
 
 /// `.foo` / `tag.foo` → Some("foo");其余 None(逗号/组合器/伪类都不算)。
@@ -711,11 +702,22 @@ impl<'a> NodeImporter<'a> {
             style.retain(|d| d.prop != p);
         }
 
+        // `display: none` 回读为 hidden 标志,与导出侧「hidden → display:none」对称。
+        // 不做这一步的话,隐藏对象 → 保存 → 重新打开,图层眼睛是睁着的但对象不可见
+        // —— 又一处"界面说谎"。其余 display 值(flex/block…)原样保留。
+        let hidden = style
+            .iter()
+            .any(|d| d.prop == "display" && d.value.trim() == "none");
+        if hidden {
+            style.retain(|d| !(d.prop == "display" && d.value.trim() == "none"));
+        }
+
         let mut n = Node::new(kind, name, sid);
         n.tag = tag;
         n.classes = classes;
         n.attrs = attrs;
         n.style = style;
+        n.hidden = hidden;
         n.comment_before = comment;
         n.geom = Geom { x, y, w, h };
         let id = self.attach(parent, n);

@@ -122,6 +122,7 @@
 | R11 | 安装包体积膨胀 | 低 | 低 | 依赖白名单 + `docs/deps.md` 记录；目标 <120MB | 每次加依赖 |
 | R12 | 字体许可（随包字体） | 低 | 中 | 只随包开源字体（如思源黑体需核对许可）；默认用系统字体 | 打包前 |
 | R13 | 个人时间不可持续 | 高 | 高 | 用 Agent 承担确定性编码；每版都有可交付成果；开源核心吸引贡献 | 持续 |
+| R14 | **文档 / commit 虚标**（README 状态表与代码不一致） | 高 | 中 | 本篇「提交与文档纪律」；状态表真相表（可复现核对）；提交前一句话自检 | 每 commit ｜ 每版评审 |
 
 ---
 
@@ -131,3 +132,55 @@
 2. **R1/R6 靠"可测量"解决** —— 语料库与校对视图让风险变成数字。
 3. **R2/R3/R4 靠 Spike 前置** —— 花 2 周验证，避免半年后返工。
 4. 每次版本评审更新本表（新增行不删旧行，标注处置结果）。
+
+---
+
+# 提交与文档纪律（Commit & Doc Discipline）
+
+> 来源：14 篇 §7.2 / §7.3。**本节是纪律，不是建议** —— 违反它，后续所有判断的输入都是脏的。
+
+## 一、为什么要有这一节
+
+历史问题：8 个 commit 全在同一天，最后一条声称交付 `v0.7 + v1.4 + v1.0` 三类内容，而代码实际范围远小于声称。
+**虚标的版本号会污染所有后续判断** —— 当你说不清自己站在哪，就没法决定下一步做什么。
+
+## 二、commit message 四条规则
+
+| # | 规则 | 反例 |
+|---|---|---|
+| 1 | 只描述本次改动本身，**不写版本里程碑**（里程碑归 `docs/design/` 管） | ❌ `feat: v0.7 + v1.4 + v1.0` |
+| 2 | **禁止一个 commit 混多层**；多层拆成可独立回滚的多条 | ❌ 上条应拆成 3 条 |
+| 3 | 影响 README 状态表的改动，**同 commit 内**更新状态表 | ❌ 加了功能却不改状态表 |
+| 4 | 提交前自检一句话：「有人 checkout 这个 commit 并按 README 操作，会得到什么？」答不出来 = message 写虚了 | — |
+
+## 三、文档与代码同步规则
+
+| 触发 | 动作 |
+|---|---|
+| 新增命令 / 工具 | 同 commit 更新 `commands.yaml` + 14 篇第 4 章 |
+| 新增主题令牌 | 同 commit 更新 `vb_ui::theme` + `docs/design/assets/vb-ui-tokens.json` + 14 篇 §3.2 |
+| 与 Illustrator 行为有意不一致 | 同 commit 写进 02 篇 §六 差异表，**必须写原因** |
+| 新增依赖 | 同 commit 在 `docs/deps.md` 记一行（用途 / 体积 / 许可 / 替代） |
+| 文档里的 ⚠️待实测 | 有条件时真机核对 Illustrator 并更新（02 篇 §八 首项） |
+
+## 四、状态表真相（可复现基准）
+
+README 状态表只允许写**代码可验证**的内容。核对方式写在右列，任何人可复现。
+
+| 项 | 事实（v0.7 基线，2026-09-10） | 核对方式 |
+|---|---|---|
+| CLI 子命令 | **10 个**：batch / tree / find / get / patch / export / shot / save / info / selfcheck | `crates/vb_agent/src/main.rs` → `enum Cmd` |
+| CLI `outline` 子命令 | **不存在**（等价能力是 `tree`）；README 旧文案曾写 `outline`，已修正 | 同上 |
+| patch 操作数 | **16**：insert / set_text / set_style / set_attr / move / set_box / rename / set_tag / duplicate / delete / group / ungroup / align / order / set_token / new_artboard | `crates/vb_agent/src/patch.rs` → `enum PatchOp` 的 `serde(rename)` 计数 |
+| MCP 工具数 | **10** | `crates/vb_agent/src/bin/vellum-mcp.rs` → `TOOLS_LIST` |
+| GUI 工具数 | **4 / 13**（Select / Rect / Ellipse / Hand；06 篇 P0 要求 13） | `crates/vb_app/src/app.rs` → `enum Tool` |
+| 快捷键 | **34 条绑定 / 32 个命令**（另有 2 个仅菜单命令，合计 34 个已实现命令 ID）；`commands.yaml` 仅 **19** 条（02 篇目标 ~120） | `crates/vb_app/src/shortcuts.rs` → `SHORTCUTS` / `IMPLEMENTED_IDS` |
+| 菜单 | **5 个菜单 / 25 个菜单项**，键位文本全部自动查表 | `shortcuts.rs` → `MENUS` |
+| 剪贴板 | **零实现**（无 copy / cut / paste） | `grep -ri clipboard crates/vb_app/src` |
+| 空壳 crate | `vb_ui`(4 行) / `vb_layout`(4 行) / `vb_platform`(1 行) | `wc -l crates/*/src/*.rs` |
+| 空目录 | `tests/` `i18n/` `assets/` 均 0 条目 | `ls -A tests i18n assets` |
+| 主题 | 1 套深色，颜色为硬编码字面量（门禁 8 基线 24 处，P2 清零） | `pwsh tools/check_no_hardcoded_color.ps1 -List` |
+| 往返语料库 | 20 例 L0/L1 幂等 | `cargo test -p vb_doc --test corpus` |
+| 质量门禁 | 14 篇 §7.1 共列 **9 项**，`ci.ps1` 已自动化其中 **5 项**（格式 / clippy / 全量测试 / Agent 自检 / 颜色棘轮）；渲染快照、性能基准、i18n、输出校验 4 项未落地 | `pwsh tools/ci.ps1`（脚本头部列有覆盖清单） |
+
+> 上表更新时机：**任何一项数值变化，与引起变化的 commit 同批**。若发现 README 与上表冲突，以上表为准并立刻修正 README。
