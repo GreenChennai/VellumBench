@@ -40,6 +40,7 @@ pub struct BorderDef {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DrawKind {
+    VectorPath,
     Box,
     Text,
     Image,
@@ -63,6 +64,8 @@ pub struct DrawItem {
     pub src: Option<String>,
     /// 旋转(CSS 顺时针度数,绕 rect 中心)。
     pub rot: f64,
+    /// 矢量路径(P4 钢笔;画板本地坐标)。
+    pub path: Option<vb_common::geom::BezPath>,
 }
 
 /// 解析 transform 中的 rotate(θdeg) → 度(CSS 顺时针;引擎共用)。
@@ -343,6 +346,7 @@ pub fn encode_artboard(doc: &Document, artboard: NodeId) -> Result<DrawList, VbE
         label: None,
         src: None,
         rot: 0.0,
+        path: None,
     });
     let children = ab.children.clone();
     for c in children {
@@ -390,6 +394,7 @@ fn encode_node(
             kind: match &node.kind {
                 NodeKind::Text { .. } => DrawKind::Text,
                 NodeKind::Image { .. } => DrawKind::Image,
+                NodeKind::Vector { .. } => DrawKind::VectorPath,
                 NodeKind::Frozen { .. } => DrawKind::FrozenPlaceholder,
                 _ => DrawKind::Box,
             },
@@ -416,6 +421,10 @@ fn encode_node(
             },
             src: match &node.kind {
                 NodeKind::Image { src } => Some(src.clone()),
+                _ => None,
+            },
+            path: match &node.kind {
+                NodeKind::Vector { path } => Some(path.clone()),
                 _ => None,
             },
             rot: node

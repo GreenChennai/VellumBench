@@ -25,10 +25,13 @@ use vb_ui::theme::{self, semantic, Tokens};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
     Select,
+    DirectSelect,
     Rect,
     Ellipse,
     /// 直线段:创建细长 Box(HTML 中即一个 2px 高的色条,02 篇 \)
     Line,
+    /// 钢笔:逐点落锚点,直线段连接;点击起点或 Enter 闭合/结束
+    Pen,
     Hand,
     /// 缩放工具:单击放大 / Alt+单击缩小 / 拖框缩放到区域
     Zoom,
@@ -94,14 +97,24 @@ pub struct VellumApp {
     cursor_world: (f64, f64),
     grid_on: bool,
     smart_guides_on: bool,
+    smart_guides: Vec<[f64; 4]>,
+    /// P4.2 标尺开关与参考线(画板本地坐标;true=水平线)
     /// 轮廓模式(线框):`Mod+Y`(02 篇 §四-视图)
     outline_mode: bool,
     /// 当前主题(true=深色)。P2.7 支持浅色。
     theme_dark: bool,
     /// 右侧面板当前 Tab(P2.6)。
     panel_tab: usize,
-    /// 本帧吸附参考线(画板本地坐标的线段 [x0,y0,x1,y1]),每帧清空
-    smart_guides: Vec<[f64; 4]>,
+    rulers_on: bool,
+    guides_visible: bool,
+    guides_locked: bool,
+    guides: Vec<(bool, f64)>,
+    /// P4.3 隔离模式:当前隔离的编组节点
+    isolate: Option<vb_doc::model::NodeId>,
+    /// P4 钢笔进行中的锚点(画板本地坐标)
+    pen_points: Vec<(f64, f64)>,
+    /// 直接选择:正在拖拽的 (sid, 顶点序号)
+    ds_vertex: Option<(String, usize)>,
     /// 双击文本编辑中的 sid
     editing_text: Option<String>,
     status: String,
@@ -193,6 +206,13 @@ impl VellumApp {
             paste_offset: 0,
             palette_open: false,
             palette_query: String::new(),
+            rulers_on: true,
+            guides_visible: true,
+            guides_locked: false,
+            guides: Vec::new(),
+            isolate: None,
+            pen_points: Vec::new(),
+            ds_vertex: None,
         };
         app.watcher_rx = start_watcher(project.as_deref());
         app
@@ -904,11 +924,64 @@ impl VellumApp {
                     if self.smart_guides_on { "开" } else { "关" }
                 );
             }
+            "view.toggle_rulers" => {
+                self.rulers_on = !self.rulers_on;
+                self.status = format!("标尺:{}", if self.rulers_on { "显示" } else { "隐藏" });
+            }
+            "view.toggle_guides" => {
+                self.guides_visible = !self.guides_visible;
+                self.status = format!(
+                    "参考线:{}",
+                    if self.guides_visible {
+                        "显示"
+                    } else {
+                        "隐藏"
+                    }
+                );
+            }
+            "view.lock_guides" => {
+                self.guides_locked = !self.guides_locked;
+                self.status = format!(
+                    "参考线:{}",
+                    if self.guides_locked {
+                        "已锁定"
+                    } else {
+                        "未锁定"
+                    }
+                );
+            }
+            "view.guides_from_selection" => {
+                let mut added = 0;
+                for sid in &self.selection {
+                    if let Some(nid) = self.doc.find_by_sid(sid) {
+                        if let Some(n) = self.doc.nodes.get(nid) {
+                            let bb = vb_tools::abs_bbox(&self.doc, nid).unwrap_or_default();
+                            for pos in [bb.x0, (bb.x0 + bb.x1) / 2.0, bb.x1] {
+                                self.guides.push((false, pos));
+                                added += 1;
+                            }
+                            for pos in [bb.y0, (bb.y0 + bb.y1) / 2.0, bb.y1] {
+                                self.guides.push((true, pos));
+                                added += 1;
+                            }
+                        }
+                    }
+                }
+                self.status = format!("从选区生成 {added} 条参考线(Ctrl+5)");
+            }
             // ── 工具箱 ──
             "tool.select" => self.tool = Tool::Select,
             "tool.rect" => self.tool = Tool::Rect,
             "tool.ellipse" => self.tool = Tool::Ellipse,
             "tool.line" => self.tool = Tool::Line,
+            "tool.pen" => {
+                self.tool = Tool::Pen;
+                self.pen_points.clear();
+            }
+            "tool.direct_select" => {
+                self.tool = Tool::DirectSelect;
+                self.ds_vertex = None;
+            }
             "tool.zoom" => self.tool = Tool::Zoom,
             "tool.hand" => self.tool = Tool::Hand,
             // ── P3.8 分布(≥3 选中) ──
@@ -997,10 +1070,39 @@ impl VellumApp {
                 self.arrow_nudge(key, false, shift);
             }
             "canvas.cancel" => {
+                // 钢笔进行中:Esc = 结束开放路径(02 篇 §5.3)
+                if self.tool == Tool::Pen && !self.pen_points.is_empty() {
+                    self.finish_pen(false);
+                    self.status = "钢笔:路径已结束(开放)".into();
+                    return;
+                }
+                // P4.3 隔离模式:Esc 逐层退出
+                if self.isolate.is_some() {
+                    self.isolate = self
+                        .isolate
+                        .and_then(|id| self.doc.nodes.get(id).and_then(|n| n.parent))
+                        .filter(|p| {
+                            self.doc
+                                .nodes
+                                .get(*p)
+                                .map(|n| matches!(n.kind, NodeKind::Group))
+                                .unwrap_or(false)
+                        });
+                    self.selection.clear();
+                    self.status = "退出隔离模式".into();
+                    return;
+                }
                 self.selection.clear();
                 if !matches!(self.drag, Drag::None) {
                     self.drag = Drag::None;
                     self.status = "已取消".into();
+                }
+            }
+            // ── P4 钢笔:Enter 结束路径 ──
+            "canvas.pen_finish" => {
+                if self.tool == Tool::Pen && !self.pen_points.is_empty() {
+                    self.finish_pen(false);
+                    self.status = "钢笔:路径已结束".into();
                 }
             }
             // ── 应用级(无键位,仅菜单) ──
@@ -1220,6 +1322,161 @@ impl VellumApp {
             self.exec(Command::Compound { cmds });
             self.status = format!("已{}分布 {count} 个对象(间距 {gap:.0}px)", axis);
         }
+    }
+
+    /// 钢笔结束:closed = 闭合路径;否则开放路径(仅描边)。
+    /// 锚点 → BezPath(直线段;平滑手柄属 P4 后半)。
+    fn finish_pen(&mut self, closed: bool) {
+        let pts = std::mem::take(&mut self.pen_points);
+        if pts.len() < 2 {
+            return;
+        }
+        let mut path = vb_common::geom::BezPath::new();
+        path.move_to(vb_common::geom::Point::new(pts[0].0, pts[0].1));
+        for p in &pts[1..] {
+            path.line_to(vb_common::geom::Point::new(p.0, p.1));
+        }
+        if closed {
+            path.close_path();
+        }
+        self.create_vector_node(path, closed);
+    }
+
+    /// 由路径创建矢量节点(P4.5)。
+    fn create_vector_node(&mut self, path: vb_common::geom::BezPath, closed: bool) {
+        use kurbo::Shape;
+        let (minx, miny, maxx, maxy) = {
+            let bb = path.bounding_box();
+            (bb.x0, bb.y0, bb.x1, bb.y1)
+        };
+        let sid = self.doc.alloc_sid();
+        let mut n = vb_doc::model::Node::new(
+            NodeKind::Vector { path: path.clone() },
+            format!("路径 {}", sid.as_str()),
+            sid.clone(),
+        );
+        n.tag = "svg".into();
+        n.geom = Geom {
+            x: minx.round(),
+            y: miny.round(),
+            w: (maxx - minx).ceil().max(1.0),
+            h: (maxy - miny).ceil().max(1.0),
+        };
+        // 路径以节点原点为基准:平移到 geom.x/y
+        let mut shifted = vb_common::geom::BezPath::new();
+        for el in &path.elements().to_vec() {
+            use vb_common::geom::PathEl;
+            match &el {
+                PathEl::MoveTo(p) => {
+                    shifted.move_to(*p - vb_common::geom::Vec2::new(n.geom.x, n.geom.y))
+                }
+                PathEl::LineTo(p) => {
+                    shifted.line_to(*p - vb_common::geom::Vec2::new(n.geom.x, n.geom.y))
+                }
+                PathEl::QuadTo(c, p) => shifted.quad_to(
+                    *c - vb_common::geom::Vec2::new(n.geom.x, n.geom.y),
+                    *p - vb_common::geom::Vec2::new(n.geom.x, n.geom.y),
+                ),
+                PathEl::CurveTo(c1, c2, p) => shifted.curve_to(
+                    *c1 - vb_common::geom::Vec2::new(n.geom.x, n.geom.y),
+                    *c2 - vb_common::geom::Vec2::new(n.geom.x, n.geom.y),
+                    *p - vb_common::geom::Vec2::new(n.geom.x, n.geom.y),
+                ),
+                PathEl::ClosePath => shifted.close_path(),
+            }
+        }
+        n.kind = NodeKind::Vector { path: shifted };
+        if closed {
+            n.style.push(vb_css::Decl {
+                prop: "fill".into(),
+                value: "#d4d4d4".into(),
+                important: false,
+            });
+        }
+        n.style.push(vb_css::Decl {
+            prop: "stroke".into(),
+            value: "#1a1a1a".into(),
+            important: false,
+        });
+        n.style.push(vb_css::Decl {
+            prop: "stroke-width".into(),
+            value: "1.5px".into(),
+            important: false,
+        });
+        let ab = self
+            .artboard_at_world(n.geom.x, n.geom.y)
+            .or(self.doc.artboards.first().copied())
+            .unwrap();
+        let ab_sid = self.doc.nodes.get(ab).unwrap().sid.as_str().to_string();
+        let ab_len = self.doc.nodes.get(ab).unwrap().children.len();
+        let tree = vb_doc::model::NodeTree {
+            node: n,
+            children: vec![],
+        };
+        self.exec(Command::Insert {
+            parent_sid: ab_sid,
+            index: ab_len,
+            tree,
+        });
+        self.selection = vec![sid.as_str().to_string()];
+    }
+
+    /// 直接选择:命中检测 — 找光标附近矢量节点的顶点。返回 (sid, 顶点序号)。
+    fn find_vector_vertex(&self, wx: f64, wy: f64, tol: f64) -> Option<(String, usize)> {
+        for &ab in &self.doc.artboards {
+            let mut ids = Vec::new();
+            self.doc.subtree(ab, &mut ids);
+            for id in ids {
+                let Some(n) = self.doc.nodes.get(id) else {
+                    continue;
+                };
+                if n.hidden || n.locked {
+                    continue;
+                }
+                if let NodeKind::Vector { path } = &n.kind {
+                    for (i, el) in path.elements().iter().enumerate() {
+                        use vb_common::geom::PathEl;
+                        let p = match el {
+                            PathEl::MoveTo(p) | PathEl::LineTo(p) => *p,
+                            _ => continue,
+                        };
+                        // 路径以节点原点存储 → 绝对 = 节点 bbox 原点 + 点
+                        let bb = vb_tools::abs_bbox(&self.doc, id)?;
+                        let ax = bb.x0 + p.x;
+                        let ay = bb.y0 + p.y;
+                        if (ax - wx).hypot(ay - wy) <= tol {
+                            return Some((n.sid.as_str().to_string(), i));
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// 取矢量节点的顶点绝对坐标(直接选择渲染/拖拽用)。
+    fn vector_vertices(&self, sid: &str) -> Vec<(usize, f64, f64)> {
+        let Some(nid) = self.doc.find_by_sid(sid) else {
+            return vec![];
+        };
+        let Some(n) = self.doc.nodes.get(nid) else {
+            return vec![];
+        };
+        let NodeKind::Vector { path } = &n.kind else {
+            return vec![];
+        };
+        let bb = vb_tools::abs_bbox(&self.doc, nid).unwrap_or(vb_common::geom::Rect::ZERO);
+        path.elements()
+            .iter()
+            .enumerate()
+            .filter_map(|(i, el)| {
+                use vb_common::geom::PathEl;
+                match el {
+                    PathEl::MoveTo(p) | PathEl::LineTo(p) => Some((i, bb.x0 + p.x, bb.y0 + p.y)),
+                    _ => None,
+                }
+            })
+            .collect()
     }
 
     /// 对齐(P3.8):多选 → 在选择包围盒内对齐;单选 → 对齐所属画板。
@@ -1490,6 +1747,8 @@ impl VellumApp {
                                 (Tool::Rect, Name::ToolRect, "矩形", "M"),
                                 (Tool::Ellipse, Name::ToolEllipse, "椭圆", "L"),
                                 (Tool::Line, Name::Crosshair, "直线", "\\"),
+                                (Tool::Pen, Name::KindVector, "钢笔", "P"),
+                                (Tool::DirectSelect, Name::ToolSelect, "直接选择", "A"),
                                 (Tool::Zoom, Name::ZoomIn, "缩放", "Z"),
                                 (Tool::Hand, Name::ToolHand, "抓手", "H"),
                             ] {
@@ -2390,6 +2649,33 @@ impl VellumApp {
                 return;
             }
         }
+        // 钢笔工具单击(P4.5):落锚点;靠近起点时闭合
+        if response.clicked() && self.tool == Tool::Pen {
+            if let Some(p) = response.interact_pointer_pos() {
+                let pl = p - rect.min;
+                let (wx, wy) = self.camera.screen_to_world(pl.x as f64, pl.y as f64);
+                let (wx, wy) = (wx.round(), wy.round());
+                if let Some(&(x0, y0)) = self.pen_points.first() {
+                    if (wx - x0).hypot(wy - y0) <= 6.0 / self.camera.zoom
+                        && self.pen_points.len() >= 3
+                    {
+                        self.finish_pen(true);
+                        return;
+                    }
+                }
+                self.pen_points.push((wx, wy));
+                // (request_repaint 由 egui 输入事件自动触发)
+            }
+            return;
+        }
+        // 直接选择单击(A):命中矢量顶点 → 记录待拖(P4.6)
+        if response.clicked() && self.tool == Tool::DirectSelect {
+            if let Some(p) = response.interact_pointer_pos() {
+                let pl = p - rect.min;
+                let (wx, wy) = self.camera.screen_to_world(pl.x as f64, pl.y as f64);
+                self.ds_vertex = self.find_vector_vertex(wx, wy, 8.0 / self.camera.zoom);
+            }
+        }
         // 光标世界坐标(指针先转画布本地)
         if let Some(p) = response.hover_pos() {
             let pl = p - rect.min;
@@ -2622,6 +2908,12 @@ impl VellumApp {
                 Tool::Zoom => {
                     self.drag = Drag::ZoomRegion { start: p, cur: p };
                 }
+                Tool::Pen => {
+                    // 钢笔单击由 clicked() 处理;这里兜底防穿透
+                }
+                Tool::DirectSelect => {
+                    // 直接选择:单击由 clicked() 处理(顶点命中)
+                }
             }
         }
 
@@ -2848,6 +3140,8 @@ impl VellumApp {
     ) -> (f64, f64, Vec<[f64; 4]>) {
         let mut xs: Vec<(f64, f64, f64)> = Vec::new(); // (候选 x, 线 y0, 线 y1)
         let mut ys: Vec<(f64, f64, f64)> = Vec::new(); // (候选 y, 线 x0, 线 x1)
+                                                       // 兄弟完整 bbox(P4.1 间距/尺寸类用)
+        let mut sib_rects: Vec<(f64, f64, f64, f64)> = Vec::new(); // (x0,y0,x1,y1)
 
         // 画板边/中心
         if let Some(ab) = artboard {
@@ -2870,6 +3164,7 @@ impl VellumApp {
                     }
                     if let Some(bb) = vb_tools::abs_bbox(&self.doc, c) {
                         let (bx0, by0, bx1, by1) = (bb.x0, bb.y0, bb.x1, bb.y1);
+                        sib_rects.push((bx0, by0, bx1, by1));
                         xs.push((bx0, by0, by1));
                         xs.push(((bx0 + bx1) / 2.0, by0, by1));
                         xs.push((bx1, by0, by1));
@@ -2932,7 +3227,92 @@ impl VellumApp {
                 .unwrap_or(c);
             g.y + (c - cur)
         });
-        (nx.unwrap_or(g.x), ny.unwrap_or(g.y), lines)
+
+        let mut nx = nx.unwrap_or(g.x);
+        let mut ny = ny.unwrap_or(g.y);
+
+        // ── P4.1 间距类:移动边与某兄弟形成"与既有兄弟对间距相等"的布局时吸附。
+        // 仅在坐标轴对齐类未命中时尝试(对齐优先)。
+        if best_x.is_none() && sib_rects.len() >= 2 {
+            let mut sibs: Vec<(f64, f64, f64, f64)> = sib_rects.clone();
+            sibs.sort_by(|a, b| a.2.total_cmp(&b.2));
+            let mut gaps: Vec<f64> = Vec::new();
+            for w in sibs.windows(2) {
+                let gp = w[1].0 - w[0].2;
+                if gp > 0.0 {
+                    gaps.push(gp);
+                }
+            }
+            let mut best: Option<(f64, f64, f64, f64)> = None; // (delta, cand_x, y0, y1)
+            for (ax0, ay0, ax1, ay1) in &sib_rects {
+                for gp in &gaps {
+                    // 放在兄弟右侧:移动盒左缘 = 兄弟右缘 + gp
+                    let cand = ax1 + gp;
+                    let d = (g.x - cand).abs();
+                    if d <= tol && best.as_ref().map(|(bd, ..)| d < *bd).unwrap_or(true) {
+                        best = Some((d, cand, *ay0, *ay1));
+                    }
+                    // 放在兄弟左侧:移动盒左缘 = 兄弟左缘 - gp - 移动盒宽
+                    let cand2 = ax0 - gp - g.w;
+                    let d2 = (g.x - cand2).abs();
+                    if d2 <= tol && best.as_ref().map(|(bd, ..)| d2 < *bd).unwrap_or(true) {
+                        best = Some((d2, cand2, *ay0, *ay1));
+                    }
+                }
+            }
+            if let Some((_, cand, ly0, ly1)) = best {
+                nx = cand;
+                // 间距参考线:横跨两盒中点的水平测量线
+                let mid_y = ly0 + (ly1 - ly0) / 2.0;
+                lines.push([cand, mid_y, cand + g.w, mid_y]);
+            }
+        }
+        if best_y.is_none() && sib_rects.len() >= 2 {
+            let mut vrects: Vec<(f64, f64, f64, f64)> = sib_rects.clone();
+            vrects.sort_by(|a, b| a.3.total_cmp(&b.3));
+            let mut gaps: Vec<f64> = Vec::new();
+            for w in vrects.windows(2) {
+                let gp = w[1].1 - w[0].3;
+                if gp > 0.0 {
+                    gaps.push(gp);
+                }
+            }
+            let mut best: Option<(f64, f64, f64, f64)> = None;
+            for (bx0, by0, bx1, by1) in &vrects {
+                for gp in &gaps {
+                    let cand = *by1 + gp;
+                    let d = (g.y - cand).abs();
+                    if d <= tol && best.as_ref().map(|(bd, ..)| d < *bd).unwrap_or(true) {
+                        best = Some((d, cand, *bx0, *bx1));
+                    }
+                    let cand2 = by0 - gp - g.h;
+                    let d2 = (g.y - cand2).abs();
+                    if d2 <= tol && best.as_ref().map(|(bd, ..)| d2 < *bd).unwrap_or(true) {
+                        best = Some((d2, cand2, *bx0, *bx1));
+                    }
+                }
+            }
+            if let Some((_, cand, lx0, lx1)) = best {
+                ny = cand;
+                let mid_x = lx0 + (lx1 - lx0) / 2.0;
+                lines.push([mid_x, cand, mid_x, cand + g.h]);
+            }
+        }
+
+        // ── P4.1 尺寸相等类:宽(或高)与某兄弟一致时轻微吸附(仅拖动,不改尺寸) ──
+        // 移动时若宽恰等于某兄弟宽,沿该兄弟左缘对齐提示;此处以参考线表达。
+        for (bx0, by0, bx1, by1) in &sib_rects {
+            let dw = (*bx1 - *bx0 - g.w).abs();
+            let dh = (*by1 - *by0 - g.h).abs();
+            if dw <= tol * 0.5 {
+                lines.push([*bx0, *by0 - 8.0, *bx0, *by1 + 8.0]);
+            }
+            if dh <= tol * 0.5 {
+                lines.push([*bx0 - 8.0, *by0, *bx1 + 8.0, *by0]);
+            }
+        }
+
+        (nx, ny, lines)
     }
 
     fn draw_artboards(&self, painter: &egui::Painter, origin: egui::Vec2) {
@@ -3258,7 +3638,7 @@ fn kind_icon(kind: &NodeKind) -> Name {
         NodeKind::Box => Name::KindBox,
         NodeKind::Text { .. } => Name::KindText,
         NodeKind::Image { .. } => Name::KindImage,
-        NodeKind::Vector => Name::KindVector,
+        NodeKind::Vector { .. } => Name::KindVector,
         NodeKind::Slice => Name::KindSlice,
         NodeKind::Frozen { .. } => Name::KindFrozen,
     }

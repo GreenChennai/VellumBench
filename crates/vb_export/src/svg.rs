@@ -129,8 +129,67 @@ fn write_item(out: &mut String, i: usize, item: &DrawItem, scale: f64) {
         tf = format!(r#" transform="{}{}""#, rot, sc);
     }
 
+    // P4 矢量路径 → <path d>
+    if let Some(kpath) = &item.path {
+        let mut d = String::new();
+        for el in kpath.elements() {
+            use vb_common::geom::PathEl;
+            match el {
+                PathEl::MoveTo(p) => {
+                    let _ = write!(
+                        d,
+                        "M{} {} ",
+                        (p.x + item.rect[0]) * scale,
+                        (p.y + item.rect[1]) * scale
+                    );
+                }
+                PathEl::LineTo(p) => {
+                    let _ = write!(
+                        d,
+                        "L{} {} ",
+                        (p.x + item.rect[0]) * scale,
+                        (p.y + item.rect[1]) * scale
+                    );
+                }
+                PathEl::QuadTo(c, p) => {
+                    let _ = write!(
+                        d,
+                        "Q{} {} {} {} ",
+                        (c.x + item.rect[0]) * scale,
+                        (c.y + item.rect[1]) * scale,
+                        (p.x + item.rect[0]) * scale,
+                        (p.y + item.rect[1]) * scale
+                    );
+                }
+                PathEl::CurveTo(c1, c2, p) => {
+                    let _ = write!(
+                        d,
+                        "C{} {} {} {} {} {} ",
+                        (c1.x + item.rect[0]) * scale,
+                        (c1.y + item.rect[1]) * scale,
+                        (c2.x + item.rect[0]) * scale,
+                        (c2.y + item.rect[1]) * scale,
+                        (p.x + item.rect[0]) * scale,
+                        (p.y + item.rect[1]) * scale
+                    );
+                }
+                PathEl::ClosePath => d.push('Z'),
+            }
+        }
+        let fa = fill_attr(item, i);
+        let _ = writeln!(
+            out,
+            r#"<path d="{d}" {fa} stroke="rgb(20,20,20)" stroke-width="1.5"{tf}/>"#
+        );
+        return;
+    }
+
+    if item.kind == DrawKind::VectorPath {
+        return;
+    }
+    #[allow(unreachable_patterns)]
     match item.kind {
-        DrawKind::Text => {
+        DrawKind::VectorPath | DrawKind::Text => {
             if let Some(t) = &item.label {
                 let (r, g, b) = to_255(t.color);
                 let weight = if t.weight_bold { "600" } else { "400" };

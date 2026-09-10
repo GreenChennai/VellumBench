@@ -31,3 +31,4 @@ wgpu = "29"
 vb_css.workspace = true
 vb_ui = { path = "../vb_ui" }
 notify = "8.2.0"
+kurbo = "0.13"

@@ -572,6 +572,7 @@ fn collect_affected(cmd: &Command, out: &mut PatchOutcome) {
         | Command::SetAttrs { sid, .. }
         | Command::Rename { sid, .. }
         | Command::SetTag { sid, .. }
+        | Command::SetVector { sid, .. }
         | Command::SetFlags { sid, .. } => out.changed_ids.push(sid.clone()),
         Command::Group {
             member_sids,

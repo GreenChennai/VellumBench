@@ -59,7 +59,9 @@ pub enum NodeKind {
         src: String,
     },
     /// 矢量路径(v0.1 导入为 Frozen;变体保留占位)
-    Vector,
+    Vector {
+        path: kurbo::BezPath,
+    },
     Slice,
     /// 冻结块:原样保留的 HTML 片段(可见、可移动/删除、内部不可编辑)
     Frozen {
@@ -76,7 +78,7 @@ impl NodeKind {
             NodeKind::Box => "box",
             NodeKind::Text { .. } => "text",
             NodeKind::Image { .. } => "image",
-            NodeKind::Vector => "vector",
+            NodeKind::Vector { .. } => "vector",
             NodeKind::Slice => "slice",
             NodeKind::Frozen { .. } => "frozen",
         }
@@ -143,7 +145,7 @@ impl Node {
             NodeKind::Box => "div".to_string(),
             NodeKind::Text { .. } => "p".to_string(),
             NodeKind::Image { .. } => "img".to_string(),
-            NodeKind::Vector => "svg".to_string(),
+            NodeKind::Vector { .. } => "svg".to_string(),
             NodeKind::Slice => "div".to_string(),
             NodeKind::Frozen { .. } => "#frozen".to_string(),
         };

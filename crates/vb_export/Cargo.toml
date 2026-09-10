@@ -8,5 +8,6 @@ description = "Vellum Bench 导出管线:命名模板、原生引擎调度、WPI
 
 [dependencies]
 serde_json = { workspace = true }
+vb_common = { workspace = true }
 vb_doc = { workspace = true }
 vb_render = { path = "../vb_render" }

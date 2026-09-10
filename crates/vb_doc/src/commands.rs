@@ -53,6 +53,7 @@ pub enum CmdKind {
     SetAttrs,
     Rename,
     SetTag,
+    SetVector,
     Flags,
     Group,
     Ungroup,
@@ -117,6 +118,12 @@ pub enum Command {
         new: String,
         old: Option<String>,
     },
+    /// 矢量路径编辑(P4 钢笔/直接选择):整路径替换(锚点移动/增删都表现为新路径)
+    SetVector {
+        sid: String,
+        new: kurbo::BezPath,
+        old: Option<kurbo::BezPath>,
+    },
     SetFlags {
         sid: String,
         hidden: Option<bool>,
@@ -160,6 +167,7 @@ impl Command {
             Command::SetAttrs { .. } => CmdKind::SetAttrs,
             Command::Rename { .. } => CmdKind::Rename,
             Command::SetTag { .. } => CmdKind::SetTag,
+            Command::SetVector { .. } => CmdKind::SetVector,
             Command::SetFlags { .. } => CmdKind::Flags,
             Command::Group { .. } => CmdKind::Group,
             Command::Ungroup { .. } => CmdKind::Ungroup,
@@ -176,7 +184,8 @@ impl Command {
             | Command::SetStyle { sid, .. }
             | Command::SetText { sid, .. }
             | Command::Rename { sid, .. }
-            | Command::SetTag { sid, .. } => Some((self.kind(), sid.clone())),
+            | Command::SetTag { sid, .. }
+            | Command::SetVector { sid, .. } => Some((self.kind(), sid.clone())),
             _ => None,
         }
     }
@@ -193,6 +202,7 @@ impl Command {
             Command::SetAttrs { .. } => "修改 HTML 属性",
             Command::Rename { .. } => "重命名",
             Command::SetTag { .. } => "切换语义标签",
+            Command::SetVector { .. } => "编辑矢量路径",
             Command::SetFlags { .. } => "切换可见/锁定",
             Command::Group { .. } => "编组",
             Command::Ungroup { .. } => "取消编组",
@@ -348,6 +358,27 @@ impl Command {
                     *old = Some(n.tag.clone());
                 }
                 n.tag = new.clone();
+                Ok(ChangeSet {
+                    structure: false,
+                    style: true,
+                    geometry: false,
+                    text: false,
+                })
+            }
+            Command::SetVector { sid, new, old } => {
+                let id = doc.find_by_sid(sid).ok_or_else(|| no_such(sid))?;
+                let n = doc.nodes.get_mut(id).unwrap();
+                if old.is_none() {
+                    *old = Some(match &n.kind {
+                        NodeKind::Vector { path } => path.clone(),
+                        _ => {
+                            return Err(VbError::Unsupported("该对象不是矢量路径".into()));
+                        }
+                    });
+                }
+                if let NodeKind::Vector { path } = &mut n.kind {
+                    *path = new.clone();
+                }
                 Ok(ChangeSet {
                     structure: false,
                     style: true,
@@ -604,6 +635,21 @@ impl Command {
                 if let Some(t) = old {
                     let id = doc.find_by_sid(sid).ok_or_else(|| no_such(sid))?;
                     doc.nodes.get_mut(id).unwrap().tag = t.clone();
+                }
+                Ok(ChangeSet {
+                    structure: false,
+                    style: true,
+                    geometry: false,
+                    text: false,
+                })
+            }
+            Command::SetVector { sid, old, .. } => {
+                if let Some(p) = old {
+                    let id = doc.find_by_sid(sid).ok_or_else(|| no_such(sid))?;
+                    let n = doc.nodes.get_mut(id).unwrap();
+                    if let NodeKind::Vector { path } = &mut n.kind {
+                        *path = p.clone();
+                    }
                 }
                 Ok(ChangeSet {
                     structure: false,

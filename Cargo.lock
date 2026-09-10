@@ -4396,6 +4396,7 @@ dependencies = [
  "egui",
  "env_logger",
  "image",
+ "kurbo",
  "log",
  "notify",
  "rfd",
@@ -4442,6 +4443,7 @@ name = "vb_export"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+ "vb_common",
  "vb_doc",
  "vb_render",
 ]

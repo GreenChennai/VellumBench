@@ -397,6 +397,20 @@ pub const SHORTCUTS: &[Shortcut] = &[
         ctx: CTX_CANVAS,
     },
     Shortcut {
+        id: "tool.pen",
+        key: Key::P,
+        ctrl: ModMatch::Off,
+        shift: ModMatch::Off,
+        ctx: CTX_CANVAS,
+    },
+    Shortcut {
+        id: "tool.direct_select",
+        key: Key::A,
+        ctrl: ModMatch::Off,
+        shift: ModMatch::Off,
+        ctx: CTX_CANVAS,
+    },
+    Shortcut {
         id: "tool.zoom",
         key: Key::Z,
         ctrl: ModMatch::Off,
@@ -439,6 +453,14 @@ pub const SHORTCUTS: &[Shortcut] = &[
         ctrl: ModMatch::Any,
         shift: ModMatch::Any,
         ctx: CTX_NO_TEXT,
+    },
+    // P4 钢笔:Enter 结束开放路径
+    Shortcut {
+        id: "canvas.pen_finish",
+        key: Key::Enter,
+        ctrl: ModMatch::Off,
+        shift: ModMatch::Any,
+        ctx: CtxSet::one(InputContext::Canvas),
     },
     // ── P3.3 剪贴板(画布上下文;文本框内 Ctrl+C 交给 egui 原生) ──
     Shortcut {
@@ -567,6 +589,8 @@ pub const IMPLEMENTED_IDS: &[&str] = &[
     "tool.rect",
     "tool.ellipse",
     "tool.line",
+    "tool.pen",
+    "tool.direct_select",
     "tool.zoom",
     "tool.hand",
     "canvas.nudge_left",
@@ -574,6 +598,7 @@ pub const IMPLEMENTED_IDS: &[&str] = &[
     "canvas.nudge_up",
     "canvas.nudge_down",
     "canvas.cancel",
+    "canvas.pen_finish",
     // 无键位绑定、仅出现在菜单里的命令
     "view.toggle_theme",
     "object.unlock_all",
@@ -596,6 +621,13 @@ pub const IMPLEMENTED_IDS: &[&str] = &[
     "app.command_palette",
     "object.distribute_h",
     "object.distribute_v",
+    "view.toggle_rulers",
+    "view.toggle_guides",
+    "view.lock_guides",
+    "view.guides_from_selection",
+    "view.toggle_rulers",
+    "view.toggle_guides",
+    "view.lock_guides",
 ];
 
 /// 全部命令的中文名(命令面板 / 菜单 / 状态提示共用)。
@@ -949,3 +981,4 @@ mod tests {
         assert_eq!(lookup(Key::Z, true, true).unwrap().id, "edit.redo");
     }
 }
+// P4.2 标尺与参考线补充命令(无默认键位,经菜单/命令面板触发)

@@ -68,6 +68,34 @@ fn draw_item(
     if iw <= 0.0 || ih <= 0.0 {
         return;
     }
+    // P4 矢量路径:kurbo BezPath -> tiny_skia Path
+    if let Some(kpath) = &item.path {
+        if let Some(tp) = kurbo_to_skia_path(kpath, item.rect[0], item.rect[1], item.opacity, item)
+        {
+            let mut paint = Paint::default();
+            paint.anti_alias = true;
+            if let Some(c) = &item.fill {
+                if let crate::encode::FillDef::Solid(col) = c {
+                    paint.set_color(with_alpha(*col, item.opacity));
+                    pixmap.fill_path(&tp, &paint, FillRule::Winding, tf, None);
+                }
+            }
+            if let Some(b) = &item.border {
+                paint.set_color(with_alpha(b.color, item.opacity));
+                pixmap.stroke_path(
+                    &tp,
+                    &paint,
+                    &Stroke {
+                        width: b.width.max(1.0) as f32,
+                        ..Stroke::default()
+                    },
+                    tf,
+                    None,
+                );
+            }
+        }
+    }
+
     let text_hint: Option<&crate::encode::TextHint> = match item.kind {
         DrawKind::Text => {
             // ADR-0017:占位条(叠加在节点自身填充之上,见下方 Box|Text 臂)
@@ -112,7 +140,7 @@ fn draw_item(
                 }
             }
         }
-        DrawKind::Box | DrawKind::Text => {
+        DrawKind::Box | DrawKind::Text | DrawKind::VectorPath => {
             if let Some(fill) = &item.fill {
                 if let Some(shape) = shape_for(item, x, y, iw, ih) {
                     match fill {
@@ -348,4 +376,39 @@ pub fn gradient_line(angle_css_deg: f64, w: f64, h: f64) -> (tiny_skia::Point, t
         tiny_skia::Point::from_xy(cx - dx * l / 2.0, cy - dy * l / 2.0),
         tiny_skia::Point::from_xy(cx + dx * l / 2.0, cy + dy * l / 2.0),
     )
+}
+
+/// kurbo BezPath → tiny_skia Path(平移到 item 的锚点位置)。
+pub fn kurbo_to_skia_path(
+    src: &vb_common::geom::BezPath,
+    ox: f64,
+    oy: f64,
+    opacity: f32,
+    _item: &DrawItem,
+) -> Option<SkPath> {
+    let _ = opacity;
+    let mut pb = PathBuilder::new();
+    for el in src.elements() {
+        use vb_common::geom::PathEl;
+        match el {
+            PathEl::MoveTo(p) => pb.move_to((p.x + ox) as f32, (p.y + oy) as f32),
+            PathEl::LineTo(p) => pb.line_to((p.x + ox) as f32, (p.y + oy) as f32),
+            PathEl::QuadTo(c, p) => pb.quad_to(
+                (c.x + ox) as f32,
+                (c.y + oy) as f32,
+                (p.x + ox) as f32,
+                (p.y + oy) as f32,
+            ),
+            PathEl::CurveTo(c1, c2, p) => pb.cubic_to(
+                (c1.x + ox) as f32,
+                (c1.y + oy) as f32,
+                (c2.x + ox) as f32,
+                (c2.y + oy) as f32,
+                (p.x + ox) as f32,
+                (p.y + oy) as f32,
+            ),
+            PathEl::ClosePath => pb.close(),
+        }
+    }
+    pb.finish()
 }

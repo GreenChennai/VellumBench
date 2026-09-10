@@ -77,6 +77,41 @@ fn draw_item(scene: &mut Scene, item: &DrawItem) {
         return;
     }
     let tf = item_tf(item);
+    // P4 77e291cf8def5f84:BezPath 4f1851486e3267d3(fill + stroke)
+    if let Some(kpath) = &item.path {
+        let mut vpath = vello::kurbo::BezPath::new();
+        for el in kpath.elements() {
+            match el {
+                vb_common::geom::PathEl::MoveTo(p) => {
+                    vpath.move_to(vello::kurbo::Point::new(p.x + x, p.y + y))
+                }
+                vb_common::geom::PathEl::LineTo(p) => {
+                    vpath.line_to(vello::kurbo::Point::new(p.x + x, p.y + y))
+                }
+                vb_common::geom::PathEl::QuadTo(c, p) => vpath.quad_to(
+                    vello::kurbo::Point::new(c.x + x, c.y + y),
+                    vello::kurbo::Point::new(p.x + x, p.y + y),
+                ),
+                vb_common::geom::PathEl::CurveTo(c1, c2, p) => vpath.curve_to(
+                    vello::kurbo::Point::new(c1.x + x, c1.y + y),
+                    vello::kurbo::Point::new(c2.x + x, c2.y + y),
+                    vello::kurbo::Point::new(p.x + x, p.y + y),
+                ),
+                vb_common::geom::PathEl::ClosePath => vpath.close_path(),
+            }
+        }
+        let brush = match &item.fill {
+            Some(FillDef::Solid(c)) => Brush::Solid(to_color(*c, item.opacity)),
+            _ => Brush::Solid(to_color([0.5, 0.5, 0.5, 1.0], item.opacity)),
+        };
+        scene.fill(vello::peniko::Fill::NonZero, tf, &brush, None, &vpath);
+        if let Some(b) = &item.border {
+            let stroke = vello::kurbo::Stroke::new(b.width.max(1.0));
+            let sbrush = Brush::Solid(to_color(b.color, item.opacity));
+            scene.stroke(&stroke, tf, &sbrush, None, &vpath);
+        }
+        return;
+    }
     if item.kind == DrawKind::Image || item.kind == DrawKind::FrozenPlaceholder {
         let shape = shape_of(item);
         let brush = Brush::Solid(to_color([0.85, 0.83, 0.8, 1.0], item.opacity));
