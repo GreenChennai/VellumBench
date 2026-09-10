@@ -105,6 +105,13 @@ pub struct VellumApp {
     export_format: usize,
     export_scale: u32,
     export_transparent: bool,
+    /// 内部剪贴板(P3.3):(来源父级 sid, 子树快照)
+    clipboard: Vec<(String, vb_doc::model::NodeTree)>,
+    /// 连续粘贴的递增偏移(×16px);复制/剪切时归零
+    paste_offset: u32,
+    /// 命令面板(P3.2,Ctrl+K)
+    palette_open: bool,
+    palette_query: String,
     /// 上次保存/导入时的 rev(外部修改判定:磁盘变了但 rev 未动 → 自动采用)
     saved_rev: u64,
     /// 文件监听事件通道(Agent/外部编辑器改 HTML → 热重载,v0.6)
@@ -173,6 +180,10 @@ impl VellumApp {
             saved_rev: 0,
             watcher_rx: None,
             last_self_write: None,
+            clipboard: Vec::new(),
+            paste_offset: 0,
+            palette_open: false,
+            palette_query: String::new(),
         };
         app.watcher_rx = start_watcher(project.as_deref());
         app
@@ -677,6 +688,51 @@ impl eframe::App for VellumApp {
                 });
             self.show_export = open;
         }
+
+        // 命令面板(P3.2,Ctrl+K)
+        if self.palette_open {
+            let mut open = self.palette_open;
+            egui::Window::new("命令面板")
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .show(ui.ctx(), |ui| {
+                    ui.add_sized(
+                        [360.0, 22.0],
+                        egui::TextEdit::singleline(&mut self.palette_query).hint_text("搜索命令…"),
+                    );
+                    let query = self.palette_query.to_lowercase();
+                    egui::ScrollArea::vertical()
+                        .max_height(320.0)
+                        .show(ui, |ui| {
+                            let mut executed: Option<String> = None;
+                            for &(id, label) in shortcuts::CMD_LABELS {
+                                if !query.is_empty()
+                                    && !label.to_lowercase().contains(&query)
+                                    && !id.contains(&query)
+                                {
+                                    continue;
+                                }
+                                let key_text = shortcuts::key_text_for(id).unwrap_or_default();
+                                let row = ui.add(
+                                    egui::Button::new(
+                                        egui::RichText::new(format!("{label}    {key_text}"))
+                                            .size(12.0),
+                                    )
+                                    .min_size(egui::vec2(340.0, 20.0)),
+                                );
+                                if row.clicked() {
+                                    executed = Some(id.to_string());
+                                }
+                            }
+                            if let Some(id) = executed {
+                                self.run_command(&id, false, false);
+                                self.palette_open = false;
+                            }
+                        });
+                });
+            self.palette_open = open;
+        }
     }
 }
 
@@ -844,6 +900,77 @@ impl VellumApp {
             "tool.rect" => self.tool = Tool::Rect,
             "tool.ellipse" => self.tool = Tool::Ellipse,
             "tool.hand" => self.tool = Tool::Hand,
+            // ── P3.3 剪贴板 ──
+            "edit.copy" => self.clipboard_copy(),
+            "edit.cut" => {
+                self.clipboard_copy();
+                self.delete_selection();
+            }
+            "edit.paste" => self.clipboard_paste(false),
+            "edit.paste_in_place" => self.clipboard_paste(true),
+            // ── P3.8 对齐 ──
+            "align.left" => self.align_selection("left"),
+            "align.hcenter" => self.align_selection("hcenter"),
+            "align.right" => self.align_selection("right"),
+            "align.top" => self.align_selection("top"),
+            "align.vcenter" => self.align_selection("vcenter"),
+            "align.bottom" => self.align_selection("bottom"),
+            // ── P3.9 锁定 / 隐藏 ──
+            "object.lock" => {
+                let sids = self.selection.clone();
+                for sid in sids {
+                    self.exec(Command::SetFlags {
+                        sid,
+                        hidden: None,
+                        locked: Some(true),
+                        old: None,
+                    });
+                }
+                self.status = "已锁定所选".into();
+            }
+            "object.unlock_all" => {
+                let mut ids = Vec::new();
+                for &ab in &self.doc.artboards {
+                    self.doc.subtree(ab, &mut ids);
+                }
+                for id in ids {
+                    if let Some(n) = self.doc.nodes.get_mut(id) {
+                        n.locked = false;
+                    }
+                }
+                self.doc.rev += 1;
+                self.status = "已解锁全部".into();
+            }
+            "object.hide" => {
+                let sids = self.selection.clone();
+                for sid in sids {
+                    self.exec(Command::SetFlags {
+                        sid,
+                        hidden: Some(true),
+                        locked: None,
+                        old: None,
+                    });
+                }
+                self.status = "已隐藏所选".into();
+            }
+            "object.show_all" => {
+                let mut ids = Vec::new();
+                for &ab in &self.doc.artboards {
+                    self.doc.subtree(ab, &mut ids);
+                }
+                for id in ids {
+                    if let Some(n) = self.doc.nodes.get_mut(id) {
+                        n.hidden = false;
+                    }
+                }
+                self.doc.rev += 1;
+                self.status = "已显示全部".into();
+            }
+            // ── P3.2 命令面板 ──
+            "app.command_palette" => {
+                self.palette_open = true;
+                self.palette_query.clear();
+            }
             // ── 画布 ──
             "canvas.nudge_left" | "canvas.nudge_right" | "canvas.nudge_up"
             | "canvas.nudge_down" => {
@@ -951,7 +1078,157 @@ impl VellumApp {
         self.status = "已取消编组(Ctrl+Shift+G)".into();
     }
 
-    /// 5c425e8f8c036574:delta=+1 524d79fb4e005c42(z 5e8f5347),-1 540e79fb;front/back 7528 00b110000
+    /// 剪贴板:复制所选子树(非破坏;NodeTree::from_document 只克隆)。
+    fn clipboard_copy(&mut self) {
+        if self.selection.is_empty() {
+            self.status = "剪贴板:未选中对象".into();
+            return;
+        }
+        let mut buf = Vec::new();
+        for sid in &self.selection {
+            if let Some(nid) = self.doc.find_by_sid(sid) {
+                if let Some(n) = self.doc.nodes.get(nid) {
+                    let parent_sid = n
+                        .parent
+                        .and_then(|p| self.doc.nodes.get(p))
+                        .map(|p| p.sid.as_str().to_string())
+                        .unwrap_or_default();
+                    if let Some(tree) = vb_doc::model::NodeTree::from_document(&self.doc, nid) {
+                        buf.push((parent_sid, tree));
+                    }
+                }
+            }
+        }
+        self.clipboard = buf;
+        self.paste_offset = 0;
+        self.status = format!("已复制 {} 个对象", self.clipboard.len());
+    }
+
+    /// 剪贴板:粘贴。`in_place` = 原坐标(AI 的贴在前面);否则按 16px 递增偏移。
+    fn clipboard_paste(&mut self, in_place: bool) {
+        if self.clipboard.is_empty() {
+            self.status = "剪贴板为空".into();
+            return;
+        }
+        let offset = if in_place { 0 } else { self.paste_offset };
+        self.paste_offset += 1;
+        let dx = (offset * 16) as f64;
+        let dy = (offset * 16) as f64;
+
+        // 深拷贝出命令序列(整批一个 undo 条目)
+        let entries = self.clipboard.clone();
+        let mut cmds: Vec<Command> = Vec::new();
+        let mut pasted_sids: Vec<String> = Vec::new();
+        for (parent_sid, tree) in &entries {
+            let mut tree = tree.clone();
+            re_sid_tree(&mut tree, &mut self.doc);
+            if !in_place {
+                tree.node.geom.x += dx;
+                tree.node.geom.y += dy;
+            }
+            pasted_sids.push(tree.node.sid.as_str().to_string());
+            cmds.push(Command::Insert {
+                parent_sid: parent_sid.clone(),
+                index: usize::MAX,
+                tree,
+            });
+        }
+        self.exec(Command::Compound { cmds });
+        self.selection = pasted_sids;
+        self.status = format!(
+            "已粘贴 {} 个对象{}",
+            self.clipboard.len(),
+            if in_place { "(就地)" } else { "" }
+        );
+    }
+
+    /// 对齐(P3.8):多选 → 在选择包围盒内对齐;单选 → 对齐所属画板。
+    fn align_selection(&mut self, mode: &str) {
+        if self.selection.is_empty() {
+            self.status = "对齐:未选中对象".into();
+            return;
+        }
+        // (sid, 当前几何, 绝对 bbox)
+        let mut items: Vec<(String, Geom, vb_common::geom::Rect)> = Vec::new();
+        for sid in &self.selection {
+            if let Some(nid) = self.doc.find_by_sid(sid) {
+                if let Some(bb) = vb_tools::abs_bbox(&self.doc, nid) {
+                    if let Some(n) = self.doc.nodes.get(nid) {
+                        items.push((sid.clone(), n.geom, bb));
+                    }
+                }
+            }
+        }
+        if items.is_empty() {
+            return;
+        }
+        // 目标包围盒:单选 = 画板;多选 = 选择集合的包围盒
+        let (bx0, by0, bx1, by1) = if items.len() == 1 {
+            let (_, _, first_bb) = &items[0];
+            let ab = self
+                .artboard_at_world(first_bb.x0 + 1.0, first_bb.y0 + 1.0)
+                .or(self.doc.artboards.first().copied());
+            match ab.and_then(|a| {
+                self.doc
+                    .nodes
+                    .get(a)
+                    .map(|n| (n.geom.x, n.geom.y, n.geom.w, n.geom.h))
+            }) {
+                Some((ax, ay, aw, ah)) => (ax, ay, ax + aw, ay + ah),
+                None => (0.0, 0.0, 1440.0, 900.0),
+            }
+        } else {
+            let mut bx0 = f64::INFINITY;
+            let mut by0 = f64::INFINITY;
+            let mut bx1 = f64::NEG_INFINITY;
+            let mut by1 = f64::NEG_INFINITY;
+            for (_, _, bb) in &items {
+                bx0 = bx0.min(bb.x0);
+                by0 = by0.min(bb.y0);
+                bx1 = bx1.max(bb.x1);
+                by1 = by1.max(bb.y1);
+            }
+            (bx0, by0, bx1, by1)
+        };
+
+        let mut cmds: Vec<Command> = Vec::new();
+        for (sid, g, bb) in &items {
+            let (nx0, ny0) = match mode {
+                "left" => (bx0, bb.y0),
+                "hcenter" => ((bx0 + bx1) / 2.0 - bb.width() / 2.0, bb.y0),
+                "right" => (bx1 - bb.width(), bb.y0),
+                "top" => (bb.x0, by0),
+                "vcenter" => (bb.x0, (by0 + by1) / 2.0 - bb.height() / 2.0),
+                "bottom" => (bb.x0, by1 - bb.height()),
+                _ => continue,
+            };
+            // 绝对位移转相对位移(节点 geom 相对画板/父级)
+            let dx = nx0 - bb.x0;
+            let dy = ny0 - bb.y0;
+            if dx.abs() < 0.5 && dy.abs() < 0.5 {
+                continue;
+            }
+            cmds.push(Command::SetGeom {
+                sid: sid.clone(),
+                new: Geom {
+                    x: g.x + dx,
+                    y: g.y + dy,
+                    w: g.w,
+                    h: g.h,
+                },
+                old: None,
+            });
+        }
+        if cmds.is_empty() {
+            self.status = "对齐:无需移动".into();
+            return;
+        }
+        let n = cmds.len();
+        self.exec(Command::Compound { cmds });
+        self.status = format!("已对齐 {n} 个对象({mode})");
+    }
+
+    /// 层序调整:delta=+1 前移一层(z 序升),-1 后移;front/back 用 ±10000
     fn reorder(&mut self, sid: &str, delta: i32) {
         let Some(nid) = self.doc.find_by_sid(sid) else {
             return;
@@ -1301,6 +1578,31 @@ impl VellumApp {
                                         old: None,
                                     });
                                 }
+
+                                // --- 对齐(P3.8:复用命令派发,快捷键同源) ---
+                                ui.separator();
+                                ui.label("对齐");
+                                ui.horizontal(|ui| {
+                                    let btns: [(&str, &str); 6] = [
+                                        ("align.left", "⇤"),
+                                        ("align.hcenter", "↔"),
+                                        ("align.right", "⇥"),
+                                        ("align.top", "⤒"),
+                                        ("align.vcenter", "↕"),
+                                        ("align.bottom", "⤓"),
+                                    ];
+                                    for (id, icon) in btns {
+                                        if ui
+                                            .button(icon)
+                                            .on_hover_text(
+                                                shortcuts::command_label(id).unwrap_or(id),
+                                            )
+                                            .clicked()
+                                        {
+                                            self.run_command(id, false, false);
+                                        }
+                                    }
+                                });
 
                                 // --- v0.7 网页能力 ---
                                 ui.separator();
@@ -2013,6 +2315,7 @@ impl VellumApp {
         let mods = ctx.input(|i| i.modifiers);
         let alt = mods.alt;
         let shift = mods.shift;
+        let ctrl = mods.ctrl || mods.command;
         let _ = alt_down;
 
         // 本帧参考线清空(绘制在 overlay)
@@ -2312,9 +2615,9 @@ impl VellumApp {
                 _ => None,
             };
             if let Some((sid, g)) = drag_update {
-                // 智能参考线:对齐兄弟/画板(屏幕空间 6px 阈值)
+                // 智能参考线:对齐兄弟/画板(屏幕空间 6px 阈值);拖动中 Mod 临时禁用(P3.10)
                 let mut g = g;
-                if self.smart_guides_on {
+                if self.smart_guides_on && !ctrl {
                     if let Some(nid) = self.doc.find_by_sid(&sid) {
                         let parent = self.doc.nodes.get(nid).unwrap().parent;
                         let ab = self.artboard_at_world(g.x + 1.0, g.y + 1.0);
@@ -2593,6 +2896,66 @@ impl VellumApp {
         }
         if std::env::var("VB_NO_OVERLAY").is_ok() {
             return;
+        }
+        // 数值浮层(P3.7,14 篇 §4.4):移动 / 缩放 / 旋转时跟随光标显示实时数值
+        let drag_label: Option<String> = match &self.drag {
+            Drag::MoveObj {
+                sid, start_geom, ..
+            } => {
+                let n = self
+                    .doc
+                    .find_by_sid(sid)
+                    .and_then(|id| self.doc.nodes.get(id));
+                n.map(|n| {
+                    format!(
+                        "X {}\nY {}\nΔX +{}\nΔY +{}",
+                        vb_common::units::fmt_num(n.geom.x),
+                        vb_common::units::fmt_num(n.geom.y),
+                        vb_common::units::fmt_num(n.geom.x - start_geom.x),
+                        vb_common::units::fmt_num(n.geom.y - start_geom.y),
+                    )
+                })
+            }
+            Drag::Resize { sid, .. } => self.doc.find_by_sid(sid).and_then(|id| {
+                self.doc.nodes.get(id).map(|n| {
+                    format!(
+                        "W {}\nH {}",
+                        vb_common::units::fmt_num(n.geom.w),
+                        vb_common::units::fmt_num(n.geom.h)
+                    )
+                })
+            }),
+            Drag::Rotate { sid, .. } => self.doc.find_by_sid(sid).and_then(|id| {
+                self.doc
+                    .nodes
+                    .get(id)
+                    .and_then(|n| n.style_get("transform"))
+                    .and_then(vb_render::encode::parse_rotate_deg)
+                    .map(|d| format!("旋转 {}°", vb_common::units::fmt_num(d)))
+            }),
+            _ => None,
+        };
+        if let Some(label) = drag_label {
+            let (cx, cy) = self.cursor_world;
+            let (sx, sy) = self.camera.world_to_screen(cx, cy);
+            let pos = pos2(sx as f32 + origin.x + 16.0, sy as f32 + origin.y + 16.0);
+            let bg = t.bg_raised;
+            let fg = t.text;
+            painter.rect_filled(
+                Rect::from_min_size(
+                    pos,
+                    egui::vec2(96.0, 16.0 * label.lines().count() as f32 + 10.0),
+                ),
+                4.0,
+                bg,
+            );
+            painter.text(
+                pos2(pos.x + 8.0, pos.y + 5.0),
+                Align2::LEFT_TOP,
+                label,
+                FontId::monospace(11.0),
+                fg,
+            );
         }
         // 文本近似绘制 + 冻结块占位(ADR-0017)
         let mut ids = Vec::new();
@@ -2989,5 +3352,13 @@ impl VellumApp {
         });
         self.selection = vec![sid.as_str().to_string()];
         self.status = "已创建对象".into();
+    }
+}
+
+/// 递归给子树分配全新 sid(粘贴用:副本是新元素,必须有自己的稳定 id)。
+fn re_sid_tree(tree: &mut vb_doc::model::NodeTree, doc: &mut Document) {
+    tree.node.sid = doc.alloc_sid();
+    for c in &mut tree.children {
+        re_sid_tree(c, doc);
     }
 }

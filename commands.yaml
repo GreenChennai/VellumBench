@@ -96,3 +96,79 @@
   keys: { win: "H" }
   undoable: false
   expose_to_agent: false
+# ── P3 批次(剪贴板 / 对齐 / 锁定隐藏 / 命令面板) ──
+- id: edit.copy
+  label: 复制
+  keys: { win: "Ctrl+C" }
+  undoable: false
+  expose_to_agent: true
+- id: edit.cut
+  label: 剪切
+  keys: { win: "Ctrl+X" }
+  undoable: true
+  expose_to_agent: true
+- id: edit.paste
+  label: 粘贴
+  keys: { win: "Ctrl+V" }
+  undoable: true
+  expose_to_agent: true
+- id: edit.paste_in_place
+  label: 贴在前面(就地)
+  keys: { win: "Ctrl+F" }
+  undoable: true
+  expose_to_agent: true
+- id: align.left
+  label: 水平左对齐
+  keys: { win: "Ctrl+Shift+L" }
+  undoable: true
+  expose_to_agent: true
+- id: align.hcenter
+  label: 水平居中对齐
+  keys: { win: "Ctrl+Shift+C" }
+  undoable: true
+  expose_to_agent: true
+- id: align.right
+  label: 水平右对齐
+  keys: { win: "Ctrl+Shift+R" }
+  undoable: true
+  expose_to_agent: true
+- id: align.top
+  label: 垂直顶对齐
+  keys: { win: "Ctrl+Shift+T" }
+  undoable: true
+  expose_to_agent: true
+- id: align.vcenter
+  label: 垂直居中对齐
+  keys: { win: "Ctrl+Shift+V" }
+  undoable: true
+  expose_to_agent: true
+- id: align.bottom
+  label: 垂直底对齐
+  keys: { win: "Ctrl+Shift+B" }
+  undoable: true
+  expose_to_agent: true
+- id: object.lock
+  label: 锁定所选
+  keys: { win: "Ctrl+2" }
+  undoable: true
+  expose_to_agent: true
+- id: object.hide
+  label: 隐藏所选
+  keys: { win: "Ctrl+3" }
+  undoable: true
+  expose_to_agent: true
+- id: object.unlock_all
+  label: 解锁全部
+  keys: { win: "Ctrl+Alt+2" }
+  undoable: false
+  expose_to_agent: true
+- id: object.show_all
+  label: 显示全部
+  keys: { win: "Ctrl+Alt+3" }
+  undoable: false
+  expose_to_agent: true
+- id: app.command_palette
+  label: 命令面板
+  keys: { win: "Ctrl+K" }
+  undoable: false
+  expose_to_agent: false

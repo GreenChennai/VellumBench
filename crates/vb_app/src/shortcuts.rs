@@ -426,6 +426,102 @@ pub const SHORTCUTS: &[Shortcut] = &[
         shift: ModMatch::Any,
         ctx: CTX_NO_TEXT,
     },
+    // ── P3.3 剪贴板(画布上下文;文本框内 Ctrl+C 交给 egui 原生) ──
+    Shortcut {
+        id: "edit.copy",
+        key: Key::C,
+        ctrl: ModMatch::On,
+        shift: ModMatch::Off,
+        ctx: CTX_CANVAS,
+    },
+    Shortcut {
+        id: "edit.cut",
+        key: Key::X,
+        ctrl: ModMatch::On,
+        shift: ModMatch::Off,
+        ctx: CTX_CANVAS,
+    },
+    Shortcut {
+        id: "edit.paste",
+        key: Key::V,
+        ctrl: ModMatch::On,
+        shift: ModMatch::Off,
+        ctx: CTX_CANVAS,
+    },
+    // 贴在前面(AI:Mod+F);Mod+Shift+V 留给垂直居中对齐
+    Shortcut {
+        id: "edit.paste_in_place",
+        key: Key::F,
+        ctrl: ModMatch::On,
+        shift: ModMatch::Off,
+        ctx: CTX_CANVAS,
+    },
+    // ── P3.8 对齐六快捷键(02 篇 §四,与 AI 完全一致) ──
+    Shortcut {
+        id: "align.left",
+        key: Key::L,
+        ctrl: ModMatch::On,
+        shift: ModMatch::On,
+        ctx: CTX_NO_TEXT,
+    },
+    Shortcut {
+        id: "align.hcenter",
+        key: Key::C,
+        ctrl: ModMatch::On,
+        shift: ModMatch::On,
+        ctx: CTX_NO_TEXT,
+    },
+    Shortcut {
+        id: "align.right",
+        key: Key::R,
+        ctrl: ModMatch::On,
+        shift: ModMatch::On,
+        ctx: CTX_NO_TEXT,
+    },
+    Shortcut {
+        id: "align.top",
+        key: Key::T,
+        ctrl: ModMatch::On,
+        shift: ModMatch::On,
+        ctx: CTX_NO_TEXT,
+    },
+    Shortcut {
+        id: "align.vcenter",
+        key: Key::V,
+        ctrl: ModMatch::On,
+        shift: ModMatch::On,
+        ctx: CTX_NO_TEXT,
+    },
+    Shortcut {
+        id: "align.bottom",
+        key: Key::B,
+        ctrl: ModMatch::On,
+        shift: ModMatch::On,
+        ctx: CTX_NO_TEXT,
+    },
+    // ── P3.9 锁定/隐藏(Mod+2/3;Alt 变体待注册表支持 Alt 维度后补) ──
+    Shortcut {
+        id: "object.lock",
+        key: Key::Num2,
+        ctrl: ModMatch::On,
+        shift: ModMatch::Off,
+        ctx: CTX_CANVAS,
+    },
+    Shortcut {
+        id: "object.hide",
+        key: Key::Num3,
+        ctrl: ModMatch::On,
+        shift: ModMatch::Off,
+        ctx: CTX_CANVAS,
+    },
+    // ── P3.2 命令面板 ──
+    Shortcut {
+        id: "app.command_palette",
+        key: Key::K,
+        ctrl: ModMatch::On,
+        shift: ModMatch::Off,
+        ctx: CTX_NO_TEXT,
+    },
 ];
 
 /// 已实现的命令 ID(派发层声明)。必须与 `app.rs::run_command` 的 match 覆盖一致。
@@ -464,9 +560,80 @@ pub const IMPLEMENTED_IDS: &[&str] = &[
     "canvas.cancel",
     // 无键位绑定、仅出现在菜单里的命令
     "view.toggle_theme",
+    "object.unlock_all",
+    "object.show_all",
     "app.about",
     "app.quit",
+    // P3 批次
+    "edit.copy",
+    "edit.cut",
+    "edit.paste",
+    "edit.paste_in_place",
+    "align.left",
+    "align.hcenter",
+    "align.right",
+    "align.top",
+    "align.vcenter",
+    "align.bottom",
+    "object.lock",
+    "object.hide",
+    "app.command_palette",
 ];
+
+/// 全部命令的中文名(命令面板 / 菜单 / 状态提示共用)。
+pub const CMD_LABELS: &[(&str, &str)] = &[
+    ("file.new", "新建文档"),
+    ("file.open", "打开项目…"),
+    ("file.save", "保存"),
+    ("file.export_dialog", "导出…"),
+    ("file.export_repeat", "上次导出(当前画板 PNG @2x)"),
+    ("app.quit", "退出"),
+    ("edit.undo", "撤销"),
+    ("edit.redo", "重做"),
+    ("edit.select_all", "全选(当前画板)"),
+    ("edit.copy", "复制"),
+    ("edit.cut", "剪切"),
+    ("edit.paste", "粘贴"),
+    ("edit.paste_in_place", "贴在前面(就地)"),
+    ("object.group", "编组"),
+    ("object.ungroup", "取消编组"),
+    ("object.transform_again", "再次变换"),
+    ("object.bring_forward", "前移一层"),
+    ("object.bring_to_front", "置于顶层"),
+    ("object.send_backward", "后移一层"),
+    ("object.send_to_back", "置于底层"),
+    ("object.delete", "删除对象"),
+    ("object.lock", "锁定所选"),
+    ("object.unlock_all", "解锁全部"),
+    ("object.hide", "隐藏所选"),
+    ("object.show_all", "显示全部"),
+    ("align.left", "水平左对齐"),
+    ("align.hcenter", "水平居中对齐"),
+    ("align.right", "水平右对齐"),
+    ("align.top", "垂直顶对齐"),
+    ("align.vcenter", "垂直居中对齐"),
+    ("align.bottom", "垂直底对齐"),
+    ("view.zoom_in", "放大"),
+    ("view.zoom_out", "缩小"),
+    ("view.fit", "适合窗口"),
+    ("view.actual_size", "实际大小 100%"),
+    ("view.outline", "轮廓模式(线框)"),
+    ("view.toggle_grid", "显示 / 隐藏网格"),
+    ("view.toggle_smart_guides", "智能参考线开关"),
+    ("view.toggle_theme", "深色 / 浅色主题"),
+    ("tool.select", "选择工具"),
+    ("tool.rect", "矩形工具"),
+    ("tool.ellipse", "椭圆工具"),
+    ("tool.hand", "抓手工具"),
+    ("canvas.cancel", "取消 / 清空选区"),
+    ("app.command_palette", "命令面板"),
+    ("app.about", "关于"),
+];
+
+/// 命令的中文名(无则返回 None)。
+pub fn command_label(id: &str) -> Option<&'static str> {
+    CMD_LABELS.iter().find(|(k, _)| *k == id).map(|(_, v)| *v)
+}
 
 /// 该命令 ID 是否已实现。
 pub fn is_implemented(id: &str) -> bool {
