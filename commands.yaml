@@ -172,3 +172,13 @@
   keys: { win: "Ctrl+K" }
   undoable: false
   expose_to_agent: false
+- id: object.distribute_h
+  label: 水平等距分布
+  keys: {}
+  undoable: true
+  expose_to_agent: true
+- id: object.distribute_v
+  label: 垂直等距分布
+  keys: {}
+  undoable: true
+  expose_to_agent: true

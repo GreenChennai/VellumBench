@@ -27,7 +27,11 @@ pub enum Tool {
     Select,
     Rect,
     Ellipse,
+    /// 直线段:创建细长 Box(HTML 中即一个 2px 高的色条,02 篇 \)
+    Line,
     Hand,
+    /// 缩放工具:单击放大 / Alt+单击缩小 / 拖框缩放到区域
+    Zoom,
 }
 
 enum Drag {
@@ -65,8 +69,13 @@ enum Drag {
         start: Vec2,
         cur: Vec2,
     },
-    /// 矩形/椭圆创建预览
+    /// 矩形/椭圆创建预览(直线工具复用同一状态,落点为线段端点)
     Create {
+        start: Vec2,
+        cur: Vec2,
+    },
+    /// 缩放工具拖框:松开后把框内区域放大到画布
+    ZoomRegion {
         start: Vec2,
         cur: Vec2,
     },
@@ -899,7 +908,12 @@ impl VellumApp {
             "tool.select" => self.tool = Tool::Select,
             "tool.rect" => self.tool = Tool::Rect,
             "tool.ellipse" => self.tool = Tool::Ellipse,
+            "tool.line" => self.tool = Tool::Line,
+            "tool.zoom" => self.tool = Tool::Zoom,
             "tool.hand" => self.tool = Tool::Hand,
+            // ── P3.8 分布(≥3 选中) ──
+            "object.distribute_h" => self.distribute_selection(true),
+            "object.distribute_v" => self.distribute_selection(false),
             // ── P3.3 剪贴板 ──
             "edit.copy" => self.clipboard_copy(),
             "edit.cut" => {
@@ -1140,6 +1154,72 @@ impl VellumApp {
             self.clipboard.len(),
             if in_place { "(就地)" } else { "" }
         );
+    }
+
+    /// 分布(P3.8 尾巴):≥3 个选中时,让相邻对象间距相等。
+    /// `horizontal` = 水平分布;否则垂直。
+    fn distribute_selection(&mut self, horizontal: bool) {
+        let mut items: Vec<(String, Geom)> = Vec::new();
+        for sid in &self.selection {
+            if let Some(nid) = self.doc.find_by_sid(sid) {
+                if let Some(n) = self.doc.nodes.get(nid) {
+                    items.push((sid.clone(), n.geom));
+                }
+            }
+        }
+        if items.len() < 3 {
+            self.status = "分布需要至少 3 个对象".into();
+            return;
+        }
+        // 按位置排序(左→右或上→下)
+        if horizontal {
+            items.sort_by(|a, b| (a.1.x + a.1.w).total_cmp(&(b.1.x + b.1.w)));
+        } else {
+            items.sort_by(|a, b| (a.1.y + a.1.h).total_cmp(&(b.1.y + b.1.h)));
+        }
+        let first = items.first().unwrap().1;
+        let last = items.last().unwrap().1;
+        // 首尾不动,中间等间距
+        let (total_span, _size_sum): (f64, f64) = if horizontal {
+            let span = (last.x + last.w) - first.x - items.iter().map(|(_, g)| g.w).sum::<f64>();
+            (span, items.iter().map(|(_, g)| g.w).sum())
+        } else {
+            let span = (last.y + last.h) - first.y - items.iter().map(|(_, g)| g.h).sum::<f64>();
+            (span, items.iter().map(|(_, g)| g.h).sum())
+        };
+        let n = items.len();
+        if n < 2 {
+            return;
+        }
+        let gap = total_span / (n - 1) as f64;
+        let mut cmds: Vec<Command> = Vec::new();
+        let mut cursor = if horizontal { first.x } else { first.y };
+        for (i, (sid, g)) in items.iter().enumerate() {
+            if i == 0 || i == n - 1 {
+                // 首尾不动,但仍推进游标
+                cursor += if horizontal { g.w + gap } else { g.h + gap };
+                continue;
+            }
+            let mut ng = *g;
+            if horizontal {
+                ng.x = cursor.round();
+                cursor += ng.w + gap;
+            } else {
+                ng.y = cursor.round();
+                cursor += ng.h + gap;
+            }
+            cmds.push(Command::SetGeom {
+                sid: sid.clone(),
+                new: ng,
+                old: None,
+            });
+        }
+        let count = cmds.len();
+        let axis = if horizontal { "水平" } else { "垂直" };
+        if count > 0 {
+            self.exec(Command::Compound { cmds });
+            self.status = format!("已{}分布 {count} 个对象(间距 {gap:.0}px)", axis);
+        }
     }
 
     /// 对齐(P3.8):多选 → 在选择包围盒内对齐;单选 → 对齐所属画板。
@@ -1409,6 +1489,8 @@ impl VellumApp {
                                 (Tool::Select, Name::ToolSelect, "选择", "V"),
                                 (Tool::Rect, Name::ToolRect, "矩形", "M"),
                                 (Tool::Ellipse, Name::ToolEllipse, "椭圆", "L"),
+                                (Tool::Line, Name::Crosshair, "直线", "\\"),
+                                (Tool::Zoom, Name::ZoomIn, "缩放", "Z"),
                                 (Tool::Hand, Name::ToolHand, "抓手", "H"),
                             ] {
                                 if ToolButton::new(icon, label)
@@ -1601,6 +1683,15 @@ impl VellumApp {
                                         {
                                             self.run_command(id, false, false);
                                         }
+                                    }
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("分布");
+                                    if ui.button("↔ 等距").clicked() {
+                                        self.run_command("object.distribute_h", false, false);
+                                    }
+                                    if ui.button("↕ 等距").clicked() {
+                                        self.run_command("object.distribute_v", false, false);
                                     }
                                 });
 
@@ -2273,8 +2364,19 @@ impl VellumApp {
     }
 
     fn handle_canvas_input(&mut self, response: &egui::Response, ctx: egui::Context, rect: Rect) {
-        // 单击创建(Rect/Ellipse 工具下单击 = 默认尺寸形状;处理单帧合并的合成拖拽)
-        if response.clicked() && matches!(self.tool, Tool::Rect | Tool::Ellipse) {
+        // 缩放工具单击:放大 / Alt+单击缩小(02 篇 §5.6)
+        if response.clicked() && self.tool == Tool::Zoom {
+            if let Some(p) = response.interact_pointer_pos() {
+                let pl = p - rect.min;
+                let alt_click = ctx.input(|i| i.modifiers.alt);
+                let f = if alt_click { 1.0 / 1.25 } else { 1.25 };
+                self.camera.zoom_at(pl.x as f64, pl.y as f64, f);
+                self.status = format!("缩放 {}%", (self.camera.zoom * 100.0) as i64);
+            }
+            return;
+        }
+        // 单击创建(Rect/Ellipse/Line 工具下单击 = 默认尺寸形状;处理单帧合并的合成拖拽)
+        if response.clicked() && matches!(self.tool, Tool::Rect | Tool::Ellipse | Tool::Line) {
             if let Some(p) = response.interact_pointer_pos() {
                 let pl = p - rect.min;
                 let (wx, wy) = self.camera.screen_to_world(pl.x as f64, pl.y as f64);
@@ -2325,6 +2427,15 @@ impl VellumApp {
         let pan_wanted = self.space_down || self.tool == Tool::Hand;
         if pan_wanted {
             ctx.set_cursor_icon(vbcursor::PAN);
+        } else {
+            // 工具光标映射(P2.8 尾巴):绘图类十字线、缩放放大镜
+            match self.tool {
+                Tool::Rect | Tool::Ellipse | Tool::Line => {
+                    ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+                }
+                Tool::Zoom => ctx.set_cursor_icon(egui::CursorIcon::ZoomIn),
+                _ => {}
+            }
         }
 
         // 手柄悬停光标(P2.8):非平移态下,指针落在选中对象手柄上给方向光标,
@@ -2505,8 +2616,11 @@ impl VellumApp {
                         }
                     }
                 }
-                Tool::Rect | Tool::Ellipse => {
+                Tool::Rect | Tool::Ellipse | Tool::Line => {
                     self.drag = Drag::Create { start: p, cur: p };
+                }
+                Tool::Zoom => {
+                    self.drag = Drag::ZoomRegion { start: p, cur: p };
                 }
             }
         }
@@ -2584,7 +2698,9 @@ impl VellumApp {
 
             // 移动 + 智能参考线
             let drag_update: Option<(String, Geom)> = match &mut self.drag {
-                Drag::Marquee { cur, .. } | Drag::Create { cur, .. } => {
+                Drag::Marquee { cur, .. }
+                | Drag::Create { cur, .. }
+                | Drag::ZoomRegion { cur, .. } => {
                     *cur = p;
                     None
                 }
@@ -2674,6 +2790,30 @@ impl VellumApp {
                     let (cx, cy) = self.camera.screen_to_world(cur.x as f64, cur.y as f64);
                     let g = vb_tools::drag_rect_geom(sx, sy, cx, cy, shift, alt);
                     self.create_shape(g);
+                }
+                Drag::ZoomRegion { start, cur } => {
+                    let (x0, y0) = self
+                        .camera
+                        .screen_to_world(start.x.min(cur.x) as f64, start.y.min(cur.y) as f64);
+                    let (x1, y1) = self
+                        .camera
+                        .screen_to_world(start.x.max(cur.x) as f64, start.y.max(cur.y) as f64);
+                    let rw = (x1 - x0).max(1.0);
+                    let rh = (y1 - y0).max(1.0);
+                    if let Some(r) = self.canvas_rect {
+                        if rw > 1.0 && rh > 1.0 {
+                            let zoom = ((r.width() as f64) / rw)
+                                .min((r.height() as f64) / rh)
+                                .clamp(0.01, 64.0);
+                            self.camera.zoom = zoom;
+                            // pan 使区域中心落在画布中心(screen 为画布本地坐标)
+                            let ccx = (r.center().x - rect.min.x) as f64;
+                            let ccy = (r.center().y - rect.min.y) as f64;
+                            self.camera.pan_x = ccx - (x0 + rw / 2.0) * zoom;
+                            self.camera.pan_y = ccy - (y0 + rh / 2.0) * zoom;
+                            self.status = format!("缩放到区域 {}%", (zoom * 100.0) as i64);
+                        }
+                    }
                 }
                 Drag::MoveObj {
                     sid,
@@ -2933,6 +3073,12 @@ impl VellumApp {
                     .and_then(vb_render::encode::parse_rotate_deg)
                     .map(|d| format!("旋转 {}°", vb_common::units::fmt_num(d)))
             }),
+            // 创建/缩放区域:拖拽中实时显示目标尺寸(P3.7)
+            Drag::Create { start, cur } | Drag::ZoomRegion { start, cur } => {
+                let w = ((cur.x - start.x).abs() as f64 / self.camera.zoom).round();
+                let h = ((cur.y - start.y).abs() as f64 / self.camera.zoom).round();
+                Some(format!("{} × {}", w, h))
+            }
             _ => None,
         };
         if let Some(label) = drag_label {
@@ -3313,10 +3459,19 @@ fn start_watcher(project: Option<&std::path::Path>) -> Option<std::sync::mpsc::R
 
 impl VellumApp {
     /// 在指定几何处创建 Box 形状(矩形/椭圆由当前工具决定),可撤销。
-    fn create_shape(&mut self, g: Geom) {
+    fn create_shape(&mut self, mut g: Geom) {
+        // 直线工具:创建 2px 高的细长色条(HTML 中即一条水平线;斜线待 P4 矢量路径)
+        let is_line = self.tool == Tool::Line;
+        if is_line {
+            g.h = 2.0;
+        }
         let sid = self.doc.alloc_sid();
-        let mut n =
-            vb_doc::model::Node::new(NodeKind::Box, format!("矩形 {}", sid.as_str()), sid.clone());
+        let name = if is_line { "直线" } else { "矩形" };
+        let mut n = vb_doc::model::Node::new(
+            NodeKind::Box,
+            format!("{} {}", name, sid.as_str()),
+            sid.clone(),
+        );
         n.geom = g;
         if self.tool == Tool::Ellipse {
             n.style.push(vb_css::Decl {
@@ -3325,16 +3480,24 @@ impl VellumApp {
                 important: false,
             });
         }
-        n.style.push(vb_css::Decl {
-            prop: "background-color".into(),
-            value: "#d4d4d4".into(), // vb-token-ok: 新建形状默认填充(文档内容,非 UI 皮肤)
-            important: false,
-        });
-        n.style.push(vb_css::Decl {
-            prop: "border".into(),
-            value: "1px solid #1a1a1a".into(),
-            important: false,
-        });
+        if is_line {
+            n.style.push(vb_css::Decl {
+                prop: "background-color".into(),
+                value: "#1a1a1a".into(), // vb-token-ok: 直线是文档内容
+                important: false,
+            });
+        } else {
+            n.style.push(vb_css::Decl {
+                prop: "background-color".into(),
+                value: "#d4d4d4".into(), // vb-token-ok: 新建形状默认填充(文档内容,非 UI 皮肤)
+                important: false,
+            });
+            n.style.push(vb_css::Decl {
+                prop: "border".into(),
+                value: "1px solid #1a1a1a".into(),
+                important: false,
+            });
+        }
         let ab = self
             .artboard_at_world(g.x, g.y)
             .or(self.doc.artboards.first().copied())

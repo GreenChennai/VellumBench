@@ -389,6 +389,20 @@ pub const SHORTCUTS: &[Shortcut] = &[
         shift: ModMatch::Off,
         ctx: CTX_CANVAS,
     },
+    Shortcut {
+        id: "tool.line",
+        key: Key::Backslash,
+        ctrl: ModMatch::Off,
+        shift: ModMatch::Off,
+        ctx: CTX_CANVAS,
+    },
+    Shortcut {
+        id: "tool.zoom",
+        key: Key::Z,
+        ctrl: ModMatch::Off,
+        shift: ModMatch::Off,
+        ctx: CTX_CANVAS,
+    },
     // ── 画布(方向键微移;Shift = 10px) ──
     Shortcut {
         id: "canvas.nudge_left",
@@ -552,6 +566,8 @@ pub const IMPLEMENTED_IDS: &[&str] = &[
     "tool.select",
     "tool.rect",
     "tool.ellipse",
+    "tool.line",
+    "tool.zoom",
     "tool.hand",
     "canvas.nudge_left",
     "canvas.nudge_right",
@@ -578,6 +594,8 @@ pub const IMPLEMENTED_IDS: &[&str] = &[
     "object.lock",
     "object.hide",
     "app.command_palette",
+    "object.distribute_h",
+    "object.distribute_v",
 ];
 
 /// 全部命令的中文名(命令面板 / 菜单 / 状态提示共用)。
@@ -613,6 +631,8 @@ pub const CMD_LABELS: &[(&str, &str)] = &[
     ("align.top", "垂直顶对齐"),
     ("align.vcenter", "垂直居中对齐"),
     ("align.bottom", "垂直底对齐"),
+    ("object.distribute_h", "水平等距分布"),
+    ("object.distribute_v", "垂直等距分布"),
     ("view.zoom_in", "放大"),
     ("view.zoom_out", "缩小"),
     ("view.fit", "适合窗口"),
