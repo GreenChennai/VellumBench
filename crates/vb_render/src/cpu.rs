@@ -72,14 +72,16 @@ fn draw_item(
     if let Some(kpath) = &item.path {
         if let Some(tp) = kurbo_to_skia_path(kpath, item.rect[0], item.rect[1], item.opacity, item)
         {
-            let mut paint = Paint::default();
-            paint.anti_alias = true;
-            if let Some(c) = &item.fill {
-                if let crate::encode::FillDef::Solid(col) = c {
-                    paint.set_color(with_alpha(*col, item.opacity));
-                    pixmap.fill_path(&tp, &paint, FillRule::Winding, tf, None);
-                }
+            let mut fill_col = [0.5f32, 0.5, 0.5, 1.0];
+            if let Some(crate::encode::FillDef::Solid(col)) = &item.fill {
+                fill_col = *col;
             }
+            let mut paint = Paint {
+                anti_alias: true,
+                ..Paint::default()
+            };
+            paint.set_color(with_alpha(fill_col, item.opacity));
+            pixmap.fill_path(&tp, &paint, FillRule::Winding, tf, None);
             if let Some(b) = &item.border {
                 paint.set_color(with_alpha(b.color, item.opacity));
                 pixmap.stroke_path(

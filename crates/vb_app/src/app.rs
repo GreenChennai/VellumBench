@@ -954,7 +954,7 @@ impl VellumApp {
                 let mut added = 0;
                 for sid in &self.selection {
                     if let Some(nid) = self.doc.find_by_sid(sid) {
-                        if let Some(n) = self.doc.nodes.get(nid) {
+                        if let Some(_n) = self.doc.nodes.get(nid) {
                             let bb = vb_tools::abs_bbox(&self.doc, nid).unwrap_or_default();
                             for pos in [bb.x0, (bb.x0 + bb.x1) / 2.0, bb.x1] {
                                 self.guides.push((false, pos));
@@ -1455,6 +1455,7 @@ impl VellumApp {
     }
 
     /// 取矢量节点的顶点绝对坐标(直接选择渲染/拖拽用)。
+    #[allow(dead_code)]
     fn vector_vertices(&self, sid: &str) -> Vec<(usize, f64, f64)> {
         let Some(nid) = self.doc.find_by_sid(sid) else {
             return vec![];
