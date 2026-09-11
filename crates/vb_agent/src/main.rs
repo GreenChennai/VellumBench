@@ -31,6 +31,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// 性能基准(P5.3,B1–B6 简版):合成画板 → 计时编码+渲染
+    Bench {
+        #[arg(long, default_value_t = 200)]
+        objects: usize,
+    },
     /// 数据驱动批量(v1.4):CSV 行 × ops 模板(支持 {列名} 占位)→ 事务 patch
     Batch {
         /// CSV 文件(首行为表头)
@@ -155,7 +160,7 @@ fn open_doc(path: &Path) -> Result<(Document, UndoStack, PathBuf), CliError> {
 }
 
 fn run(cli: Cli) -> Result<(), CliError> {
-    let need_doc = !matches!(cli.command, Cmd::Selfcheck);
+    let need_doc = !matches!(cli.command, Cmd::Selfcheck | Cmd::Bench { .. });
     let doc_path = if need_doc {
         cli.doc.clone().ok_or_else(|| {
             CliError::NoDoc("未指定 --doc <项目目录|index.html>(文档未打开,退出码 2)".into())
@@ -166,6 +171,73 @@ fn run(cli: Cli) -> Result<(), CliError> {
 
     match cli.command {
         Cmd::Selfcheck => selfcheck(cli.json),
+        Cmd::Bench { objects } => {
+            let t0 = std::time::Instant::now();
+            let mut doc = Document::new("Bench", "zh-CN");
+            let ab = doc.artboards[0];
+            doc.nodes.get_mut(ab).unwrap().geom.h = (objects as f64 / 20.0 + 10.0) * 40.0;
+            for i in 0..objects {
+                let sid = doc.alloc_sid();
+                let mut n = vb_doc::model::Node::new(
+                    vb_doc::model::NodeKind::Box,
+                    format!("对象 {i}"),
+                    sid.clone(),
+                );
+                n.geom = vb_doc::model::Geom {
+                    x: (i % 20) as f64 * 40.0 + 10.0,
+                    y: (i / 20) as f64 * 40.0 + 10.0,
+                    w: 30.0,
+                    h: 30.0,
+                };
+                n.style.push(vb_css::Decl {
+                    prop: "background-color".into(),
+                    value: format!("#{:06x}", 0x3399ff + (i % 16) * 0x001111),
+                    important: false,
+                });
+                n.style.push(vb_css::Decl {
+                    prop: "border-radius".into(),
+                    value: format!("{}px", 4 + i % 8),
+                    important: false,
+                });
+                let pid = doc
+                    .find_by_sid(doc.nodes.get(ab).unwrap().sid.as_str())
+                    .unwrap();
+                let id = doc.nodes.insert(n);
+                doc.nodes.get_mut(id).unwrap().parent = Some(pid);
+                doc.nodes.get_mut(pid).unwrap().children.push(id);
+            }
+            let build_t = t0.elapsed();
+            let list = vb_render::encode::encode_artboard(&doc, ab)
+                .map_err(|e| CliError::Export(e.to_string()))?;
+            let encode_t = t0.elapsed() - build_t;
+            let res =
+                vb_render::cpu::render_png(&list, 1.0, false, None).map_err(CliError::Export)?;
+            let render_t = t0.elapsed() - build_t - encode_t;
+            if cli.json {
+                println!(
+                    "{}",
+                    json!({
+                        "objects": objects,
+                        "build_ms": build_t.as_millis(),
+                        "encode_ms": encode_t.as_millis(),
+                        "render_ms": render_t.as_millis() as u64,
+                        "total_ms": t0.elapsed().as_millis(),
+                        "png_bytes": res.png.len(),
+                    })
+                );
+            } else {
+                println!(
+                    "bench {} objects: build {:?} / encode {:?} / render {:?} / total {:?} → {} KB",
+                    objects,
+                    build_t,
+                    encode_t,
+                    render_t,
+                    t0.elapsed(),
+                    res.png.len() / 1024
+                );
+            }
+            Ok(())
+        }
         Cmd::Batch { csv, template } => {
             let (mut doc, mut undo, _) = open_doc(&doc_path)?;
             // 解析 CSV(首行表头;支持带引号字段)
