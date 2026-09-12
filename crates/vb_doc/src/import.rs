@@ -289,15 +289,36 @@ impl Stylesheet {
         self.raw_blocks.extend(other.raw_blocks);
         self.root_vars.extend(other.root_vars);
     }
+}
 
-    fn decls_for_class(&self, class: &str) -> Vec<Decl> {
-        let mut out = Vec::new();
-        for (c, decls) in &self.class_rules {
-            if c == class {
-                out.extend(decls.iter().cloned());
+/// 字符串/转义感知的扫描状态:`content: "}"`、`url(a;b)`、属性选择器里
+/// 的引号都不能当成块/规则边界(CSS 规范:字符串内无特殊字符)。
+#[derive(Default)]
+struct CssScan {
+    in_str: Option<char>,
+    escape: bool,
+}
+
+impl CssScan {
+    /// 推进一个字符;返回 true 表示该字符位于字符串/转义内,不做边界判断。
+    fn step(&mut self, c: char) -> bool {
+        if let Some(q) = self.in_str {
+            if self.escape {
+                self.escape = false;
+            } else if c == '\\' {
+                self.escape = true;
+            } else if c == q {
+                self.in_str = None;
             }
+            return true;
         }
-        out
+        match c {
+            '"' | '\'' => {
+                self.in_str = Some(c);
+                true
+            }
+            _ => false,
+        }
     }
 }
 
@@ -332,8 +353,17 @@ pub fn parse_stylesheet(text: &str) -> Stylesheet {
             // at-rule:读到 ';' 或配平的 '}'
             let start = i;
             let mut depth = 0usize;
+            let mut paren = 0usize;
+            let mut scan = CssScan::default();
             while i < n {
-                match chars[i] {
+                let c = chars[i];
+                if scan.step(c) {
+                    i += 1;
+                    continue;
+                }
+                match c {
+                    '(' => paren += 1,
+                    ')' => paren = paren.saturating_sub(1),
                     '{' => depth += 1,
                     '}' => {
                         depth -= 1;
@@ -342,7 +372,8 @@ pub fn parse_stylesheet(text: &str) -> Stylesheet {
                             break;
                         }
                     }
-                    ';' if depth == 0 => {
+                    // @import url(a;b) 的分号在括号内,不是规则边界
+                    ';' if depth == 0 && paren == 0 => {
                         i += 1;
                         break;
                     }
@@ -363,7 +394,8 @@ pub fn parse_stylesheet(text: &str) -> Stylesheet {
         }
         // 普通规则:selector { body }
         let sel_start = i;
-        while i < n && chars[i] != '{' {
+        let mut sel_scan = CssScan::default();
+        while i < n && (sel_scan.step(chars[i]) || chars[i] != '{') {
             i += 1;
         }
         if i >= n {
@@ -374,8 +406,14 @@ pub fn parse_stylesheet(text: &str) -> Stylesheet {
         i += 1; // '{'
         let body_start = i;
         let mut depth = 1usize;
+        let mut body_scan = CssScan::default();
         while i < n {
-            match chars[i] {
+            let c = chars[i];
+            if body_scan.step(c) {
+                i += 1;
+                continue;
+            }
+            match c {
                 '{' => depth += 1,
                 '}' => {
                     depth -= 1;
@@ -539,16 +577,20 @@ impl<'a> NodeImporter<'a> {
     }
 
     fn merged_class_decls(&self, el: &Element) -> Vec<Decl> {
-        let mut out = Vec::new();
-        for c in el.class_list() {
-            // 标记类的规则是导出器样板(基规则),由导出层重建,不吸收进节点样式
-            if ARTBOARD_CLASSES.contains(&c)
+        let classes = el.class_list();
+        let is_marker = |c: &str| {
+            ARTBOARD_CLASSES.contains(&c)
                 || LAYER_CLASSES.contains(&c)
                 || GROUP_CLASSES.contains(&c)
-            {
-                continue;
+        };
+        let mut out = Vec::new();
+        // CSS 级联:同特异度规则按**样式表出现顺序**后者胜。
+        // 按元素 class 属性顺序拼接会让 `class="b a"` 推翻样式表里 .a 在后
+        // 的正确结果(导入→导出的级联语义漂移)。
+        for (c, decls) in &self.sheet.class_rules {
+            if classes.iter().any(|k| k == c) && !is_marker(c) {
+                out.extend(decls.iter().cloned());
             }
-            out.extend(self.sheet.decls_for_class(c));
         }
         out
     }
@@ -582,8 +624,11 @@ impl<'a> NodeImporter<'a> {
                     return;
                 }
                 if el.name == "style" || el.name == "link" {
+                    // body 里的样式表/样式链接进 head_extra(HTML 侧透传)。
+                    // 此前进 raw_css 会把 HTML 标签字面写进 main.css 损坏样式表;
+                    // 其规则不参与 v0.1 画布样式合并(与 head style 等价收窄)。
                     let raw = serialize_node(node);
-                    self.doc.raw_css.push(raw);
+                    self.doc.head_extra.push(raw.trim().to_string());
                     return;
                 }
                 let id = self.build_node(node, parent);
@@ -773,7 +818,12 @@ fn split_attrs(
     for (k, v) in &el.attrs {
         match k.as_str() {
             "class" | "style" => {}
-            "data-vb-id" => sid = vb_common::StableId::parse(v),
+            "data-vb-id" => {
+                // sid 是全文档唯一身份:手编 HTML 的重复 data-vb-id(或与
+                // 短码撞码)会让 find_by_sid 命中错误节点,弃用并重分配
+                let parsed = vb_common::StableId::parse(v).filter(|s| !doc.sid_in_use(s.as_str()));
+                sid = Some(parsed.unwrap_or_else(|| doc.alloc_sid()));
+            }
             "data-vb-name" => {}
             _ => {
                 attrs.insert(k.clone(), v.clone());
@@ -808,8 +858,11 @@ fn has_explicit_position(node: &HtmlNode, sheet: &Stylesheet) -> bool {
 
 /// class 规则在前,inline 在后覆盖(同 prop 保留后者)。
 fn merge_decls(base: Vec<Decl>, over: Vec<Decl>) -> Vec<Decl> {
-    let mut out = base;
-    for d in over {
+    // 同 prop 后者胜:类规则级联展开后 base 自身可能同 prop 多条
+    // (如两个类都设 color),不折叠会导致 style_get 取首条而导出 CSS
+    // 由浏览器取末条,画布与落盘语义漂移
+    let mut out: Vec<Decl> = Vec::new();
+    for d in base.into_iter().chain(over) {
         if let Some(existing) = out.iter_mut().find(|e| e.prop == d.prop) {
             *existing = d;
         } else {

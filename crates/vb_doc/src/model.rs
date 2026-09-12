@@ -288,7 +288,7 @@ impl Document {
         self.alloc_sid()
     }
 
-    fn sid_in_use(&self, sid: &str) -> bool {
+    pub fn sid_in_use(&self, sid: &str) -> bool {
         self.nodes.values().any(|n| n.sid.as_str() == sid)
     }
 

@@ -464,24 +464,32 @@ fn write_node(node: &HtmlNode, indent: usize, out: &mut String) {
                 return;
             }
             if e.is_rawtext() {
-                out.push_str(&pad);
-                out.push('<');
-                out.push_str(&e.name);
-                write_attrs(e, out);
-                out.push('>');
                 // 内容逐字节保留(verbatim):任何装饰性换行/缩进都会在下次
                 // 解析时进入内容,破坏 L1 幂等 —— 因此闭合标签紧跟内容。
-                let inner: String = node
+                // pre 是普通元素可含子元素(如 <pre><code>):有元素子节点时
+                // 退回普通序列化(空白折叠一次后幂等),否则整个元素被吞掉。
+                let has_element_child = node
                     .children
                     .iter()
-                    .filter_map(|c| match &c.data {
-                        NodeData::Text(t) => Some(t.clone()),
-                        _ => None,
-                    })
-                    .collect();
-                out.push_str(&inner);
-                out.push_str(&format!("</{}>\n", e.name));
-                return;
+                    .any(|c| !matches!(&c.data, NodeData::Text(_)));
+                if !has_element_child {
+                    out.push_str(&pad);
+                    out.push('<');
+                    out.push_str(&e.name);
+                    write_attrs(e, out);
+                    out.push('>');
+                    let inner: String = node
+                        .children
+                        .iter()
+                        .filter_map(|c| match &c.data {
+                            NodeData::Text(t) => Some(t.clone()),
+                            _ => None,
+                        })
+                        .collect();
+                    out.push_str(&inner);
+                    out.push_str(&format!("</{}>\n", e.name));
+                    return;
+                }
             }
             out.push_str(&pad);
             out.push('<');

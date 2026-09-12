@@ -123,12 +123,22 @@ impl Decl {
     /// 解析单条 `"prop: value"`(不含分号)。白名单外照样解析(unknown 保底)。
     pub fn parse(text: &str) -> Option<Decl> {
         let (prop, value) = text.split_once(':')?;
-        let prop = prop.trim().to_ascii_lowercase();
-        if prop.is_empty()
-            || !prop
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-        {
+        let raw = prop.trim();
+        // 自定义属性(--*)区分大小写:--brandColor 与 --brandcolor 是两个变量,
+        // 小写化会让 var(--brandColor) 引用断裂(CSS 规范行为)
+        let is_custom = raw.starts_with("--");
+        let prop = if is_custom {
+            raw.to_string()
+        } else {
+            raw.to_ascii_lowercase()
+        };
+        let prop_ok = prop.chars().all(|c| {
+            c.is_ascii_lowercase()
+                || c.is_ascii_digit()
+                || c == '-'
+                || (is_custom && (c.is_ascii_uppercase() || c == '_'))
+        });
+        if prop.is_empty() || !prop_ok {
             return None;
         }
         if !prop.starts_with(|c: char| c.is_ascii_lowercase() || c == '-') {
@@ -178,6 +188,8 @@ pub fn canonical_value(raw: &str) -> String {
     let mut i = 0;
     let mut in_string: Option<char> = None;
     let mut last_ws = false;
+    // 函数调用栈:url(#id) 里的 # 是 SVG 引用不是颜色,不能缩短
+    let mut fn_stack: Vec<String> = Vec::new();
 
     while i < chars.len() {
         let c = chars[i];
@@ -206,6 +218,7 @@ pub fn canonical_value(raw: &str) -> String {
                     out.pop();
                 }
                 out.push(c);
+                fn_stack.pop();
                 last_ws = false;
                 i += 1;
             }
@@ -229,14 +242,17 @@ pub fn canonical_value(raw: &str) -> String {
                 i += 1;
             }
             '#' => {
-                // 颜色 token
                 let start = i + 1;
                 let mut end = start;
                 while end < chars.len() && chars[end].is_ascii_hexdigit() {
                     end += 1;
                 }
                 let hexs: String = chars[start..end].iter().collect();
-                if let Some(rgba) = parse_hex_len(&hexs) {
+                if fn_stack.last().map(|f| f == "url").unwrap_or(false) {
+                    // url(#fragment):SVG/clip-path 引用,逐字保留
+                    out.push('#');
+                    out.push_str(&hexs);
+                } else if let Some(rgba) = parse_hex_len(&hexs) {
                     out.push_str(&rgba.to_shortest_hex());
                 } else {
                     out.push('#');
@@ -321,6 +337,7 @@ pub fn canonical_value(raw: &str) -> String {
                         let name: String =
                             chars[i..j].iter().collect::<String>().to_ascii_lowercase();
                         out.push_str(&name);
+                        fn_stack.push(name);
                         i = j;
                         continue;
                     } else {
