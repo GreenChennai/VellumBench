@@ -239,7 +239,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             Ok(())
         }
         Cmd::Batch { csv, template } => {
-            let (mut doc, mut undo, _) = open_doc(&doc_path)?;
+            let (mut doc, mut undo, project_dir) = open_doc(&doc_path)?;
             // 解析 CSV(首行表头;支持带引号字段)
             let csv_text = std::fs::read_to_string(&csv)
                 .with_context(|| format!("读取 {}", csv.display()))
@@ -298,7 +298,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             };
             let outcome = apply_patch(&mut doc, &mut undo, &req)
                 .map_err(|e| CliError::Usage(format!("{e}")))?;
-            save_doc(&mut doc, &doc_path)?;
+            save_doc(&mut doc, &project_dir)?;
             if cli.json {
                 println!(
                     "{}",
@@ -427,7 +427,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             Ok(())
         }
         Cmd::Patch { file, dry_run } => {
-            let (mut doc, mut undo, _) = open_doc(&doc_path)?;
+            let (mut doc, mut undo, project_dir) = open_doc(&doc_path)?;
             let text = std::fs::read_to_string(&file)
                 .with_context(|| format!("读取 {}", file.display()))
                 .map_err(|e| CliError::Other(format!("{e:#}")))?;
@@ -438,7 +438,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                     if dry_run {
                         // dry-run 已应用即回滚(重放进临时 doc);v0.1 简化:应用后不落盘
                     } else {
-                        save_doc(&mut doc, &doc_path)?;
+                        save_doc(&mut doc, &project_dir)?;
                     }
                     if cli.json {
                         println!(
@@ -632,8 +632,8 @@ fn run(cli: Cli) -> Result<(), CliError> {
             Ok(())
         }
         Cmd::Save => {
-            let (mut doc, _, _) = open_doc(&doc_path)?;
-            save_doc(&mut doc, &doc_path)?;
+            let (mut doc, _, project_dir) = open_doc(&doc_path)?;
+            save_doc(&mut doc, &project_dir)?;
             if cli.json {
                 println!("{}", json!({"ok": true}));
             } else {

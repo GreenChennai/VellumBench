@@ -5,4 +5,7 @@
 
 pub mod patch;
 
-pub use patch::{apply_patch, PatchError, PatchOp, PatchOutcome, PatchRequest};
+pub use patch::{
+    apply_patch, BoxSpec, InsertNodeSpec, OffsetSpec, PatchError, PatchOp, PatchOutcome,
+    PatchRequest,
+};

@@ -346,24 +346,28 @@ fn main() {
             continue;
         }
         let Ok(msg) = serde_json::from_str::<Value>(&line) else {
+            // JSON-RPC 2.0 §4.1:解析失败必须回 -32700,否则客户端只能干等超时
+            let resp = json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": "Parse error"}});
+            writeln!(stdout, "{resp}").ok();
+            stdout.flush().ok();
             continue;
         };
         let id = msg.get("id").cloned();
         let method = msg.get("method").and_then(|v| v.as_str()).unwrap_or("");
+        // 通知帧(无 id)不得执行有副作用的调用:无回执地址,执行了客户端也无从得知
+        if id.is_none() {
+            continue;
+        }
         match dispatch(method, msg.get("params").cloned().unwrap_or(Value::Null)) {
             Ok(result) => {
-                if id.is_some() {
-                    let resp = json!({"jsonrpc": "2.0", "id": id, "result": result});
-                    writeln!(stdout, "{resp}").ok();
-                    stdout.flush().ok();
-                }
+                let resp = json!({"jsonrpc": "2.0", "id": id, "result": result});
+                writeln!(stdout, "{resp}").ok();
+                stdout.flush().ok();
             }
             Err(err) => {
-                if id.is_some() {
-                    let resp = json!({"jsonrpc": "2.0", "id": id, "error": err});
-                    writeln!(stdout, "{resp}").ok();
-                    stdout.flush().ok();
-                }
+                let resp = json!({"jsonrpc": "2.0", "id": id, "error": err});
+                writeln!(stdout, "{resp}").ok();
+                stdout.flush().ok();
             }
         }
     }

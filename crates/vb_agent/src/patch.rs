@@ -152,11 +152,15 @@ pub fn apply_patch(
     }
     // 事务:全部命令先编译成功才应用(08 篇 §五:全部成功或全部回滚)
     let mut cmds = Vec::new();
+    let mut warnings = Vec::new();
     for op in &req.ops {
-        cmds.extend(compile_op(doc, op)?);
+        let (mut cs, mut ws) = compile_op(doc, op)?;
+        cmds.append(&mut cs);
+        warnings.append(&mut ws);
     }
     let mut outcome = PatchOutcome {
         rev: doc.rev,
+        warnings,
         ..Default::default()
     };
     for c in &cmds {
@@ -182,19 +186,10 @@ impl From<VbError> for PatchError {
     }
 }
 
-fn style_map_to_decls(css: &std::collections::BTreeMap<String, String>) -> Vec<vb_css::Decl> {
-    css.iter()
-        .map(|(p, v)| vb_css::Decl {
-            prop: p.to_ascii_lowercase(),
-            value: v.clone(),
-            important: false,
-        })
-        .collect()
-}
-
-fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<Vec<Command>, PatchError> {
+fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<(Vec<Command>, Vec<String>), PatchError> {
     let sid_str = |s: &str| s.to_string();
-    Ok(match op {
+    let mut warnings = Vec::new();
+    let cmds = match op {
         PatchOp::Insert {
             parent,
             index,
@@ -236,7 +231,11 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<Vec<Command>, PatchErr
                 .find_by_sid(id)
                 .ok_or_else(|| PatchError::Op(format!("{id} 不存在")))?;
             let mut style = doc.nodes.get(nid).unwrap().style.clone();
-            for d in style_map_to_decls(css) {
+            for (p, v) in css {
+                // 与 insert 路径一致:必须过 Decl::parse 校验,否则非法声明
+                // 原样落盘损坏 CSS(导出时不做二次过滤)
+                let d = vb_css::Decl::parse(&format!("{p}: {v}"))
+                    .ok_or_else(|| PatchError::Op(format!("非法 CSS 声明: {p}: {v}")))?;
                 if let Some(existing) = style.iter_mut().find(|e| e.prop == d.prop) {
                     existing.value = d.value;
                 } else {
@@ -253,6 +252,17 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<Vec<Command>, PatchErr
             let nid = doc
                 .find_by_sid(id)
                 .ok_or_else(|| PatchError::Op(format!("{id} 不存在")))?;
+            // class/style/data-vb-* 由场景图字段或导出层生成,attrs 里再写
+            // 一份会在导出时产生重复 HTML 属性(html5ever 只取第一个,静默丢编辑);
+            // id 例外:导出层专门从 attrs 读 id 输出
+            const RESERVED: &[&str] = &["class", "style", "data-vb-id", "data-vb-name"];
+            for k in attrs.keys() {
+                if RESERVED.contains(&k.as_str()) {
+                    return Err(PatchError::Op(format!(
+                        "set_attr 不允许写保留属性:{k}(class/style 走 set_style,名称走 rename)"
+                    )));
+                }
+            }
             let mut merged = doc.nodes.get(nid).unwrap().attrs.clone();
             for (k, v) in attrs {
                 merged.insert(k.clone(), v.clone());
@@ -300,16 +310,6 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<Vec<Command>, PatchErr
             let nid = doc
                 .find_by_sid(id)
                 .ok_or_else(|| PatchError::Op(format!("{id} 不存在")))?;
-            let src = doc.nodes.get(nid).unwrap().clone();
-            let mut copy = src.clone();
-            copy.sid = doc.alloc_sid_for_dup();
-            if let Some(o) = offset {
-                copy.geom.x += o.x;
-                copy.geom.y += o.y;
-            } else {
-                copy.geom.x += 24.0;
-                copy.geom.y += 24.0;
-            }
             let parent_sid = doc
                 .nodes
                 .get(nid)
@@ -317,10 +317,17 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<Vec<Command>, PatchErr
                 .and_then(|p| doc.nodes.get(p))
                 .map(|p| p.sid.as_str().to_string())
                 .ok_or_else(|| PatchError::Op("duplicate 需要有父级的节点".into()))?;
-            let tree = NodeTree {
-                node: copy,
-                children: vec![],
+            // 深拷贝整棵子树(此前只复制根节点,容器内容全部丢失);
+            // sid 是身份(ADR-0010),副本全树重新分配
+            let mut tree = NodeTree::from_document(doc, nid)
+                .ok_or_else(|| PatchError::Op("duplicate 取子树失败".into()))?;
+            re_sid_tree(doc, &mut tree);
+            let (dx, dy) = match offset {
+                Some(o) => (o.x, o.y),
+                None => (24.0, 24.0),
             };
+            tree.node.geom.x += dx;
+            tree.node.geom.y += dy;
             vec![Command::Insert {
                 parent_sid,
                 index: usize::MAX,
@@ -350,7 +357,9 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<Vec<Command>, PatchErr
         }
         PatchOp::Align { ids, mode, to } => {
             let _ = to; // v0.1:对齐到画板(selection 集合的公共画板)
-            align_cmds(doc, ids, mode)?
+            let (c, w) = align_cmds(doc, ids, mode)?;
+            warnings = w;
+            c
         }
         PatchOp::Order { id, to } => {
             let nid = doc
@@ -440,56 +449,103 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<Vec<Command>, PatchErr
                 },
             }]
         }
-    })
+    };
+    Ok((cmds, warnings))
 }
 
 /// 对齐(相对所属画板;08 篇 §五 align op)。
-fn align_cmds(doc: &Document, ids: &[String], mode: &str) -> Result<Vec<Command>, PatchError> {
-    let mut geoms: Vec<(String, Geom)> = Vec::new();
+/// geom.x/y 是**画板本地**坐标:跨画板的成员不能混进同一组 min/max,
+/// 按画板分组各自对齐;落单成员跳过并给出 warning。
+fn align_cmds(
+    doc: &Document,
+    ids: &[String],
+    mode: &str,
+) -> Result<(Vec<Command>, Vec<String>), PatchError> {
+    // 按公共画板分组(保序)
+    let mut groups: Vec<(vb_doc::model::NodeId, Vec<(String, Geom)>)> = Vec::new();
     for id in ids {
         let nid = doc
             .find_by_sid(id)
             .ok_or_else(|| PatchError::Op(format!("{id} 不存在")))?;
-        geoms.push((id.clone(), doc.nodes.get(nid).unwrap().geom));
-    }
-    if geoms.is_empty() {
-        return Ok(vec![]);
-    }
-    let min_x = geoms.iter().map(|(_, g)| g.x).fold(f64::INFINITY, f64::min);
-    let min_y = geoms.iter().map(|(_, g)| g.y).fold(f64::INFINITY, f64::min);
-    let max_r = geoms
-        .iter()
-        .map(|(_, g)| g.x + g.w)
-        .fold(f64::NEG_INFINITY, f64::max);
-    let max_b = geoms
-        .iter()
-        .map(|(_, g)| g.y + g.h)
-        .fold(f64::NEG_INFINITY, f64::max);
-    let center_x = (min_x + max_r) / 2.0;
-    let center_y = (min_y + max_b) / 2.0;
-
-    let moved = |g: Geom, x: f64, y: f64| Command::SetGeom {
-        sid: String::new(),
-        new: Geom { x, y, ..g },
-        old: None,
-    };
-    let mut cmds = Vec::new();
-    for (id, g) in geoms {
-        let mut c = match mode {
-            "left" => moved(g, min_x, g.y),
-            "right" => moved(g, max_r - g.w, g.y),
-            "hcenter" => moved(g, center_x - g.w / 2.0, g.y),
-            "top" => moved(g, g.x, min_y),
-            "bottom" => moved(g, g.x, max_b - g.h),
-            "vcenter" => moved(g, g.x, center_y - g.h / 2.0),
-            other => return Err(PatchError::Op(format!("未知对齐模式:{other}"))),
-        };
-        if let Command::SetGeom { sid, .. } = &mut c {
-            *sid = id;
+        let ab = artboard_of(doc, nid);
+        let g = doc.nodes.get(nid).unwrap().geom;
+        if let Some(entry) = groups.iter_mut().find(|(a, _)| *a == ab) {
+            entry.1.push((id.clone(), g));
+        } else {
+            groups.push((ab, vec![(id.clone(), g)]));
         }
-        cmds.push(c);
     }
-    Ok(cmds)
+    let mut warnings = Vec::new();
+    let mut cmds = Vec::new();
+    for (ab, members) in &groups {
+        if members.len() < 2 {
+            let name = doc
+                .find_by_sid(&members[0].0)
+                .and_then(|nid| doc.nodes.get(nid))
+                .map(|n| n.name.clone())
+                .unwrap_or_else(|| members[0].0.clone());
+            warnings.push(format!("align 跳过 {name}:与其余成员不在同一画板或落单"));
+            continue;
+        }
+        let _ = ab;
+        let geoms = members;
+        let min_x = geoms.iter().map(|(_, g)| g.x).fold(f64::INFINITY, f64::min);
+        let min_y = geoms.iter().map(|(_, g)| g.y).fold(f64::INFINITY, f64::min);
+        let max_r = geoms
+            .iter()
+            .map(|(_, g)| g.x + g.w)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let max_b = geoms
+            .iter()
+            .map(|(_, g)| g.y + g.h)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let center_x = (min_x + max_r) / 2.0;
+        let center_y = (min_y + max_b) / 2.0;
+
+        let moved = |g: Geom, x: f64, y: f64| Command::SetGeom {
+            sid: String::new(),
+            new: Geom { x, y, ..g },
+            old: None,
+        };
+        for (id, g) in geoms {
+            let mut c = match mode {
+                "left" => moved(*g, min_x, g.y),
+                "right" => moved(*g, max_r - g.w, g.y),
+                "hcenter" => moved(*g, center_x - g.w / 2.0, g.y),
+                "top" => moved(*g, g.x, min_y),
+                "bottom" => moved(*g, g.x, max_b - g.h),
+                "vcenter" => moved(*g, g.x, center_y - g.h / 2.0),
+                other => return Err(PatchError::Op(format!("未知对齐模式:{other}"))),
+            };
+            if let Command::SetGeom { sid, .. } = &mut c {
+                *sid = id.clone();
+            }
+            cmds.push(c);
+        }
+    }
+    Ok((cmds, warnings))
+}
+
+/// 节点所属画板(沿 parent 链上溯);root 之下找不到画板时返回 root 哨兵。
+fn artboard_of(doc: &Document, mut id: vb_doc::model::NodeId) -> vb_doc::model::NodeId {
+    while let Some(n) = doc.nodes.get(id) {
+        if matches!(n.kind, NodeKind::Artboard) {
+            return id;
+        }
+        match n.parent {
+            Some(p) => id = p,
+            None => break,
+        }
+    }
+    doc.root
+}
+
+/// 递归重分配子树内全部 sid(duplicate:副本是新元素,身份必须全新)。
+fn re_sid_tree(doc: &mut Document, tree: &mut NodeTree) {
+    tree.node.sid = doc.alloc_sid_for_dup();
+    for c in &mut tree.children {
+        re_sid_tree(doc, c);
+    }
 }
 
 fn build_node_from_spec(spec: &InsertNodeSpec, doc: &mut Document) -> Result<Node, PatchError> {
@@ -518,6 +574,14 @@ fn build_node_from_spec(spec: &InsertNodeSpec, doc: &mut Document) -> Result<Nod
         n.style = parse_style_map(style);
     }
     if let Some(attrs) = &spec.attrs {
+        const RESERVED: &[&str] = &["class", "style", "data-vb-id", "data-vb-name"];
+        for k in attrs.keys() {
+            if RESERVED.contains(&k.as_str()) {
+                return Err(PatchError::Op(format!(
+                    "insert 的 attrs 不允许写保留属性:{k}(class 走 style 之外的专用字段)"
+                )));
+            }
+        }
         n.attrs = attrs.clone();
     }
     // 默认几何
@@ -562,7 +626,11 @@ fn parse_style_map(css: &std::collections::BTreeMap<String, String>) -> Vec<vb_c
 fn collect_affected(cmd: &Command, out: &mut PatchOutcome) {
     match cmd {
         Command::Insert { tree, .. } => {
-            out.changed_ids.push(tree.root_sid().to_string());
+            let sid = tree.root_sid().to_string();
+            if !out.created_ids.contains(&sid) {
+                out.created_ids.push(sid.clone());
+            }
+            out.changed_ids.push(sid);
         }
         Command::Delete { target_sid, .. } => out.changed_ids.push(target_sid.clone()),
         Command::Move { sid, .. }
