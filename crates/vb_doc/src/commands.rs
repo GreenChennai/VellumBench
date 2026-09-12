@@ -147,7 +147,8 @@ pub enum Command {
     SetToken {
         name: String,
         new: String,
-        old: Option<Option<String>>,
+        /// Some(None) = 原先不存在;Some(Some((原索引, 原值))) = 原先存在。
+        old: Option<Option<(usize, String)>>,
     },
 }
 
@@ -242,6 +243,7 @@ impl Command {
                 }
                 doc.insert_tree_at(tree, parent_sid, *index)
                     .ok_or_else(|| no_such(parent_sid))?;
+                doc.sync_artboards();
                 Ok(ChangeSet::full())
             }
             Command::Delete {
@@ -260,6 +262,7 @@ impl Command {
                     doc.extract_subtree(target_sid)
                         .ok_or_else(|| no_such(target_sid))?;
                 }
+                doc.sync_artboards();
                 Ok(ChangeSet::full())
             }
             Command::Move {
@@ -272,13 +275,20 @@ impl Command {
                     *old = Some(Self::slot_of(doc, sid)?);
                 }
                 let id = doc.find_by_sid(sid).ok_or_else(|| no_such(sid))?;
-                doc.detach(id);
                 let np = doc
                     .find_by_sid(new_parent_sid)
                     .ok_or_else(|| no_such(new_parent_sid))?;
+                // 环防护:新父级不得是自身或自身后代(否则场景图成环,遍历栈溢出)
+                if doc.is_descendant_or_self(id, np) {
+                    return Err(VbError::Conflict(format!(
+                        "不能把节点移入自身或其后代: {new_parent_sid}"
+                    )));
+                }
+                doc.detach(id);
                 let idx = (*new_index).min(doc.nodes.get(np).unwrap().children.len());
                 doc.nodes.get_mut(np).unwrap().children.insert(idx, id);
                 doc.nodes.get_mut(id).unwrap().parent = Some(np);
+                doc.sync_artboards();
                 Ok(ChangeSet::full())
             }
             Command::SetGeom { sid, new, old } => {
@@ -416,6 +426,15 @@ impl Command {
                 group_sid,
                 old_slots,
             } => {
+                if member_sids.is_empty() {
+                    return Err(VbError::Parse("编组需要至少一个成员".into()));
+                }
+                let mut seen = std::collections::HashSet::new();
+                for m in member_sids.iter() {
+                    if !seen.insert(m.as_str()) {
+                        return Err(VbError::Conflict(format!("编组成员重复: {m}")));
+                    }
+                }
                 if doc.find_by_sid(group_sid).is_some() {
                     // Redo:编组已被 revert 拆掉,group_sid 应空闲;占用即状态错误
                     return Err(VbError::Conflict(format!("group sid 已存在: {group_sid}")));
@@ -462,7 +481,8 @@ impl Command {
                     h: (maxb - miny).max(0.0),
                 };
                 let gid = doc.nodes.insert(group);
-                // 摘除成员并收进编组
+                // 摘除成员并收进编组;成员坐标从原父级系重定基到组系
+                // (渲染时组偏移会再累加一次,不重定基则内容整体位移)
                 for (id, _) in &members {
                     doc.detach(*id);
                 }
@@ -473,7 +493,10 @@ impl Command {
                     }
                 }
                 for (id, _) in &members {
-                    doc.nodes.get_mut(*id).unwrap().parent = Some(gid);
+                    let m = doc.nodes.get_mut(*id).unwrap();
+                    m.geom.x -= minx;
+                    m.geom.y -= miny;
+                    m.parent = Some(gid);
                 }
                 if let Some(top_slot) = top {
                     let parent = doc
@@ -485,6 +508,7 @@ impl Command {
                     doc.nodes.get_mut(parent).unwrap().children.insert(idx, gid);
                     doc.nodes.get_mut(gid).unwrap().parent = Some(parent);
                 }
+                doc.sync_artboards();
                 Ok(ChangeSet::full())
             }
             Command::Ungroup {
@@ -504,21 +528,38 @@ impl Command {
                     doc.extract_subtree(group_sid)
                         .ok_or_else(|| no_such(group_sid))?;
                 }
-                // 成员平移进编组原位置
+                // 成员平移进编组原位置;坐标从组系重定基回原父级系
                 let (slot, tree) = captured.as_ref().unwrap();
                 let parent = doc
                     .find_by_sid(&slot.parent_sid)
                     .ok_or_else(|| no_such(&slot.parent_sid))?;
+                let (gx, gy) = (tree.node.geom.x, tree.node.geom.y);
                 let mut created = Vec::new();
                 for (i, child) in tree.children.iter().enumerate() {
+                    let mut child = child.clone();
+                    child.node.geom.x += gx;
+                    child.node.geom.y += gy;
                     child.insert_into(doc, parent, slot.index + i, &mut created);
                 }
+                doc.sync_artboards();
                 Ok(ChangeSet::full())
             }
             Command::Compound { cmds } => {
-                for c in cmds {
-                    c.apply(doc)?;
+                // 原子性:任一子命令失败,逆序回滚已应用的部分再报错
+                // (否则半条事务固化在文档上且不入 undo 栈,08 篇 §五)
+                let mut done = 0usize;
+                for c in cmds.iter_mut() {
+                    match c.apply(doc) {
+                        Ok(_) => done += 1,
+                        Err(e) => {
+                            for prev in cmds[..done].iter_mut().rev() {
+                                let _ = prev.revert(doc);
+                            }
+                            return Err(e);
+                        }
+                    }
                 }
+                doc.sync_artboards();
                 Ok(ChangeSet::full())
             }
             Command::SetToken { name, new, old } => {
@@ -526,11 +567,14 @@ impl Command {
                     *old = Some(
                         doc.tokens
                             .iter()
-                            .find(|(n, _)| n == name)
-                            .map(|(_, v)| v.clone()),
+                            .enumerate()
+                            .find_map(|(i, (n, v))| (n == name).then_some((i, v.clone()))),
                     );
                 }
-                if let Some(t) = doc.tokens.iter_mut().find(|(n, _)| n == name) {
+                // 空值 = 删除令牌(界面「删除」按钮同语义);否则原地 upsert
+                if new.is_empty() {
+                    doc.tokens.retain(|(n, _)| n != name);
+                } else if let Some(t) = doc.tokens.iter_mut().find(|(n, _)| n == name) {
                     t.1 = new.clone();
                 } else {
                     doc.tokens.push((name.clone(), new.clone()));
@@ -550,6 +594,7 @@ impl Command {
             Command::Insert { tree, .. } => {
                 doc.extract_subtree(tree.root_sid())
                     .ok_or_else(|| no_such(tree.root_sid()))?;
+                doc.sync_artboards();
                 Ok(ChangeSet::full())
             }
             Command::Delete {
@@ -561,6 +606,7 @@ impl Command {
                     .ok_or_else(|| VbError::Parse("Delete 未捕获快照".into()))?;
                 doc.insert_tree_at(tree, &slot.parent_sid, slot.index)
                     .ok_or_else(|| no_such(target_sid))?;
+                doc.sync_artboards();
                 Ok(ChangeSet::full())
             }
             Command::Move { sid, old, .. } => {
@@ -576,6 +622,7 @@ impl Command {
                 let idx = old_index.min(doc.nodes.get(p).unwrap().children.len());
                 doc.nodes.get_mut(p).unwrap().children.insert(idx, id);
                 doc.nodes.get_mut(id).unwrap().parent = Some(p);
+                doc.sync_artboards();
                 Ok(ChangeSet::full())
             }
             Command::SetGeom { sid, old, .. } => {
@@ -686,11 +733,23 @@ impl Command {
                     .as_ref()
                     .ok_or_else(|| VbError::Parse("Group 未捕获槽位".into()))?;
                 let mut gtree = gtree;
-                for (m, slot) in member_sids.iter().zip(slots.iter()) {
-                    let member_tree = gtree.take_child(m).ok_or_else(|| no_such(m))?;
+                // 组原点:revert 把成员坐标从组系加回原父级系
+                let (gx, gy) = (gtree.node.geom.x, gtree.node.geom.y);
+                // 同父级内按原索引升序重插(乱序会被 clamp 推挤,z 序错乱)
+                let mut order: Vec<_> = member_sids.iter().zip(slots.iter()).collect();
+                order.sort_by(|a, b| {
+                    a.1.parent_sid
+                        .cmp(&b.1.parent_sid)
+                        .then(a.1.index.cmp(&b.1.index))
+                });
+                for (m, slot) in order {
+                    let mut member_tree = gtree.take_child(m).ok_or_else(|| no_such(m))?;
+                    member_tree.node.geom.x += gx;
+                    member_tree.node.geom.y += gy;
                     doc.insert_tree_at(&member_tree, &slot.parent_sid, slot.index)
                         .ok_or_else(|| no_such(m))?;
                 }
+                doc.sync_artboards();
                 Ok(ChangeSet::full())
             }
             Command::Ungroup {
@@ -711,6 +770,7 @@ impl Command {
                 }
                 doc.insert_tree_at(tree, &slot.parent_sid, slot.index)
                     .ok_or_else(|| no_such(group_sid))?;
+                doc.sync_artboards();
                 Ok(ChangeSet::full())
             }
             Command::Compound { cmds } => {
@@ -720,10 +780,11 @@ impl Command {
                 Ok(ChangeSet::full())
             }
             Command::SetToken { name, old, .. } => {
-                if let Some(v) = old {
+                if let Some(prev) = old {
                     doc.tokens.retain(|(n, _)| n != name);
-                    if let Some(val) = v {
-                        doc.tokens.push((name.clone(), val.clone()));
+                    if let Some((idx, val)) = prev {
+                        let i = (*idx).min(doc.tokens.len());
+                        doc.tokens.insert(i, (name.clone(), val.clone()));
                     }
                 }
                 Ok(ChangeSet {

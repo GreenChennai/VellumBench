@@ -323,6 +323,45 @@ impl Document {
         id
     }
 
+    /// 从 `root.children` 重建 `artboards`(导出顺序 = root 子序)。
+    ///
+    /// 命令层(Insert/Delete/Move/Group/Ungroup)只改 arena 与 children,
+    /// 不感知画板注册表;每次结构命令落地后调用本函数保持派生状态一致。
+    pub fn sync_artboards(&mut self) {
+        self.artboards = self
+            .nodes
+            .get(self.root)
+            .map(|root| {
+                root.children
+                    .iter()
+                    .copied()
+                    .filter(|&c| {
+                        self.nodes
+                            .get(c)
+                            .is_some_and(|n| matches!(n.kind, NodeKind::Artboard))
+                    })
+                    .collect::<Vec<NodeId>>()
+            })
+            .unwrap_or_default();
+    }
+
+    /// `target` 是否为 `ancestor` 自身或其后代(移动/编组的环防护)。
+    pub fn is_descendant_or_self(&self, ancestor: NodeId, target: NodeId) -> bool {
+        if ancestor == target {
+            return true;
+        }
+        let mut stack = vec![ancestor];
+        while let Some(id) = stack.pop() {
+            if id == target {
+                return true;
+            }
+            if let Some(n) = self.nodes.get(id) {
+                stack.extend_from_slice(&n.children);
+            }
+        }
+        false
+    }
+
     /// 画板内所有节点的世界坐标 bbox(画板偏移 + 本地坐标;扁平模型,v0.1 无旋转累积)。
     pub fn artboard_origin(&self, artboard: NodeId) -> (f64, f64) {
         self.nodes

@@ -69,22 +69,37 @@ impl UndoStack {
         let Some(mut cmd) = self.undo.pop() else {
             return Ok(None);
         };
-        cmd.revert(doc)?;
-        self.redo.push(cmd);
-        self.last_merge = None;
-        doc.rev += 1;
-        Ok(self.undo.last().map(|c| c.label().to_string()))
+        match cmd.revert(doc) {
+            Ok(_) => {
+                self.redo.push(cmd);
+                self.last_merge = None;
+                doc.rev += 1;
+                Ok(self.undo.last().map(|c| c.label().to_string()))
+            }
+            // 失败时命令推回原栈:丢弃会让该步操作既不能重试也不能重做
+            Err(e) => {
+                self.undo.push(cmd);
+                Err(e)
+            }
+        }
     }
 
     pub fn redo(&mut self, doc: &mut Document) -> Result<Option<String>> {
         let Some(mut cmd) = self.redo.pop() else {
             return Ok(None);
         };
-        cmd.apply(doc)?;
-        self.undo.push(cmd);
-        self.last_merge = None;
-        doc.rev += 1;
-        Ok(self.undo.last().map(|c| c.label().to_string()))
+        match cmd.apply(doc) {
+            Ok(_) => {
+                self.undo.push(cmd);
+                self.last_merge = None;
+                doc.rev += 1;
+                Ok(self.undo.last().map(|c| c.label().to_string()))
+            }
+            Err(e) => {
+                self.redo.push(cmd);
+                Err(e)
+            }
+        }
     }
 
     pub fn can_undo(&self) -> bool {
@@ -110,6 +125,8 @@ impl UndoStack {
 }
 
 /// 用 `src` 的 new 值覆盖 `top` 的 new 值(合并时保持最初 old)。
+/// 必须与 `Command::merge_target` 的可合并集合保持一致 —— 漏一个 arm,
+/// Redo 就会把中间值写回文档,吞掉最后一次编辑。
 fn replace_new(top: &mut Command, src: &Command) {
     use Command::*;
     match (top, src) {
@@ -117,6 +134,8 @@ fn replace_new(top: &mut Command, src: &Command) {
         (SetStyle { new, .. }, SetStyle { new: n2, .. }) => *new = n2.clone(),
         (SetText { new, .. }, SetText { new: n2, .. }) => *new = n2.clone(),
         (Rename { new, .. }, Rename { new: n2, .. }) => *new = n2.clone(),
+        (SetTag { new, .. }, SetTag { new: n2, .. }) => *new = n2.clone(),
+        (SetVector { new, .. }, SetVector { new: n2, .. }) => *new = n2.clone(),
         _ => {}
     }
 }
