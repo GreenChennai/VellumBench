@@ -1557,7 +1557,6 @@ impl VellumApp {
     }
 
     /// 取矢量节点的顶点绝对坐标(直接选择渲染/拖拽用)。
-    #[allow(dead_code)]
     fn vector_vertices(&self, sid: &str) -> Vec<(usize, f64, f64)> {
         let Some(nid) = self.doc.find_by_sid(sid) else {
             return vec![];
@@ -2780,12 +2779,54 @@ impl VellumApp {
             }
             return;
         }
-        // 直接选择单击(A):命中矢量顶点 → 记录待拖(P4.6)
+        // 直接选择单击(A):命中矢量顶点 → 选中节点并记录待拖(P4.6)
         if response.clicked() && self.tool == Tool::DirectSelect {
             if let Some(p) = response.interact_pointer_pos() {
                 let pl = p - rect.min;
                 let (wx, wy) = self.camera.screen_to_world(pl.x as f64, pl.y as f64);
                 self.ds_vertex = self.find_vector_vertex(wx, wy, 8.0 / self.camera.zoom);
+                if let Some((sid, _)) = &self.ds_vertex {
+                    self.selection = vec![sid.clone()];
+                }
+            }
+        }
+
+        // 直接选择(A):拖拽锚点 → SetVector 命令入 undo 栈(P4.6 接线)。
+        // 连续拖拽落在 500ms 合并窗口内 = 一条 undo 条目(与数值框同策略)
+        if self.tool == Tool::DirectSelect && response.dragged() {
+            if let (Some(p0), Some((sid, vi))) =
+                (response.interact_pointer_pos(), self.ds_vertex.as_ref())
+            {
+                let p = p0 - rect.min;
+                let (wx, wy) = self.camera.screen_to_world(p.x as f64, p.y as f64);
+                let (sid, vi) = (sid.clone(), *vi);
+                if let Some(nid) = self.doc.find_by_sid(&sid) {
+                    if let Some(n) = self.doc.nodes.get(nid) {
+                        if let NodeKind::Vector { path } = &n.kind {
+                            // 顶点存节点本地坐标:新本地 = 光标世界 - 节点世界原点
+                            if let Some(bb) = vb_tools::abs_bbox_world(&self.doc, nid) {
+                                let mut els: Vec<vb_common::geom::PathEl> =
+                                    path.elements().to_vec();
+                                let new_pt = vb_common::geom::Point::new(wx - bb.x0, wy - bb.y0);
+                                els[vi] = match els[vi] {
+                                    vb_common::geom::PathEl::MoveTo(_) => {
+                                        vb_common::geom::PathEl::MoveTo(new_pt)
+                                    }
+                                    vb_common::geom::PathEl::LineTo(_) => {
+                                        vb_common::geom::PathEl::LineTo(new_pt)
+                                    }
+                                    other => other,
+                                };
+                                let np = vb_common::geom::BezPath::from_vec(els);
+                                self.exec(Command::SetVector {
+                                    sid,
+                                    new: np,
+                                    old: None,
+                                });
+                            }
+                        }
+                    }
+                }
             }
         }
         // 光标世界坐标(指针先转画布本地)
@@ -3743,6 +3784,33 @@ impl VellumApp {
                             semantic::SELECT_BOX,
                         );
                     }
+                }
+            }
+        }
+
+        // 直接选择(A):矢量锚点方块(拖拽中的锚点高亮)
+        if self.tool == Tool::DirectSelect {
+            if let Some(sid) = self.selection.last() {
+                for (i, vx, vy) in self.vector_vertices(sid) {
+                    let (sx, sy) = self.camera.world_to_screen(vx, vy);
+                    let c = pos2(sx as f32 + origin.x, sy as f32 + origin.y);
+                    let active = self
+                        .ds_vertex
+                        .as_ref()
+                        .map(|(s, vi)| s == sid && *vi == i)
+                        .unwrap_or(false);
+                    let fill = if active {
+                        semantic::SELECT_BOX
+                    } else {
+                        t.bg_panel
+                    };
+                    painter.rect_filled(Rect::from_center_size(c, vec2(7.0, 7.0)), 1.0, fill);
+                    painter.rect_stroke(
+                        Rect::from_center_size(c, vec2(7.0, 7.0)),
+                        1.0,
+                        Stroke::new(1.0, semantic::SELECT_BOX),
+                        egui::StrokeKind::Outside,
+                    );
                 }
             }
         }
