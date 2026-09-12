@@ -66,10 +66,44 @@ pub fn abs_bbox(doc: &Document, id: NodeId) -> Option<Rect> {
     Some(Rect::new(x, y, x + n.geom.w, y + n.geom.h))
 }
 
+/// 节点所属画板(沿 parent 链上溯);节点自身是画板时返回自身。
+pub fn artboard_of(doc: &Document, id: NodeId) -> Option<NodeId> {
+    let mut cur = Some(id);
+    while let Some(cid) = cur {
+        let n = doc.nodes.get(cid)?;
+        if matches!(n.kind, NodeKind::Artboard) {
+            return Some(cid);
+        }
+        cur = n.parent;
+    }
+    None
+}
+
+/// 节点的**世界坐标** bbox(画板原点 + abs_bbox;画板自身 geom 即世界坐标)。
+/// 拾取/框选/叠加层绘制与相机(世界系)交互时必须用这一口径。
+pub fn abs_bbox_world(doc: &Document, id: NodeId) -> Option<Rect> {
+    let bb = abs_bbox(doc, id)?;
+    // 画板自身的 geom 就是世界坐标,不再叠加原点
+    if doc
+        .nodes
+        .get(id)
+        .is_some_and(|n| matches!(n.kind, NodeKind::Artboard))
+    {
+        return Some(bb);
+    }
+    let origin = artboard_of(doc, id).map(|ab| doc.artboard_origin(ab));
+    match origin {
+        Some((ox, oy)) => Some(Rect::new(bb.x0 + ox, bb.y0 + oy, bb.x1 + ox, bb.y1 + oy)),
+        None => Some(bb),
+    }
+}
+
 /// 拾取:z 序从顶向下(children 末位在最上层),命中容器时优先深入子级。
+/// `(wx, wy)` 是**世界坐标**(相机系);内部换算成画板本地再比较。
 pub fn hit_test(doc: &Document, artboard: NodeId, wx: f64, wy: f64) -> Option<NodeId> {
     let ab = doc.nodes.get(artboard)?;
-    hit_children(doc, &ab.children, wx, wy)
+    let (ox, oy) = doc.artboard_origin(artboard);
+    hit_children(doc, &ab.children, wx - ox, wy - oy)
 }
 
 fn hit_children(doc: &Document, ids: &[NodeId], wx: f64, wy: f64) -> Option<NodeId> {
@@ -95,13 +129,17 @@ fn hit_children(doc: &Document, ids: &[NodeId], wx: f64, wy: f64) -> Option<Node
 }
 
 /// 框选:**相交即选中**(AI 语义,设计文档 02 篇 §5.1)。
+/// `rect` 是**世界坐标**;只选中相交的**顶层**对象(命中父级不再深入,
+/// 否则组与子孙同时入选,删除/编组/对齐都会连锁出错)。
 pub fn marquee_select(doc: &Document, artboard: NodeId, rect: Rect) -> Vec<NodeId> {
     let mut out = Vec::new();
     let Some(ab) = doc.nodes.get(artboard) else {
         return out;
     };
+    let (ox, oy) = doc.artboard_origin(artboard);
+    let local = Rect::new(rect.x0 - ox, rect.y0 - oy, rect.x1 - ox, rect.y1 - oy);
     for &c in &ab.children {
-        collect_intersect(doc, c, rect, &mut out);
+        collect_intersect(doc, c, local, &mut out);
     }
     out
 }
@@ -115,6 +153,7 @@ fn collect_intersect(doc: &Document, id: NodeId, rect: Rect, out: &mut Vec<NodeI
     let inter = bb.intersect(rect);
     if inter.width() > 0.0 && inter.height() > 0.0 {
         out.push(id);
+        return; // 顶层语义:父级已命中,不再把子孙一并选中
     }
     for &c in &n.children {
         collect_intersect(doc, c, rect, out);
@@ -215,6 +254,68 @@ mod tests {
         assert_eq!(constrain_axis(30.0, 4.0, true), (30.0, 0.0));
         assert_eq!(constrain_axis(2.0, 50.0, true), (0.0, 50.0));
         assert_eq!(constrain_axis(30.0, 4.0, false), (30.0, 4.0));
+    }
+
+    /// 多画板:拾取/框选必须用世界坐标(此前第 2+ 块画板点不中、框选错乱)。
+    #[test]
+    fn hit_and_marquee_use_world_coords() {
+        let mut doc = Document::new("t", "zh-CN");
+        // 第二块画板放在 y=980
+        let ab2 = doc.new_artboard("画板 2", 800.0, 600.0);
+        doc.nodes.get_mut(ab2).unwrap().geom.y = 980.0;
+        let box_id = add_box(&mut doc, ab2, 100.0, 50.0, 100.0, 50.0);
+
+        // 画板本地 (100+50) + 画板原点 980 = 世界 (150, 1030)
+        assert_eq!(
+            hit_test(&doc, ab2, 150.0, 1030.0),
+            Some(box_id),
+            "世界坐标点选必须命中第二画板上的对象"
+        );
+        assert_eq!(hit_test(&doc, ab2, 150.0, 50.0), None, "本地坐标不得命中");
+
+        let r = Rect::new(140.0, 1020.0, 260.0, 1140.0);
+        let hits = marquee_select(&doc, ab2, r);
+        assert_eq!(hits, vec![box_id], "世界坐标框选必须命中");
+        // 第一画板范围内框选不得命中第二画板对象
+        let r_local = Rect::new(140.0, 20.0, 260.0, 140.0);
+        assert!(marquee_select(&doc, ab2, r_local).is_empty());
+    }
+
+    /// 框选顶层语义:命中组后不再把组内子孙一并选中。
+    #[test]
+    fn marquee_selects_top_level_only() {
+        let mut doc = Document::new("t", "zh-CN");
+        let ab = doc.artboards[0];
+        let gsid = doc.alloc_sid();
+        let mut g = Node::new(NodeKind::Group, "组", gsid);
+        g.geom = Geom {
+            x: 0.0,
+            y: 0.0,
+            w: 300.0,
+            h: 300.0,
+        };
+        let gid = doc.nodes.insert(g);
+        doc.nodes.get_mut(gid).unwrap().parent = Some(ab);
+        doc.nodes.get_mut(ab).unwrap().children.push(gid);
+        let child = add_box(&mut doc, gid, 10.0, 10.0, 80.0, 40.0);
+
+        let hits = marquee_select(&doc, ab, Rect::new(0.0, 0.0, 320.0, 320.0));
+        assert_eq!(hits, vec![gid], "只选组本身,不得连子孙一起选");
+        assert!(!hits.contains(&child));
+    }
+
+    /// abs_bbox_world = 画板原点 + 本地 bbox;画板自身 geom 即世界坐标。
+    #[test]
+    fn abs_bbox_world_adds_artboard_origin() {
+        let mut doc = Document::new("t", "zh-CN");
+        let ab2 = doc.new_artboard("画板 2", 800.0, 600.0);
+        doc.nodes.get_mut(ab2).unwrap().geom.y = 980.0;
+        let id = add_box(&mut doc, ab2, 100.0, 50.0, 100.0, 50.0);
+        let bb = abs_bbox_world(&doc, id).unwrap();
+        assert_eq!((bb.x0, bb.y0), (100.0, 1030.0));
+        let ab_bb = abs_bbox_world(&doc, ab2).unwrap();
+        assert_eq!((ab_bb.x0, ab_bb.y0), (0.0, 980.0));
+        assert_eq!(artboard_of(&doc, id), Some(ab2));
     }
 
     #[test]

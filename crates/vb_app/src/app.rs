@@ -250,9 +250,10 @@ impl VellumApp {
         let w = (max_r - min_x).max(1.0);
         let h = (max_b - min_y).max(1.0);
         let margin = 60.0f64;
+        // clamp 下限:画布极窄时分子为负会产生负缩放(视图翻转)
         let zoom = (((rect.width() as f64) - margin * 2.0) / w)
             .min(((rect.height() as f64) - margin * 2.0) / h)
-            .min(4.0);
+            .clamp(0.01, 4.0);
         self.camera.zoom = zoom;
         self.camera.pan_x = rect.left() as f64 + margin - min_x * zoom;
         self.camera.pan_y = rect.top() as f64 + margin - min_y * zoom;
@@ -314,6 +315,12 @@ impl VellumApp {
                     self.doc = r.doc;
                     self.undo = UndoStack::new();
                     self.selection.clear();
+                    // 新 arena 的 NodeId 与旧文档无对应关系,全部悬空引用作废
+                    self.isolate = None;
+                    self.pen_points.clear();
+                    self.ds_vertex = None;
+                    self.editing_text = None;
+                    self.drag = Drag::None;
                     self.saved_rev = self.doc.rev;
                     self.status = format!("检测到外部修改,已自动采用(Agent 热重载,{n} 画板)");
                 }
@@ -335,6 +342,11 @@ impl VellumApp {
                     self.doc = r.doc;
                     self.undo = UndoStack::new();
                     self.selection.clear();
+                    self.isolate = None;
+                    self.pen_points.clear();
+                    self.ds_vertex = None;
+                    self.editing_text = None;
+                    self.drag = Drag::None;
                     self.project_dir = Some(r.project_dir);
                     self.fit_view();
                     self.status = format!("已打开 {}(画板 {n})", dir.display());
@@ -555,6 +567,18 @@ impl VellumApp {
                 .unwrap_or(false)
         })
     }
+
+    /// 切换工具的唯一入口:清进行中的钢笔锚点与直接选择顶点。
+    /// 直接赋值 `self.tool` 会残留上一次未完成的路径(切走再切回钢笔,
+    /// 单击会接着旧路径画/误触旧起点闭合)。
+    fn set_tool(&mut self, tool: Tool) {
+        if self.tool == tool {
+            return;
+        }
+        self.pen_points.clear();
+        self.ds_vertex = None;
+        self.tool = tool;
+    }
 }
 
 impl eframe::App for VellumApp {
@@ -721,6 +745,7 @@ impl eframe::App for VellumApp {
         // 命令面板(P3.2,Ctrl+K)
         if self.palette_open {
             let mut open = self.palette_open;
+            let mut close = false;
             egui::Window::new("命令面板")
                 .open(&mut open)
                 .collapsible(false)
@@ -730,6 +755,10 @@ impl eframe::App for VellumApp {
                         [360.0, 22.0],
                         egui::TextEdit::singleline(&mut self.palette_query).hint_text("搜索命令…"),
                     );
+                    // Esc 关闭:输入框聚焦时全局 Esc 走 TextEdit 上下文,面板须自行处理
+                    if ui.ctx().input(|i| i.key_pressed(Key::Escape)) {
+                        close = true;
+                    }
                     let query = self.palette_query.to_lowercase();
                     egui::ScrollArea::vertical()
                         .max_height(320.0)
@@ -760,6 +789,9 @@ impl eframe::App for VellumApp {
                             }
                         });
                 });
+            if close {
+                open = false;
+            }
             self.palette_open = open;
         }
     }
@@ -831,6 +863,24 @@ impl VellumApp {
             shortcuts::is_implemented(id),
             "命令 {id} 未在 shortcuts::IMPLEMENTED_IDS 中声明"
         );
+        // 拖拽进行中收敛可派发集合:删除正在拖的对象会让后续每帧 SetGeom
+        // 打到死 sid 上刷屏报错;切工具会让 drag 状态与新工具错位
+        if matches!(
+            self.drag,
+            Drag::MoveObj { .. }
+                | Drag::Resize { .. }
+                | Drag::Rotate { .. }
+                | Drag::Marquee { .. }
+                | Drag::Create { .. }
+                | Drag::ZoomRegion { .. }
+        ) && !(id == "canvas.cancel"
+            || id.starts_with("app.")
+            || id.starts_with("file.")
+            || id.starts_with("view."))
+        {
+            self.status = "拖拽进行中:先松手或 Esc 取消".into();
+            return;
+        }
         match id {
             // ── 文件 ──
             "file.new" => {
@@ -838,6 +888,12 @@ impl VellumApp {
                 self.undo = UndoStack::new();
                 self.selection.clear();
                 self.project_dir = None;
+                // 旧 doc 的 NodeId 全部失效,进行中的状态一并作废
+                self.isolate = None;
+                self.pen_points.clear();
+                self.ds_vertex = None;
+                self.editing_text = None;
+                self.drag = Drag::None;
                 self.fit_view();
                 self.status = "新建文档(1440×900)".into();
             }
@@ -859,11 +915,18 @@ impl VellumApp {
                 };
             }
             "edit.select_all" => {
-                if let Some(&ab) = self.doc.artboards.first() {
+                // 当前画板(含选区推断),不是硬编码第一块
+                if let Some(ab) = self.active_artboard() {
                     let kids = self.doc.nodes.get(ab).unwrap().children.clone();
                     self.selection = kids
                         .into_iter()
-                        .filter(|id| self.doc.nodes.get(*id).map(|n| !n.locked).unwrap_or(false))
+                        .filter(|id| {
+                            self.doc
+                                .nodes
+                                .get(*id)
+                                .map(|n| !n.locked && !n.hidden)
+                                .unwrap_or(false)
+                        })
                         .map(|id| self.doc.nodes.get(id).unwrap().sid.as_str().to_string())
                         .collect();
                     self.status = format!("已全选 {} 个对象", self.selection.len());
@@ -955,7 +1018,7 @@ impl VellumApp {
                 for sid in &self.selection {
                     if let Some(nid) = self.doc.find_by_sid(sid) {
                         if let Some(_n) = self.doc.nodes.get(nid) {
-                            let bb = vb_tools::abs_bbox(&self.doc, nid).unwrap_or_default();
+                            let bb = vb_tools::abs_bbox_world(&self.doc, nid).unwrap_or_default();
                             for pos in [bb.x0, (bb.x0 + bb.x1) / 2.0, bb.x1] {
                                 self.guides.push((false, pos));
                                 added += 1;
@@ -969,21 +1032,15 @@ impl VellumApp {
                 }
                 self.status = format!("从选区生成 {added} 条参考线(Ctrl+5)");
             }
-            // ── 工具箱 ──
-            "tool.select" => self.tool = Tool::Select,
-            "tool.rect" => self.tool = Tool::Rect,
-            "tool.ellipse" => self.tool = Tool::Ellipse,
-            "tool.line" => self.tool = Tool::Line,
-            "tool.pen" => {
-                self.tool = Tool::Pen;
-                self.pen_points.clear();
-            }
-            "tool.direct_select" => {
-                self.tool = Tool::DirectSelect;
-                self.ds_vertex = None;
-            }
-            "tool.zoom" => self.tool = Tool::Zoom,
-            "tool.hand" => self.tool = Tool::Hand,
+            // ── 工具箱(统一经 set_tool:清进行中的钢笔锚点/直接选择顶点) ──
+            "tool.select" => self.set_tool(Tool::Select),
+            "tool.rect" => self.set_tool(Tool::Rect),
+            "tool.ellipse" => self.set_tool(Tool::Ellipse),
+            "tool.line" => self.set_tool(Tool::Line),
+            "tool.pen" => self.set_tool(Tool::Pen),
+            "tool.direct_select" => self.set_tool(Tool::DirectSelect),
+            "tool.zoom" => self.set_tool(Tool::Zoom),
+            "tool.hand" => self.set_tool(Tool::Hand),
             // ── P3.8 分布(≥3 选中) ──
             "object.distribute_h" => self.distribute_selection(true),
             "object.distribute_v" => self.distribute_selection(false),
@@ -1055,7 +1112,8 @@ impl VellumApp {
             }
             // ── P3.2 命令面板 ──
             "app.command_palette" => {
-                self.palette_open = true;
+                // 切换语义:面板开着再按 Ctrl+K 关闭(此前只能点 X)
+                self.palette_open = !self.palette_open;
                 self.palette_query.clear();
             }
             // ── 画布 ──
@@ -1094,7 +1152,44 @@ impl VellumApp {
                 }
                 self.selection.clear();
                 if !matches!(self.drag, Drag::None) {
-                    self.drag = Drag::None;
+                    // Esc 取消拖拽必须还原几何:移动/缩放中每帧 SetGeom 已落盘,
+                    // 只丢状态会让"取消"留下脏数据
+                    match std::mem::replace(&mut self.drag, Drag::None) {
+                        Drag::MoveObj {
+                            sid, start_geom, ..
+                        }
+                        | Drag::Resize {
+                            sid, start_geom, ..
+                        } => {
+                            if self.doc.find_by_sid(&sid).is_some() {
+                                self.exec(Command::SetGeom {
+                                    sid,
+                                    new: start_geom,
+                                    old: None,
+                                });
+                            }
+                        }
+                        Drag::Rotate { sid, start_deg, .. } => {
+                            if let Some(nid) = self.doc.find_by_sid(&sid) {
+                                let deg = if start_deg.abs() < f64::EPSILON {
+                                    "none".to_string()
+                                } else {
+                                    format!("rotate({start_deg}deg)")
+                                };
+                                let mut style = self.doc.nodes.get(nid).unwrap().style.clone();
+                                if let Some(d) = style.iter_mut().find(|d| d.prop == "transform") {
+                                    d.value = deg;
+                                }
+                                self.exec(Command::SetStyle {
+                                    sid,
+                                    new: style,
+                                    old: None,
+                                });
+                            }
+                        }
+                        _ => {}
+                    }
+                    self.smart_guides.clear();
                     self.status = "已取消".into();
                 }
             }
@@ -1227,7 +1322,10 @@ impl VellumApp {
             return;
         }
         let offset = if in_place { 0 } else { self.paste_offset };
-        self.paste_offset += 1;
+        if !in_place {
+            // 就地粘贴不消耗偏移预算(否则后续普通粘贴多跳 16px)
+            self.paste_offset += 1;
+        }
         let dx = (offset * 16) as f64;
         let dy = (offset * 16) as f64;
 
@@ -1273,11 +1371,12 @@ impl VellumApp {
             self.status = "分布需要至少 3 个对象".into();
             return;
         }
-        // 按位置排序(左→右或上→下)
+        // 按前缘排序(左→右或上→下):游标按前缘推进,排序也必须按前缘,
+        // 否则尺寸悬殊时右缘序 ≠ 前缘序,分布结果互相穿越
         if horizontal {
-            items.sort_by(|a, b| (a.1.x + a.1.w).total_cmp(&(b.1.x + b.1.w)));
+            items.sort_by(|a, b| a.1.x.total_cmp(&b.1.x));
         } else {
-            items.sort_by(|a, b| (a.1.y + a.1.h).total_cmp(&(b.1.y + b.1.h)));
+            items.sort_by(|a, b| a.1.y.total_cmp(&b.1.y));
         }
         let first = items.first().unwrap().1;
         let last = items.last().unwrap().1;
@@ -1440,8 +1539,11 @@ impl VellumApp {
                             PathEl::MoveTo(p) | PathEl::LineTo(p) => *p,
                             _ => continue,
                         };
-                        // 路径以节点原点存储 → 绝对 = 节点 bbox 原点 + 点
-                        let bb = vb_tools::abs_bbox(&self.doc, id)?;
+                        // 路径以节点原点存储 → 世界 = 世界 bbox 原点 + 点;
+                        // 单个节点取不到 bbox 只跳过该节点(此前 `?` 会放弃整棵树)
+                        let Some(bb) = vb_tools::abs_bbox_world(&self.doc, id) else {
+                            continue;
+                        };
                         let ax = bb.x0 + p.x;
                         let ay = bb.y0 + p.y;
                         if (ax - wx).hypot(ay - wy) <= tol {
@@ -1466,7 +1568,7 @@ impl VellumApp {
         let NodeKind::Vector { path } = &n.kind else {
             return vec![];
         };
-        let bb = vb_tools::abs_bbox(&self.doc, nid).unwrap_or(vb_common::geom::Rect::ZERO);
+        let bb = vb_tools::abs_bbox_world(&self.doc, nid).unwrap_or(vb_common::geom::Rect::ZERO);
         path.elements()
             .iter()
             .enumerate()
@@ -1502,17 +1604,15 @@ impl VellumApp {
         }
         // 目标包围盒:单选 = 画板;多选 = 选择集合的包围盒
         let (bx0, by0, bx1, by1) = if items.len() == 1 {
-            let (_, _, first_bb) = &items[0];
+            // 目标画板 = 该对象所属画板(沿父链上溯;坐标探测会找错画板)。
+            // 对象 bbox 是画板本地坐标,目标框同样取本地系 (0,0,w,h)
+            let ab_sid = items[0].0.clone();
             let ab = self
-                .artboard_at_world(first_bb.x0 + 1.0, first_bb.y0 + 1.0)
-                .or(self.doc.artboards.first().copied());
-            match ab.and_then(|a| {
-                self.doc
-                    .nodes
-                    .get(a)
-                    .map(|n| (n.geom.x, n.geom.y, n.geom.w, n.geom.h))
-            }) {
-                Some((ax, ay, aw, ah)) => (ax, ay, ax + aw, ay + ah),
+                .doc
+                .find_by_sid(&ab_sid)
+                .and_then(|nid| vb_tools::artboard_of(&self.doc, nid));
+            match ab.and_then(|a| self.doc.nodes.get(a).map(|n| (n.geom.w, n.geom.h))) {
+                Some((aw, ah)) => (0.0, 0.0, aw, ah),
                 None => (0.0, 0.0, 1440.0, 900.0),
             }
         } else {
@@ -1760,7 +1860,18 @@ impl VellumApp {
                                     .ui(ui)
                                     .clicked()
                                 {
-                                    self.tool = tool;
+                                    // 与快捷键同一条命令路径(统一清理工具状态)
+                                    let id = match tool {
+                                        Tool::Select => "tool.select",
+                                        Tool::Rect => "tool.rect",
+                                        Tool::Ellipse => "tool.ellipse",
+                                        Tool::Line => "tool.line",
+                                        Tool::Pen => "tool.pen",
+                                        Tool::DirectSelect => "tool.direct_select",
+                                        Tool::Zoom => "tool.zoom",
+                                        Tool::Hand => "tool.hand",
+                                    };
+                                    self.run_command(id, false, false);
                                 }
                             }
                         });
@@ -2733,7 +2844,7 @@ impl VellumApp {
                     let Some(nid) = self.doc.find_by_sid(sid) else {
                         continue;
                     };
-                    let Some(bb) = vb_tools::abs_bbox(&self.doc, nid) else {
+                    let Some(bb) = vb_tools::abs_bbox_world(&self.doc, nid) else {
                         continue;
                     };
                     let (sx, sy) = self.camera.world_to_screen(bb.x0, bb.y0);
@@ -2793,7 +2904,7 @@ impl VellumApp {
         // 选中对象的屏幕 bbox(用于手柄/旋转命中)
         let sel_bbox_screen = self.selection.last().and_then(|sid| {
             let nid = self.doc.find_by_sid(sid)?;
-            let bb = vb_tools::abs_bbox(&self.doc, nid)?;
+            let bb = vb_tools::abs_bbox_world(&self.doc, nid)?;
             let (x0, y0) = self.camera.world_to_screen(bb.x0, bb.y0);
             let (x1, y1) = self.camera.world_to_screen(bb.x1, bb.y1);
             Some((
@@ -2882,15 +2993,39 @@ impl VellumApp {
                                 self.selection = vec![sid.clone()];
                             }
                         }
-                        // Alt = 复制并拖动(AI 招牌)
+                        // Alt = 复制并拖动(AI 招牌);走 Insert 命令入 undo 栈,
+                        // 裸 clone_subtree 产生的克隆体永远撤销不掉
                         let drag_sid = if alt {
                             let nid = self.doc.find_by_sid(&sid).unwrap();
-                            let parent = self.doc.nodes.get(nid).unwrap().parent.unwrap();
-                            let new_id = self.doc.clone_subtree(nid, parent);
-                            let new_sid =
-                                self.doc.nodes.get(new_id).unwrap().sid.as_str().to_string();
-                            self.selection = vec![new_sid.clone()];
-                            new_sid
+                            match self.doc.nodes.get(nid).unwrap().parent {
+                                Some(parent_id) => {
+                                    let fallback = vb_doc::model::NodeTree {
+                                        node: self.doc.nodes.get(nid).unwrap().clone(),
+                                        children: vec![],
+                                    };
+                                    let mut tree =
+                                        vb_doc::model::NodeTree::from_document(&self.doc, nid)
+                                            .unwrap_or(fallback);
+                                    re_sid_tree(&mut tree, &mut self.doc);
+                                    let new_sid = tree.node.sid.as_str().to_string();
+                                    let parent_sid = self
+                                        .doc
+                                        .nodes
+                                        .get(parent_id)
+                                        .unwrap()
+                                        .sid
+                                        .as_str()
+                                        .to_string();
+                                    self.exec(Command::Insert {
+                                        parent_sid,
+                                        index: usize::MAX,
+                                        tree,
+                                    });
+                                    self.selection = vec![new_sid.clone()];
+                                    new_sid
+                                }
+                                None => sid.clone(),
+                            }
                         } else {
                             sid.clone()
                         };
@@ -3036,7 +3171,9 @@ impl VellumApp {
                 if self.smart_guides_on && !ctrl {
                     if let Some(nid) = self.doc.find_by_sid(&sid) {
                         let parent = self.doc.nodes.get(nid).unwrap().parent;
-                        let ab = self.artboard_at_world(g.x + 1.0, g.y + 1.0);
+                        // 移动对象所属画板直接沿父链上溯(坐标探测在多画板
+                        // 且对象位于负坐标时会找错画板)
+                        let ab = vb_tools::artboard_of(&self.doc, nid);
                         let (sx, sy, lines) =
                             self.smart_snap(nid, parent, ab, &g, 6.0 / self.camera.zoom);
                         g.x = sx;
@@ -3062,7 +3199,8 @@ impl VellumApp {
         if response.drag_stopped() {
             match std::mem::replace(&mut self.drag, Drag::None) {
                 Drag::Marquee { start, cur } => {
-                    // 相交即选中(AI)
+                    // 相交即选中(AI);框选落在拖拽起点所在画板(此前硬编码
+                    // artboards.first(),多画板文档在其它画板框选错乱)
                     let (x0, y0) = self
                         .camera
                         .screen_to_world(start.x.min(cur.x) as f64, start.y.min(cur.y) as f64);
@@ -3070,14 +3208,22 @@ impl VellumApp {
                         .camera
                         .screen_to_world(start.x.max(cur.x) as f64, start.y.max(cur.y) as f64);
                     let r = vb_common::geom::rect_xywh(x0, y0, x1 - x0, y1 - y0);
-                    if let Some(ab) = self.doc.artboards.first().copied() {
+                    let (swx, swy) = self.camera.screen_to_world(start.x as f64, start.y as f64);
+                    let ab = self
+                        .artboard_at_world(swx, swy)
+                        .or_else(|| self.doc.artboards.first().copied());
+                    if let Some(ab) = ab {
                         let hits = vb_tools::marquee_select(&self.doc, ab, r);
                         let mut sids: Vec<String> = hits
                             .into_iter()
                             .map(|id| self.doc.nodes.get(id).unwrap().sid.as_str().to_string())
                             .collect();
                         if shift {
-                            sids.append(&mut self.selection);
+                            for s in &self.selection {
+                                if !sids.contains(s) {
+                                    sids.push(s.clone());
+                                }
+                            }
                         }
                         self.selection = sids;
                         if !self.selection.is_empty() {
@@ -3170,6 +3316,16 @@ impl VellumApp {
                     if c == moving {
                         continue;
                     }
+                    // 隐藏/锁定对象不可见不可选,也不得吸走拖动(与拾取口径一致)
+                    if self
+                        .doc
+                        .nodes
+                        .get(c)
+                        .map(|n| n.hidden || n.locked)
+                        .unwrap_or(true)
+                    {
+                        continue;
+                    }
                     if let Some(bb) = vb_tools::abs_bbox(&self.doc, c) {
                         let (bx0, by0, bx1, by1) = (bb.x0, bb.y0, bb.x1, bb.y1);
                         sib_rects.push((bx0, by0, bx1, by1));
@@ -3189,24 +3345,33 @@ impl VellumApp {
         let my = [g.y, g.y + g.h / 2.0, g.y + g.h];
 
         let mut best_x: Option<(f64, f64)> = None; // (delta, 候选)
+        let mut best_line_x: Option<[f64; 4]> = None;
         for e in mx {
             for (cand, ly0, ly1) in &xs {
                 let d = (e - cand).abs();
                 if d <= tol && best_x.map(|(bd, _)| d < bd).unwrap_or(true) {
                     best_x = Some((d, *cand));
-                    lines.push([*cand, *ly0 - 12.0, *cand, *ly1 + 12.0]);
+                    // 只保留当前最优候选的参考线(此前每个容差内候选都画一条)
+                    best_line_x = Some([*cand, *ly0 - 12.0, *cand, *ly1 + 12.0]);
                 }
             }
         }
+        if let Some(l) = best_line_x {
+            lines.push(l);
+        }
         let mut best_y: Option<(f64, f64)> = None;
+        let mut best_line_y: Option<[f64; 4]> = None;
         for e in my {
             for (cand, lx0, lx1) in &ys {
                 let d = (e - cand).abs();
                 if d <= tol && best_y.map(|(bd, _)| d < bd).unwrap_or(true) {
                     best_y = Some((d, *cand));
-                    lines.push([*lx0 - 12.0, *cand, *lx1 + 12.0, *cand]);
+                    best_line_y = Some([*lx0 - 12.0, *cand, *lx1 + 12.0, *cand]);
                 }
             }
+        }
+        if let Some(l) = best_line_y {
+            lines.push(l);
         }
         let nx = best_x.map(|(_, c)| {
             // 对齐的是哪条边?吸附到候选后保持原相对关系:取移动后最接近候选的那条边
@@ -3389,7 +3554,7 @@ impl VellumApp {
             if n.hidden || n.tag == "#text" || matches!(n.kind, NodeKind::Artboard) {
                 continue;
             }
-            let Some(bb) = vb_tools::abs_bbox(&self.doc, id) else {
+            let Some(bb) = vb_tools::abs_bbox_world(&self.doc, id) else {
                 continue;
             };
             let (sx, sy) = self.camera.world_to_screen(bb.x0, bb.y0);
@@ -3503,7 +3668,7 @@ impl VellumApp {
             if n.hidden || n.tag == "#text" {
                 continue;
             }
-            let abs = vb_tools::abs_bbox(&self.doc, id);
+            let abs = vb_tools::abs_bbox_world(&self.doc, id);
             let Some(bb) = abs else { continue };
             let (sx, sy) = self.camera.world_to_screen(bb.x0, bb.y0);
             let (ex, ey) = self.camera.world_to_screen(bb.x1, bb.y1);
@@ -3554,7 +3719,7 @@ impl VellumApp {
             let Some(nid) = self.doc.find_by_sid(sid) else {
                 continue;
             };
-            let Some(bb) = vb_tools::abs_bbox(&self.doc, nid) else {
+            let Some(bb) = vb_tools::abs_bbox_world(&self.doc, nid) else {
                 continue;
             };
             let (sx, sy) = self.camera.world_to_screen(bb.x0, bb.y0);
