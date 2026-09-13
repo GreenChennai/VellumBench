@@ -245,7 +245,30 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 .with_context(|| format!("读取 {}", csv.display()))
                 .map_err(|e| CliError::Other(format!("{e:#}")))?;
             let mut rows: Vec<Vec<String>> = Vec::new();
-            for line in csv_text.lines() {
+            // RFC 4180 行切分:引号内的换行/逗号是字段内容,不得撕裂
+            // (此前 .lines() 预切分,带换行的单元格破坏行结构)
+            let mut records: Vec<String> = Vec::new();
+            {
+                let mut cur = String::new();
+                let mut in_q = false;
+                for c in csv_text.chars() {
+                    match c {
+                        '"' => {
+                            in_q = !in_q;
+                            cur.push(c);
+                        }
+                        '\n' if !in_q => {
+                            records.push(std::mem::take(&mut cur));
+                        }
+                        '\r' => {}
+                        c => cur.push(c),
+                    }
+                }
+                if !cur.trim().is_empty() {
+                    records.push(cur);
+                }
+            }
+            for line in &records {
                 if line.trim().is_empty() {
                     continue;
                 }

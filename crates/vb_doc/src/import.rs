@@ -105,7 +105,17 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
                     }
                 }
                 "style" => {
-                    css_texts.push(collect_text(child));
+                    // 带非 all media 属性的样式表是条件样式,并入全局会改默认画布
+                    // 表现;整块 verbatim 转投 head 透传(media 语义由浏览器保留)
+                    if el
+                        .attr("media")
+                        .map(|m| !m.is_empty() && !m.eq_ignore_ascii_case("all"))
+                        .unwrap_or(false)
+                    {
+                        head_extra.push(serialize_node(child));
+                    } else {
+                        css_texts.push(collect_text(child));
+                    }
                 }
                 "script" => {
                     head_extra.push(serialize_node(child));

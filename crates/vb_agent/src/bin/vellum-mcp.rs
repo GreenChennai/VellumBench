@@ -34,7 +34,11 @@ fn with_session(f: impl FnOnce(&mut Session) -> Result<Value, String>) -> Result
 
 fn outline_json(doc: &Document, depth: usize) -> Value {
     fn node_json(doc: &Document, id: vb_doc::model::NodeId, depth: usize) -> Value {
-        let n = doc.nodes.get(id).unwrap();
+        // 容忍悬挂 id(防御:命令层已同步画板注册表,此处兜底不 panic——
+        // MCP 进程无 catch_unwind,unwrap = 整个 server 崩溃)
+        let Some(n) = doc.nodes.get(id) else {
+            return Value::Null;
+        };
         let children: Vec<Value> = if depth > 1 {
             n.children
                 .iter()
