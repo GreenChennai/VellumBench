@@ -187,20 +187,32 @@ impl Command {
             | Command::Rename { sid, .. }
             | Command::SetTag { sid, .. }
             | Command::SetVector { sid, .. } => Some((self.kind(), sid.clone())),
-            // 渐变拖拽每帧一条 Compound(逐目标 SetStyle):不可合并会把
-            // 一次拖拽稀释成几百步 undo。仅当全部子命令为 SetStyle 时
-            // 视为「多目标 SetStyle」可合并,key = 目标 sid 集合。
+            // 渐变拖拽每帧一条 Compound(逐目标 SetStyle)、多选拖拽每帧
+            // 一条 Compound(逐目标 SetGeom):不可合并会把一次拖拽稀释成
+            // 几百步 undo。仅当全部子命令为**同一类** Set* 时可合并,
+            // key = 类别标记 + 目标 sid 集合。
             Command::Compound { cmds } if !cmds.is_empty() => {
                 let mut key = String::new();
+                let mut tag = ' ';
                 for c in cmds {
-                    match c {
-                        Command::SetStyle { sid, .. } => {
-                            key.push_str(sid);
-                            key.push(',');
-                        }
+                    let this_tag = match c {
+                        Command::SetStyle { .. } => 's',
+                        Command::SetGeom { .. } => 'g',
                         _ => return None,
+                    };
+                    if tag == ' ' {
+                        tag = this_tag;
+                    } else if tag != this_tag {
+                        return None;
                     }
+                    let sid = match c {
+                        Command::SetStyle { sid, .. } | Command::SetGeom { sid, .. } => sid,
+                        _ => unreachable!(),
+                    };
+                    key.push_str(sid);
+                    key.push(',');
                 }
+                key.insert(0, tag);
                 Some((self.kind(), key))
             }
             _ => None,

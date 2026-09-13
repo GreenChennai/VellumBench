@@ -84,6 +84,19 @@ impl UndoStack {
         }
     }
 
+    /// 弹出栈顶命令并直接 revert,**不进入 redo 栈**(Esc 取消语义:
+    /// 本次拖拽整体作废,不可重做)。栈空或 revert 失败(命令推回)时
+    /// 文档保持原状。
+    pub fn cancel_top(&mut self, doc: &mut Document) {
+        if let Some(mut cmd) = self.undo.pop() {
+            match cmd.revert(doc) {
+                Ok(_) => doc.rev += 1,
+                Err(_) => self.undo.push(cmd),
+            }
+        }
+        self.last_merge = None;
+    }
+
     pub fn redo(&mut self, doc: &mut Document) -> Result<Option<String>> {
         let Some(mut cmd) = self.redo.pop() else {
             return Ok(None);
@@ -146,19 +159,28 @@ fn replace_new(top: &mut Command, src: &Command) {
         (Rename { new, .. }, Rename { new: n2, .. }) => *new = n2.clone(),
         (SetTag { new, .. }, SetTag { new: n2, .. }) => *new = n2.clone(),
         (SetVector { new, .. }, SetVector { new: n2, .. }) => *new = n2.clone(),
-        // 多目标 SetStyle Compound(渐变拖拽):按 sid 配对更新 new,
-        // 栈顶首帧捕获的 old 不动(可合并性由 merge_target 校验)
+        // 多目标 SetStyle/SetGeom Compound(渐变拖拽/多选拖拽):按 sid
+        // 配对更新 new,栈顶首帧捕获的 old 不动(可合并性由 merge_target 校验)
         (Compound { cmds: tcmds, .. }, Compound { cmds: scmds, .. }) => {
             for t in tcmds.iter_mut() {
-                let (sid, new) = match t {
-                    SetStyle { sid, new, .. } => (sid, new),
-                    _ => continue,
-                };
-                if let Some(SetStyle { new: n2, .. }) = scmds
-                    .iter()
-                    .find(|c| matches!(c, SetStyle { sid: s2, .. } if s2 == sid))
-                {
-                    *new = n2.clone();
+                match t {
+                    SetStyle { sid, new, .. } => {
+                        if let Some(SetStyle { new: n2, .. }) = scmds
+                            .iter()
+                            .find(|c| matches!(c, SetStyle { sid: s2, .. } if s2 == sid))
+                        {
+                            *new = n2.clone();
+                        }
+                    }
+                    SetGeom { sid, new, .. } => {
+                        if let Some(SetGeom { new: n2, .. }) = scmds
+                            .iter()
+                            .find(|c| matches!(c, SetGeom { sid: s2, .. } if s2 == sid))
+                        {
+                            *new = *n2;
+                        }
+                    }
+                    _ => {}
                 }
             }
         }

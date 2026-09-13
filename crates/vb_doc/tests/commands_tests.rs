@@ -729,3 +729,87 @@ fn mixed_compound_does_not_merge() {
         "混合 Compound 各自独立,第一次撤销后样式仍在"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 15 号计划 B4:cancel_top(Esc 取消不入栈)+ SetGeom Compound 合并
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cancel_top_discards_drag_entry() {
+    let mut doc = Document::new_default();
+    let ab = doc.artboards[0];
+    let ab_sid = doc.nodes.get(ab).unwrap().sid.as_str().to_string();
+    let a = make_box(&mut doc, &ab_sid, 0.0, 0.0);
+    let mut stack = UndoStack::new();
+    // 模拟拖拽两帧(合并为一条)
+    for x in [10.0, 20.0] {
+        stack
+            .push(
+                &mut doc,
+                set_geom(
+                    &a,
+                    Geom {
+                        x,
+                        y: 0.0,
+                        w: 100.0,
+                        h: 80.0,
+                    },
+                ),
+            )
+            .expect("帧应用失败");
+    }
+    assert_eq!(geom_of(&doc, &a).x, 20.0);
+    // Esc 取消:文档回到拖拽前,且不可重做
+    stack.cancel_top(&mut doc);
+    assert_eq!(geom_of(&doc, &a).x, 0.0, "取消应回到拖拽前");
+    assert!(!stack.can_redo(), "取消的动作不得进入 redo 栈");
+    assert!(
+        stack.undo(&mut doc).unwrap().is_none(),
+        "undo 栈应为空(拖拽未留痕)"
+    );
+}
+
+#[test]
+fn compound_setgeom_merges_for_multi_drag() {
+    let mut doc = Document::new_default();
+    let ab = doc.artboards[0];
+    let ab_sid = doc.nodes.get(ab).unwrap().sid.as_str().to_string();
+    let a = make_box(&mut doc, &ab_sid, 0.0, 0.0);
+    let b = make_box(&mut doc, &ab_sid, 50.0, 0.0);
+    let mut stack = UndoStack::new();
+    for dx in [5.0f64, 12.0] {
+        stack
+            .push(
+                &mut doc,
+                Command::Compound {
+                    cmds: vec![
+                        set_geom(
+                            &a,
+                            Geom {
+                                x: dx,
+                                y: 0.0,
+                                w: 100.0,
+                                h: 80.0,
+                            },
+                        ),
+                        set_geom(
+                            &b,
+                            Geom {
+                                x: 50.0 + dx,
+                                y: 0.0,
+                                w: 100.0,
+                                h: 80.0,
+                            },
+                        ),
+                    ],
+                },
+            )
+            .expect("帧应用失败");
+    }
+    stack.undo(&mut doc).expect("撤销失败");
+    assert_eq!(geom_of(&doc, &a).x, 0.0, "一次撤销回到拖拽前");
+    assert_eq!(geom_of(&doc, &b).x, 50.0);
+    stack.redo(&mut doc).expect("重做失败");
+    assert_eq!(geom_of(&doc, &a).x, 12.0, "重做恢复最后一帧");
+    assert_eq!(geom_of(&doc, &b).x, 62.0);
+}

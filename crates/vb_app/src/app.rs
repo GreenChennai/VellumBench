@@ -86,13 +86,15 @@ enum Drag {
     Pan {
         start_pan: Vec2,
     },
-    /// 移动对象(sid;alt 首动复制出的新 sid)
+    /// 移动对象(sid;alt 首动复制出的新 sid)。多选时 `others`
+    /// 携带其余选中对象的起始几何,整体随主对象位移(B4)。
     MoveObj {
         sid: String,
         start_geom: Geom,
         grab_dx: f64,
         grab_dy: f64,
         moved: bool,
+        others: Vec<(String, Geom)>,
     },
     /// 8 手柄缩放(handle: 0=NW 1=N 2=NE 3=E 4=SE 5=S 6=SW 7=W)
     Resize {
@@ -147,6 +149,10 @@ pub struct VellumApp {
     /// 位图缓存(B3):GUI 逐帧编码,不缓存则每帧解码一次文件;
     /// 热重载/打开新项目时清空。
     image_cache: std::collections::HashMap<String, vb_render::encode::BitmapData>,
+    /// 拖拽期间是否有命令落盘(Esc 取消时据此判断有无可作废条目)。
+    drag_edited: bool,
+    /// 已同步到 egui 的主题(None=尚未同步;B4 主题单一真相)。
+    theme_synced: Option<bool>,
     /// 当前主题(true=深色)。P2.7 支持浅色。
     theme_dark: bool,
     /// 右侧面板当前 Tab(P2.6)。
@@ -230,6 +236,8 @@ impl VellumApp {
             smart_guides_on: true,
             outline_mode: false,
             image_cache: std::collections::HashMap::new(),
+            drag_edited: false,
+            theme_synced: None,
             theme_dark: true,
             panel_tab: 0,
             smart_guides: Vec::new(),
@@ -270,6 +278,11 @@ impl VellumApp {
     fn exec(&mut self, cmd: Command) {
         if let Err(e) = self.undo.push(&mut self.doc, cmd) {
             self.status = format!("命令失败:{e}");
+            return;
+        }
+        // 拖拽进行中的每次落盘都标记(Esc 取消时据此作废合并条目)
+        if !matches!(self.drag, Drag::None) {
+            self.drag_edited = true;
         }
     }
 
@@ -698,6 +711,17 @@ impl VellumApp {
 
 impl eframe::App for VellumApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        // 主题单一真相(B4):theme_dark 是唯一来源,变化时同步进
+        // egui 偏好 —— 否则 tokens(ctx)(读 ctx.theme())在系统浅色
+        // 模式下取到浅色令牌,深色界面对比度塌掉
+        if self.theme_synced != Some(self.theme_dark) {
+            ui.ctx().set_theme(if self.theme_dark {
+                egui::ThemePreference::Dark
+            } else {
+                egui::ThemePreference::Light
+            });
+            self.theme_synced = Some(self.theme_dark);
+        }
         // 主题逐帧应用(幂等;P2.7 支持 深/浅 切换)
         theme::apply(ui.ctx(), self.theme_dark);
         // FPS 统计
@@ -1198,7 +1222,9 @@ impl VellumApp {
                         }
                     }
                 }
-                self.status = format!("从选区生成 {added} 条参考线(Ctrl+5)");
+                let key = shortcuts::key_text_for("view.guides_from_selection")
+                    .unwrap_or_else(|| "未绑定".into());
+                self.status = format!("从选区生成 {added} 条参考线({key})");
             }
             // ── 工具箱(统一经 set_tool:清进行中的钢笔锚点/直接选择顶点) ──
             "tool.select" => self.set_tool(Tool::Select),
@@ -1235,14 +1261,20 @@ impl VellumApp {
             "align.bottom" => self.align_selection("bottom"),
             // ── P3.9 锁定 / 隐藏 ──
             "object.lock" => {
-                let sids = self.selection.clone();
-                for sid in sids {
-                    self.exec(Command::SetFlags {
+                // 多选合成一条 Compound(N 条独立 undo → 一条,B4)
+                let cmds: Vec<Command> = self
+                    .selection
+                    .clone()
+                    .into_iter()
+                    .map(|sid| Command::SetFlags {
                         sid,
                         hidden: None,
                         locked: Some(true),
                         old: None,
-                    });
+                    })
+                    .collect();
+                if !cmds.is_empty() {
+                    self.exec(Command::Compound { cmds });
                 }
                 self.status = "已锁定所选".into();
             }
@@ -1275,14 +1307,19 @@ impl VellumApp {
                 }
             }
             "object.hide" => {
-                let sids = self.selection.clone();
-                for sid in sids {
-                    self.exec(Command::SetFlags {
+                let cmds: Vec<Command> = self
+                    .selection
+                    .clone()
+                    .into_iter()
+                    .map(|sid| Command::SetFlags {
                         sid,
                         hidden: Some(true),
                         locked: None,
                         old: None,
-                    });
+                    })
+                    .collect();
+                if !cmds.is_empty() {
+                    self.exec(Command::Compound { cmds });
                 }
                 self.status = "已隐藏所选".into();
             }
@@ -1361,45 +1398,29 @@ impl VellumApp {
                 }
                 self.selection.clear();
                 if !matches!(self.drag, Drag::None) {
-                    // Esc 取消拖拽必须还原几何:移动/缩放中每帧 SetGeom 已落盘,
-                    // 只丢状态会让"取消"留下脏数据
+                    // Esc 取消语义:拖拽产生的合并条目从 undo 栈整体作废
+                    // (不进 redo 栈 —— 取消的动作不可重做),文档直接回到
+                    // 拖拽前。此前走 exec(还原)会留下一条
+                    // 「Ctrl+Z 跳回被取消位置」的 undo 步(B4)
                     match std::mem::replace(&mut self.drag, Drag::None) {
-                        Drag::MoveObj {
-                            sid, start_geom, ..
-                        }
-                        | Drag::Resize {
-                            sid, start_geom, ..
-                        } => {
-                            if self.doc.find_by_sid(&sid).is_some() {
-                                self.exec(Command::SetGeom {
-                                    sid,
-                                    new: start_geom,
-                                    old: None,
-                                });
+                        Drag::MoveObj { .. }
+                        | Drag::Resize { .. }
+                        | Drag::Rotate { .. }
+                        | Drag::GradientAnnotate { .. } => {
+                            if self.drag_edited {
+                                self.undo.cancel_top(&mut self.doc);
+                                self.status = "已取消(未入撤销栈)".into();
+                            } else {
+                                self.status = "已取消".into();
                             }
+                            self.drag_edited = false;
+                            self.last_move_delta = None;
                         }
-                        Drag::Rotate { sid, start_deg, .. } => {
-                            if let Some(nid) = self.doc.find_by_sid(&sid) {
-                                let deg = if start_deg.abs() < f64::EPSILON {
-                                    "none".to_string()
-                                } else {
-                                    format!("rotate({start_deg}deg)")
-                                };
-                                let mut style = self.doc.nodes.get(nid).unwrap().style.clone();
-                                if let Some(d) = style.iter_mut().find(|d| d.prop == "transform") {
-                                    d.value = deg;
-                                }
-                                self.exec(Command::SetStyle {
-                                    sid,
-                                    new: style,
-                                    old: None,
-                                });
-                            }
+                        _ => {
+                            self.status = "已取消".into();
                         }
-                        _ => {}
                     }
                     self.smart_guides.clear();
-                    self.status = "已取消".into();
                 }
             }
             // ── P4 钢笔:Enter 结束路径 ──
@@ -1478,6 +1499,20 @@ impl VellumApp {
             });
         }
         self.status = "已删除(Ctrl+Z 撤销)".into();
+    }
+
+    /// 多选拖动(B4):除主对象外的其余选中对象及其起始几何。
+    fn selection_others(&self, primary_sid: &str) -> Vec<(String, Geom)> {
+        self.selection
+            .iter()
+            .filter(|s| s.as_str() != primary_sid)
+            .filter_map(|s| {
+                self.doc
+                    .find_by_sid(s)
+                    .and_then(|id| self.doc.nodes.get(id))
+                    .map(|n| (s.clone(), n.geom))
+            })
+            .collect()
     }
 
     fn is_artboard_sid(&self, sid: &str) -> bool {
@@ -2411,11 +2446,25 @@ impl VellumApp {
                                         } else {
                                             merged.insert("href".into(), href.clone());
                                         }
-                                        self.exec(Command::SetAttrs {
-                                            sid: sid.clone(),
-                                            new: merged.into_iter().collect(),
-                                            old: None,
-                                        });
+                                        // 内容没变不推 undo 条目(此前点一下输入框
+                                        // 就多出一条「修改 HTML 属性」)
+                                        let next = merged.into_iter().collect::<Vec<_>>();
+                                        if next
+                                            != self
+                                                .doc
+                                                .nodes
+                                                .get(self.doc.find_by_sid(&sid).unwrap())
+                                                .map(|n| {
+                                                    n.attrs.clone().into_iter().collect::<Vec<_>>()
+                                                })
+                                                .unwrap_or_default()
+                                        {
+                                            self.exec(Command::SetAttrs {
+                                                sid: sid.clone(),
+                                                new: next,
+                                                old: None,
+                                            });
+                                        }
                                     }
                                 });
                                 ui.horizontal(|ui| {
@@ -2631,6 +2680,10 @@ impl VellumApp {
                                         captured: None,
                                     });
                                     self.selection.clear();
+                                    // 隔离栈里可能压着被删画板的节点:
+                                    // 不清会导致拾取拿到死 id 而全面失效
+                                    self.isolate_stack
+                                        .retain(|id| self.doc.nodes.get(*id).is_some());
                                     self.status = "画板已删除".into();
                                 }
                                 if let Some(sid) = select {
@@ -3089,7 +3142,12 @@ impl VellumApp {
         let gpu = self.gpu.as_mut().unwrap();
         if let Some((_, view, s, _)) = &gpu.tex {
             let params = vello::RenderParams {
-                base_color: vello::peniko::Color::from_rgb8(0x14, 0x14, 0x14),
+                // 画板外留白随主题(此前浅色主题下仍是深色纹理)
+                base_color: if self.theme_dark {
+                    vello::peniko::Color::from_rgb8(0x14, 0x14, 0x14)
+                } else {
+                    vello::peniko::Color::from_rgb8(0xE8, 0xE6, 0xE2)
+                },
                 width: s[0],
                 height: s[1],
                 antialiasing_method: vello::AaConfig::Area,
@@ -3556,12 +3614,14 @@ impl VellumApp {
                         }
                         let nid = self.doc.find_by_sid(&sid).unwrap();
                         let g = self.doc.nodes.get(nid).unwrap().geom;
+                        let others = self.selection_others(&sid);
                         self.drag = Drag::MoveObj {
                             sid,
                             start_geom: g,
                             grab_dx: wx - g.x,
                             grab_dy: wy - g.y,
                             moved: false,
+                            others,
                         };
                     } else {
                         self.drag = Drag::Marquee { start: p, cur: p };
@@ -3620,12 +3680,14 @@ impl VellumApp {
                         };
                         let nid = self.doc.find_by_sid(&drag_sid).unwrap();
                         let g = self.doc.nodes.get(nid).unwrap().geom;
+                        let others = self.selection_others(&drag_sid);
                         self.drag = Drag::MoveObj {
                             sid: drag_sid,
                             start_geom: g,
                             grab_dx: wx - g.x,
                             grab_dy: wy - g.y,
                             moved: false,
+                            others,
                         };
                     } else {
                         self.drag = Drag::Marquee { start: p, cur: p };
@@ -3812,11 +3874,42 @@ impl VellumApp {
                         self.smart_guides = lines;
                     }
                 }
-                self.exec(Command::SetGeom {
-                    sid: sid.clone(),
-                    new: g,
-                    old: None,
-                });
+                // 多选:其余成员随主对象整体位移(含吸附量),
+                // 合成一条纯 SetGeom Compound(合并键同族 → 整段拖拽一条 undo)
+                let (others, start_geom) = match &self.drag {
+                    Drag::MoveObj {
+                        others, start_geom, ..
+                    } => (others.clone(), *start_geom),
+                    _ => (Vec::new(), g),
+                };
+                if others.is_empty() {
+                    self.exec(Command::SetGeom {
+                        sid: sid.clone(),
+                        new: g,
+                        old: None,
+                    });
+                } else {
+                    let dx = g.x - start_geom.x;
+                    let dy = g.y - start_geom.y;
+                    let mut cmds = vec![Command::SetGeom {
+                        sid: sid.clone(),
+                        new: g,
+                        old: None,
+                    }];
+                    for (osid, og) in others {
+                        cmds.push(Command::SetGeom {
+                            sid: osid,
+                            new: Geom {
+                                x: og.x + dx,
+                                y: og.y + dy,
+                                w: og.w,
+                                h: og.h,
+                            },
+                            old: None,
+                        });
+                    }
+                    self.exec(Command::Compound { cmds });
+                }
                 if let Drag::MoveObj {
                     moved, start_geom, ..
                 } = &mut self.drag
