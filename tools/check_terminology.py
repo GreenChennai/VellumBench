@@ -13,7 +13,7 @@ BANNED = [
 
 i18n = pathlib.Path("i18n")
 if not i18n.exists():
-    print("术语扫描: PASS (i18n/ 尚未建立,P5 落地)")
+    print("terminology: PASS (i18n/ not created yet, P5)")
     sys.exit(0)
 
 fails = 0
@@ -21,8 +21,8 @@ for f in sorted(i18n.glob("*.ftl")):
     for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
         for word, why in BANNED:
             if word in line and "禁用" not in line:
-                print(f"[术语] {f}:{i}: 禁用词「{word}」({why})")
+                print(f"[term] {f}:{i}: banned word {word!r} ({why})")
                 fails += 1
 
-print(f"术语扫描: {'FAIL' if fails else 'PASS'}")
+print(f"terminology: {'FAIL' if fails else 'PASS'}")
 sys.exit(1 if fails else 0)

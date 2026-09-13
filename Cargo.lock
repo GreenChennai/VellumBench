@@ -4384,6 +4384,7 @@ dependencies = [
  "vb_css",
  "vb_doc",
  "vb_export",
+ "vb_html",
  "vb_render",
 ]
 

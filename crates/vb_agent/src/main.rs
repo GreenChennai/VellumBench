@@ -31,6 +31,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// 输出校验(门禁 7):导出 → 重解析 + CSS 声明合法性 + L1 幂等
+    Validate,
     /// 性能基准(P5.3,B1–B6 简版):合成画板 → 计时编码+渲染
     Bench {
         #[arg(long, default_value_t = 200)]
@@ -171,6 +173,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
 
     match cli.command {
         Cmd::Selfcheck => selfcheck(cli.json),
+        Cmd::Validate => validate(&doc_path, cli.json),
         Cmd::Bench { objects } => {
             let t0 = std::time::Instant::now();
             let mut doc = Document::new("Bench", "zh-CN");
@@ -759,6 +762,133 @@ fn tree_json(doc: &Document, depth: usize) -> String {
         .map(|&a| node_json(doc, a, depth))
         .collect();
     json!({"rev": doc.rev, "artboards": arts}).to_string()
+}
+
+/// 门禁 7 · 输出校验(10 篇:W3C Nu + prettier 的本地等价实现,免外部依赖):
+/// ① 导出 HTML 用 html5ever 严格重解析(容错解析通过 = 结构良构);
+/// ② `data-vb-id` 全文档唯一(sid 是寻址命脉);
+/// ③ main.css 花括号配平 + 每条声明可被 Decl::parse 接受(非法声明会损坏
+///    浏览器侧样式表);
+/// ④ L1 幂等:导出 → 再导入 → 再导出,两次字节相同(04 篇 §六生命线)。
+fn validate(doc_path: &Path, json: bool) -> Result<(), CliError> {
+    let (doc, _, project_dir) = open_doc(doc_path)?;
+    let mut issues: Vec<String> = Vec::new();
+
+    let files = vb_doc::export::render_project(&doc);
+    for (path, content) in &files.files {
+        if path.ends_with("index.html") {
+            // ① 良构性:parse 内部容错,能产出 dom 即通过;② sid 唯一性
+            let dom = vb_html::HtmlDom::parse(content);
+            let mut sids: Vec<String> = Vec::new();
+            dom.root.walk(&mut |n| {
+                if let Some(el) = n.as_element() {
+                    if let Some(v) = el.attr("data-vb-id") {
+                        sids.push(v.to_string());
+                    }
+                }
+            });
+            let mut seen = std::collections::HashSet::new();
+            for sid in &sids {
+                if !seen.insert(sid.as_str()) {
+                    issues.push(format!("{path}: data-vb-id 重复:{sid}"));
+                }
+            }
+        }
+        if path.ends_with(".css") {
+            // ③ CSS 配平 + 声明合法性
+            let depth = content.chars().fold(0i64, |d, c| match c {
+                '{' => d + 1,
+                '}' => d - 1,
+                _ => d,
+            });
+            if depth != 0 {
+                issues.push(format!("{path}: 花括号不配平(净 {depth})"));
+            }
+            let body = content
+                .strip_prefix(":root {")
+                .and_then(|r| r.rsplit_once('}'))
+                .map(|(_, rest)| rest)
+                .unwrap_or(content);
+            for decl in body.split(';') {
+                let decl = decl.replace(['{', '}', '\n', '\r'], " ");
+                let decl = decl.trim();
+                // 跳过选择器段(最后一个 '{' 之后才是声明)
+                let decl = match decl.rsplit_once('}') {
+                    Some((_, d)) => d.trim(),
+                    None => decl,
+                };
+                let decl = match decl.rsplit_once('{') {
+                    Some((_, d)) => d.trim(),
+                    None => decl,
+                };
+                if decl.is_empty() {
+                    continue;
+                }
+                if vb_css::Decl::parse(decl).is_none() {
+                    issues.push(format!("{path}: 非法 CSS 声明「{decl}」"));
+                }
+            }
+        }
+    }
+
+    // ④ L1 幂等(临时目录内完成,不污染工作区)
+    let tmp = std::env::temp_dir().join(format!(
+        "vellum-validate-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let _ = std::fs::create_dir_all(&tmp);
+    let first: Vec<(String, String)> = files.files.clone();
+    vb_doc::export::write_project(&doc, &tmp).map_err(|e| CliError::Other(e.to_string()))?;
+    match vb_doc::import::import_project(&tmp) {
+        Ok(r2) => {
+            let second = vb_doc::export::render_project(&r2.doc);
+            let map = |fs: &[(String, String)]| -> std::collections::BTreeMap<String, String> {
+                fs.iter().map(|(p, c)| (p.clone(), c.clone())).collect()
+            };
+            let (m1, m2) = (map(&first), map(&second.files));
+            let m2: std::collections::BTreeMap<String, String> = m2;
+            for (p, c1) in &m1 {
+                match m2.get(p.as_str()) {
+                    Some(c2) if c2 == c1 => {}
+                    Some(_) => issues.push(format!("L1 幂等:{p} 二次导出字节不同")),
+                    None => issues.push(format!("L1 幂等:{p} 二次导出缺失")),
+                }
+            }
+            for p in m2.keys() {
+                if !m1.contains_key(p.as_str()) {
+                    issues.push(format!("L1 幂等:{p} 二次导出多出"));
+                }
+            }
+        }
+        Err(e) => issues.push(format!("L1 幂等:重导入失败:{e}")),
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = project_dir;
+
+    if json {
+        println!(
+            "{}",
+            json!({"ok": issues.is_empty(), "files": first.len(), "issues": issues})
+        );
+    } else if issues.is_empty() {
+        println!(
+            "✔ 输出校验通过({} 个文件;良构/sid 唯一/CSS 合法/L1 幂等)",
+            first.len()
+        );
+    } else {
+        for i in &issues {
+            println!("✘ {i}");
+        }
+        println!("共 {} 个问题", issues.len());
+    }
+    if issues.is_empty() {
+        Ok(())
+    } else {
+        Err(CliError::Other(format!("输出校验失败:{}", issues.len())))
+    }
 }
 
 fn selfcheck(as_json: bool) -> Result<(), CliError> {

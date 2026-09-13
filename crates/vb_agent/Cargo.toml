@@ -19,6 +19,7 @@ path = "src/lib.rs"
 
 [dependencies]
 vb_common = { workspace = true }
+vb_html = { workspace = true }
 vb_css = { workspace = true }
 vb_doc = { workspace = true }
 vb_render = { path = "../vb_render" }

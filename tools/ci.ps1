@@ -73,6 +73,20 @@ Write-GateHeader "门禁 4 · Agent 自检(selfcheck)"
 cargo run -q -p vb_agent --bin vellum-cli -- selfcheck --json
 Mark-Gate "4 Agent 自检" $LASTEXITCODE
 
+# ---- 门禁 6:术语禁用词扫描(01 篇 §七;i18n/ 未建立时自动 PASS) ----
+Write-GateHeader "门禁 6 · 术语禁用词扫描"
+python -X utf8 tools/check_terminology.py
+Mark-Gate "6 术语扫描" $LASTEXITCODE
+
+# ---- 门禁 7:输出校验(良构 + sid 唯一 + CSS 合法 + L1 幂等) ----
+Write-GateHeader "门禁 7 · 输出校验(validate:示例工程全检)"
+$cli = "target\debugellum-cli.exe"
+if (-not (Test-Path $cli)) { $cli = "target
+eleaseellum-cli.exe" }
+cargo build --bin vellum-cli 2>&1 | Out-Null
+& $cli --doc examples/landing/index.html validate
+Mark-Gate "7 输出校验" $LASTEXITCODE
+
 # ---- 门禁 8:硬编码颜色(棘轮) ----
 Write-GateHeader "门禁 8 · 硬编码颜色扫描"
 & "$PSScriptRoot\check_no_hardcoded_color.ps1" -Max $ColorMax
