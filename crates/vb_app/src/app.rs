@@ -1488,12 +1488,14 @@ impl VellumApp {
         if closed {
             n.style.push(vb_css::Decl {
                 prop: "fill".into(),
+                // vb-token-ok: 钢笔闭合形状的默认填充(文档内容,非 UI 皮肤,同下方直线描边)
                 value: "#d4d4d4".into(),
                 important: false,
             });
         }
         n.style.push(vb_css::Decl {
             prop: "stroke".into(),
+            // vb-token-ok: 钢笔路径的默认描边(文档内容,非 UI 皮肤)
             value: "#1a1a1a".into(),
             important: false,
         });
