@@ -65,14 +65,34 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
     let mut lang = "zh-CN".to_string();
     let mut css_texts: Vec<String> = Vec::new();
     let mut head_extra: Vec<String> = Vec::new();
+    let mut extra_html_attrs: Vec<(String, String)> = Vec::new();
+    let mut extra_body_attrs: Vec<(String, String)> = Vec::new();
 
     if let Some(html_el) = dom.root.as_element() {
         if let Some(l) = html_el.attr("lang") {
             lang = l.to_string();
         }
+        // html/body 其余属性保真(此前 lang 之外全部丢失)
+        for (k, v) in html_el.attrs.iter() {
+            if k != "lang" && k != "data-vb-output" {
+                extra_html_attrs.push((k.clone(), v.clone()));
+            }
+        }
+        if let Some(body_el) = dom.body().and_then(|b| b.as_element()) {
+            for (k, v) in body_el.attrs.iter() {
+                if k != "data-vb-output" {
+                    extra_body_attrs.push((k.clone(), v.clone()));
+                }
+            }
+        }
     }
     if let Some(head) = dom.head() {
         for child in &head.children {
+            // head 内注释保真(此前静默丢弃)
+            if let NodeData::Comment(c) = &child.data {
+                head_extra.push(format!("<!--{c}-->"));
+                continue;
+            }
             let Some(el) = child.as_element() else {
                 continue;
             };
@@ -136,6 +156,8 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
     // ---- body → 画板/节点 ----
     let mut doc = Document::new_empty(title.trim(), &lang);
     doc.head_extra = head_extra;
+    doc.extra_html_attrs = extra_html_attrs;
+    doc.extra_body_attrs = extra_body_attrs;
     doc.raw_css = sheet.raw_blocks.clone();
     // :root 变量 → 设计令牌
     for (var, value) in &sheet.root_vars {
@@ -152,7 +174,7 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
         sheet: &sheet,
         warnings: &mut warnings,
         tag_counter: Default::default(),
-        pending_comment: None,
+        pending_comments: Vec::new(),
         matched_classes: Default::default(),
     };
 
@@ -161,7 +183,7 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
 
     for child in &body.children {
         match &child.data {
-            NodeData::Comment(c) => importer.pending_comment = Some(c.clone()),
+            NodeData::Comment(c) => importer.pending_comments.push(c.clone()),
             NodeData::Element(el) => {
                 if is_artboard(el) {
                     let id = importer.build_artboard(child);
@@ -210,12 +232,24 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
             .push("画板外存在游离内容:已并入第一个画板".to_string());
     }
 
+    // body 尾注释保真(此前 pending 队列在循环结束后被静默丢弃);
+    // 先取出内容,待 importer 借用结束后再落盘
+    let trailing_comments = if importer.pending_comments.is_empty() {
+        None
+    } else {
+        Some(importer.pending_comments.join("\n"))
+    };
+    importer.pending_comments.clear();
+
     // 结束 importer 对 doc 的可变借用
     let matched = std::mem::take(&mut importer.matched_classes);
     drop(importer);
+    if let Some(joined) = trailing_comments {
+        doc.trailing_raw.push(format!("<!--{joined}-->"));
+    }
 
     // 孤儿类规则(没有任何元素使用)也必须保留,否则丢失(unknown 保底语义)
-    for (cls, decls) in &sheet.class_rules {
+    for (cls, _, decls) in &sheet.class_rules {
         if !matched.contains(cls) {
             let body = decls
                 .iter()
@@ -286,7 +320,7 @@ fn write_fragment(node: &HtmlNode, out: &mut String) {
 #[derive(Default)]
 pub struct Stylesheet {
     /// 简单类选择器 → 声明(`.foo` / `tag.foo`)。
-    pub class_rules: Vec<(String, Vec<Decl>)>,
+    pub class_rules: Vec<(String, bool, Vec<Decl>)>,
     /// at-rules / 复杂选择器(verbatim)。
     pub raw_blocks: Vec<String>,
     /// `:root` 中的 CSS 变量。
@@ -471,8 +505,10 @@ pub fn parse_stylesheet(text: &str) -> Stylesheet {
             }
             continue;
         }
-        if let Some(class) = simple_class_selector(selector) {
-            sheet.class_rules.push((class, parse_decls(&body)));
+        if let Some((class, tag_qualified)) = simple_class_selector(selector) {
+            sheet
+                .class_rules
+                .push((class, tag_qualified, parse_decls(&body)));
         } else if !selector.is_empty() {
             sheet
                 .raw_blocks
@@ -483,7 +519,7 @@ pub fn parse_stylesheet(text: &str) -> Stylesheet {
 }
 
 /// `.foo` / `tag.foo` → Some("foo");其余 None(逗号/组合器/伪类都不算)。
-fn simple_class_selector(sel: &str) -> Option<String> {
+fn simple_class_selector(sel: &str) -> Option<(String, bool)> {
     let sel = sel.trim();
     if sel.is_empty()
         || sel.contains(',')
@@ -500,7 +536,7 @@ fn simple_class_selector(sel: &str) -> Option<String> {
     if let Some(cls) = sel.strip_prefix('.') {
         // 单类名 `.cls`(不得再有第二个点)
         if valid_class(cls) && !cls.contains('.') {
-            return Some(cls.to_string());
+            return Some((cls.to_string(), false));
         }
         return None;
     }
@@ -511,7 +547,7 @@ fn simple_class_selector(sel: &str) -> Option<String> {
             && !tag.is_empty()
             && tag.chars().all(|c| c.is_ascii_alphanumeric())
         {
-            return Some(cls.to_string());
+            return Some((cls.to_string(), true));
         }
     }
     None
@@ -530,7 +566,7 @@ struct NodeImporter<'a> {
     sheet: &'a Stylesheet,
     warnings: &'a mut Vec<String>,
     tag_counter: std::collections::HashMap<String, u32>,
-    pending_comment: Option<String>,
+    pending_comments: Vec<String>,
 
     ///79c16709:51fa73b08fc77684 class(5b64513f89c4521956de586b7528)
     matched_classes: std::collections::BTreeSet<String>,
@@ -545,7 +581,7 @@ impl<'a> NodeImporter<'a> {
         classes: Vec<String>,
         attrs: std::collections::BTreeMap<String, String>,
         style: Vec<Decl>,
-        comment: Option<String>,
+        comment: Vec<String>,
         sid: vb_common::StableId,
     ) -> NodeIdT {
         let mut n = Node::new(NodeKind::Artboard, name, sid);
@@ -590,7 +626,7 @@ impl<'a> NodeImporter<'a> {
             .map(str::to_string)
             .collect();
         let (attrs, sid) = split_attrs(el, self.doc);
-        let comment = self.pending_comment.take();
+        let comment = self.take_pending_comments();
         let id = self.new_artboard_named(
             &name,
             Geom {
@@ -622,19 +658,36 @@ impl<'a> NodeImporter<'a> {
         // CSS 级联:同特异度规则按**样式表出现顺序**后者胜。
         // 按元素 class 属性顺序拼接会让 `class="b a"` 推翻样式表里 .a 在后
         // 的正确结果(导入→导出的级联语义漂移)。
-        for (c, decls) in &self.sheet.class_rules {
+        //
+        // 特异性(B5):tag 限定选择器(div.foo)高于裸类(.foo) ——
+        // 稳定排序把 tag 限定规则排到后面,与「后者胜」合并后语义一致。
+        let mut matched: Vec<(bool, &Vec<Decl>)> = Vec::new();
+        for (c, tag_qualified, decls) in &self.sheet.class_rules {
             if classes.iter().any(|k| k == c) && !is_marker(c) {
-                out.extend(decls.iter().cloned());
+                matched.push((*tag_qualified, decls));
             }
         }
+        matched.sort_by_key(|(tq, _)| *tq);
+        for (_, decls) in matched {
+            out.extend(decls.iter().cloned());
+        }
         out
+    }
+
+    /// 取走挂起的注释队列(合并为一条多行注释保内容;此前连续注释
+    /// 只留最后一条)。空队列返回 None。
+    fn take_pending_comments(&mut self) -> Vec<String> {
+        // 多条注释逐条保真(此前单槽后到覆盖,连续注释只剩最后一条)
+        std::mem::take(&mut self.pending_comments)
     }
 
     /// 把一个 body/画板子元素构建为节点并挂到 parent 下。
     fn build_into(&mut self, parent: NodeIdT, node: &HtmlNode) {
         match &node.data {
             NodeData::Comment(c) => {
-                self.pending_comment = Some(c.clone());
+                // 连续注释进队列,下一个节点全部带走(此前单槽后到覆盖,
+                // `<!-- one --><!-- two -->` 只剩 two)
+                self.pending_comments.push(c.clone());
             }
             NodeData::Text(t) => {
                 if !t.trim().is_empty() {
@@ -713,7 +766,7 @@ impl<'a> NodeImporter<'a> {
             .map(str::to_string)
             .or_else(|| el.class_list().first().map(|c| prettify_class(c)))
             .unwrap_or_else(|| self.next_tag_name(&el.name));
-        let comment = self.pending_comment.take();
+        let comment = self.take_pending_comments();
 
         let kind: NodeKind;
         let mut tag = el.name.clone();
@@ -728,6 +781,11 @@ impl<'a> NodeImporter<'a> {
                 self.warnings.push("<img> 缺少 src".into());
             }
             kind = NodeKind::Image { src };
+        } else if matches!(el.name.as_str(), "br" | "hr" | "wbr") {
+            // 换行/分隔线等空布局元素:冻结原样保留(此前建成
+            // 100×100 幽灵 Box,还生成 position:absolute 规则)
+            let raw = serialize_node(node);
+            kind = NodeKind::Frozen { html: raw };
         } else {
             let has_element_children = node.children.iter().any(|c| c.as_element().is_some());
             let all_text = collect_text(node);
@@ -880,9 +938,9 @@ fn has_explicit_position(node: &HtmlNode, sheet: &Stylesheet) -> bool {
         return true;
     }
     for c in el.class_list() {
-        for (_, decls) in &sheet.class_rules {
+        for (_, _, decls) in &sheet.class_rules {
             if decls.iter().any(|d| d.prop == "left" || d.prop == "top")
-                && simple_class_selector(&format!(".{c}")) == Some(c.to_string())
+                && matches!(simple_class_selector(&format!(".{c}")), Some((cl, _)) if cl == c)
             {
                 return true;
             }

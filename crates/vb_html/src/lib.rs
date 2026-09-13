@@ -307,12 +307,13 @@ fn escape_text(s: &str) -> String {
 }
 
 fn escape_attr(s: &str) -> String {
+    // 属性值内的换行/制表是数据(alt/title/data-*),原样保留 ——
+    // 此前改写为空格造成字节级 L0 漂移
     let mut o = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
             '&' => o.push_str("&amp;"),
             '"' => o.push_str("&quot;"),
-            '\n' | '\t' | '\r' => o.push(' '),
             c => o.push(c),
         }
     }

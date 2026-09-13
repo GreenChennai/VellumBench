@@ -235,14 +235,14 @@ fn stylesheet_body_braces_in_comments() {
     let sheet = parse_stylesheet(".p { color: red /* } */ ; background: blue }");
     let rules = &sheet.class_rules;
     assert_eq!(rules.len(), 1, "应切出一条 p 规则:{rules:?}");
-    let props: Vec<&str> = rules[0].1.iter().map(|d| d.prop.as_str()).collect();
+    let props: Vec<&str> = rules[0].2.iter().map(|d| d.prop.as_str()).collect();
     assert_eq!(props, vec!["color", "background"], "注释内花括号破坏切分");
 
     // 注释内的 '{' 不得把 '}' 吸进声明值
     let sheet = parse_stylesheet(".a { width: 1px /* { */ ; height: 2px }");
     assert_eq!(sheet.class_rules.len(), 1, "{:?}", sheet.class_rules);
     let props: Vec<&str> = sheet.class_rules[0]
-        .1
+        .2
         .iter()
         .map(|d| d.prop.as_str())
         .collect();
@@ -258,7 +258,7 @@ fn stylesheet_body_braces_in_comments() {
 #[test]
 fn value_comment_preserved() {
     let sheet = parse_stylesheet(".p { color: red /* note */ }");
-    let decls = &sheet.class_rules[0].1;
+    let decls = &sheet.class_rules[0].2;
     assert_eq!(decls.len(), 1);
     assert!(decls[0].value.contains("note"), "{:?}", decls[0].value);
 }
@@ -279,4 +279,116 @@ fn nbsp_survives_roundtrip() {
 "#;
     let nbsp_text = "A\u{00A0}B".to_string();
     check_l0_l1("nbsp", src, &[nbsp_text]).expect("nbsp 应原样往返");
+}
+
+// ---------------------------------------------------------------------------
+// 15 号计划 B5:文档模型 P2(注释保真/html+body 属性/br+hr/特异性)
+// ---------------------------------------------------------------------------
+
+/// B5:连续注释、head 注释、尾注释全部保真(此前只留最后一条)。
+#[test]
+fn comments_fidelity() {
+    let doc = import_str(
+        r#"<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><!-- head note --><title>t</title></head>
+<body>
+  <!-- one -->
+  <!-- two -->
+  <section class="vb-artboard ab" data-vb-id="ab1234" data-vb-name="AB">
+    <p data-vb-id="p00001">hi</p>
+  </section>
+  <!-- tail note -->
+</body>
+</html>
+"#,
+    )
+    .doc;
+    let files = vb_doc::export::render_project(&doc).files;
+    let html = common::find(&files, "index.html");
+    assert!(html.contains("<!-- head note -->"), "head 注释丢失:{html}");
+    assert!(html.contains("<!-- one -->"), "连续注释第一条丢失");
+    assert!(html.contains("<!-- two -->"), "连续注释第二条丢失");
+    assert!(html.contains("<!-- tail note -->"), "尾注释丢失");
+}
+
+/// B5:html/body 属性往返保真(此前 lang 之外全部丢失)。
+#[test]
+fn html_body_attrs_roundtrip() {
+    let doc = import_str(
+        r#"<!DOCTYPE html>
+<html lang="zh-CN" dir="ltr">
+<head><meta charset="UTF-8"><title>t</title></head>
+<body class="theme-dark" data-page="1">
+  <section class="vb-artboard ab" data-vb-id="ab1234" data-vb-name="AB"><p data-vb-id="p00001">hi</p></section>
+</body>
+</html>
+"#,
+    )
+    .doc;
+    let files = vb_doc::export::render_project(&doc).files;
+    let html = common::find(&files, "index.html");
+    assert!(html.contains(r#"<html lang="zh-CN" dir="ltr">"#), "{html}");
+    assert!(
+        html.contains(r#"<body class="theme-dark" data-page="1">"#),
+        "body 属性丢失:{html}"
+    );
+}
+
+/// B5:br/hr 冻结保真,不再产生 100×100 幽灵 Box。
+#[test]
+fn void_layout_elements_frozen() {
+    let doc = import_str(
+        r#"<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>t</title></head>
+<body>
+  <section class="vb-artboard ab" data-vb-id="ab1234" data-vb-name="AB">
+    <div data-vb-id="d00001" style="position:absolute;left:0;top:0;width:100px;height:50px;background:#123456"></div>
+    <hr>
+  </section>
+</body>
+</html>
+"#,
+    );
+    let mut ghost = false;
+    for (_, n) in doc.doc.nodes.iter() {
+        if matches!(n.kind, vb_doc::model::NodeKind::Box) && n.geom.w == 100.0 && n.geom.h == 100.0
+        {
+            ghost = true;
+        }
+    }
+    assert!(!ghost, "br/hr 不应生成 100×100 幽灵 Box");
+    let files = vb_doc::export::render_project(&doc.doc).files;
+    let html = common::find(&files, "index.html");
+    assert!(html.contains("<hr"), "hr 内容丢失(L0 损坏):{html}");
+}
+
+/// B5:tag 限定选择器(div.foo)特异性高于裸类(.foo)。
+#[test]
+fn tag_qualified_selector_specificity() {
+    let doc = import_str(
+        r#"<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><style>p.k { color: #ff0000; position:absolute; left:0; top:0; width:100px; height:50px } .k { color: #00ff00 }</style></head>
+<body>
+  <section class="vb-artboard ab" data-vb-id="ab1234" data-vb-name="AB">
+    <p class="k" data-vb-id="p00001">hi</p>
+  </section>
+</body>
+</html>
+"#,
+    )
+    .doc;
+    let pid = doc.find_by_sid("p00001").unwrap();
+    let color = doc
+        .nodes
+        .get(pid)
+        .unwrap()
+        .style
+        .iter()
+        .find(|d| d.prop == "color")
+        .map(|d| d.value.clone())
+        .unwrap_or_default();
+    assert_eq!(color, "#f00", "div/p 限定规则应胜出(CSS 特异性)");
 }

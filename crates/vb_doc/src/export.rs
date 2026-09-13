@@ -89,7 +89,9 @@ pub fn write_project(doc: &Document, dir: &Path) -> Result<Vec<std::path::PathBu
 // ---------- HTML ----------
 
 fn render_html(doc: &mut Document, css: &str) -> String {
-    let mut html_el = HtmlNode::element("html", vec![("lang".into(), doc.meta.lang.clone())]);
+    let mut html_attrs = vec![("lang".into(), doc.meta.lang.clone())];
+    html_attrs.extend(doc.extra_html_attrs.clone());
+    let mut html_el = HtmlNode::element("html", html_attrs);
     let mut head = HtmlNode::element("head", vec![]);
     head.children.push(HtmlNode::element(
         "meta",
@@ -130,11 +132,11 @@ fn render_html(doc: &mut Document, css: &str) -> String {
         }
     }
 
-    let mut body = HtmlNode::element("body", vec![]);
+    let mut body = HtmlNode::element("body", doc.extra_body_attrs.clone());
     let artboard_ids = doc.artboards.clone();
     for ab in artboard_ids {
         if let Some(n) = doc.nodes.get(ab) {
-            if let Some(c) = &n.comment_before {
+            for c in &n.comment_before {
                 body.children.push(HtmlNode {
                     data: NodeData::Comment(c.clone()),
                     children: vec![],
@@ -231,7 +233,7 @@ fn render_node(doc: &mut Document, id: NodeId, node: &Node) -> HtmlNode {
             let child_ids = node.children.clone();
             for &c in &child_ids {
                 if let Some(cn) = doc.nodes.get(c) {
-                    if let Some(cm) = &cn.comment_before {
+                    for cm in &cn.comment_before {
                         el.children.push(HtmlNode {
                             data: NodeData::Comment(cm.clone()),
                             children: vec![],

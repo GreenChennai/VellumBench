@@ -269,6 +269,18 @@ impl Command {
                         tree.root_sid()
                     )));
                 }
+                // root 之下只允许画板:非画板节点挂 root 会从导出中
+                // 整体消失(渲染只走画板子树),必须拒绝(B5)
+                {
+                    let pid = doc.find_by_sid(parent_sid);
+                    let is_root = pid == Some(doc.root);
+                    let is_artboard = matches!(tree.node.kind, NodeKind::Artboard);
+                    if is_root && !is_artboard {
+                        return Err(VbError::Conflict(
+                            "root 下只能挂画板(节点会脱离导出子树)".into(),
+                        ));
+                    }
+                }
                 doc.insert_tree_at(tree, parent_sid, *index)
                     .ok_or_else(|| no_such(parent_sid))?;
                 doc.sync_artboards();
@@ -318,6 +330,14 @@ impl Command {
                 let np = doc
                     .find_by_sid(new_parent_sid)
                     .ok_or_else(|| no_such(new_parent_sid))?;
+                // root 之下只允许画板(同 Insert;B5)
+                if np == doc.root
+                    && !matches!(doc.nodes.get(id), Some(n) if matches!(n.kind, NodeKind::Artboard))
+                {
+                    return Err(VbError::Conflict(
+                        "root 下只能挂画板(节点会脱离导出子树)".into(),
+                    ));
+                }
                 // 环防护:新父级不得是自身或自身后代(否则场景图成环,遍历栈溢出)
                 if doc.is_descendant_or_self(id, np) {
                     return Err(VbError::Conflict(format!(

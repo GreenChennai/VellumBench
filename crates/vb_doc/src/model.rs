@@ -130,7 +130,7 @@ pub struct Node {
     /// CSS 声明(含 unknown;导出时按 PROP_ORDER 排序)。
     pub style: Vec<Decl>,
     /// 节点前注释(导入保序,导出还原)。
-    pub comment_before: Option<String>,
+    pub comment_before: Vec<String>,
     pub geom: Geom,
     pub hidden: bool,
     pub locked: bool,
@@ -159,7 +159,7 @@ impl Node {
             classes: Vec::new(),
             attrs: BTreeMap::new(),
             style: Vec::new(),
-            comment_before: None,
+            comment_before: Vec::new(),
             geom: Geom::default(),
             hidden: false,
             locked: false,
@@ -226,6 +226,10 @@ pub struct Document {
     pub trailing_raw: Vec<String>,
     /// head 中无法建模的原样透传片段(meta/link 等,除 charset/viewport/title 外)。
     pub head_extra: Vec<String>,
+    /// `<html>` 元素除 lang 外的保真属性(B5)。
+    pub extra_html_attrs: Vec<(String, String)>,
+    /// `<body>` 元素的保真属性(B5)。
+    pub extra_body_attrs: Vec<(String, String)>,
     sid_next: u64,
 }
 
@@ -264,6 +268,8 @@ impl Document {
             raw_css: Vec::new(),
             trailing_raw: Vec::new(),
             head_extra: Vec::new(),
+            extra_html_attrs: Vec::new(),
+            extra_body_attrs: Vec::new(),
             sid_next: 1,
         }
     }
