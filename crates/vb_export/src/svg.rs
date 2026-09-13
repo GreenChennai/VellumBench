@@ -178,10 +178,19 @@ fn write_item(out: &mut String, i: usize, item: &DrawItem, scale: f64) {
             }
         }
         let fa = fill_attr(item, i);
-        let _ = writeln!(
-            out,
-            r#"<path d="{d}" {fa} stroke="rgb(20,20,20)" stroke-width="1.5"{tf}/>"#
-        );
+        // 描边色/宽与 CPU/GPU 端一致取 border(此前硬编码深灰)
+        let stroke = match &item.border {
+            Some(b) => {
+                let (r, g, b2) = to_255(b.color);
+                format!(
+                    r#"stroke="rgb({r},{g},{b2})" stroke-width="{}" stroke-opacity="{}""#,
+                    b.width.max(1.0),
+                    b.color[3] * item.opacity
+                )
+            }
+            None => r#"stroke="none""#.to_string(),
+        };
+        let _ = writeln!(out, r#"<path d="{d}" {fa} {stroke}{tf}/>"#);
         return;
     }
 
@@ -241,6 +250,14 @@ fn write_item(out: &mut String, i: usize, item: &DrawItem, scale: f64) {
                     w / 2.0,
                     h / 2.0
                 );
+            } else if item.radii.iter().any(|r| *r > 0.0)
+                && (item.radii[0] != item.radii[1]
+                    || item.radii[1] != item.radii[2]
+                    || item.radii[2] != item.radii[3])
+            {
+                // 四角异径:rect 的 rx 单值表达不了,与 CPU 端同构发 path
+                let d = rounded_rect_path(x, y, w, h, item.radii, s);
+                let _ = write!(out, r#"<path d="{d}" {fa}{tf}/>"#);
             } else {
                 let _ = write!(
                     out,
@@ -277,6 +294,77 @@ fn write_item(out: &mut String, i: usize, item: &DrawItem, scale: f64) {
             }
         }
     }
+}
+
+/// 四角异径圆角矩形 → SVG path d 串(与 cpu.rs rect_path 同一几何:
+/// kappa 0.5522848 控制点;坐标已缩放)。
+fn rounded_rect_path(x: f64, y: f64, w: f64, h: f64, radii: [f64; 4], s: f64) -> String {
+    const KAPPA: f64 = 0.552_284_8;
+    let clamp = |r: f64| r.min(w.min(h) / 2.0);
+    let tl = clamp(radii[0]) * s;
+    let tr = clamp(radii[1]) * s;
+    let br = clamp(radii[2]) * s;
+    let bl = clamp(radii[3]) * s;
+    let mut d = String::new();
+    let _ = write!(d, "M{} {} ", x + tl, y);
+    let _ = write!(d, "L{} {} ", x + w - tr, y);
+    if tr > 0.0 {
+        let k = KAPPA * tr;
+        let _ = write!(
+            d,
+            "C{} {} {} {} {} {} ",
+            x + w - tr + k,
+            y,
+            x + w,
+            y + tr - k,
+            x + w,
+            y + tr
+        );
+    }
+    let _ = write!(d, "L{} {} ", x + w, y + h - br);
+    if br > 0.0 {
+        let k = KAPPA * br;
+        let _ = write!(
+            d,
+            "C{} {} {} {} {} {} ",
+            x + w,
+            y + h - br + k,
+            x + w - br + k,
+            y + h,
+            x + w - br,
+            y + h
+        );
+    }
+    let _ = write!(d, "L{} {} ", x + bl, y + h);
+    if bl > 0.0 {
+        let k = KAPPA * bl;
+        let _ = write!(
+            d,
+            "C{} {} {} {} {} {} ",
+            x + bl - k,
+            y + h,
+            x,
+            y + h - bl + k,
+            x,
+            y + h - bl
+        );
+    }
+    let _ = write!(d, "L{} {} ", x, y + tl);
+    if tl > 0.0 {
+        let k = KAPPA * tl;
+        let _ = write!(
+            d,
+            "C{} {} {} {} {} {} ",
+            x,
+            y + tl - k,
+            x + tl - k,
+            y,
+            x + tl,
+            y
+        );
+    }
+    d.push('Z');
+    d
 }
 
 fn escape_xml(s: &str) -> String {

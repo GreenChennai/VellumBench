@@ -4698,6 +4698,7 @@ dependencies = [
  "serde_json",
  "usvg",
  "vb_common",
+ "vb_css",
  "vb_doc",
  "vb_render",
 ]

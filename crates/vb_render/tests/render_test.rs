@@ -233,3 +233,130 @@ fn gradient_direction_keywords_parse() {
     // 未知方向:整条无效
     assert!(p("linear-gradient(to somewhere, red, blue)").is_none());
 }
+
+// ---------------------------------------------------------------------------
+// 15 号计划 B2:渲染 P2 清账(圆角多值/百分比、bg-color 兜底、位图)
+// ---------------------------------------------------------------------------
+
+fn one_node_doc_raw(html_body_inner: &str, dir: &Path) -> vb_doc::Document {
+    let _ = std::fs::remove_dir_all(dir);
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(
+        dir.join("index.html"),
+        format!(
+            r#"<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>t</title></head>
+<body>
+  <section class="vb-artboard ab" data-vb-id="ab1234" data-vb-name="AB">
+{html_body_inner}  </section>
+</body>
+</html>
+"#
+        ),
+    )
+    .unwrap();
+    import_project(dir).expect("导入").doc
+}
+
+/// B2:border-radius 四值简写展开为 [tl,tr,br,bl]。
+#[test]
+fn border_radius_four_values() {
+    let dir = std::env::temp_dir().join(format!("vb-br4-{}", std::process::id()));
+    let doc = one_node_doc_raw(
+        r#"    <div data-vb-id="n00001" style="position:absolute;left:0;top:0;width:100px;height:80px;background-color:#123456;border-radius:20px 4px 30px 8px"></div>
+"#,
+        &dir,
+    );
+    let ab = doc.artboards[0];
+    let list = vb_render::encode::encode_artboard(&doc, ab).expect("编码");
+    let item = list
+        .items
+        .iter()
+        .find(|i| i.kind == vb_render::encode::DrawKind::Box && i.rect[2] == 100.0)
+        .expect("应有目标项");
+    assert_eq!(item.radii, [20.0, 4.0, 30.0, 8.0], "{:?}", item.radii);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// B2:border-radius 百分比按短边近似。
+#[test]
+fn border_radius_percentage() {
+    let dir = std::env::temp_dir().join(format!("vb-brp-{}", std::process::id()));
+    let doc = one_node_doc_raw(
+        r#"    <div data-vb-id="n00001" style="position:absolute;left:0;top:0;width:100px;height:80px;background-color:#123456;border-radius:25%"></div>
+"#,
+        &dir,
+    );
+    let ab = doc.artboards[0];
+    let list = vb_render::encode::encode_artboard(&doc, ab).expect("编码");
+    let item = list
+        .items
+        .iter()
+        .find(|i| i.kind == vb_render::encode::DrawKind::Box && i.rect[2] == 100.0)
+        .expect("应有目标项");
+    // 25% × min(100,80) = 20
+    assert_eq!(item.radii[0], 20.0, "{:?}", item.radii);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// B2:background-image 为 url 等不支持的形态时,回退 background-color。
+#[test]
+fn background_color_fallback_when_image_unsupported() {
+    let dir = std::env::temp_dir().join(format!("vb-bgf-{}", std::process::id()));
+    let doc = one_node_doc_raw(
+        r#"    <div data-vb-id="n00001" style="position:absolute;left:0;top:0;width:100px;height:80px;background-image:url(assets/x.png);background-color:#123456"></div>
+"#,
+        &dir,
+    );
+    let ab = doc.artboards[0];
+    let list = vb_render::encode::encode_artboard(&doc, ab).expect("编码");
+    let item = list
+        .items
+        .iter()
+        .find(|i| i.kind == vb_render::encode::DrawKind::Box && i.rect[2] == 100.0)
+        .expect("应有目标项");
+    match &item.fill {
+        Some(vb_render::encode::FillDef::Solid(c)) => {
+            assert!((c[0] - 0x12 as f32 / 255.0).abs() < 0.01, "应回退到背景色");
+        }
+        other => panic!("应有 Solid 填充兜底,实际 {other:?}"),
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// B2:位图 @2x 落点必须乘 scale(此前位置减半)且不透明度生效。
+#[test]
+fn bitmap_scales_position_and_opacity() {
+    let dir = std::env::temp_dir().join(format!("vb-bmp-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("assets")).unwrap();
+    let img = image::RgbaImage::from_pixel(10, 10, image::Rgba([255, 0, 0, 255]));
+    img.save(dir.join("assets").join("dot.png")).unwrap();
+    std::fs::write(
+        dir.join("index.html"),
+        r#"<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>t</title></head>
+<body>
+  <section class="vb-artboard ab" data-vb-id="ab1234" data-vb-name="AB">
+    <img data-vb-id="n00001" src="assets/dot.png" style="position:absolute;left:40px;top:40px;width:20px;height:20px;opacity:0.5">
+  </section>
+</body>
+</html>
+"#
+        ,
+    )
+    .unwrap();
+    let doc = import_project(&dir).expect("导入").doc;
+    let ab = doc.artboards[0];
+    let list = vb_render::encode::encode_artboard_opts(&doc, ab, true).expect("编码");
+    let out = vb_render::cpu::render_png(&list, 2.0, true, Some(&dir)).expect("渲染 @2x");
+    let img = image::load_from_memory(&out.png).unwrap();
+    let px = img.get_pixel(2 * 40 + 10, 2 * 40 + 10).0;
+    assert!(
+        px[0] > 200 && (px[3] as i32 - 127).abs() <= 8,
+        "@2x 位图应落在 (100,100) 且半透明,实际 {px:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -79,8 +79,17 @@ pub fn parse_color(s: &str) -> Option<Rgba> {
         return Some(Rgba::new(v[0], v[1], v[2], v[3]));
     }
     if let Some(rest) = lower.strip_prefix("rgb(") {
+        // CSS Color 4:rgb() 可以带 alpha(`rgb(255 0 0 / 50%)`)
         let v = parse_func_args(rest)?;
-        return Some(Rgba::new(v[0], v[1], v[2], 255));
+        return Some(Rgba::new(v[0], v[1], v[2], v[3]));
+    }
+    if let Some(rest) = lower.strip_prefix("hsla(") {
+        let (h, sl, li, a) = parse_hsl_args(rest)?;
+        return Some(hsl_to_rgb(h, sl, li, a));
+    }
+    if let Some(rest) = lower.strip_prefix("hsl(") {
+        let (h, sl, li, a) = parse_hsl_args(rest)?;
+        return Some(hsl_to_rgb(h, sl, li, a));
     }
     named(&lower)
 }
@@ -120,9 +129,36 @@ fn parse_hex(h: &str) -> Option<Rgba> {
     }
 }
 
-/// 解析 `r,g,b[,a]` 到 `)`;支持 0-255 与百分比。
+/// 解析 `r,g b[/ a]` 参数到 `)`;支持 0-255 与百分比,以及
+/// CSS Color 4 现代空格语法(`rgb(255 0 0 / 50%)`,此前整条解析失败
+/// 导致填充静默丢失)。
 fn parse_func_args(rest: &str) -> Option<[u8; 4]> {
     let inner = rest.strip_suffix(')')?;
+    // 现代语法:斜杠前 3 通道,后 alpha
+    if inner.contains('/') {
+        let (rgb_part, a_part) = inner.split_once('/')?;
+        let chans: Vec<&str> = rgb_part.split_whitespace().collect();
+        if chans.len() != 3 {
+            return None;
+        }
+        let a = parse_alpha(a_part.trim())?;
+        return Some([
+            chan_u8(chans[0])?,
+            chan_u8(chans[1])?,
+            chan_u8(chans[2])?,
+            a,
+        ]);
+    }
+    // 空格语法无 alpha:`rgb(255 0 0)`(含逗号时不是空格语法)
+    let spaced: Vec<&str> = inner.split_whitespace().collect();
+    if !inner.contains(',') && spaced.len() == 3 {
+        return Some([
+            chan_u8(spaced[0])?,
+            chan_u8(spaced[1])?,
+            chan_u8(spaced[2])?,
+            255,
+        ]);
+    }
     let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
     if parts.len() != 3 && parts.len() != 4 {
         return None;
@@ -137,18 +173,148 @@ fn parse_func_args(rest: &str) -> Option<[u8; 4]> {
         }
     };
     let a = if parts.len() == 4 {
-        // alpha 可以是 0-1 或百分比
-        if let Some(p) = parts[3].strip_suffix('%') {
-            let f: f64 = p.trim().parse().ok()?;
-            ((f / 100.0) * 255.0).round().clamp(0.0, 255.0) as u8
-        } else {
-            let f: f64 = parts[3].parse().ok()?;
-            (f * 255.0).round().clamp(0.0, 255.0) as u8
-        }
+        parse_alpha(parts[3])?
     } else {
         255
     };
     Some([ch(parts[0])?, ch(parts[1])?, ch(parts[2])?, a])
+}
+
+/// alpha:0-1 浮点或百分比。
+fn parse_alpha(s: &str) -> Option<u8> {
+    if let Some(p) = s.strip_suffix('%') {
+        let f: f64 = p.trim().parse().ok()?;
+        Some(((f / 100.0) * 255.0).round().clamp(0.0, 255.0) as u8)
+    } else {
+        let f: f64 = s.parse().ok()?;
+        Some((f * 255.0).round().clamp(0.0, 255.0) as u8)
+    }
+}
+
+/// 通道:0-255 数字或百分比。
+fn chan_u8(s: &str) -> Option<u8> {
+    if let Some(p) = s.strip_suffix('%') {
+        let f: f64 = p.trim().parse().ok()?;
+        Some((f * 255.0 / 100.0).round().clamp(0.0, 255.0) as u8)
+    } else {
+        let f: f64 = s.parse().ok()?;
+        Some(f.round().clamp(0.0, 255.0) as u8)
+    }
+}
+
+/// 解析 hsl/hsla 参数:`120, 50%, 50%[, a]` 或 `120deg 50% 50% / a`。
+/// 返回 (hue 度数, s%, l%, alpha u8)。
+fn parse_hsl_args(rest: &str) -> Option<(f64, f64, f64, u8)> {
+    let inner = rest.strip_suffix(')')?;
+    let (body, a_part) = if inner.contains('/') {
+        let (b, a) = inner.split_once('/')?;
+        (b, Some(a.trim()))
+    } else if inner.contains(',') {
+        // 逗号语法:h,s%,l%[,a]
+        let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
+        if parts.len() != 3 && parts.len() != 4 {
+            return None;
+        }
+        let a = if parts.len() == 4 {
+            parse_alpha(parts[3])?
+        } else {
+            255
+        };
+        return Some((
+            parse_hue(parts[0])?,
+            parse_pct(parts[1])?,
+            parse_pct(parts[2])?,
+            a,
+        ));
+    } else {
+        (inner, None)
+    };
+    let comps: Vec<&str> = body.split_whitespace().collect();
+    if comps.len() != 3 {
+        return None;
+    }
+    let a = match a_part {
+        Some(x) => parse_alpha(x)?,
+        None => 255,
+    };
+    Some((
+        parse_hue(comps[0])?,
+        parse_pct(comps[1])?,
+        parse_pct(comps[2])?,
+        a,
+    ))
+}
+
+/// 色相:`120` / `120deg` / `0.5turn` / `1.2rad` / `200grad`。
+fn parse_hue(s: &str) -> Option<f64> {
+    let t = s.trim();
+    if let Some(v) = t.strip_suffix("deg") {
+        return v.trim().parse().ok();
+    }
+    if let Some(v) = t.strip_suffix("turn") {
+        let f: f64 = v.trim().parse().ok()?;
+        return Some(f * 360.0);
+    }
+    if let Some(v) = t.strip_suffix("grad") {
+        let f: f64 = v.trim().parse().ok()?;
+        return Some(f * 360.0 / 400.0);
+    }
+    if let Some(v) = t.strip_suffix("rad") {
+        let f: f64 = v.trim().parse().ok()?;
+        return Some(f * 180.0 / std::f64::consts::PI);
+    }
+    t.parse().ok()
+}
+
+/// s/l:百分比或 0-1 数字。
+fn parse_pct(s: &str) -> Option<f64> {
+    let t = s.trim();
+    if let Some(p) = t.strip_suffix('%') {
+        return p.trim().parse().ok();
+    }
+    let f: f64 = t.parse().ok()?;
+    Some(f * 100.0)
+}
+
+/// HSL → sRGB(标准算法;sRGB 即网页唯一色彩空间)。
+fn hsl_to_rgb(h_deg: f64, s_pct: f64, l_pct: f64, a: u8) -> Rgba {
+    let h = h_deg.rem_euclid(360.0) / 360.0;
+    let s = (s_pct / 100.0).clamp(0.0, 1.0);
+    let l = (l_pct / 100.0).clamp(0.0, 1.0);
+    if s == 0.0 {
+        let v = (l * 255.0).round() as u8;
+        return Rgba::new(v, v, v, a);
+    }
+    let q = if l < 0.5 {
+        l * (1.0 + s)
+    } else {
+        l + s - l * s
+    };
+    let p = 2.0 * l - q;
+    let hue = |mut t: f64| -> f64 {
+        if t < 0.0 {
+            t += 1.0;
+        }
+        if t > 1.0 {
+            t -= 1.0;
+        }
+        if t < 1.0 / 6.0 {
+            return p + (q - p) * 6.0 * t;
+        }
+        if t < 0.5 {
+            return q;
+        }
+        if t < 2.0 / 3.0 {
+            return p + (q - p) * (2.0 / 3.0 - t) * 6.0;
+        }
+        p
+    };
+    Rgba::new(
+        (hue(h + 1.0 / 3.0) * 255.0).round() as u8,
+        (hue(h) * 255.0).round() as u8,
+        (hue(h - 1.0 / 3.0) * 255.0).round() as u8,
+        a,
+    )
 }
 
 fn named(lower: &str) -> Option<Rgba> {
@@ -207,5 +373,64 @@ mod tests {
         assert_eq!((c.r, c.g, c.b, c.a), (0x2b, 0x1a, 0x12, 255));
         assert!(parse_color("not-a-color").is_none());
         assert!(parse_color("#12345").is_none());
+    }
+}
+
+#[cfg(test)]
+mod b2_tests {
+    use super::*;
+
+    /// B2:CSS Color 4 现代空格/斜杠语法。
+    #[test]
+    fn modern_space_syntax() {
+        assert_eq!(
+            parse_color("rgb(255 0 0)").unwrap().to_shortest_hex(),
+            "#f00"
+        );
+        assert_eq!(
+            parse_color("rgb(255 0 0 / 50%)").unwrap().to_shortest_hex(),
+            "#ff000080"
+        );
+        assert_eq!(
+            parse_color("rgba(0 168 112 / 0.5)")
+                .unwrap()
+                .to_shortest_hex(),
+            "#00a87080"
+        );
+        // 逗号语法不回退
+        assert_eq!(
+            parse_color("rgba(0, 168, 112, 0.5)")
+                .unwrap()
+                .to_shortest_hex(),
+            "#00a87080"
+        );
+    }
+
+    /// B2:hsl()/hsla() 全形式。
+    #[test]
+    fn hsl_syntax() {
+        // hsl(120, 50%, 50%) = rgb(64,191,64)
+        assert_eq!(
+            parse_color("hsl(120, 50%, 50%)").unwrap().to_shortest_hex(),
+            "#40bf40"
+        );
+        // 0.5turn = 180° = 青色
+        assert_eq!(
+            parse_color("hsl(0.5turn 100% 50%)")
+                .unwrap()
+                .to_shortest_hex(),
+            "#0ff"
+        );
+        assert_eq!(
+            parse_color("hsla(30, 100%, 50%, 0.5)")
+                .unwrap()
+                .to_shortest_hex(),
+            "#ff800080"
+        );
+        // 灰色系:s=0
+        assert_eq!(
+            parse_color("hsl(200 0% 50%)").unwrap().to_shortest_hex(),
+            "#808080"
+        );
     }
 }

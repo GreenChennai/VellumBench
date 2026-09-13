@@ -296,8 +296,9 @@ fn parse_fill(doc: &Document, node: &Node, w: f64, h: f64) -> Option<FillDef> {
                 return Some(FillDef::RadialGradient { cx, cy, stops });
             }
         }
-        // url(...) 图像背景:v0.1 暂不绘制(见 warnings)
-        return None;
+        // url(...) 图像背景 / conic-gradient 等 v0.1 不绘制:
+        // 回退到 background-color 兜底(CSS 中 image 盖在 color 之上),
+        // 此前直接 None 把填充整个丢掉
     }
     if let Some(bg) = node.style_get("background-color") {
         if let Some(c) = parse_color_rgba_resolved(doc, bg) {
@@ -307,17 +308,52 @@ fn parse_fill(doc: &Document, node: &Node, w: f64, h: f64) -> Option<FillDef> {
     node.fill_color().map(|c| FillDef::Solid(c.to_rgb_f32()))
 }
 
-fn parse_radii(node: &Node) -> [f64; 4] {
-    if let Some(r) = node.style_get("border-radius") {
-        if r == "50%" {
-            // 椭圆(圆)标记:由调用方按 w/h 处理
-            return [f64::INFINITY; 4];
-        }
-        if let Some(v) = px(r) {
-            return [v, v, v, v];
+/// 解析 border-radius → [tl, tr, br, bl]。
+/// 支持 1-4 值(CSS 简写展开)与百分比(按 min(w,h) 近似 —— CSS 语义是
+/// 横向按宽、纵向按高的椭圆圆角,引擎 v0.2 只有单半径,取短边);
+/// 单值 50%(或四角均 ≥ 半短边)时返回 INFINITY 哨兵 = 椭圆。
+/// 椭圆斜杠语法 `a / b` 取斜杠前部分。
+fn parse_radii(node: &Node, w: f64, h: f64) -> [f64; 4] {
+    let Some(r) = node.style_get("border-radius") else {
+        return [0.0; 4];
+    };
+    let r = r.split('/').next().unwrap_or(r).trim();
+    let short = w.min(h);
+    let mut vals: Vec<f64> = Vec::new();
+    let mut all_pct_50 = true;
+    for tok in r.split_whitespace() {
+        if let Some(p) = tok.strip_suffix('%') {
+            let f: f64 = p.trim().parse().unwrap_or(0.0);
+            if f < 50.0 {
+                all_pct_50 = false;
+            }
+            vals.push(f * short / 100.0);
+        } else if let Some(v) = px(tok) {
+            all_pct_50 = false;
+            vals.push(v);
+        } else {
+            return [0.0; 4];
         }
     }
-    [0.0; 4]
+    if vals.is_empty() {
+        return [0.0; 4];
+    }
+    let expanded = match vals.len() {
+        1 => [vals[0], vals[0], vals[0], vals[0]],
+        2 => [vals[0], vals[1], vals[0], vals[1]],
+        3 => [vals[0], vals[1], vals[2], vals[1]],
+        4 => [vals[0], vals[1], vals[2], vals[3]],
+        _ => return [0.0; 4],
+    };
+    if matches!(expanded, [v, ..] if v.is_infinite())
+        || (all_pct_50
+            && expanded.iter().all(|&v| v >= short / 2.0)
+            && short.is_finite()
+            && short > 0.0)
+    {
+        return [f64::INFINITY; 4];
+    }
+    expanded
 }
 
 fn parse_border(doc: &Document, node: &Node) -> Option<BorderDef> {
@@ -448,7 +484,7 @@ fn encode_node(
 
     let is_container = node.kind.is_container();
     if !is_container || has_own_visual(node) {
-        let radii = parse_radii(node);
+        let radii = parse_radii(node, w, h);
         let ellipse = radii[0].is_infinite();
         let radii = if ellipse { [0.0; 4] } else { radii };
         list.items.push(DrawItem {

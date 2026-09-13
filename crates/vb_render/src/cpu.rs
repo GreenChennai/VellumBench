@@ -127,7 +127,7 @@ fn draw_item(
                 if let Some(dir) = project_dir {
                     let p = dir.join(&src);
                     if p.is_file() {
-                        match draw_bitmap(pixmap, &p, x, y, iw, ih, scale) {
+                        match draw_bitmap(pixmap, &p, x, y, iw, ih, scale, item.rot, item.opacity) {
                             Ok(()) => drew = true,
                             Err(e) => warnings.push(format!("图片解码失败 {src}: {e}")),
                         }
@@ -328,6 +328,7 @@ fn stroke_color(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_bitmap(
     pixmap: &mut Pixmap,
     path: &std::path::Path,
@@ -336,6 +337,8 @@ fn draw_bitmap(
     w: f64,
     h: f64,
     scale: f32,
+    rot_deg: f64,
+    opacity: f32,
 ) -> Result<(), String> {
     let img = image::open(path).map_err(|e| e.to_string())?;
     let rgba = img.to_rgba8();
@@ -346,14 +349,22 @@ fn draw_bitmap(
         return Err("tiny-skia 位图构建失败".into());
     };
     pm.data_mut().copy_from_slice(resized.as_raw());
-    pixmap.draw_pixmap(
-        0,
-        0,
-        pm.as_ref(),
-        &tiny_skia::PixmapPaint::default(),
-        Transform::from_translate(x as f32, y as f32),
-        None,
-    );
+    // 位置必须乘 scale(设备坐标);旋转绕缩放后矩形中心,与其他绘制
+    // 项同帧(此前旋转与不透明度均被忽略,且 @2x 落点减半)
+    let mut tf = Transform::from_translate((x * scale as f64) as f32, (y * scale as f64) as f32);
+    if rot_deg.abs() > 1e-9 {
+        let cx = ((x + w / 2.0) * scale as f64) as f32;
+        let cy = ((y + h / 2.0) * scale as f64) as f32;
+        tf = Transform::from_translate(cx, cy)
+            .post_concat(Transform::from_rotate(rot_deg as f32))
+            .post_concat(Transform::from_translate(-cx, -cy))
+            .post_concat(tf);
+    }
+    let paint = tiny_skia::PixmapPaint {
+        opacity: opacity.clamp(0.0, 1.0),
+        ..tiny_skia::PixmapPaint::default()
+    };
+    pixmap.draw_pixmap(0, 0, pm.as_ref(), &paint, tf, None);
     Ok(())
 }
 

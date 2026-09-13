@@ -16,3 +16,4 @@ vb_render = { path = "../vb_render" }
 image.workspace = true
 resvg = "0.48.1"
 usvg = "0.48.1"
+vb_css.workspace = true

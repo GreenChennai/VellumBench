@@ -87,3 +87,57 @@ fn svg_transparent_skips_background() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---------------------------------------------------------------------------
+// 15 号计划 B2:SVG 四角异径走 path;矢量描边色取 border
+// ---------------------------------------------------------------------------
+
+/// B2:四角异径圆角在 SVG 中发 <path>(rect 的 rx 单值表达不了)。
+#[test]
+fn svg_uneven_radii_emit_path() {
+    let (doc, dir) = doc_with_node("background-color:#00ff00;border-radius:40px 12px 40px 12px;");
+    let ab = doc.artboards[0];
+    let svg = vb_export::export_artboard_svg(&doc, ab, 1, false).expect("SVG 导出");
+    assert!(svg.contains("<path d=\"M"), "四角异径应发 path:{svg}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// B2:矢量路径描边取 border 色(此前硬编码 rgb(20,20,20))。
+#[test]
+fn svg_vector_stroke_uses_border_color() {
+    use vb_common::geom::{BezPath, PathEl, Point};
+    use vb_doc::model::{Geom, Node, NodeKind};
+    use vb_doc::UndoStack;
+
+    let mut doc = vb_doc::Document::new_default();
+    let ab = doc.artboards[0];
+    let ab_sid = doc.nodes.get(ab).unwrap().sid.as_str().to_string();
+    let sid = doc.alloc_sid();
+    let mut path = BezPath::new();
+    path.push(PathEl::MoveTo(Point::new(0.0, 0.0)));
+    path.push(PathEl::LineTo(Point::new(50.0, 50.0)));
+    let mut n = Node::new(NodeKind::Vector { path }, "矢量", sid.clone());
+    n.geom = Geom {
+        x: 10.0,
+        y: 10.0,
+        w: 60.0,
+        h: 60.0,
+    };
+    n.style.push(vb_css::Decl {
+        prop: "border".into(),
+        value: "3px solid #ff8800".into(),
+        important: false,
+    });
+    let pid = doc.find_by_sid(&ab_sid).unwrap();
+    let id = doc.nodes.insert(n);
+    doc.nodes.get_mut(id).unwrap().parent = Some(pid);
+    doc.nodes.get_mut(pid).unwrap().children.push(id);
+    let _ = UndoStack::new();
+
+    let svg = vb_export::export_artboard_svg(&doc, ab, 1, false).expect("SVG 导出");
+    assert!(
+        svg.contains(r#"stroke="rgb(255,136,0)""#),
+        "矢量描边应取 border 色:{svg}"
+    );
+    assert!(!svg.contains("rgb(20,20,20)"), "不得残留硬编码描边色");
+}
