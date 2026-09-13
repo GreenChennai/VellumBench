@@ -854,12 +854,23 @@ impl eframe::App for VellumApp {
                 .collapsible(false)
                 .resizable(false)
                 .show(ui.ctx(), |ui| {
-                    ui.add_sized(
+                    let search = ui.add_sized(
                         [360.0, 22.0],
                         egui::TextEdit::singleline(&mut self.palette_query).hint_text("搜索命令…"),
                     );
+                    // egui TextEdit 只有点击才聚焦:面板开着就持续请求焦点,
+                    // 否则首帧键入落空、工具快捷键穿透(G6)
+                    search.request_focus();
                     // Esc 关闭:输入框聚焦时全局 Esc 走 TextEdit 上下文,面板须自行处理
                     if ui.ctx().input(|i| i.key_pressed(Key::Escape)) {
+                        close = true;
+                    }
+                    // Ctrl+K 再按一次关闭(面板开启期间输入上下文是
+                    // TextEdit,全局 CTX_NO_TEXT 派发不到这里)
+                    if ui
+                        .ctx()
+                        .input(|i| i.key_pressed(Key::K) && i.modifiers.ctrl)
+                    {
                         close = true;
                     }
                     let query = self.palette_query.to_lowercase();
@@ -947,7 +958,9 @@ impl VellumApp {
 
     /// 当前输入上下文(栈顶)。02 篇 §一 / 14 篇 §4.1。
     fn input_context(&self, ctx: &egui::Context) -> InputContext {
-        if self.editing_text.is_some() || ctx.egui_wants_keyboard_input() {
+        // 命令面板打开期间视为文本上下文:搜索框拿到焦点前
+        // egui_wants_keyboard_input 尚为 false,不拦会连环切工具(G6)
+        if self.editing_text.is_some() || self.palette_open || ctx.egui_wants_keyboard_input() {
             return InputContext::TextEdit;
         }
         if !matches!(self.drag, Drag::None) {
@@ -3383,10 +3396,17 @@ impl VellumApp {
                     }
                 });
                 if in_top || in_left || near_line.is_some() {
+                    // 命中已有参考线(±3px)一律抓取,与指针在不在标尺条内
+                    // 无关;否则水平参考线拖到画布中部后,方向 guard 不匹配
+                    // 会凭空新建一条垂直线(G7)
                     let idx = match near_line {
-                        Some(i) if self.guides[i].0 == in_top => i,
-                        _ => {
-                            self.guides.push((in_top, if in_top { wy } else { wx }));
+                        Some(i) => i,
+                        None if in_top => {
+                            self.guides.push((true, wy));
+                            self.guides.len() - 1
+                        }
+                        None => {
+                            self.guides.push((false, wx));
                             self.guides.len() - 1
                         }
                     };
@@ -3900,8 +3920,38 @@ impl VellumApp {
         }
     }
 
+    /// 移动节点父级到所属画板之间的累计 geom 偏移(父级即画板时为 0)。
+    /// 用于把父相对坐标换算成画板本地坐标。
+    fn parent_offset_in_artboard(
+        &self,
+        parent: Option<vb_doc::model::NodeId>,
+        artboard: Option<vb_doc::model::NodeId>,
+    ) -> (f64, f64) {
+        let (mut ox, mut oy) = (0.0f64, 0.0f64);
+        let Some(mut cur) = parent else {
+            return (ox, oy);
+        };
+        while let Some(n) = self.doc.nodes.get(cur) {
+            if Some(cur) == artboard || matches!(n.kind, NodeKind::Artboard) {
+                return (ox, oy);
+            }
+            ox += n.geom.x;
+            oy += n.geom.y;
+            match n.parent {
+                Some(p) => cur = p,
+                None => return (ox, oy),
+            }
+        }
+        (ox, oy)
+    }
+
     /// 智能参考线:移动中的对象边/中心 对齐 兄弟边/中心 或 画板边/中心。
-    /// 返回 (吸附后 x, 吸附后 y, 参考线段[画板本地坐标])。
+    /// 返回 (吸附后 x, 吸附后 y, 参考线段[世界坐标])。
+    ///
+    /// 帧纪律(G2/G3 修复):移动盒 geom 是父相对坐标,兄弟 bbox 与画板
+    /// 边是画板本地坐标 —— 先把移动盒换算进画板本地帧再比较(否则组内
+    /// 拖动吸附整体偏移一个组偏移量);参考线统一加画板世界原点输出
+    /// (否则第 2+ 画板上的线错位一个画板偏移)。
     fn smart_snap(
         &self,
         moving: vb_doc::model::NodeId,
@@ -3910,6 +3960,11 @@ impl VellumApp {
         g: &Geom,
         tol: f64,
     ) -> (f64, f64, Vec<[f64; 4]>) {
+        let (off_x, off_y) = self.parent_offset_in_artboard(parent, artboard);
+        let (abx, aby) = artboard
+            .and_then(|ab| self.doc.nodes.get(ab))
+            .map(|n| (n.geom.x, n.geom.y))
+            .unwrap_or((0.0, 0.0));
         let mut xs: Vec<(f64, f64, f64)> = Vec::new(); // (候选 x, 线 y0, 线 y1)
         let mut ys: Vec<(f64, f64, f64)> = Vec::new(); // (候选 y, 线 x0, 线 x1)
                                                        // 兄弟完整 bbox(P4.1 间距/尺寸类用)
@@ -3959,8 +4014,8 @@ impl VellumApp {
         }
 
         let mut lines: Vec<[f64; 4]> = Vec::new();
-        let mx = [g.x, g.x + g.w / 2.0, g.x + g.w];
-        let my = [g.y, g.y + g.h / 2.0, g.y + g.h];
+        let mx = [g.x + off_x, g.x + off_x + g.w / 2.0, g.x + off_x + g.w];
+        let my = [g.y + off_y, g.y + off_y + g.h / 2.0, g.y + off_y + g.h];
 
         let mut best_x: Option<(f64, f64)> = None; // (delta, 候选)
         let mut best_line_x: Option<[f64; 4]> = None;
@@ -3970,7 +4025,12 @@ impl VellumApp {
                 if d <= tol && best_x.map(|(bd, _)| d < bd).unwrap_or(true) {
                     best_x = Some((d, *cand));
                     // 只保留当前最优候选的参考线(此前每个容差内候选都画一条)
-                    best_line_x = Some([*cand, *ly0 - 12.0, *cand, *ly1 + 12.0]);
+                    best_line_x = Some([
+                        *cand + abx,
+                        *ly0 - 12.0 + aby,
+                        *cand + abx,
+                        *ly1 + 12.0 + aby,
+                    ]);
                 }
             }
         }
@@ -3984,7 +4044,12 @@ impl VellumApp {
                 let d = (e - cand).abs();
                 if d <= tol && best_y.map(|(bd, _)| d < bd).unwrap_or(true) {
                     best_y = Some((d, *cand));
-                    best_line_y = Some([*lx0 - 12.0, *cand, *lx1 + 12.0, *cand]);
+                    best_line_y = Some([
+                        *lx0 - 12.0 + abx,
+                        *cand + aby,
+                        *lx1 + 12.0 + abx,
+                        *cand + aby,
+                    ]);
                 }
             }
         }
@@ -3993,7 +4058,8 @@ impl VellumApp {
         }
         let nx = best_x.map(|(_, c)| {
             // 对齐的是哪条边?吸附到候选后保持原相对关系:取移动后最接近候选的那条边
-            let cur = [g.x, g.x + g.w / 2.0, g.x + g.w]
+            // (c 与 cur 同在画板本地帧,delta 是平移量,帧无关)
+            let cur = [g.x + off_x, g.x + off_x + g.w / 2.0, g.x + off_x + g.w]
                 .iter()
                 .copied()
                 .min_by(|a, b| {
@@ -4006,7 +4072,7 @@ impl VellumApp {
             g.x + (c - cur)
         });
         let ny = best_y.map(|(_, c)| {
-            let cur = [g.y, g.y + g.h / 2.0, g.y + g.h]
+            let cur = [g.y + off_y, g.y + off_y + g.h / 2.0, g.y + off_y + g.h]
                 .iter()
                 .copied()
                 .min_by(|a, b| {
@@ -4039,23 +4105,23 @@ impl VellumApp {
                 for gp in &gaps {
                     // 放在兄弟右侧:移动盒左缘 = 兄弟右缘 + gp
                     let cand = ax1 + gp;
-                    let d = (g.x - cand).abs();
+                    let d = (g.x + off_x - cand).abs();
                     if d <= tol && best.as_ref().map(|(bd, ..)| d < *bd).unwrap_or(true) {
                         best = Some((d, cand, *ay0, *ay1));
                     }
                     // 放在兄弟左侧:移动盒左缘 = 兄弟左缘 - gp - 移动盒宽
                     let cand2 = ax0 - gp - g.w;
-                    let d2 = (g.x - cand2).abs();
+                    let d2 = (g.x + off_x - cand2).abs();
                     if d2 <= tol && best.as_ref().map(|(bd, ..)| d2 < *bd).unwrap_or(true) {
                         best = Some((d2, cand2, *ay0, *ay1));
                     }
                 }
             }
             if let Some((_, cand, ly0, ly1)) = best {
-                nx = cand;
-                // 间距参考线:横跨两盒中点的水平测量线
+                nx = cand - off_x;
+                // 间距参考线:横跨两盒中点的水平测量线(世界坐标)
                 let mid_y = ly0 + (ly1 - ly0) / 2.0;
-                lines.push([cand, mid_y, cand + g.w, mid_y]);
+                lines.push([cand + abx, mid_y + aby, cand + g.w + abx, mid_y + aby]);
             }
         }
         if best_y.is_none() && sib_rects.len() >= 2 {
@@ -4072,21 +4138,21 @@ impl VellumApp {
             for (bx0, by0, bx1, by1) in &vrects {
                 for gp in &gaps {
                     let cand = *by1 + gp;
-                    let d = (g.y - cand).abs();
+                    let d = (g.y + off_y - cand).abs();
                     if d <= tol && best.as_ref().map(|(bd, ..)| d < *bd).unwrap_or(true) {
                         best = Some((d, cand, *bx0, *bx1));
                     }
                     let cand2 = by0 - gp - g.h;
-                    let d2 = (g.y - cand2).abs();
+                    let d2 = (g.y + off_y - cand2).abs();
                     if d2 <= tol && best.as_ref().map(|(bd, ..)| d2 < *bd).unwrap_or(true) {
                         best = Some((d2, cand2, *bx0, *bx1));
                     }
                 }
             }
             if let Some((_, cand, lx0, lx1)) = best {
-                ny = cand;
+                ny = cand - off_y;
                 let mid_x = lx0 + (lx1 - lx0) / 2.0;
-                lines.push([mid_x, cand, mid_x, cand + g.h]);
+                lines.push([mid_x + abx, cand + aby, mid_x + abx, cand + g.h + aby]);
             }
         }
 
@@ -4096,7 +4162,7 @@ impl VellumApp {
             let dw = (*bx1 - *bx0 - g.w).abs();
             let dh = (*by1 - *by0 - g.h).abs();
             if dw <= tol * 0.5 {
-                lines.push([*bx0, *by0 - 8.0, *bx0, *by1 + 8.0]);
+                lines.push([*bx0 + abx, *by0 - 8.0 + aby, *bx0 + abx, *by1 + 8.0 + aby]);
             }
             if dh <= tol * 0.5 {
                 lines.push([*bx0 - 8.0, *by0, *bx1 + 8.0, *by0]);
@@ -4466,7 +4532,12 @@ impl VellumApp {
         // 框选/创建预览
         match &self.drag {
             Drag::Marquee { start, cur } => {
-                let r = Rect::from_two_pos(pos2(start.x, start.y), pos2(cur.x, cur.y));
+                // start/cur 是画布本地坐标,painter 是屏幕绝对:补 origin
+                // 与真实相交判定同帧(G5,此前预览比实际选区高一个菜单栏)
+                let r = Rect::from_two_pos(
+                    pos2(start.x + origin.x, start.y + origin.y),
+                    pos2(cur.x + origin.x, cur.y + origin.y),
+                );
                 painter.rect_filled(r, 0.0, semantic::MARQUEE_FILL);
                 painter.rect_stroke(
                     r,
@@ -4476,7 +4547,10 @@ impl VellumApp {
                 );
             }
             Drag::Create { start, cur } => {
-                let r = Rect::from_two_pos(pos2(start.x, start.y), pos2(cur.x, cur.y));
+                let r = Rect::from_two_pos(
+                    pos2(start.x + origin.x, start.y + origin.y),
+                    pos2(cur.x + origin.x, cur.y + origin.y),
+                );
                 painter.rect_stroke(
                     r,
                     0.0,
@@ -4658,19 +4732,22 @@ fn draw_grid(painter: &egui::Painter, rect: Rect, cam: &Camera, dark: bool) {
         return;
     }
     let color = semantic::guide_grid(dark);
-    let k0 = ((rect.left() as f64 - cam.pan_x) / (level * cam.zoom)).floor() as i64;
-    let k1 = ((rect.right() as f64 - cam.pan_x) / (level * cam.zoom)).ceil() as i64;
+    // painter 是屏幕绝对坐标:内容映射 = rect.min + pan + w*zoom,
+    // 网格必须带 rect.min,否则整体错位一个菜单栏高度(G4)
+    let (ox, oy) = (rect.min.x as f64, rect.min.y as f64);
+    let k0 = ((rect.left() as f64 - ox - cam.pan_x) / (level * cam.zoom)).floor() as i64;
+    let k1 = ((rect.right() as f64 - ox - cam.pan_x) / (level * cam.zoom)).ceil() as i64;
     for k in k0..=k1 {
-        let x = (k as f64 * level * cam.zoom + cam.pan_x) as f32;
+        let x = (k as f64 * level * cam.zoom + cam.pan_x + ox) as f32;
         painter.line_segment(
             [pos2(x, rect.top()), pos2(x, rect.bottom())],
             Stroke::new(0.5, color),
         );
     }
-    let j0 = ((rect.top() as f64 - cam.pan_y) / (level * cam.zoom)).floor() as i64;
-    let j1 = ((rect.bottom() as f64 - cam.pan_y) / (level * cam.zoom)).ceil() as i64;
+    let j0 = ((rect.top() as f64 - oy - cam.pan_y) / (level * cam.zoom)).floor() as i64;
+    let j1 = ((rect.bottom() as f64 - oy - cam.pan_y) / (level * cam.zoom)).ceil() as i64;
     for j in j0..=j1 {
-        let y = (j as f64 * level * cam.zoom + cam.pan_y) as f32;
+        let y = (j as f64 * level * cam.zoom + cam.pan_y + oy) as f32;
         painter.line_segment(
             [pos2(rect.left(), y), pos2(rect.right(), y)],
             Stroke::new(0.5, color),

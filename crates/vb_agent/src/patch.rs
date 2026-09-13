@@ -166,8 +166,13 @@ pub fn apply_patch(
     for c in &cmds {
         collect_affected(c, &mut outcome);
     }
-    undo.push_compound(doc, cmds)
-        .map_err(|e| PatchError::Op(e.to_string()))?;
+    // Agent 事务禁用 undo 合并:两次相邻 patch 若目标集合相同,
+    // 不允许被合并成一条 undo(08 篇:一次 patch = 一条 undo)
+    let prev_merging = undo.merging_enabled;
+    undo.merging_enabled = false;
+    let pushed = undo.push_compound(doc, cmds);
+    undo.merging_enabled = prev_merging;
+    pushed.map_err(|e| PatchError::Op(e.to_string()))?;
     outcome.rev = doc.rev;
     Ok(outcome)
 }

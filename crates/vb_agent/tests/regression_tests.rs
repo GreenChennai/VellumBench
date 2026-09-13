@@ -535,3 +535,68 @@ fn delete_last_artboard_rejected() {
     assert!(err.to_string().contains("画板"), "错误信息:{err}");
     assert_eq!(doc.artboards.len(), 1, "画板数量不变");
 }
+
+/// G1(agent 侧):相邻两次 patch 目标集合相同也不得合并成一条 undo
+/// (08 篇:一次 patch = 一条 undo)。
+#[test]
+fn consecutive_patches_stay_separate_undo_entries() {
+    let mut doc = Document::new_default();
+    let mut undo = UndoStack::new();
+    let ab = ab0_sid(&doc);
+    apply_patch(
+        &mut doc,
+        &mut undo,
+        &req(vec![PatchOp::Insert {
+            parent: ab,
+            index: None,
+            node: vb_agent::InsertNodeSpec {
+                tag: "div".into(),
+                name: None,
+                text: None,
+                style: None,
+                attrs: None,
+                r#box: Some(vb_agent::BoxSpec {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 50.0,
+                    h: 50.0,
+                }),
+            },
+        }]),
+    )
+    .expect("插入失败");
+    let sid = doc
+        .nodes
+        .get(doc.artboards[0])
+        .unwrap()
+        .children
+        .iter()
+        .find_map(|&c| {
+            let n = doc.nodes.get(c).unwrap();
+            (!matches!(n.kind, NodeKind::Artboard)).then(|| n.sid.as_str().to_string())
+        })
+        .expect("应有对象");
+
+    // 两次相邻 patch 改同一对象(同目标集合 → 若不禁合并会被吞成一条)
+    for color in ["#ff0000", "#0000ff"] {
+        apply_patch(
+            &mut doc,
+            &mut undo,
+            &req(vec![PatchOp::SetStyle {
+                id: sid.clone(),
+                css: vec![("background-color".into(), color.to_string())]
+                    .into_iter()
+                    .collect(),
+            }]),
+        )
+        .expect("patch 失败");
+    }
+    // 第一次 undo 只回退第二次 patch(蓝→红);若合并则直接回到无色
+    undo.undo(&mut doc).expect("撤销失败");
+    let n = doc.nodes.get(doc.find_by_sid(&sid).unwrap()).unwrap();
+    let has_red = n
+        .style
+        .iter()
+        .any(|d| d.prop == "background-color" && d.value == "#f00");
+    assert!(has_red, "第一次 undo 后应回到第一次 patch 的红色");
+}

@@ -146,6 +146,22 @@ fn replace_new(top: &mut Command, src: &Command) {
         (Rename { new, .. }, Rename { new: n2, .. }) => *new = n2.clone(),
         (SetTag { new, .. }, SetTag { new: n2, .. }) => *new = n2.clone(),
         (SetVector { new, .. }, SetVector { new: n2, .. }) => *new = n2.clone(),
+        // 多目标 SetStyle Compound(渐变拖拽):按 sid 配对更新 new,
+        // 栈顶首帧捕获的 old 不动(可合并性由 merge_target 校验)
+        (Compound { cmds: tcmds, .. }, Compound { cmds: scmds, .. }) => {
+            for t in tcmds.iter_mut() {
+                let (sid, new) = match t {
+                    SetStyle { sid, new, .. } => (sid, new),
+                    _ => continue,
+                };
+                if let Some(SetStyle { new: n2, .. }) = scmds
+                    .iter()
+                    .find(|c| matches!(c, SetStyle { sid: s2, .. } if s2 == sid))
+                {
+                    *new = n2.clone();
+                }
+            }
+        }
         _ => {}
     }
 }

@@ -611,3 +611,113 @@ fn group_rejects_artboard_member() {
 
 #[allow(dead_code)]
 fn ensure_vberror_import_used(_: Option<VbError>) {}
+
+// ---------------------------------------------------------------------------
+// 15 号计划 A4 / G1:渐变拖拽的 Compound 合并(一次拖拽 = 一条 undo)
+// ---------------------------------------------------------------------------
+
+fn grad_style(angle: u32) -> Vec<Decl> {
+    vec![Decl {
+        prop: "background-image".into(),
+        value: format!("linear-gradient({angle}deg, #d4d4d4 0%, #ffffff 100%)"),
+        important: false,
+    }]
+}
+
+fn bg_image_of(doc: &Document, sid: &str) -> Option<String> {
+    doc.find_by_sid(sid)
+        .and_then(|id| doc.nodes.get(id))
+        .and_then(|n| n.style.iter().find(|d| d.prop == "background-image"))
+        .map(|d| d.value.clone())
+}
+
+#[test]
+fn compound_setstyle_merges_into_single_undo() {
+    let mut doc = Document::new_default();
+    let ab = doc.artboards[0];
+    let ab_sid = doc.nodes.get(ab).unwrap().sid.as_str().to_string();
+    let a = make_box(&mut doc, &ab_sid, 0.0, 0.0);
+    let b = make_box(&mut doc, &ab_sid, 10.0, 10.0);
+    let mut stack = UndoStack::new();
+    // 模拟渐变拖拽 3 帧(每帧一条多目标 SetStyle Compound)
+    for angle in [0u32, 45, 90] {
+        stack
+            .push(
+                &mut doc,
+                Command::Compound {
+                    cmds: vec![
+                        Command::SetStyle {
+                            sid: a.clone(),
+                            new: grad_style(angle),
+                            old: None,
+                        },
+                        Command::SetStyle {
+                            sid: b.clone(),
+                            new: grad_style(angle),
+                            old: None,
+                        },
+                    ],
+                },
+            )
+            .expect("帧应用失败");
+    }
+    // 一次 undo → 两个对象都回到无渐变初态(而非回退一帧几毫秒)
+    stack.undo(&mut doc).expect("撤销失败");
+    assert!(bg_image_of(&doc, &a).is_none(), "对象 A 应回到初态");
+    assert!(bg_image_of(&doc, &b).is_none(), "对象 B 应回到初态");
+    // 再 undo 应为空(拖拽只产生一条 undo)
+    assert!(
+        stack.undo(&mut doc).unwrap().is_none(),
+        "拖拽帧应合并为一条 undo,不得稀释"
+    );
+    // redo → 恢复到最后一帧值
+    stack.redo(&mut doc).expect("重做失败");
+    assert_eq!(
+        bg_image_of(&doc, &a).as_deref(),
+        Some("linear-gradient(90deg, #d4d4d4 0%, #ffffff 100%)"),
+        "redo 应恢复最后一帧的渐变"
+    );
+}
+
+/// 混合变体的 Compound 不得合并(paste/align 等语义不同)。
+#[test]
+fn mixed_compound_does_not_merge() {
+    use vb_doc::model::Geom;
+    let mut doc = Document::new_default();
+    let ab = doc.artboards[0];
+    let ab_sid = doc.nodes.get(ab).unwrap().sid.as_str().to_string();
+    let a = make_box(&mut doc, &ab_sid, 0.0, 0.0);
+    let mut stack = UndoStack::new();
+    for _ in 0..2 {
+        stack
+            .push(
+                &mut doc,
+                Command::Compound {
+                    cmds: vec![
+                        Command::SetStyle {
+                            sid: a.clone(),
+                            new: grad_style(0),
+                            old: None,
+                        },
+                        Command::SetGeom {
+                            sid: a.clone(),
+                            new: Geom {
+                                x: 5.0,
+                                y: 5.0,
+                                w: 100.0,
+                                h: 80.0,
+                            },
+                            old: None,
+                        },
+                    ],
+                },
+            )
+            .expect("应用失败");
+    }
+    // 两条独立 undo:第一次 undo 只回退最后一条
+    stack.undo(&mut doc).expect("撤销失败");
+    assert!(
+        bg_image_of(&doc, &a).is_some(),
+        "混合 Compound 各自独立,第一次撤销后样式仍在"
+    );
+}
