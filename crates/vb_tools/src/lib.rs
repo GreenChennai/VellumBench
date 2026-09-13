@@ -128,6 +128,25 @@ fn hit_children(doc: &Document, ids: &[NodeId], wx: f64, wy: f64) -> Option<Node
     None
 }
 
+/// 子树拾取:在 `root` 的直接子级中命中(局部坐标 = root 的 abs 坐标系)。
+/// 隔离模式用:root = 隔离组,lx/ly = 画板本地坐标(与 abs_bbox 同帧)。
+pub fn hit_test_root(doc: &Document, root: NodeId, lx: f64, ly: f64) -> Option<NodeId> {
+    let n = doc.nodes.get(root)?;
+    hit_children(doc, &n.children, lx, ly)
+}
+
+/// 子树框选:`rect_local` 与 `root` 子级的 abs bbox(同一局部帧)求交。
+pub fn marquee_select_root(doc: &Document, root: NodeId, rect_local: Rect) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    let Some(n) = doc.nodes.get(root) else {
+        return out;
+    };
+    for &c in &n.children {
+        collect_intersect(doc, c, rect_local, &mut out);
+    }
+    out
+}
+
 /// 框选:**相交即选中**(AI 语义,设计文档 02 篇 §5.1)。
 /// `rect` 是**世界坐标**;只选中相交的**顶层**对象(命中父级不再深入,
 /// 否则组与子孙同时入选,删除/编组/对齐都会连锁出错)。

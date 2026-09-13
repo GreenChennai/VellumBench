@@ -160,6 +160,8 @@ pub mod semantic {
 
     /// 选中边界框与 8 个手柄。
     pub const SELECT_BOX: Color32 = Color32::from_rgb(0x0D, 0x99, 0xFF);
+    /// 标尺参考线（AI 青色,02 篇 §5.2;跨主题共用,浅色下同值够对比）。
+    pub const GUIDE_RULER: Color32 = Color32::from_rgb(0x00, 0xA5, 0xFF);
     /// 悬停对象的轮廓（同色半透明，与选中框区分）。
     pub const HOVER_BOX: Color32 = Color32::from_rgba_unmultiplied_const(0x0D, 0x99, 0xFF, 153);
     /// 框选（marquee）填充。

@@ -355,6 +355,24 @@ pub fn encode_artboard(doc: &Document, artboard: NodeId) -> Result<DrawList, VbE
     Ok(list)
 }
 
+/// 从任意节点(编组)开始编码子树为 DrawList(无背景)。
+/// 隔离模式用:内容坐标为该节点所处画板的本地坐标系(与 encode_artboard 同帧),
+/// 宿主在遮罩层之上叠加本列表即可让隔离内容保持全亮。
+pub fn encode_subtree(doc: &Document, root: NodeId) -> Result<DrawList, VbError> {
+    let n = doc
+        .nodes
+        .get(root)
+        .ok_or(VbError::NoSuchNode("subtree root".into()))?;
+    let mut list = DrawList {
+        w: n.geom.w,
+        h: n.geom.h,
+        background: [0.0, 0.0, 0.0, 0.0],
+        items: Vec::new(),
+    };
+    encode_node(doc, root, 0.0, 0.0, 1.0, &mut list);
+    Ok(list)
+}
+
 fn encode_node(
     doc: &Document,
     id: NodeId,

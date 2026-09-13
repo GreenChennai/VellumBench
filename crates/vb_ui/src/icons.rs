@@ -50,7 +50,7 @@ pub const FALLBACK: char = '·';
 /// 也避免同一个语义在 A 处用 `trash-2`、B 处用 `trash`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Name {
-    // ── 工具箱（4 个） ──
+    // ── 工具箱 ──
     /// 选择工具。
     ToolSelect,
     /// 矩形工具。
@@ -59,6 +59,12 @@ pub enum Name {
     ToolEllipse,
     /// 抓手工具。
     ToolHand,
+    /// 文字工具。
+    ToolText,
+    /// 吸管工具。
+    ToolEyedropper,
+    /// 画板工具。
+    ToolArtboard,
 
     // ── 图层树的节点类型 ──
     /// 画板。
@@ -150,6 +156,9 @@ impl Name {
         Name::ToolRect,
         Name::ToolEllipse,
         Name::ToolHand,
+        Name::ToolText,
+        Name::ToolEyedropper,
+        Name::ToolArtboard,
         Name::KindArtboard,
         Name::KindLayer,
         Name::KindGroup,
@@ -194,6 +203,9 @@ impl Name {
             Name::ToolRect => "square",
             Name::ToolEllipse => "circle",
             Name::ToolHand => "hand",
+            Name::ToolText => "type",
+            Name::ToolEyedropper => "pipette",
+            Name::ToolArtboard => "frame",
 
             Name::KindArtboard => "frame",
             Name::KindLayer => "layers",
@@ -352,7 +364,7 @@ mod tests {
         // 枚举变体总数（含 ALL 自己占的一行由 compiler 保证一致）
         assert_eq!(
             Name::ALL.len(),
-            39,
+            42,
             "Name::ALL 的条数与枚举变体数不符：新增图标后要同步 ALL"
         );
     }

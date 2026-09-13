@@ -35,10 +35,42 @@ pub enum Tool {
     Hand,
     /// 缩放工具:单击放大 / Alt+单击缩小 / 拖框缩放到区域
     Zoom,
+    /// 文字工具:单击点文本 / 拖框区域文本(06 篇 §5.2)
+    Text,
+    /// 吸管:点击取色应用到选区;Alt 取全部样式(06 篇 §5.4)
+    Eyedropper,
+    /// 画板工具:拖框新建画板(06 篇 §3.1)
+    Artboard,
+}
+
+/// 钢笔锚点:anchor + 出手柄(画板本地坐标;平滑点 h_out=Some,
+/// 入手柄 = 镜像;角点 h_out=None)。拖拽落点产生平滑点(06 篇 §5.3)。
+#[derive(Debug, Clone, Copy)]
+struct PenPt {
+    anchor: (f64, f64),
+    h_out: Option<(f64, f64)>,
+}
+
+impl PenPt {
+    fn corner(x: f64, y: f64) -> Self {
+        PenPt {
+            anchor: (x, y),
+            h_out: None,
+        }
+    }
+    /// 入手柄 = anchor 关于 anchor 的镜像(out 的反向延长)。
+    fn h_in(&self) -> Option<(f64, f64)> {
+        self.h_out
+            .map(|(hx, hy)| (2.0 * self.anchor.0 - hx, 2.0 * self.anchor.1 - hy))
+    }
 }
 
 enum Drag {
     None,
+    /// 拖动标尺参考线(idx;松手在标尺内/画布外 = 删除)
+    Guide {
+        idx: usize,
+    },
     /// Space/中键/抓手:平移视图
     Pan {
         start_pan: Vec2,
@@ -109,10 +141,10 @@ pub struct VellumApp {
     guides_visible: bool,
     guides_locked: bool,
     guides: Vec<(bool, f64)>,
-    /// P4.3 隔离模式:当前隔离的编组节点
-    isolate: Option<vb_doc::model::NodeId>,
-    /// P4 钢笔进行中的锚点(画板本地坐标)
-    pen_points: Vec<(f64, f64)>,
+    /// P4.3 隔离模式:进入栈(双击编组 push,Esc pop;面包屑 = 栈内容)
+    isolate_stack: Vec<vb_doc::model::NodeId>,
+    /// P4 钢笔进行中的锚点(世界坐标;平滑点带出手柄)
+    pen_points: Vec<PenPt>,
     /// 直接选择:正在拖拽的 (sid, 顶点序号)
     ds_vertex: Option<(String, usize)>,
     /// 双击文本编辑中的 sid
@@ -210,7 +242,7 @@ impl VellumApp {
             guides_visible: true,
             guides_locked: false,
             guides: Vec::new(),
-            isolate: None,
+            isolate_stack: Vec::new(),
             pen_points: Vec::new(),
             ds_vertex: None,
         };
@@ -316,7 +348,7 @@ impl VellumApp {
                     self.undo = UndoStack::new();
                     self.selection.clear();
                     // 新 arena 的 NodeId 与旧文档无对应关系,全部悬空引用作废
-                    self.isolate = None;
+                    self.isolate_stack.clear();
                     self.pen_points.clear();
                     self.ds_vertex = None;
                     self.editing_text = None;
@@ -342,7 +374,7 @@ impl VellumApp {
                     self.doc = r.doc;
                     self.undo = UndoStack::new();
                     self.selection.clear();
-                    self.isolate = None;
+                    self.isolate_stack.clear();
                     self.pen_points.clear();
                     self.ds_vertex = None;
                     self.editing_text = None;
@@ -578,6 +610,53 @@ impl VellumApp {
         self.pen_points.clear();
         self.ds_vertex = None;
         self.tool = tool;
+    }
+
+    /// 隔离栈顶(当前隔离的编组;空 = 未隔离)。
+    fn isolate_top(&self) -> Option<vb_doc::model::NodeId> {
+        self.isolate_stack.last().copied()
+    }
+
+    /// 选中/命中统一入口:隔离模式下只在隔离子树内拾取。
+    fn pick_at_world(&self, wx: f64, wy: f64) -> Option<vb_doc::model::NodeId> {
+        if let Some(iso) = self.isolate_top() {
+            let ab = vb_tools::artboard_of(&self.doc, iso)?;
+            let (ox, oy) = self.doc.artboard_origin(ab);
+            return vb_tools::hit_test_root(&self.doc, iso, wx - ox, wy - oy);
+        }
+        let ab = self.artboard_at_world(wx, wy)?;
+        vb_tools::hit_test(&self.doc, ab, wx, wy)
+    }
+
+    /// 新对象的插入目标:隔离模式下落进隔离组(06 篇 §4.3),否则所属画板。
+    fn insert_target(&self, wx: f64, wy: f64) -> vb_doc::model::NodeId {
+        if let Some(iso) = self.isolate_top() {
+            return iso;
+        }
+        self.artboard_at_world(wx, wy)
+            .or(self.doc.artboards.first().copied())
+            .expect("文档至少有一块画板")
+    }
+
+    /// 世界坐标 → 指定父级的本地坐标(累计父级 geom 偏移,止于画板)。
+    /// 直接用世界坐标建对象会在第 2+ 画板/编组内产生双倍偏移。
+    fn world_to_parent_local(
+        &self,
+        parent: vb_doc::model::NodeId,
+        mut x: f64,
+        mut y: f64,
+    ) -> (f64, f64) {
+        let mut p = self.doc.nodes.get(parent).and_then(|n| n.parent);
+        while let Some(pid) = p {
+            let pn = self.doc.nodes.get(pid).expect("parent 存活");
+            if matches!(pn.kind, NodeKind::Artboard) {
+                break;
+            }
+            x -= pn.geom.x;
+            y -= pn.geom.y;
+            p = pn.parent;
+        }
+        (x, y)
     }
 }
 
@@ -889,7 +968,7 @@ impl VellumApp {
                 self.selection.clear();
                 self.project_dir = None;
                 // 旧 doc 的 NodeId 全部失效,进行中的状态一并作废
-                self.isolate = None;
+                self.isolate_stack.clear();
                 self.pen_points.clear();
                 self.ds_vertex = None;
                 self.editing_text = None;
@@ -904,11 +983,51 @@ impl VellumApp {
             // ── 编辑 ──
             "edit.undo" | "edit.redo" => {
                 let redo = id == "edit.redo";
+                // 恢复选区策略(AI 行为):撤销删除→重选被删对象;撤销编组→重选成员;
+                // 撤销解组→重选编组;重做反向。其余情形清掉悬空 sid。
+                let top = if redo {
+                    self.undo.top_redo().cloned()
+                } else {
+                    self.undo.top().cloned()
+                };
                 let label = if redo {
                     self.undo.redo(&mut self.doc).ok().flatten()
                 } else {
                     self.undo.undo(&mut self.doc).ok().flatten()
                 };
+                if label.is_some() {
+                    self.isolate_stack
+                        .retain(|id| self.doc.nodes.get(*id).is_some());
+                    self.selection = match (&top, redo) {
+                        (Some(Command::Delete { target_sid, .. }), false) => {
+                            vec![target_sid.clone()]
+                        }
+                        (Some(Command::Group { member_sids, .. }), false) => member_sids.clone(),
+                        (Some(Command::Ungroup { group_sid, .. }), false) => {
+                            vec![group_sid.clone()]
+                        }
+                        (Some(Command::Insert { tree, .. }), true) => {
+                            vec![tree.root_sid().to_string()]
+                        }
+                        (Some(Command::Delete { target_sid, .. }), true) => self
+                            .selection
+                            .iter()
+                            .filter(|s| *s != target_sid)
+                            .cloned()
+                            .collect(),
+                        (Some(Command::Ungroup { captured, .. }), true) => captured
+                            .as_ref()
+                            .map(|(_, tree)| {
+                                tree.children
+                                    .iter()
+                                    .map(|c| c.node.sid.as_str().to_string())
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                        _ => std::mem::take(&mut self.selection),
+                    };
+                    self.selection.retain(|s| self.doc.find_by_sid(s).is_some());
+                }
                 self.status = match label {
                     Some(l) => format!("{}:{l}", if redo { "重做" } else { "撤销" }),
                     None => "没有可撤销/重做的操作".into(),
@@ -1041,6 +1160,9 @@ impl VellumApp {
             "tool.direct_select" => self.set_tool(Tool::DirectSelect),
             "tool.zoom" => self.set_tool(Tool::Zoom),
             "tool.hand" => self.set_tool(Tool::Hand),
+            "tool.text" => self.set_tool(Tool::Text),
+            "tool.eyedropper" => self.set_tool(Tool::Eyedropper),
+            "tool.artboard" => self.set_tool(Tool::Artboard),
             // ── P3.8 分布(≥3 选中) ──
             "object.distribute_h" => self.distribute_selection(true),
             "object.distribute_v" => self.distribute_selection(false),
@@ -1073,17 +1195,32 @@ impl VellumApp {
                 self.status = "已锁定所选".into();
             }
             "object.unlock_all" => {
+                // 走 SetFlags 复合命令入 undo 栈(此前裸改 arena 不可撤销)
                 let mut ids = Vec::new();
                 for &ab in &self.doc.artboards {
                     self.doc.subtree(ab, &mut ids);
                 }
-                for id in ids {
-                    if let Some(n) = self.doc.nodes.get_mut(id) {
-                        n.locked = false;
-                    }
+                let cmds: Vec<Command> = ids
+                    .into_iter()
+                    .filter_map(|id| {
+                        let n = self.doc.nodes.get(id)?;
+                        if !n.locked {
+                            return None;
+                        }
+                        Some(Command::SetFlags {
+                            sid: n.sid.as_str().to_string(),
+                            hidden: None,
+                            locked: Some(false),
+                            old: None,
+                        })
+                    })
+                    .collect();
+                if cmds.is_empty() {
+                    self.status = "没有已锁定的对象".into();
+                } else {
+                    self.exec(Command::Compound { cmds });
+                    self.status = "已解锁全部".into();
                 }
-                self.doc.rev += 1;
-                self.status = "已解锁全部".into();
             }
             "object.hide" => {
                 let sids = self.selection.clone();
@@ -1102,13 +1239,27 @@ impl VellumApp {
                 for &ab in &self.doc.artboards {
                     self.doc.subtree(ab, &mut ids);
                 }
-                for id in ids {
-                    if let Some(n) = self.doc.nodes.get_mut(id) {
-                        n.hidden = false;
-                    }
+                let cmds: Vec<Command> = ids
+                    .into_iter()
+                    .filter_map(|id| {
+                        let n = self.doc.nodes.get(id)?;
+                        if !n.hidden {
+                            return None;
+                        }
+                        Some(Command::SetFlags {
+                            sid: n.sid.as_str().to_string(),
+                            hidden: Some(false),
+                            locked: None,
+                            old: None,
+                        })
+                    })
+                    .collect();
+                if cmds.is_empty() {
+                    self.status = "没有已隐藏的对象".into();
+                } else {
+                    self.exec(Command::Compound { cmds });
+                    self.status = "已显示全部".into();
                 }
-                self.doc.rev += 1;
-                self.status = "已显示全部".into();
             }
             // ── P3.2 命令面板 ──
             "app.command_palette" => {
@@ -1134,20 +1285,26 @@ impl VellumApp {
                     self.status = "钢笔:路径已结束(开放)".into();
                     return;
                 }
-                // P4.3 隔离模式:Esc 逐层退出
-                if self.isolate.is_some() {
-                    self.isolate = self
-                        .isolate
-                        .and_then(|id| self.doc.nodes.get(id).and_then(|n| n.parent))
-                        .filter(|p| {
+                // P4.3 隔离模式:Esc 逐层弹出进入栈(面包屑回退)
+                if let Some(popped) = self.isolate_stack.pop() {
+                    self.selection.clear();
+                    let name = self
+                        .doc
+                        .nodes
+                        .get(popped)
+                        .map(|n| n.name.clone())
+                        .unwrap_or_default();
+                    self.status = match self.isolate_top() {
+                        Some(up) => format!(
+                            "退出 {name} → {}",
                             self.doc
                                 .nodes
-                                .get(*p)
-                                .map(|n| matches!(n.kind, NodeKind::Group))
-                                .unwrap_or(false)
-                        });
-                    self.selection.clear();
-                    self.status = "退出隔离模式".into();
+                                .get(up)
+                                .map(|n| n.name.clone())
+                                .unwrap_or_default()
+                        ),
+                        None => format!("退出隔离模式({name})"),
+                    };
                     return;
                 }
                 self.selection.clear();
@@ -1278,14 +1435,37 @@ impl VellumApp {
     }
 
     fn ungroup_selection(&mut self) {
-        let Some(sid) = self.selection.first().cloned() else {
+        // 多选解散全部组(AI 行为);散开后重选原成员
+        let groups: Vec<String> = self
+            .selection
+            .iter()
+            .filter(|sid| {
+                self.doc
+                    .find_by_sid(sid)
+                    .and_then(|nid| self.doc.nodes.get(nid))
+                    .is_some_and(|n| matches!(n.kind, NodeKind::Group))
+            })
+            .cloned()
+            .collect();
+        if groups.is_empty() {
+            self.status = "取消编组:选中对象里没有编组".into();
             return;
-        };
-        self.exec(Command::Ungroup {
-            group_sid: sid,
-            captured: None,
-        });
-        self.selection.clear();
+        }
+        let mut members: Vec<String> = Vec::new();
+        for g in &groups {
+            if let Some(gid) = self.doc.find_by_sid(g) {
+                for c in &self.doc.nodes.get(gid).unwrap().children {
+                    members.push(self.doc.nodes.get(*c).unwrap().sid.as_str().to_string());
+                }
+            }
+        }
+        for g in groups {
+            self.exec(Command::Ungroup {
+                group_sid: g,
+                captured: None,
+            });
+        }
+        self.selection = members;
         self.status = "已取消编组(Ctrl+Shift+G)".into();
     }
 
@@ -1430,10 +1610,25 @@ impl VellumApp {
         if pts.len() < 2 {
             return;
         }
+        // 平滑点(拖出出手柄)→ 三次贝塞尔;单柄 → 二次;无柄 → 直线(06 篇 §5.3)
         let mut path = vb_common::geom::BezPath::new();
-        path.move_to(vb_common::geom::Point::new(pts[0].0, pts[0].1));
-        for p in &pts[1..] {
-            path.line_to(vb_common::geom::Point::new(p.0, p.1));
+        path.move_to(vb_common::geom::Point::new(
+            pts[0].anchor.0,
+            pts[0].anchor.1,
+        ));
+        let n = pts.len();
+        let segs = if closed { n } else { n - 1 };
+        for i in 1..=segs {
+            let prev = &pts[i - 1];
+            let cur = &pts[i % n];
+            let end = vb_common::geom::Point::new(cur.anchor.0, cur.anchor.1);
+            let c1 = prev.h_out.map(|(x, y)| vb_common::geom::Point::new(x, y));
+            let c2 = cur.h_in().map(|(x, y)| vb_common::geom::Point::new(x, y));
+            match (c1, c2) {
+                (Some(a), Some(b)) => path.curve_to(a, b, end),
+                (Some(a), None) | (None, Some(a)) => path.quad_to(a, end),
+                (None, None) => path.line_to(end),
+            }
         }
         if closed {
             path.close_path();
@@ -1504,18 +1699,18 @@ impl VellumApp {
             value: "1.5px".into(),
             important: false,
         });
-        let ab = self
-            .artboard_at_world(n.geom.x, n.geom.y)
-            .or(self.doc.artboards.first().copied())
-            .unwrap();
-        let ab_sid = self.doc.nodes.get(ab).unwrap().sid.as_str().to_string();
-        let ab_len = self.doc.nodes.get(ab).unwrap().children.len();
+        let parent = self.insert_target(n.geom.x, n.geom.y);
+        let (dx, dy) = self.world_to_parent_local(parent, 0.0, 0.0);
+        n.geom.x += dx;
+        n.geom.y += dy;
+        let parent_sid = self.doc.nodes.get(parent).unwrap().sid.as_str().to_string();
+        let ab_len = self.doc.nodes.get(parent).unwrap().children.len();
         let tree = vb_doc::model::NodeTree {
             node: n,
             children: vec![],
         };
         self.exec(Command::Insert {
-            parent_sid: ab_sid,
+            parent_sid,
             index: ab_len,
             tree,
         });
@@ -1853,6 +2048,9 @@ impl VellumApp {
                                 (Tool::DirectSelect, Name::ToolSelect, "直接选择", "A"),
                                 (Tool::Zoom, Name::ZoomIn, "缩放", "Z"),
                                 (Tool::Hand, Name::ToolHand, "抓手", "H"),
+                                (Tool::Text, Name::ToolText, "文字", "T"),
+                                (Tool::Eyedropper, Name::ToolEyedropper, "吸管", "I"),
+                                (Tool::Artboard, Name::ToolArtboard, "画板", "Shift+O"),
                             ] {
                                 if ToolButton::new(icon, label)
                                     .shortcut(key)
@@ -1871,6 +2069,9 @@ impl VellumApp {
                                         Tool::DirectSelect => "tool.direct_select",
                                         Tool::Zoom => "tool.zoom",
                                         Tool::Hand => "tool.hand",
+                                        Tool::Text => "tool.text",
+                                        Tool::Eyedropper => "tool.eyedropper",
+                                        Tool::Artboard => "tool.artboard",
                                     };
                                     self.run_command(id, false, false);
                                 }
@@ -2714,6 +2915,40 @@ impl VellumApp {
                 scene.append(&sub, Some(tf));
             }
         }
+        // P4.3 隔离模式:遮罩压暗非隔离内容,隔离子树顶层重绘保持全亮
+        // (06 篇 §4.3「淡化 25%」;重绘与所属画板同一变换)
+        if let Some(iso) = self.isolate_top() {
+            if let Some(ab) = vb_tools::artboard_of(&self.doc, iso) {
+                if let Some(abn) = self.doc.nodes.get(ab) {
+                    let z = self.camera.zoom;
+                    let tf = vello::kurbo::Affine::translate(vello::kurbo::Vec2::new(
+                        self.camera.pan_x + abn.geom.x * z,
+                        self.camera.pan_y + abn.geom.y * z,
+                    )) * vello::kurbo::Affine::scale(z);
+                    let c = Tokens::get(self.theme_dark).bg_canvas;
+                    let scrim = vello::peniko::Color::from_rgba8(c.r(), c.g(), c.b(), 185);
+                    let mut sc = vello::Scene::new();
+                    sc.fill(
+                        vello::peniko::Fill::NonZero,
+                        vello::kurbo::Affine::IDENTITY,
+                        scrim,
+                        None,
+                        &vello::kurbo::Rect::new(
+                            -1.0e5,
+                            -1.0e5,
+                            abn.geom.w + 1.0e5,
+                            abn.geom.h + 1.0e5,
+                        ),
+                    );
+                    scene.append(&sc, Some(tf));
+                    if let Ok(list) = vb_render::encode::encode_subtree(&self.doc, iso) {
+                        let mut sub = vello::Scene::new();
+                        vb_render::gpu::encode_scene(&mut sub, &list);
+                        scene.append(&sub, Some(tf));
+                    }
+                }
+            }
+        }
         let gpu = self.gpu.as_mut().unwrap();
         if let Some((_, view, s, _)) = &gpu.tex {
             let params = vello::RenderParams {
@@ -2747,18 +2982,44 @@ impl VellumApp {
             }
             return;
         }
-        // 单击创建(Rect/Ellipse/Line 工具下单击 = 默认尺寸形状;处理单帧合并的合成拖拽)
-        if response.clicked() && matches!(self.tool, Tool::Rect | Tool::Ellipse | Tool::Line) {
+        // 吸管单击:取色/取样式应用到选区(06 篇 §5.4;Alt = 全部样式)
+        if response.clicked() && self.tool == Tool::Eyedropper {
+            let alt = ctx.input(|i| i.modifiers.alt);
+            self.eyedropper_pick(alt);
+            return;
+        }
+        // 单击创建(Rect/Ellipse/Line/Text/Artboard 工具下单击 = 默认尺寸;处理单帧合并的合成拖拽)
+        if response.clicked()
+            && matches!(
+                self.tool,
+                Tool::Rect | Tool::Ellipse | Tool::Line | Tool::Text | Tool::Artboard
+            )
+        {
             if let Some(p) = response.interact_pointer_pos() {
                 let pl = p - rect.min;
                 let (wx, wy) = self.camera.screen_to_world(pl.x as f64, pl.y as f64);
-                self.create_shape(Geom {
-                    x: (wx - 60.0).round(),
-                    y: (wy - 40.0).round(),
-                    w: 120.0,
-                    h: 80.0,
-                });
-                self.status = "已创建对象(单击默认尺寸)".into();
+                match self.tool {
+                    Tool::Text => {
+                        self.create_text_node((wx.round(), wy.round()), None);
+                    }
+                    Tool::Artboard => {
+                        self.create_artboard(Geom {
+                            x: wx.round(),
+                            y: wy.round(),
+                            w: 1440.0,
+                            h: 900.0,
+                        });
+                    }
+                    _ => {
+                        self.create_shape(Geom {
+                            x: (wx - 60.0).round(),
+                            y: (wy - 40.0).round(),
+                            w: 120.0,
+                            h: 80.0,
+                        });
+                        self.status = "已创建对象(单击默认尺寸)".into();
+                    }
+                }
                 return;
             }
         }
@@ -2768,7 +3029,8 @@ impl VellumApp {
                 let pl = p - rect.min;
                 let (wx, wy) = self.camera.screen_to_world(pl.x as f64, pl.y as f64);
                 let (wx, wy) = (wx.round(), wy.round());
-                if let Some(&(x0, y0)) = self.pen_points.first() {
+                if let Some(first) = self.pen_points.first() {
+                    let (x0, y0) = first.anchor;
                     if (wx - x0).hypot(wy - y0) <= 6.0 / self.camera.zoom
                         && self.pen_points.len() >= 3
                     {
@@ -2776,8 +3038,26 @@ impl VellumApp {
                         return;
                     }
                 }
-                self.pen_points.push((wx, wy));
+                self.pen_points.push(PenPt::corner(wx, wy));
                 // (request_repaint 由 egui 输入事件自动触发)
+            }
+            return;
+        }
+        // 钢笔拖拽(06 篇 §5.3 平滑点):按下锚点后拖出出手柄,入柄镜像
+        if response.drag_started() && self.tool == Tool::Pen {
+            if let Some(p0) = response.interact_pointer_pos() {
+                let pl = p0 - rect.min;
+                let (wx, wy) = self.camera.screen_to_world(pl.x as f64, pl.y as f64);
+                self.pen_points.push(PenPt::corner(wx.round(), wy.round()));
+            }
+            return;
+        }
+        if response.dragged() && self.tool == Tool::Pen && !self.pen_points.is_empty() {
+            if let Some(p0) = response.interact_pointer_pos() {
+                let pl = p0 - rect.min;
+                let (wx, wy) = self.camera.screen_to_world(pl.x as f64, pl.y as f64);
+                let last = self.pen_points.last_mut().unwrap();
+                last.h_out = Some((wx, wy));
             }
             return;
         }
@@ -2920,25 +3200,28 @@ impl VellumApp {
             return;
         }
 
-        // 双击:进入文本编辑(AI:双击文本进入编辑)
+        // 双击:进入文本编辑(AI:双击文本进入编辑)/编组进入隔离
         if response.double_clicked() && self.tool == Tool::Select {
             if let Some(p) = response.interact_pointer_pos() {
                 let pl = p - rect.min;
                 let (wx, wy) = self.camera.screen_to_world(pl.x as f64, pl.y as f64);
-                if let Some(ab) = self.artboard_at_world(wx, wy) {
-                    if let Some(nid) = vb_tools::hit_test(&self.doc, ab, wx, wy) {
-                        let n = self.doc.nodes.get(nid).unwrap();
-                        // P4.3 隔离模式:双击编组进入(06 篇 §4.3)
-                        if matches!(n.kind, NodeKind::Group) {
-                            self.isolate = Some(nid);
-                            self.selection.clear();
-                            self.status = format!("隔离模式:{}(Esc 退出)", n.name);
-                            return;
-                        }
-                        if matches!(n.kind, NodeKind::Text { .. }) {
-                            self.editing_text = Some(n.sid.as_str().to_string());
-                            self.status = format!("编辑文本:{}(Ctrl+Enter 提交,Esc 取消)", n.name);
-                        }
+                if let Some(nid) = self.pick_at_world(wx, wy) {
+                    let n = self.doc.nodes.get(nid).unwrap();
+                    // P4.3 隔离模式:双击编组进入(06 篇 §4.3;嵌套逐层进栈)
+                    if matches!(n.kind, NodeKind::Group) {
+                        self.isolate_stack.push(nid);
+                        self.selection.clear();
+                        let crumbs: Vec<String> = self
+                            .isolate_stack
+                            .iter()
+                            .filter_map(|id| self.doc.nodes.get(*id).map(|n| n.name.clone()))
+                            .collect();
+                        self.status = format!("隔离模式:{}(Esc 退出)", crumbs.join(" / "));
+                        return;
+                    }
+                    if matches!(n.kind, NodeKind::Text { .. }) {
+                        self.editing_text = Some(n.sid.as_str().to_string());
+                        self.status = format!("编辑文本:{}(Ctrl+Enter 提交,Esc 取消)", n.name);
                     }
                 }
             }
@@ -2964,6 +3247,35 @@ impl VellumApp {
                 return;
             };
             let p = p0 - rect.min; // 画布本地
+
+            // --- 0) 标尺参考线抓取(未锁定时优先级最高):从标尺拖出新建,
+            //        在参考线 ±3px 内按下则拖动既有参考线(02 篇 §5.2) ---
+            if self.tool == Tool::Select && !self.guides_locked {
+                let (wx, wy) = self.camera.screen_to_world(p.x as f64, p.y as f64);
+                const STRIP: f32 = 20.0;
+                let in_top = p.y <= STRIP;
+                let in_left = p.x <= STRIP;
+                let near_line = self.guides.iter().position(|&(h, pos)| {
+                    if h {
+                        let (_, sy) = self.camera.world_to_screen(0.0, pos);
+                        (p.y - sy as f32).abs() <= 3.0
+                    } else {
+                        let (sx, _) = self.camera.world_to_screen(pos, 0.0);
+                        (p.x - sx as f32).abs() <= 3.0
+                    }
+                });
+                if in_top || in_left || near_line.is_some() {
+                    let idx = match near_line {
+                        Some(i) if self.guides[i].0 == in_top => i,
+                        _ => {
+                            self.guides.push((in_top, if in_top { wy } else { wx }));
+                            self.guides.len() - 1
+                        }
+                    };
+                    self.drag = Drag::Guide { idx };
+                    return;
+                }
+            }
 
             // --- 1) 手柄/旋转命中(单选优先) ---
             if let (Some((bbox, sid)), true) = (sel_bbox_screen.clone(), self.tool == Tool::Select)
@@ -3025,8 +3337,7 @@ impl VellumApp {
                 }
                 Tool::Select => {
                     let hit = self
-                        .artboard_at_world(wx, wy)
-                        .and_then(|ab| vb_tools::hit_test(&self.doc, ab, wx, wy))
+                        .pick_at_world(wx, wy)
                         .map(|nid| self.doc.nodes.get(nid).unwrap().sid.as_str().to_string());
                     if let Some(sid) = hit {
                         if !self.selection.contains(&sid) {
@@ -3088,7 +3399,7 @@ impl VellumApp {
                         }
                     }
                 }
-                Tool::Rect | Tool::Ellipse | Tool::Line => {
+                Tool::Rect | Tool::Ellipse | Tool::Line | Tool::Text | Tool::Artboard => {
                     self.drag = Drag::Create { start: p, cur: p };
                 }
                 Tool::Zoom => {
@@ -3100,6 +3411,9 @@ impl VellumApp {
                 Tool::DirectSelect => {
                     // 直接选择:单击由 clicked() 处理(顶点命中)
                 }
+                Tool::Eyedropper => {
+                    // 吸管:单击由 clicked() 处理(取色/取样式)
+                }
             }
         }
 
@@ -3108,6 +3422,15 @@ impl VellumApp {
                 return;
             };
             let p = p0 - rect.min;
+
+            // 参考线拖动:实时跟随光标(世界坐标)
+            if let Drag::Guide { idx } = &self.drag {
+                let (wx, wy) = self.camera.screen_to_world(p.x as f64, p.y as f64);
+                if let Some(g) = self.guides.get_mut(*idx) {
+                    g.1 = if g.0 { wy } else { wx };
+                }
+                return;
+            }
 
             // 缩放 / 旋转(它们自成状态,不与 MoveObj 共路)
             match &self.drag {
@@ -3241,6 +3564,17 @@ impl VellumApp {
 
         if response.drag_stopped() {
             match std::mem::replace(&mut self.drag, Drag::None) {
+                Drag::Guide { idx } => {
+                    // 松手在标尺条内/画布外 = 删除(AI 拖回标尺删参考线)
+                    let inside = response.interact_pointer_pos().map(|pp| {
+                        let pl = pp - rect.min;
+                        pl.x > 20.0 && pl.y > 20.0 && rect.contains(pp)
+                    });
+                    if inside != Some(true) && idx < self.guides.len() {
+                        self.guides.remove(idx);
+                        self.status = "参考线已删除".into();
+                    }
+                }
                 Drag::Marquee { start, cur } => {
                     // 相交即选中(AI);框选落在拖拽起点所在画板(此前硬编码
                     // artboards.first(),多画板文档在其它画板框选错乱)
@@ -3256,7 +3590,19 @@ impl VellumApp {
                         .artboard_at_world(swx, swy)
                         .or_else(|| self.doc.artboards.first().copied());
                     if let Some(ab) = ab {
-                        let hits = vb_tools::marquee_select(&self.doc, ab, r);
+                        let hits = match self.isolate_top() {
+                            Some(iso) => {
+                                let (ox, oy) = self.doc.artboard_origin(ab);
+                                let lr = vb_common::geom::Rect::new(
+                                    r.x0 - ox,
+                                    r.y0 - oy,
+                                    r.x1 - ox,
+                                    r.y1 - oy,
+                                );
+                                vb_tools::marquee_select_root(&self.doc, iso, lr)
+                            }
+                            None => vb_tools::marquee_select(&self.doc, ab, r),
+                        };
                         let mut sids: Vec<String> = hits
                             .into_iter()
                             .map(|id| self.doc.nodes.get(id).unwrap().sid.as_str().to_string())
@@ -3277,8 +3623,38 @@ impl VellumApp {
                 Drag::Create { start, cur } => {
                     let (sx, sy) = self.camera.screen_to_world(start.x as f64, start.y as f64);
                     let (cx, cy) = self.camera.screen_to_world(cur.x as f64, cur.y as f64);
-                    let g = vb_tools::drag_rect_geom(sx, sy, cx, cy, shift, alt);
-                    self.create_shape(g);
+                    match self.tool {
+                        Tool::Text => {
+                            let g = vb_tools::drag_rect_geom(sx, sy, cx, cy, shift, alt);
+                            // 拖框 = 区域文本;几乎没拖 = 点文本(与 clicked 互斥,兜底)
+                            if g.w < 24.0 && g.h < 24.0 {
+                                self.create_text_node((sx.round(), sy.round()), None);
+                            } else {
+                                self.create_text_node(
+                                    (sx.round(), sy.round()),
+                                    Some(Geom {
+                                        x: g.x.round(),
+                                        y: g.y.round(),
+                                        w: g.w.round().max(120.0),
+                                        h: g.h.round().max(40.0),
+                                    }),
+                                );
+                            }
+                        }
+                        Tool::Artboard => {
+                            let g = vb_tools::drag_rect_geom(sx, sy, cx, cy, shift, alt);
+                            self.create_artboard(Geom {
+                                x: g.x.round(),
+                                y: g.y.round(),
+                                w: g.w.round().max(80.0),
+                                h: g.h.round().max(80.0),
+                            });
+                        }
+                        _ => {
+                            let g = vb_tools::drag_rect_geom(sx, sy, cx, cy, shift, alt);
+                            self.create_shape(g);
+                        }
+                    }
                 }
                 Drag::ZoomRegion { start, cur } => {
                     let (x0, y0) = self
@@ -3616,6 +3992,77 @@ impl VellumApp {
     fn draw_overlays(&self, painter: &egui::Painter, viewport: Rect) {
         let t = Tokens::get(self.theme_dark);
         let origin = viewport.min.to_vec2();
+
+        // P4.2 标尺参考线(青色;从选区生成/从标尺拖出,世界坐标)
+        if self.guides_visible {
+            for &(h, pos) in &self.guides {
+                let seg = if h {
+                    let (_, sy) = self.camera.world_to_screen(0.0, pos);
+                    [
+                        pos2(viewport.left(), sy as f32 + origin.y),
+                        pos2(viewport.right(), sy as f32 + origin.y),
+                    ]
+                } else {
+                    let (sx, _) = self.camera.world_to_screen(pos, 0.0);
+                    [
+                        pos2(sx as f32 + origin.x, viewport.top()),
+                        pos2(sx as f32 + origin.x, viewport.bottom()),
+                    ]
+                };
+                painter.line_segment(seg, Stroke::new(1.0, semantic::GUIDE_RULER));
+            }
+        }
+
+        // P4.5 钢笔预览:锚点连线 + 橡皮筋 + 平滑手柄(出柄实线/入柄镜像虚线)
+        if self.tool == Tool::Pen && !self.pen_points.is_empty() {
+            let to_screen = |(x, y): (f64, f64)| {
+                let (sx, sy) = self.camera.world_to_screen(x, y);
+                pos2(sx as f32 + origin.x, sy as f32 + origin.y)
+            };
+            let stroke = Stroke::new(1.2, semantic::SELECT_BOX);
+            let mut prev = to_screen(self.pen_points[0].anchor);
+            for pt in self.pen_points.iter().skip(1) {
+                let cur = to_screen(pt.anchor);
+                painter.line_segment([prev, cur], stroke);
+                prev = cur;
+            }
+            // 橡皮筋:最后锚点 → 光标
+            let last = self.pen_points.last().unwrap();
+            let cursor = to_screen(self.cursor_world);
+            painter.line_segment(
+                [to_screen(last.anchor), cursor],
+                Stroke::new(0.8, semantic::HOVER_BOX),
+            );
+            // 锚点方块 + 手柄
+            for pt in &self.pen_points {
+                let a = to_screen(pt.anchor);
+                painter.rect_filled(
+                    Rect::from_center_size(a, vec2(6.0, 6.0)),
+                    1.0,
+                    semantic::SELECT_BOX,
+                );
+                if let Some((hx, hy)) = pt.h_out {
+                    let h = to_screen((hx, hy));
+                    painter.line_segment([a, h], Stroke::new(0.8, semantic::GUIDE_SMART_DARK));
+                    painter.circle_filled(h, 2.5, semantic::GUIDE_SMART_DARK);
+                    if let Some((ix, iy)) = pt.h_in() {
+                        let i2 = to_screen((ix, iy));
+                        painter.line_segment([a, i2], Stroke::new(0.8, semantic::GUIDE_SMART_DARK));
+                        painter.circle_filled(i2, 2.5, semantic::GUIDE_SMART_DARK);
+                    }
+                }
+            }
+            // 靠近起点 ≥3 锚点:高亮提示可闭合
+            if self.pen_points.len() >= 3 {
+                let (x0, y0) = self.pen_points[0].anchor;
+                if (self.cursor_world.0 - x0).hypot(self.cursor_world.1 - y0)
+                    <= 8.0 / self.camera.zoom
+                {
+                    painter.circle_filled(to_screen((x0, y0)), 5.0, semantic::SELECT_BOX);
+                }
+            }
+        }
+
         // 智能参考线(品红,与 AI 同色)
         for l in &self.smart_guides {
             let (x0, y0) = self.camera.world_to_screen(l[0], l[1]);
@@ -3840,6 +4287,85 @@ impl VellumApp {
             }
             _ => {}
         }
+
+        // P4.2 标尺(上/左,20px;刻度与网格同一世界节奏,最后画盖在内容上)
+        if self.rulers_on {
+            const STRIP: f32 = 20.0;
+            painter.rect_filled(
+                Rect::from_min_max(
+                    pos2(viewport.left(), viewport.top()),
+                    pos2(viewport.right(), viewport.top() + STRIP),
+                ),
+                0.0,
+                t.bg_panel,
+            );
+            painter.rect_filled(
+                Rect::from_min_max(
+                    pos2(viewport.left(), viewport.top()),
+                    pos2(viewport.left() + STRIP, viewport.bottom()),
+                ),
+                0.0,
+                t.bg_panel,
+            );
+            let mut level = 64.0f64;
+            while level * self.camera.zoom < 12.0 {
+                level *= 4.0;
+            }
+            let label_step = level * 2.0;
+            let tick = Stroke::new(1.0, t.border);
+            let wx_left = (0.0 - self.camera.pan_x) / self.camera.zoom;
+            let wx_right = (viewport.width() as f64 - self.camera.pan_x) / self.camera.zoom;
+            let k0 = (wx_left / level).floor() as i64;
+            let k1 = (wx_right / level).ceil() as i64;
+            for k in k0..=k1 {
+                let wx = k as f64 * level;
+                let sx = (wx * self.camera.zoom + self.camera.pan_x) as f32 + origin.x;
+                let is_label = (wx / label_step).fract().abs() < 1e-6;
+                let len = if is_label { 10.0 } else { 5.0 };
+                painter.line_segment(
+                    [
+                        pos2(sx, viewport.top() + STRIP - len),
+                        pos2(sx, viewport.top() + STRIP),
+                    ],
+                    tick,
+                );
+                if is_label {
+                    painter.text(
+                        pos2(sx + 2.0, viewport.top()),
+                        Align2::LEFT_TOP,
+                        format!("{}", wx as i64),
+                        FontId::monospace(9.0),
+                        t.text_2,
+                    );
+                }
+            }
+            let wy_top = (0.0 - self.camera.pan_y) / self.camera.zoom;
+            let wy_bottom = (viewport.height() as f64 - self.camera.pan_y) / self.camera.zoom;
+            let j0 = (wy_top / level).floor() as i64;
+            let j1 = (wy_bottom / level).ceil() as i64;
+            for j in j0..=j1 {
+                let wy = j as f64 * level;
+                let sy = (wy * self.camera.zoom + self.camera.pan_y) as f32 + origin.y;
+                let is_label = (wy / label_step).fract().abs() < 1e-6;
+                let len = if is_label { 10.0 } else { 5.0 };
+                painter.line_segment(
+                    [
+                        pos2(viewport.left() + STRIP - len, sy),
+                        pos2(viewport.left() + STRIP, sy),
+                    ],
+                    tick,
+                );
+                if is_label {
+                    painter.text(
+                        pos2(viewport.left() + 1.0, sy + 1.0),
+                        Align2::LEFT_TOP,
+                        format!("{}", wy as i64),
+                        FontId::monospace(9.0),
+                        t.text_2,
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -3902,28 +4428,34 @@ fn set_style_prop(style: Vec<vb_css::Decl>, prop: &str, value: &str) -> Vec<vb_c
 }
 
 fn draw_grid(painter: &egui::Painter, rect: Rect, cam: &Camera, dark: bool) {
-    let step = 64.0 * cam.zoom as f32;
-    if step < 8.0 {
+    // 世界锚定:网格线 = 世界 k*level,屏幕位 = k*level*zoom + pan。
+    // 此前按屏幕取整导致平移时网格纹丝不动、缩放时相对世界跳动。
+    let mut level = 64.0f64;
+    while level * cam.zoom < 16.0 {
+        level *= 4.0;
+    }
+    let step = (level * cam.zoom) as f32;
+    if step < 6.0 {
         return;
     }
     let color = semantic::guide_grid(dark);
-    let start_x = (rect.left() / step).floor() * step;
-    let start_y = (rect.top() / step).floor() * step;
-    let mut x = start_x;
-    while x <= rect.right() {
+    let k0 = ((rect.left() as f64 - cam.pan_x) / (level * cam.zoom)).floor() as i64;
+    let k1 = ((rect.right() as f64 - cam.pan_x) / (level * cam.zoom)).ceil() as i64;
+    for k in k0..=k1 {
+        let x = (k as f64 * level * cam.zoom + cam.pan_x) as f32;
         painter.line_segment(
             [pos2(x, rect.top()), pos2(x, rect.bottom())],
             Stroke::new(0.5, color),
         );
-        x += step;
     }
-    let mut y = start_y;
-    while y <= rect.bottom() {
+    let j0 = ((rect.top() as f64 - cam.pan_y) / (level * cam.zoom)).floor() as i64;
+    let j1 = ((rect.bottom() as f64 - cam.pan_y) / (level * cam.zoom)).ceil() as i64;
+    for j in j0..=j1 {
+        let y = (j as f64 * level * cam.zoom + cam.pan_y) as f32;
         painter.line_segment(
             [pos2(rect.left(), y), pos2(rect.right(), y)],
             Stroke::new(0.5, color),
         );
-        y += step;
     }
 }
 
@@ -4121,23 +4653,180 @@ impl VellumApp {
                 important: false,
             });
         }
-        let ab = self
-            .artboard_at_world(g.x, g.y)
-            .or(self.doc.artboards.first().copied())
-            .unwrap();
-        let ab_sid = self.doc.nodes.get(ab).unwrap().sid.as_str().to_string();
-        let ab_len = self.doc.nodes.get(ab).unwrap().children.len();
+        let parent = self.insert_target(g.x, g.y);
+        let (lx, ly) = self.world_to_parent_local(parent, g.x, g.y);
+        n.geom.x = lx;
+        n.geom.y = ly;
+        let parent_sid = self.doc.nodes.get(parent).unwrap().sid.as_str().to_string();
+        let plen = self.doc.nodes.get(parent).unwrap().children.len();
         let tree = vb_doc::model::NodeTree {
             node: n,
             children: vec![],
         };
         self.exec(Command::Insert {
-            parent_sid: ab_sid,
-            index: ab_len,
+            parent_sid,
+            index: plen,
             tree,
         });
         self.selection = vec![sid.as_str().to_string()];
         self.status = "已创建对象".into();
+    }
+
+    /// 文字工具:点文本(area=None)/ 区域文本(拖框)。
+    /// 创建后立即进入编辑(AI 行为)。
+    fn create_text_node(&mut self, point: (f64, f64), area: Option<Geom>) {
+        let parent = self.insert_target(point.0, point.1);
+        let (lx, ly) = self.world_to_parent_local(parent, point.0, point.1);
+        let sid = self.doc.alloc_sid();
+        let (mode, g) = match area {
+            Some(mut a) => {
+                a.x = lx;
+                a.y = ly;
+                (vb_doc::model::TextMode::Area, a)
+            }
+            None => (
+                vb_doc::model::TextMode::Point,
+                Geom {
+                    x: lx,
+                    y: ly,
+                    w: 200.0,
+                    h: 36.0,
+                },
+            ),
+        };
+        let mut n = vb_doc::model::Node::new(
+            NodeKind::Text {
+                text: "双击编辑文本".into(),
+                mode,
+            },
+            format!("文本 {}", sid.as_str()),
+            sid.clone(),
+        );
+        n.tag = "p".into();
+        n.geom = g;
+        n.style.push(vb_css::Decl {
+            prop: "font-size".into(),
+            value: "24px".into(),
+            important: false,
+        });
+        n.style.push(vb_css::Decl {
+            prop: "color".into(),
+            // vb-token-ok: 新建文本默认字色(文档内容,非 UI 皮肤)
+            value: "#1a1a1a".into(),
+            important: false,
+        });
+        let parent_sid = self.doc.nodes.get(parent).unwrap().sid.as_str().to_string();
+        let plen = self.doc.nodes.get(parent).unwrap().children.len();
+        let tree = vb_doc::model::NodeTree {
+            node: n,
+            children: vec![],
+        };
+        self.exec(Command::Insert {
+            parent_sid,
+            index: plen,
+            tree,
+        });
+        self.selection = vec![sid.as_str().to_string()];
+        self.editing_text = Some(sid.as_str().to_string());
+        self.status = if area.is_some() {
+            "已创建区域文本(拖框宽度即换行宽度)".into()
+        } else {
+            "已创建点文本(输入内容,Ctrl+Enter 提交)".into()
+        };
+    }
+
+    /// 画板工具:在世界坐标处新建画板(画板 geom 即世界坐标)。
+    fn create_artboard(&mut self, g: Geom) {
+        let count = self.doc.artboards.len();
+        let sid = self.doc.alloc_sid();
+        let mut n = vb_doc::model::Node::new(
+            NodeKind::Artboard,
+            format!("画板 {}", count + 1),
+            sid.clone(),
+        );
+        n.geom = g;
+        let root_sid = self
+            .doc
+            .nodes
+            .get(self.doc.root)
+            .unwrap()
+            .sid
+            .as_str()
+            .to_string();
+        let tree = vb_doc::model::NodeTree {
+            node: n,
+            children: vec![],
+        };
+        self.exec(Command::Insert {
+            parent_sid: root_sid,
+            index: usize::MAX,
+            tree,
+        });
+        self.selection = vec![sid.as_str().to_string()];
+        self.status = format!("已新建画板 {}({}×{})", count + 1, g.w as i64, g.h as i64);
+    }
+
+    /// 吸管:命中对象取填充色应用到选区;Alt = 吸取全部样式替换。
+    fn eyedropper_pick(&mut self, alt: bool) {
+        let (wx, wy) = self.cursor_world;
+        let Some(nid) = self.pick_at_world(wx, wy) else {
+            self.status = "吸管:未命中对象".into();
+            return;
+        };
+        let src = self.doc.nodes.get(nid).unwrap();
+        if alt {
+            // 全部样式:整份替换(目标无声明才允许空)
+            let style = src.style.clone();
+            if style.is_empty() {
+                self.status = "吸管:目标没有样式可吸取".into();
+                return;
+            }
+            let targets = self.selection.clone();
+            if targets.is_empty() {
+                self.status = format!("已吸取 {} 条样式(先选中对象再点应用)", style.len());
+                return;
+            }
+            for sid in targets {
+                self.exec(Command::SetStyle {
+                    sid,
+                    new: style.clone(),
+                    old: None,
+                });
+            }
+            self.status = format!("已应用全部样式({} 条声明)", style.len());
+        } else {
+            let Some(color) = src.fill_color() else {
+                self.status = "吸管:目标没有填充色(Alt 可吸全部样式)".into();
+                return;
+            };
+            let hex = color.to_shortest_hex();
+            let targets = self.selection.clone();
+            if targets.is_empty() {
+                self.status = format!("已取色 {hex}(先选中对象再点应用)");
+                return;
+            }
+            for sid in targets {
+                let Some(t) = self.doc.find_by_sid(&sid) else {
+                    continue;
+                };
+                let mut style = self.doc.nodes.get(t).unwrap().style.clone();
+                if let Some(d) = style.iter_mut().find(|d| d.prop == "background-color") {
+                    d.value = hex.clone();
+                } else {
+                    style.push(vb_css::Decl {
+                        prop: "background-color".into(),
+                        value: hex.clone(),
+                        important: false,
+                    });
+                }
+                self.exec(Command::SetStyle {
+                    sid,
+                    new: style,
+                    old: None,
+                });
+            }
+            self.status = format!("已应用填充 {hex}");
+        }
     }
 }
 

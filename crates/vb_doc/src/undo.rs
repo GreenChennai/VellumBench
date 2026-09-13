@@ -102,6 +102,16 @@ impl UndoStack {
         }
     }
 
+    /// 栈顶命令窥视(宿主在 undo/redo 后据此恢复选区;不移除)。
+    pub fn top(&self) -> Option<&Command> {
+        self.undo.last()
+    }
+
+    /// redo 栈顶命令窥视。
+    pub fn top_redo(&self) -> Option<&Command> {
+        self.redo.last()
+    }
+
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }
