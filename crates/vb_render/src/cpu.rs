@@ -123,7 +123,12 @@ fn draw_item(
         DrawKind::Image => {
             let src = item.src.clone().unwrap_or_default();
             let mut drew = false;
-            if !src.is_empty() {
+            if let Some(bmp) = &item.image {
+                // 已挂载位图:直接走 RGBA,不再读文件(B3)
+                draw_bitmap_rgba(pixmap, bmp, x, y, iw, ih, scale, item.rot, item.opacity);
+                drew = true;
+            }
+            if !drew && !src.is_empty() {
                 if let Some(dir) = project_dir {
                     let p = dir.join(&src);
                     if p.is_file() {
@@ -342,11 +347,43 @@ fn draw_bitmap(
 ) -> Result<(), String> {
     let img = image::open(path).map_err(|e| e.to_string())?;
     let rgba = img.to_rgba8();
+    draw_bitmap_rgba(
+        pixmap,
+        &crate::encode::BitmapData {
+            width: rgba.width(),
+            height: rgba.height(),
+            rgba: std::sync::Arc::new(rgba.into_raw()),
+        },
+        x,
+        y,
+        w,
+        h,
+        scale,
+        rot_deg,
+        opacity,
+    );
+    Ok(())
+}
+
+/// 把 RGBA 位图绘制到设备坐标(B3 核心;文件路径与 GPU 挂载共用)。
+fn draw_bitmap_rgba(
+    pixmap: &mut Pixmap,
+    bmp: &crate::encode::BitmapData,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    scale: f32,
+    rot_deg: f64,
+    opacity: f32,
+) {
     let dw = ((w * scale as f64).round() as u32).max(1);
     let dh = ((h * scale as f64).round() as u32).max(1);
-    let resized = image::imageops::resize(&rgba, dw, dh, image::imageops::FilterType::Triangle);
+    let src = image::RgbaImage::from_raw(bmp.width, bmp.height, (*bmp.rgba).clone())
+        .unwrap_or_else(|| image::RgbaImage::new(dw, dh));
+    let resized = image::imageops::resize(&src, dw, dh, image::imageops::FilterType::Triangle);
     let Some(mut pm) = Pixmap::new(dw, dh) else {
-        return Err("tiny-skia 位图构建失败".into());
+        return;
     };
     pm.data_mut().copy_from_slice(resized.as_raw());
     // 位置必须乘 scale(设备坐标);旋转绕缩放后矩形中心,与其他绘制
@@ -365,7 +402,6 @@ fn draw_bitmap(
         ..tiny_skia::PixmapPaint::default()
     };
     pixmap.draw_pixmap(0, 0, pm.as_ref(), &paint, tf, None);
-    Ok(())
 }
 
 /// 色标 → tiny-skia 色标。节点 opacity 乘进每档 alpha(与 GPU 端一致,

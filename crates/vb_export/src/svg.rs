@@ -224,9 +224,22 @@ fn write_item(out: &mut String, i: usize, item: &DrawItem, scale: f64) {
             out.push('\n');
         }
         DrawKind::Image => {
+            if let Some(bmp) = &item.image {
+                // 位图以 data URL 嵌入(B3):导出的独立 SVG 不再丢图;
+                // PNG 载荷由原始 RGBA 现场编码(导出一次,不逐帧)
+                if let Some(href) = bitmap_data_url(bmp) {
+                    let _ = write!(
+                        out,
+                        r#"<image x="{x}" y="{y}" width="{w}" height="{h}" opacity="{}" preserveAspectRatio="none" href="{href}"{tf}/><!-- image: {:?} -->"#,
+                        item.opacity, item.src
+                    );
+                    out.push('\n');
+                    return;
+                }
+            }
             let _ = write!(
                 out,
-                r#"<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="none" stroke="rgb(230,77,77)" stroke-width="2"{tf}/><!-- image: {:?} -->"#,
+                r#"<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="none" stroke="rgb(230,77,77)" stroke-width="2"{tf}/><!-- image missing: {:?} -->"#,
                 item.src
             );
             out.push('\n');
@@ -294,6 +307,17 @@ fn write_item(out: &mut String, i: usize, item: &DrawItem, scale: f64) {
             }
         }
     }
+}
+
+/// RGBA 位图 → `data:image/png;base64,…`(导出一次性成本)。
+fn bitmap_data_url(bmp: &vb_render::encode::BitmapData) -> Option<String> {
+    use base64::Engine as _;
+    use std::io::Write as _;
+    let img = image::RgbaImage::from_raw(bmp.width, bmp.height, (*bmp.rgba).clone())?;
+    let mut png = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut png, image::ImageFormat::Png).ok()?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(png.get_ref());
+    Some(format!("data:image/png;base64,{b64}"))
 }
 
 /// 四角异径圆角矩形 → SVG path d 串(与 cpu.rs rect_path 同一几何:

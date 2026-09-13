@@ -19,22 +19,40 @@ pub fn export_artboard_png(
     transparent: bool,
     project_dir: Option<&Path>,
 ) -> Result<(Vec<u8>, Vec<String>), String> {
-    let list = vb_render::encode::encode_artboard_opts(doc, artboard, transparent)
+    let mut list = vb_render::encode::encode_artboard_opts(doc, artboard, transparent)
         .map_err(|e| e.to_string())?;
+    if let Some(dir) = project_dir {
+        vb_render::encode::attach_images(&mut list, &mut |src| load_bitmap_from(dir, src));
+    }
     let res = vb_render::cpu::render_png(&list, scale, transparent, project_dir)?;
     Ok((res.png, res.warnings))
 }
 
-/// 渲染单个画板为 SVG(原生矢量;文本为真实 `<text>`)。
+/// 渲染单个画板为 SVG(原生矢量;文本为真实 `<text>`;位图 base64 嵌入)。
 pub fn export_artboard_svg(
     doc: &Document,
     artboard: vb_doc::model::NodeId,
     scale: u32,
     transparent: bool,
+    project_dir: Option<&Path>,
 ) -> Result<String, String> {
-    let list = vb_render::encode::encode_artboard_opts(doc, artboard, transparent)
+    let mut list = vb_render::encode::encode_artboard_opts(doc, artboard, transparent)
         .map_err(|e| e.to_string())?;
+    if let Some(dir) = project_dir {
+        vb_render::encode::attach_images(&mut list, &mut |src| load_bitmap_from(dir, src));
+    }
     Ok(svg::render_svg(&list, scale, transparent))
+}
+
+/// 从项目目录解码一张位图(无缓存;GUI 由调用方持有缓存)。
+fn load_bitmap_from(dir: &Path, src: &str) -> Option<vb_render::encode::BitmapData> {
+    let img = image::open(dir.join(src)).ok()?;
+    let rgba = img.to_rgba8();
+    Some(vb_render::encode::BitmapData {
+        width: rgba.width(),
+        height: rgba.height(),
+        rgba: std::sync::Arc::new(rgba.into_raw()),
+    })
 }
 
 /// 命名模板展开(设计文档 07 篇 §六):`{doc} {artboard} {scale} {ext} {index} {width} {height}`。

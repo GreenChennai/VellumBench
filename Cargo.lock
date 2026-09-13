@@ -4693,6 +4693,7 @@ dependencies = [
 name = "vb_export"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "image",
  "resvg",
  "serde_json",

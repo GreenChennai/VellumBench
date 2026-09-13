@@ -144,6 +144,9 @@ pub struct VellumApp {
     /// P4.2 标尺开关与参考线(画板本地坐标;true=水平线)
     /// 轮廓模式(线框):`Mod+Y`(02 篇 §四-视图)
     outline_mode: bool,
+    /// 位图缓存(B3):GUI 逐帧编码,不缓存则每帧解码一次文件;
+    /// 热重载/打开新项目时清空。
+    image_cache: std::collections::HashMap<String, vb_render::encode::BitmapData>,
     /// 当前主题(true=深色)。P2.7 支持浅色。
     theme_dark: bool,
     /// 右侧面板当前 Tab(P2.6)。
@@ -226,6 +229,7 @@ impl VellumApp {
             grid_on: true,
             smart_guides_on: true,
             outline_mode: false,
+            image_cache: std::collections::HashMap::new(),
             theme_dark: true,
             panel_tab: 0,
             smart_guides: Vec::new(),
@@ -341,6 +345,8 @@ impl VellumApp {
             return;
         }
         while rx.try_recv().is_ok() {}
+        // 文档变更:位图缓存整体失效(B3;文件内容可能已被外部替换)
+        self.image_cache.clear();
         if self
             .last_self_write
             .map(|t| t.elapsed() < std::time::Duration::from_millis(800))
@@ -479,7 +485,13 @@ impl VellumApp {
                 },
                 Err(e) => self.status = format!("导出失败:{e}"),
             },
-            1 => match vb_export::export_artboard_svg(&self.doc, ab, scale, false) {
+            1 => match vb_export::export_artboard_svg(
+                &self.doc,
+                ab,
+                scale,
+                false,
+                self.project_dir.as_deref(),
+            ) {
                 Ok(svg) => match std::fs::write(&out, &svg) {
                     Ok(()) => {
                         self.status = format!(
@@ -2989,7 +3001,28 @@ impl VellumApp {
         // 编码 + 渲染(当前画板;多画板逐个编码)
         let mut scene = vello::Scene::new();
         for &ab in &self.doc.artboards {
-            if let Ok(list) = encode_artboard(&self.doc, ab) {
+            let mut list = match encode_artboard(&self.doc, ab) {
+                Ok(l) => l,
+                Err(_) => continue,
+            };
+            if let Some(dir) = self.project_dir.clone() {
+                let cache = &mut self.image_cache;
+                vb_render::encode::attach_images(&mut list, &mut |src| {
+                    if let Some(bmp) = cache.get(src) {
+                        return Some(bmp.clone());
+                    }
+                    let img = image::open(dir.join(src)).ok()?;
+                    let rgba = img.to_rgba8();
+                    let bmp = vb_render::encode::BitmapData {
+                        width: rgba.width(),
+                        height: rgba.height(),
+                        rgba: std::sync::Arc::new(rgba.into_raw()),
+                    };
+                    cache.insert(src.to_string(), bmp.clone());
+                    Some(bmp)
+                });
+            }
+            {
                 let n = self.doc.nodes.get(ab).unwrap();
                 let z = self.camera.zoom;
                 let tx = self.camera.pan_x + n.geom.x * z;
@@ -3027,7 +3060,25 @@ impl VellumApp {
                         ),
                     );
                     scene.append(&sc, Some(tf));
-                    if let Ok(list) = vb_render::encode::encode_subtree(&self.doc, iso) {
+                    if let Ok(mut list) = vb_render::encode::encode_subtree(&self.doc, iso) {
+                        // 隔离子树同样挂载位图(B3)
+                        if let Some(dir) = self.project_dir.clone() {
+                            let cache = &mut self.image_cache;
+                            vb_render::encode::attach_images(&mut list, &mut |src| {
+                                if let Some(bmp) = cache.get(src) {
+                                    return Some(bmp.clone());
+                                }
+                                let img = image::open(dir.join(src)).ok()?;
+                                let rgba = img.to_rgba8();
+                                let bmp = vb_render::encode::BitmapData {
+                                    width: rgba.width(),
+                                    height: rgba.height(),
+                                    rgba: std::sync::Arc::new(rgba.into_raw()),
+                                };
+                                cache.insert(src.to_string(), bmp.clone());
+                                Some(bmp)
+                            });
+                        }
                         let mut sub = vello::Scene::new();
                         vb_render::gpu::encode_scene(&mut sub, &list);
                         scene.append(&sub, Some(tf));

@@ -593,8 +593,9 @@ fn run(cli: Cli) -> Result<(), CliError> {
                     out.clone()
                 };
                 if is_svg {
-                    let svg = vb_export::export_artboard_svg(&doc, *id, scale, transparent)
-                        .map_err(CliError::Export)?;
+                    let svg =
+                        vb_export::export_artboard_svg(&doc, *id, scale, transparent, Some(&dir))
+                            .map_err(CliError::Export)?;
                     std::fs::write(&out_path, &svg)
                         .with_context(|| format!("写出 {}", out_path.display()))
                         .map_err(|e| CliError::Other(format!("{e:#}")))?;

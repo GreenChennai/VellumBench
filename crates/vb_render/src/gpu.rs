@@ -112,7 +112,30 @@ fn draw_item(scene: &mut Scene, item: &DrawItem) {
         }
         return;
     }
-    if item.kind == DrawKind::Image || item.kind == DrawKind::FrozenPlaceholder {
+    if item.kind == DrawKind::Image {
+        if let Some(bmp) = &item.image {
+            // 真实位图(B3):画布与导出同源,不再画米色占位
+            let peniko_img = vello::peniko::ImageData {
+                data: vello::peniko::Blob::new(bmp.rgba.clone()),
+                format: vello::peniko::ImageFormat::Rgba8,
+                alpha_type: vello::peniko::ImageAlphaType::Alpha,
+                width: bmp.width,
+                height: bmp.height,
+            };
+            let brush = Brush::Image(vello::peniko::ImageBrush::new(peniko_img));
+            // 路径 = 位图像素空间矩形,经 base 变换铺到节点矩形
+            let rect = vello::kurbo::Rect::new(0.0, 0.0, bmp.width as f64, bmp.height as f64);
+            let base = Affine::translate((x, y))
+                * Affine::scale_non_uniform(w / bmp.width as f64, h / bmp.height as f64);
+            scene.fill(vello::peniko::Fill::NonZero, tf * base, &brush, None, &rect);
+            return;
+        }
+        let shape = shape_of(item);
+        let brush = Brush::Solid(to_color([0.85, 0.83, 0.8, 1.0], item.opacity));
+        fill_shape(scene, &shape, &brush, tf);
+        return;
+    }
+    if item.kind == DrawKind::FrozenPlaceholder {
         let shape = shape_of(item);
         let brush = Brush::Solid(to_color([0.85, 0.83, 0.8, 1.0], item.opacity));
         fill_shape(scene, &shape, &brush, tf);

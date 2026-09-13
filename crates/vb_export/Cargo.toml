@@ -7,6 +7,8 @@ repository.workspace = true
 description = "Vellum Bench 导出管线:命名模板、原生引擎调度、WPI 桥接(v0.5)"
 
 [dependencies]
+base64 = "0.23.1"
+image.workspace = true
 serde_json = { workspace = true }
 vb_common = { workspace = true }
 vb_doc = { workspace = true }

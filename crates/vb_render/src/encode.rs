@@ -66,6 +66,33 @@ pub struct DrawItem {
     pub rot: f64,
     /// 矢量路径(P4 钢笔;画板本地坐标)。
     pub path: Option<vb_common::geom::BezPath>,
+    /// 已解码位图(B3):由 attach_images 挂载;缺失时各端回退占位。
+    pub image: Option<BitmapData>,
+}
+
+/// 已解码位图(RGBA8 直 alpha)。挂在 DrawItem 上供 GPU/SVG 消费;
+/// CPU 端优先用它避免重复解码文件。
+#[derive(Debug, Clone)]
+pub struct BitmapData {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: std::sync::Arc<Vec<u8>>,
+}
+
+/// 解析器:src(相对路径)→ 位图。宿主可包一层缓存(GUI 逐帧编码,
+/// 不缓存会每帧解码一次文件)。
+pub type ImageLoader<'a> = &'a mut dyn FnMut(&str) -> Option<BitmapData>;
+
+/// 把解析到的位图挂到 DrawList 的 Image 项上(就地修改)。
+pub fn attach_images(list: &mut DrawList, loader: ImageLoader) {
+    for item in &mut list.items {
+        if item.kind != DrawKind::Image || item.image.is_some() {
+            continue;
+        }
+        if let Some(src) = &item.src {
+            item.image = loader(src);
+        }
+    }
 }
 
 /// 解析 transform 中的 rotate(θdeg) → 度(CSS 顺时针;引擎共用)。
@@ -431,6 +458,7 @@ pub fn encode_artboard_opts(
             src: None,
             rot: 0.0,
             path: None,
+            image: None,
         });
     }
     let children = ab.children.clone();
@@ -534,6 +562,7 @@ fn encode_node(
                 .style_get("transform")
                 .and_then(parse_rotate_deg)
                 .unwrap_or(0.0),
+            image: None,
         });
     }
     let children = node.children.clone();

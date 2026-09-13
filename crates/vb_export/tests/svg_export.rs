@@ -30,7 +30,7 @@ fn doc_with_node(style: &str) -> (vb_doc::Document, std::path::PathBuf) {
 fn svg_no_double_scale_at_2x() {
     let (doc, dir) = doc_with_node("background-color:#00ff00;");
     let ab = doc.artboards[0];
-    let svg = vb_export::export_artboard_svg(&doc, ab, 2, false).expect("SVG 导出");
+    let svg = vb_export::export_artboard_svg(&doc, ab, 2, false, None).expect("SVG 导出");
     assert!(svg.contains(r#"width="2880""#), "画板 1440@2x 应宽 2880");
     assert!(!svg.contains("scale("), "不得出现 scale() transform:{svg}");
     // 节点 x=100 → 缩放一次 = 200
@@ -44,7 +44,7 @@ fn svg_gradient_userspace_and_opacity() {
     let (doc, dir) =
         doc_with_node("opacity: 0.5; background-image: linear-gradient(90deg, #ff0000, #0000ff);");
     let ab = doc.artboards[0];
-    let svg = vb_export::export_artboard_svg(&doc, ab, 1, false).expect("SVG 导出");
+    let svg = vb_export::export_artboard_svg(&doc, ab, 1, false, None).expect("SVG 导出");
     assert!(
         svg.contains(r#"gradientUnits="userSpaceOnUse""#),
         "缺 userSpaceOnUse(否则像素坐标被当比例读):{svg}"
@@ -64,7 +64,7 @@ fn svg_radial_gradient_radius_matches_engine() {
     let (doc, dir) =
         doc_with_node("background-image: radial-gradient(circle at 50% 50%, #ff0000, #0000ff);");
     let ab = doc.artboards[0];
-    let svg = vb_export::export_artboard_svg(&doc, ab, 1, false).expect("SVG 导出");
+    let svg = vb_export::export_artboard_svg(&doc, ab, 1, false, None).expect("SVG 导出");
     // 200×100 节点:r = sqrt(200²+100²)/2 ≈ 111.8
     assert!(svg.contains("r=\"111.8"), "径向半径应≈111.8:{svg}");
     let _ = std::fs::remove_dir_all(&dir);
@@ -75,12 +75,12 @@ fn svg_radial_gradient_radius_matches_engine() {
 fn svg_transparent_skips_background() {
     let (doc, dir) = doc_with_node("background-color:#00ff00;");
     let ab = doc.artboards[0];
-    let opaque = vb_export::export_artboard_svg(&doc, ab, 1, false).expect("SVG 导出");
+    let opaque = vb_export::export_artboard_svg(&doc, ab, 1, false, None).expect("SVG 导出");
     assert!(
         opaque.contains(r#"fill="rgb(255,0,0)""#),
         "不透明导出应有底色矩形"
     );
-    let clear = vb_export::export_artboard_svg(&doc, ab, 1, true).expect("SVG 导出");
+    let clear = vb_export::export_artboard_svg(&doc, ab, 1, true, None).expect("SVG 导出");
     assert!(
         !clear.contains(r#"fill="rgb(255,0,0)""#),
         "透明导出不得铺底色:{clear}"
@@ -97,7 +97,7 @@ fn svg_transparent_skips_background() {
 fn svg_uneven_radii_emit_path() {
     let (doc, dir) = doc_with_node("background-color:#00ff00;border-radius:40px 12px 40px 12px;");
     let ab = doc.artboards[0];
-    let svg = vb_export::export_artboard_svg(&doc, ab, 1, false).expect("SVG 导出");
+    let svg = vb_export::export_artboard_svg(&doc, ab, 1, false, None).expect("SVG 导出");
     assert!(svg.contains("<path d=\"M"), "四角异径应发 path:{svg}");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -134,10 +134,43 @@ fn svg_vector_stroke_uses_border_color() {
     doc.nodes.get_mut(pid).unwrap().children.push(id);
     let _ = UndoStack::new();
 
-    let svg = vb_export::export_artboard_svg(&doc, ab, 1, false).expect("SVG 导出");
+    let svg = vb_export::export_artboard_svg(&doc, ab, 1, false, None).expect("SVG 导出");
     assert!(
         svg.contains(r#"stroke="rgb(255,136,0)""#),
         "矢量描边应取 border 色:{svg}"
     );
     assert!(!svg.contains("rgb(20,20,20)"), "不得残留硬编码描边色");
+}
+
+/// B3:SVG 位图以 data URL 嵌入(导出的独立 SVG 不丢图)。
+#[test]
+fn svg_embeds_bitmap_as_data_url() {
+    let dir = std::env::temp_dir().join(format!("vb-svg-bmp-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("assets")).unwrap();
+    let img = image::RgbaImage::from_pixel(8, 8, image::Rgba([0, 0, 255, 255]));
+    img.save(dir.join("assets").join("dot.png")).unwrap();
+    std::fs::write(
+        dir.join("index.html"),
+        r#"<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>t</title></head>
+<body>
+  <section class="vb-artboard ab" data-vb-id="ab1234" data-vb-name="AB">
+    <img data-vb-id="n00001" src="assets/dot.png" style="position:absolute;left:20px;top:20px;width:40px;height:40px">
+  </section>
+</body>
+</html>
+"#,
+    )
+    .unwrap();
+    let doc = import_project(&dir).expect("导入").doc;
+    let ab = doc.artboards[0];
+    let svg = vb_export::export_artboard_svg(&doc, ab, 1, false, Some(&dir)).expect("SVG 导出");
+    assert!(
+        svg.contains("data:image/png;base64,"),
+        "位图应以 base64 data URL 嵌入"
+    );
+    assert!(svg.contains("<image "), "应有 <image> 元素:{svg}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

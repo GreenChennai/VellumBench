@@ -360,3 +360,50 @@ fn bitmap_scales_position_and_opacity() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// B3:attach_images 挂载位图后,无 project_dir 也能渲染(挂载即自包含)。
+#[test]
+fn attached_bitmap_renders_without_project_dir() {
+    let dir = std::env::temp_dir().join(format!("vb-bmp3-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("assets")).unwrap();
+    let img = image::RgbaImage::from_pixel(10, 10, image::Rgba([0, 255, 0, 255]));
+    img.save(dir.join("assets").join("dot.png")).unwrap();
+    std::fs::write(
+        dir.join("index.html"),
+        r#"<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>t</title></head>
+<body>
+  <section class="vb-artboard ab" data-vb-id="ab1234" data-vb-name="AB">
+    <img data-vb-id="n00001" src="assets/dot.png" style="position:absolute;left:30px;top:30px;width:30px;height:30px">
+  </section>
+</body>
+</html>
+"#,
+    )
+    .unwrap();
+    let doc = import_project(&dir).expect("导入").doc;
+    let ab = doc.artboards[0];
+    let mut list = vb_render::encode::encode_artboard(&doc, ab).expect("编码");
+    vb_render::encode::attach_images(&mut list, &mut |src| {
+        let img = image::open(dir.join(src)).ok()?;
+        let rgba = img.to_rgba8();
+        Some(vb_render::encode::BitmapData {
+            width: rgba.width(),
+            height: rgba.height(),
+            rgba: std::sync::Arc::new(rgba.into_raw()),
+        })
+    });
+    // project_dir = None:占位红框路径被禁用,只可能来自挂载位图
+    let out = vb_render::cpu::render_png(&list, 1.0, true, None).expect("渲染");
+    assert!(
+        !out.warnings.iter().any(|w| w.contains("缺失")),
+        "挂载后不应再有缺失警告:{:?}",
+        out.warnings
+    );
+    let img = image::load_from_memory(&out.png).unwrap();
+    let px = img.get_pixel(45, 45).0;
+    assert!(px[1] > 200, "挂载位图应渲染为绿色,实际 {px:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

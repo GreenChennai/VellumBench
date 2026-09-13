@@ -51,7 +51,7 @@ fn svg_rgba() -> (Vec<u8>, u32, u32) {
     std::fs::write(dir.join("index.html"), SAMPLE).unwrap();
     let r = import_project(&dir).expect("导入");
     let ab = r.doc.artboards[0];
-    let svg = vb_export::export_artboard_svg(&r.doc, ab, 1, false).expect("SVG 导出");
+    let svg = vb_export::export_artboard_svg(&r.doc, ab, 1, false, Some(&dir)).expect("SVG 导出");
     let _ = std::fs::remove_dir_all(&dir);
 
     let tree =

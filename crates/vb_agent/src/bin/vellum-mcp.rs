@@ -197,7 +197,8 @@ fn tool_export(args: &Value) -> Result<Value, String> {
                 )
             }
             "svg" => {
-                let svg = vb_export::export_artboard_svg(&s.doc, ab, scale, transparent)?;
+                let svg =
+                    vb_export::export_artboard_svg(&s.doc, ab, scale, transparent, Some(&s.dir))?;
                 std::fs::write(&out, &svg).map_err(|e| e.to_string())?;
                 Ok(json!({"ok": true, "out": out.display().to_string(), "bytes": svg.len()}))
             }
