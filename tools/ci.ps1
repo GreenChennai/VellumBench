@@ -92,6 +92,13 @@ Write-GateHeader "门禁 8 · 硬编码颜色扫描"
 & "$PSScriptRoot\check_no_hardcoded_color.ps1" -Max $ColorMax
 Mark-Gate "8 硬编码颜色" $LASTEXITCODE
 
+# ---- 门禁 10:三端一致性(15 号计划 B1) ----
+# 同一文档 → CPU 光栅 PNG vs SVG(resvg 参考栅格化)像素级容差比对;
+# 「所见即所得」的结构级偏差(渐变错位/缺失填充/双重缩放)在此变红。
+Write-GateHeader "门禁 10 · 三端一致性(CPU vs SVG 像素容差)"
+cargo test -q -p vb_export --test three_backend
+Mark-Gate "10 三端一致性" $LASTEXITCODE
+
 # ---- 汇总 ----
 $sw.Stop()
 Write-Host ""

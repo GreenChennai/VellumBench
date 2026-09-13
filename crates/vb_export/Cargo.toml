@@ -11,3 +11,8 @@ serde_json = { workspace = true }
 vb_common = { workspace = true }
 vb_doc = { workspace = true }
 vb_render = { path = "../vb_render" }
+
+[dev-dependencies]
+image.workspace = true
+resvg = "0.48.1"
+usvg = "0.48.1"

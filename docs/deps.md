@@ -19,6 +19,8 @@
 | anyhow | 1 | bin 错误处理 | MIT/Apache-2.0 | |
 | env_logger / log | 0.11/0.4 | 日志 | MIT/Apache-2.0 | |
 | pollster | 0.4 | (预留)阻塞异步 | MIT/Apache-2.0 | |
+| resvg / usvg | 0.48 | **仅 dev 依赖**(vb_export):SVG 参考栅格化,三端一致性门禁(门禁 10) | MIT/Apache-2.0 | 自带 tiny-skia 0.11 栈,不进 release 二进制 |
+| flo_curves | 0.8 | **仅 dev 依赖**(vb_tools 测试域):路径布尔 Spike(ADR-0012),批次 C 落地转正式依赖 | MIT/Apache-2.0 | |
 
 目标:release 二进制 + 资源 < 120MB(当前 ~35MB,远低于预算)。
 排期:taffy(v0.7 flex)、parley/swash(v0.2 文本)、rmcp 或自研(v0.6 已自研 stdio)、printpdf(v0.5 原生 PDF)。
