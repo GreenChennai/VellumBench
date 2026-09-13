@@ -65,6 +65,12 @@ pub enum Name {
     ToolEyedropper,
     /// 画板工具。
     ToolArtboard,
+    /// 渐变工具。
+    ToolGradient,
+    /// 剪刀工具。
+    ToolScissors,
+    /// 编组选择工具。
+    ToolGroupSelect,
 
     // ── 图层树的节点类型 ──
     /// 画板。
@@ -159,6 +165,9 @@ impl Name {
         Name::ToolText,
         Name::ToolEyedropper,
         Name::ToolArtboard,
+        Name::ToolGradient,
+        Name::ToolScissors,
+        Name::ToolGroupSelect,
         Name::KindArtboard,
         Name::KindLayer,
         Name::KindGroup,
@@ -206,6 +215,9 @@ impl Name {
             Name::ToolText => "type",
             Name::ToolEyedropper => "pipette",
             Name::ToolArtboard => "frame",
+            Name::ToolGradient => "blend",
+            Name::ToolScissors => "scissors",
+            Name::ToolGroupSelect => "lasso-select",
 
             Name::KindArtboard => "frame",
             Name::KindLayer => "layers",
@@ -364,7 +376,7 @@ mod tests {
         // 枚举变体总数（含 ALL 自己占的一行由 compiler 保证一致）
         assert_eq!(
             Name::ALL.len(),
-            42,
+            45,
             "Name::ALL 的条数与枚举变体数不符：新增图标后要同步 ALL"
         );
     }

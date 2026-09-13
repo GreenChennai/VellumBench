@@ -41,6 +41,12 @@ pub enum Tool {
     Eyedropper,
     /// 画板工具:拖框新建画板(06 篇 §3.1)
     Artboard,
+    /// 渐变工具:拖动设定线性渐变方向(06 篇 §5.5)
+    Gradient,
+    /// 剪刀:在矢量锚点处剪开(闭路开口/开路分段;06 篇 §5.3)
+    Scissors,
+    /// 编组选择:单击选中命中对象所在的整个编组(06 篇 P0)
+    GroupSelect,
 }
 
 /// 钢笔锚点:anchor + 出手柄(画板本地坐标;平滑点 h_out=Some,
@@ -70,6 +76,11 @@ enum Drag {
     /// 拖动标尺参考线(idx;松手在标尺内/画布外 = 删除)
     Guide {
         idx: usize,
+    },
+    /// 渐变批注者:从 start 拖向光标 = 渐变方向(06 篇 §5.5)
+    GradientAnnotate {
+        start: (f64, f64),
+        angle: f64,
     },
     /// Space/中键/抓手:平移视图
     Pan {
@@ -1163,6 +1174,9 @@ impl VellumApp {
             "tool.text" => self.set_tool(Tool::Text),
             "tool.eyedropper" => self.set_tool(Tool::Eyedropper),
             "tool.artboard" => self.set_tool(Tool::Artboard),
+            "tool.gradient" => self.set_tool(Tool::Gradient),
+            "tool.scissors" => self.set_tool(Tool::Scissors),
+            "tool.group_select" => self.set_tool(Tool::GroupSelect),
             // ── P3.8 分布(≥3 选中) ──
             "object.distribute_h" => self.distribute_selection(true),
             "object.distribute_v" => self.distribute_selection(false),
@@ -1717,6 +1731,37 @@ impl VellumApp {
         self.selection = vec![sid.as_str().to_string()];
     }
 
+    /// 直接选择/剪刀共用的顶点枚举:返回 (元素序号, 世界坐标)。
+    /// 锚点元素 = MoveTo/LineTo/QuadTo/CurveTo 的终点(平滑钢笔会产出曲线)。
+    fn path_anchor_points(
+        &self,
+        nid: vb_doc::model::NodeId,
+    ) -> Vec<(usize, vb_common::geom::Point)> {
+        use vb_common::geom::PathEl;
+        let Some(n) = self.doc.nodes.get(nid) else {
+            return vec![];
+        };
+        let NodeKind::Vector { path } = &n.kind else {
+            return vec![];
+        };
+        let Some(bb) = vb_tools::abs_bbox_world(&self.doc, nid) else {
+            return vec![];
+        };
+        path.elements()
+            .iter()
+            .enumerate()
+            .filter_map(|(i, el)| {
+                let p = match el {
+                    PathEl::MoveTo(p) | PathEl::LineTo(p) => *p,
+                    PathEl::QuadTo(_, p) => *p,
+                    PathEl::CurveTo(_, _, p) => *p,
+                    _ => return None,
+                };
+                Some((i, vb_common::geom::Point::new(bb.x0 + p.x, bb.y0 + p.y)))
+            })
+            .collect()
+    }
+
     /// 直接选择:命中检测 — 找光标附近矢量节点的顶点。返回 (sid, 顶点序号)。
     fn find_vector_vertex(&self, wx: f64, wy: f64, tol: f64) -> Option<(String, usize)> {
         for &ab in &self.doc.artboards {
@@ -1729,21 +1774,10 @@ impl VellumApp {
                 if n.hidden || n.locked {
                     continue;
                 }
-                if let NodeKind::Vector { path } = &n.kind {
-                    for (i, el) in path.elements().iter().enumerate() {
-                        use vb_common::geom::PathEl;
-                        let p = match el {
-                            PathEl::MoveTo(p) | PathEl::LineTo(p) => *p,
-                            _ => continue,
-                        };
-                        // 路径以节点原点存储 → 世界 = 世界 bbox 原点 + 点;
-                        // 单个节点取不到 bbox 只跳过该节点(此前 `?` 会放弃整棵树)
-                        let Some(bb) = vb_tools::abs_bbox_world(&self.doc, id) else {
-                            continue;
-                        };
-                        let ax = bb.x0 + p.x;
-                        let ay = bb.y0 + p.y;
-                        if (ax - wx).hypot(ay - wy) <= tol {
+                if matches!(n.kind, NodeKind::Vector { .. }) {
+                    // 单个节点取不到 bbox 只跳过该节点(此前 `?` 会放弃整棵树)
+                    for (i, p) in self.path_anchor_points(id) {
+                        if (p.x - wx).hypot(p.y - wy) <= tol {
                             return Some((n.sid.as_str().to_string(), i));
                         }
                     }
@@ -1765,15 +1799,18 @@ impl VellumApp {
             return vec![];
         };
         let bb = vb_tools::abs_bbox_world(&self.doc, nid).unwrap_or(vb_common::geom::Rect::ZERO);
-        path.elements()
-            .iter()
+        let els: Vec<vb_common::geom::PathEl> = path.elements().to_vec();
+        els.iter()
             .enumerate()
             .filter_map(|(i, el)| {
                 use vb_common::geom::PathEl;
-                match el {
-                    PathEl::MoveTo(p) | PathEl::LineTo(p) => Some((i, bb.x0 + p.x, bb.y0 + p.y)),
-                    _ => None,
-                }
+                let p = match el {
+                    PathEl::MoveTo(p) | PathEl::LineTo(p) => *p,
+                    PathEl::QuadTo(_, p) => *p,
+                    PathEl::CurveTo(_, _, p) => *p,
+                    _ => return None,
+                };
+                Some((i, bb.x0 + p.x, bb.y0 + p.y))
             })
             .collect()
     }
@@ -2051,6 +2088,9 @@ impl VellumApp {
                                 (Tool::Text, Name::ToolText, "文字", "T"),
                                 (Tool::Eyedropper, Name::ToolEyedropper, "吸管", "I"),
                                 (Tool::Artboard, Name::ToolArtboard, "画板", "Shift+O"),
+                                (Tool::Gradient, Name::ToolGradient, "渐变", "G"),
+                                (Tool::Scissors, Name::ToolScissors, "剪刀", "C"),
+                                (Tool::GroupSelect, Name::ToolGroupSelect, "编组选择", "Y"),
                             ] {
                                 if ToolButton::new(icon, label)
                                     .shortcut(key)
@@ -2072,6 +2112,9 @@ impl VellumApp {
                                         Tool::Text => "tool.text",
                                         Tool::Eyedropper => "tool.eyedropper",
                                         Tool::Artboard => "tool.artboard",
+                                        Tool::Gradient => "tool.gradient",
+                                        Tool::Scissors => "tool.scissors",
+                                        Tool::GroupSelect => "tool.group_select",
                                     };
                                     self.run_command(id, false, false);
                                 }
@@ -2988,6 +3031,45 @@ impl VellumApp {
             self.eyedropper_pick(alt);
             return;
         }
+        // 渐变单击:Alt = 移除 background-image 恢复纯色(06 篇 §5.5)
+        if response.clicked() && self.tool == Tool::Gradient {
+            let alt = ctx.input(|i| i.modifiers.alt);
+            if alt {
+                let targets = self.selection.clone();
+                if targets.is_empty() {
+                    self.status = "渐变:先选中对象".into();
+                } else {
+                    for sid in targets {
+                        let Some(t) = self.doc.find_by_sid(&sid) else {
+                            continue;
+                        };
+                        let mut style = self.doc.nodes.get(t).unwrap().style.clone();
+                        let before = style.len();
+                        style.retain(|d| d.prop != "background-image");
+                        if style.len() != before {
+                            self.exec(Command::SetStyle {
+                                sid,
+                                new: style,
+                                old: None,
+                            });
+                        }
+                    }
+                    self.status = "已移除渐变(恢复纯色)".into();
+                }
+            } else if self.selection.is_empty() {
+                self.status = "渐变:先选中对象,再拖动设定方向".into();
+            }
+            return;
+        }
+        // 剪刀单击:在矢量锚点处剪开(闭路开口 / 开路分段;06 篇 §5.3)
+        if response.clicked() && self.tool == Tool::Scissors {
+            if let Some(p) = response.interact_pointer_pos() {
+                let pl = p - rect.min;
+                let (wx, wy) = self.camera.screen_to_world(pl.x as f64, pl.y as f64);
+                self.scissors_cut(wx, wy, 8.0 / self.camera.zoom);
+            }
+            return;
+        }
         // 单击创建(Rect/Ellipse/Line/Text/Artboard 工具下单击 = 默认尺寸;处理单帧合并的合成拖拽)
         if response.clicked()
             && matches!(
@@ -3096,6 +3178,12 @@ impl VellumApp {
                                     }
                                     vb_common::geom::PathEl::LineTo(_) => {
                                         vb_common::geom::PathEl::LineTo(new_pt)
+                                    }
+                                    vb_common::geom::PathEl::QuadTo(c, _) => {
+                                        vb_common::geom::PathEl::QuadTo(c, new_pt)
+                                    }
+                                    vb_common::geom::PathEl::CurveTo(c1, c2, _) => {
+                                        vb_common::geom::PathEl::CurveTo(c1, c2, new_pt)
                                     }
                                     other => other,
                                 };
@@ -3335,6 +3423,52 @@ impl VellumApp {
                         start_pan: vec2(self.camera.pan_x as f32, self.camera.pan_y as f32),
                     };
                 }
+                Tool::GroupSelect => {
+                    // 编组选择:命中对象 → 选中其所在编组(最近 Group 祖先);
+                    // 无编组祖先(顶层对象)时退化为普通选择
+                    let sid = self.pick_at_world(wx, wy).map(|nid| {
+                        let mut cur = Some(nid);
+                        let mut group = None;
+                        while let Some(c) = cur {
+                            let n = self.doc.nodes.get(c).unwrap();
+                            if matches!(n.kind, NodeKind::Group) {
+                                group = Some(c);
+                                break;
+                            }
+                            cur = n.parent;
+                        }
+                        self.doc
+                            .nodes
+                            .get(group.unwrap_or(nid))
+                            .unwrap()
+                            .sid
+                            .as_str()
+                            .to_string()
+                    });
+                    if let Some(sid) = sid {
+                        if !self.selection.contains(&sid) {
+                            if shift {
+                                self.selection.push(sid.clone());
+                            } else {
+                                self.selection = vec![sid.clone()];
+                            }
+                        }
+                        let nid = self.doc.find_by_sid(&sid).unwrap();
+                        let g = self.doc.nodes.get(nid).unwrap().geom;
+                        self.drag = Drag::MoveObj {
+                            sid,
+                            start_geom: g,
+                            grab_dx: wx - g.x,
+                            grab_dy: wy - g.y,
+                            moved: false,
+                        };
+                    } else {
+                        self.drag = Drag::Marquee { start: p, cur: p };
+                        if !shift {
+                            self.selection.clear();
+                        }
+                    }
+                }
                 Tool::Select => {
                     let hit = self
                         .pick_at_world(wx, wy)
@@ -3414,6 +3548,20 @@ impl VellumApp {
                 Tool::Eyedropper => {
                     // 吸管:单击由 clicked() 处理(取色/取样式)
                 }
+                Tool::Gradient => {
+                    // 渐变批注者:需要选区;拖动方向 = 渐变方向
+                    if self.selection.is_empty() {
+                        self.status = "渐变:先选中对象".into();
+                    } else {
+                        self.drag = Drag::GradientAnnotate {
+                            start: (wx, wy),
+                            angle: 0.0,
+                        };
+                    }
+                }
+                Tool::Scissors => {
+                    // 剪刀:单击由 clicked() 处理(锚点剪开)
+                }
             }
         }
 
@@ -3428,6 +3576,22 @@ impl VellumApp {
                 let (wx, wy) = self.camera.screen_to_world(p.x as f64, p.y as f64);
                 if let Some(g) = self.guides.get_mut(*idx) {
                     g.1 = if g.0 { wy } else { wx };
+                }
+                return;
+            }
+
+            // 渐变拖动:方向 = 起点→光标;实时应用(合并窗口内一条 undo)
+            if let Drag::GradientAnnotate { start, .. } = &self.drag {
+                let (wx, wy) = self.camera.screen_to_world(p.x as f64, p.y as f64);
+                let dx = wx - start.0;
+                let dy = wy - start.1;
+                if dx.hypot(dy) >= 2.0 {
+                    // CSS 角度:0° = 向上,90° = 向右(Y 轴向下,故取 -dy)
+                    let angle = dx.atan2(-dy).to_degrees().rem_euclid(360.0);
+                    if let Drag::GradientAnnotate { angle: slot, .. } = &mut self.drag {
+                        *slot = angle;
+                    }
+                    self.apply_gradient_to_selection(angle);
                 }
                 return;
             }
@@ -3564,6 +3728,11 @@ impl VellumApp {
 
         if response.drag_stopped() {
             match std::mem::replace(&mut self.drag, Drag::None) {
+                Drag::GradientAnnotate { angle, .. } => {
+                    self.status = format!(
+                        "线性渐变已应用 {angle:.0}°(起=原填充 → 止=#ffffff;Alt+单击可移除)"
+                    );
+                }
                 Drag::Guide { idx } => {
                     // 松手在标尺条内/画布外 = 删除(AI 拖回标尺删参考线)
                     let inside = response.interact_pointer_pos().map(|pp| {
@@ -4285,6 +4454,26 @@ impl VellumApp {
                     egui::StrokeKind::Middle,
                 );
             }
+            Drag::GradientAnnotate { start, angle } => {
+                let (sx, sy) = self.camera.world_to_screen(start.0, start.1);
+                let (cx, cy) = self
+                    .camera
+                    .world_to_screen(self.cursor_world.0, self.cursor_world.1);
+                painter.line_segment(
+                    [
+                        pos2(sx as f32 + origin.x, sy as f32 + origin.y),
+                        pos2(cx as f32 + origin.x, cy as f32 + origin.y),
+                    ],
+                    Stroke::new(1.5, semantic::SELECT_BOX),
+                );
+                painter.text(
+                    pos2(cx as f32 + origin.x + 8.0, cy as f32 + origin.y),
+                    Align2::LEFT_CENTER,
+                    format!("{angle:.0}°"),
+                    FontId::monospace(11.0),
+                    semantic::SELECT_BOX,
+                );
+            }
             _ => {}
         }
 
@@ -4826,6 +5015,141 @@ impl VellumApp {
                 });
             }
             self.status = format!("已应用填充 {hex}");
+        }
+    }
+
+    /// 渐变工具:对选区写入 `linear-gradient(<角度>deg, <原填充> 0%, #ffffff 100%)`。
+    /// 起色标 = 对象现有填充(无则默认灰),止色标 = 白;逐帧 Compound 应用,
+    /// 合并窗口内整次拖动为一条 undo。
+    fn apply_gradient_to_selection(&mut self, angle: f64) {
+        let targets = self.selection.clone();
+        let mut cmds = Vec::new();
+        for sid in targets {
+            let Some(t) = self.doc.find_by_sid(&sid) else {
+                continue;
+            };
+            let n = self.doc.nodes.get(t).unwrap();
+            let c1 = n
+                .fill_color()
+                .map(|c| c.to_shortest_hex())
+                .unwrap_or_else(|| "#d4d4d4".into()); // vb-token-ok: 文档内容色
+            let value = format!("linear-gradient({angle:.0}deg, {c1} 0%, #ffffff 100%)");
+            let mut style = n.style.clone();
+            if let Some(d) = style.iter_mut().find(|d| d.prop == "background-image") {
+                d.value = value;
+            } else {
+                style.push(vb_css::Decl {
+                    prop: "background-image".into(),
+                    value,
+                    important: false,
+                });
+            }
+            cmds.push(Command::SetStyle {
+                sid,
+                new: style,
+                old: None,
+            });
+        }
+        if !cmds.is_empty() {
+            self.exec(Command::Compound { cmds });
+        }
+    }
+
+    /// 剪刀:在命中锚点处剪开矢量路径。
+    /// 闭路 → 开口(锚点处断开,Z 变显式线段);开路 → 分段为两个节点。
+    fn scissors_cut(&mut self, wx: f64, wy: f64, tol: f64) {
+        use vb_common::geom::PathEl;
+        let Some((sid, idx)) = self.find_vector_vertex(wx, wy, tol) else {
+            self.status = "剪刀:请在矢量路径的锚点上单击".into();
+            return;
+        };
+        let Some(nid) = self.doc.find_by_sid(&sid) else {
+            return;
+        };
+        let els: Vec<PathEl> = match self.doc.nodes.get(nid).unwrap().kind {
+            NodeKind::Vector { ref path } => path.elements().to_vec(),
+            _ => return,
+        };
+        let local_end = |e: &PathEl| -> vb_common::geom::Point {
+            match e {
+                PathEl::MoveTo(p) | PathEl::LineTo(p) => *p,
+                PathEl::QuadTo(_, p) => *p,
+                PathEl::CurveTo(_, _, p) => *p,
+                PathEl::ClosePath => vb_common::geom::Point::new(f64::NAN, f64::NAN),
+            }
+        };
+        let closed = matches!(els.last(), Some(PathEl::ClosePath));
+        if closed {
+            // 旋转元素序列使命中锚点成为起点;原 M 降级为 L;去 Z。
+            // 环 a0→…→a_k→…→a0 在 a_k 处断开:全部边保留,首尾都是 a_k
+            let start_pt = local_end(&els[idx]);
+            let m0 = local_end(&els[0]);
+            let mut new_els: Vec<PathEl> = vec![PathEl::MoveTo(start_pt)];
+            if idx + 1 < els.len() - 1 {
+                new_els.extend_from_slice(&els[idx + 1..els.len() - 1]);
+            }
+            new_els.push(PathEl::LineTo(m0));
+            if idx >= 1 {
+                new_els.extend_from_slice(&els[1..=idx]);
+            }
+            let mut np = vb_common::geom::BezPath::new();
+            for e in new_els {
+                np.push(e);
+            }
+            self.exec(Command::SetVector {
+                sid,
+                new: np,
+                old: None,
+            });
+            self.status = "剪刀:已剪开(路径开放,填充按隐式闭合渲染)".into();
+        } else {
+            // 开路分段:[0..=idx] 与 [idx..end];端点处无需剪
+            if idx == 0 || idx >= els.len() - 1 {
+                self.status = "剪刀:锚点已在路径端点,无需剪".into();
+                return;
+            }
+            let split_pt = local_end(&els[idx]);
+            let mut first = vb_common::geom::BezPath::new();
+            for e in &els[..=idx] {
+                first.push(*e);
+            }
+            let mut second = vb_common::geom::BezPath::new();
+            second.push(PathEl::MoveTo(split_pt));
+            for e in &els[idx + 1..] {
+                second.push(*e);
+            }
+            // 第二段 = 克隆节点(新 sid)+ 替换路径;第一段 = SetVector
+            let n = self.doc.nodes.get(nid).unwrap().clone();
+            let parent_sid = n
+                .parent
+                .and_then(|p| self.doc.nodes.get(p))
+                .map(|p| p.sid.as_str().to_string())
+                .unwrap_or_default();
+            let mut second_node = n.clone();
+            second_node.sid = self.doc.alloc_sid();
+            second_node.name = format!("{} 2", n.name);
+            second_node.kind = NodeKind::Vector { path: second };
+            let new_sid = second_node.sid.as_str().to_string();
+            let tree = vb_doc::model::NodeTree {
+                node: second_node,
+                children: vec![],
+            };
+            self.exec(Command::Compound {
+                cmds: vec![
+                    Command::SetVector {
+                        sid: sid.clone(),
+                        new: first,
+                        old: None,
+                    },
+                    Command::Insert {
+                        parent_sid,
+                        index: usize::MAX,
+                        tree,
+                    },
+                ],
+            });
+            self.selection = vec![sid, new_sid];
+            self.status = "剪刀:已剪开为两段(两段均已选中)".into();
         }
     }
 }
