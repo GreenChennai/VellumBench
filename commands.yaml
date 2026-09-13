@@ -353,6 +353,26 @@
   keys: { win: "Ctrl+K" }
   undoable: false
   expose_to_agent: false
+- id: view.next_artboard
+  label: 下一画板
+  keys: { win: "Ctrl+PageDown" }
+  undoable: false
+  expose_to_agent: false
+- id: view.prev_artboard
+  label: 上一画板
+  keys: { win: "Ctrl+PageUp" }
+  undoable: false
+  expose_to_agent: false
+- id: view.next_panel_tab
+  label: 切换右侧面板 Tab
+  keys: { win: "F4" }
+  undoable: false
+  expose_to_agent: false
+- id: view.zoom_to_selection
+  label: 缩放到选区
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
 - id: app.about
   label: 关于
   keys: { win: "" }

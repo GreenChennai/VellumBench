@@ -593,6 +593,28 @@ pub const SHORTCUTS: &[Shortcut] = &[
         ctx: CTX_CANVAS,
     },
     // ── P3.2 命令面板 ──
+    // ── C3:画板导航 / 面板 Tab ──
+    Shortcut {
+        id: "view.next_artboard",
+        key: Key::PageDown,
+        ctrl: ModMatch::On,
+        shift: ModMatch::Off,
+        ctx: CTX_NO_TEXT,
+    },
+    Shortcut {
+        id: "view.prev_artboard",
+        key: Key::PageUp,
+        ctrl: ModMatch::On,
+        shift: ModMatch::Off,
+        ctx: CTX_NO_TEXT,
+    },
+    Shortcut {
+        id: "view.next_panel_tab",
+        key: Key::F4,
+        ctrl: ModMatch::Off,
+        shift: ModMatch::Off,
+        ctx: CTX_NO_TEXT,
+    },
     Shortcut {
         id: "app.command_palette",
         key: Key::K,
@@ -680,6 +702,10 @@ pub const IMPLEMENTED_IDS: &[&str] = &[
     "path.subtract",
     "path.intersect",
     "path.xor",
+    "view.next_artboard",
+    "view.prev_artboard",
+    "view.next_panel_tab",
+    "view.zoom_to_selection",
 ];
 
 /// 全部命令的中文名(命令面板 / 菜单 / 状态提示共用)。
@@ -754,6 +780,10 @@ pub const CMD_LABELS: &[(&str, &str)] = &[
     ("view.lock_guides", "锁定参考线"),
     ("view.guides_from_selection", "从选区生成参考线"),
     ("app.command_palette", "命令面板"),
+    ("view.next_artboard", "下一画板"),
+    ("view.prev_artboard", "上一画板"),
+    ("view.next_panel_tab", "切换右侧面板 Tab"),
+    ("view.zoom_to_selection", "缩放到选区"),
     ("app.about", "关于"),
 ];
 
@@ -941,6 +971,18 @@ pub const MENU_VIEW: &[MenuItem] = &[
     MenuItem {
         id: "view.toggle_theme",
         label: "浅色主题",
+    },
+    MenuItem {
+        id: "view.next_artboard",
+        label: "下一画板",
+    },
+    MenuItem {
+        id: "view.prev_artboard",
+        label: "上一画板",
+    },
+    MenuItem {
+        id: "view.zoom_to_selection",
+        label: "缩放到选区",
     },
 ];
 

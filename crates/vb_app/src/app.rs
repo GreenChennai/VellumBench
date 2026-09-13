@@ -286,6 +286,40 @@ impl VellumApp {
         }
     }
 
+    /// 缩放到选区(C3):选区联合 bbox 充满视口;无选区回退 fit_view。
+    fn zoom_to_selection(&mut self) {
+        let Some(rect) = self.canvas_rect else {
+            return;
+        };
+        let mut x0 = f64::INFINITY;
+        let mut y0 = f64::INFINITY;
+        let mut x1 = f64::NEG_INFINITY;
+        let mut y1 = f64::NEG_INFINITY;
+        for sid in &self.selection {
+            if let Some(nid) = self.doc.find_by_sid(sid) {
+                if let Some(bb) = vb_tools::abs_bbox_world(&self.doc, nid) {
+                    x0 = x0.min(bb.x0);
+                    y0 = y0.min(bb.y0);
+                    x1 = x1.max(bb.x1);
+                    y1 = y1.max(bb.y1);
+                }
+            }
+        }
+        if !x0.is_finite() {
+            self.fit_view();
+            return;
+        }
+        let margin = 60.0f64;
+        let w = (x1 - x0).max(20.0);
+        let h = (y1 - y0).max(20.0);
+        let zoom = ((rect.width() as f64 - margin * 2.0) / w)
+            .min((rect.height() as f64 - margin * 2.0) / h)
+            .clamp(0.01, 64.0);
+        self.camera.zoom = zoom;
+        self.camera.pan_x = rect.width() as f64 / 2.0 - (x0 + w / 2.0) * zoom;
+        self.camera.pan_y = rect.height() as f64 / 2.0 - (y0 + h / 2.0) * zoom;
+    }
+
     fn fit_view(&mut self) {
         let Some(rect) = self.canvas_rect else { return };
         let Some(&ab) = self.doc.artboards.first() else {
@@ -1178,6 +1212,38 @@ impl VellumApp {
                     "智能参考线:{}",
                     if self.smart_guides_on { "开" } else { "关" }
                 );
+            }
+            "view.next_artboard" | "view.prev_artboard" => {
+                // 画板循环导航:选中并视图居中(C3)
+                if self.doc.artboards.is_empty() {
+                    return;
+                }
+                let cur = self
+                    .selection
+                    .first()
+                    .and_then(|s| self.doc.find_by_sid(s))
+                    .and_then(|id| self.doc.artboards.iter().position(|&a| a == id));
+                let n = self.doc.artboards.len();
+                let next = match cur {
+                    Some(i) => {
+                        if id == "view.next_artboard" {
+                            (i + 1) % n
+                        } else {
+                            (i + n - 1) % n
+                        }
+                    }
+                    None => 0,
+                };
+                let ab = self.doc.artboards[next];
+                let sid = self.doc.nodes.get(ab).unwrap().sid.as_str().to_string();
+                self.selection = vec![sid];
+                self.run_command("view.zoom_to_selection", false, false);
+            }
+            "view.next_panel_tab" => {
+                self.panel_tab = (self.panel_tab + 1) % 3;
+            }
+            "view.zoom_to_selection" => {
+                self.zoom_to_selection();
             }
             "view.toggle_rulers" => {
                 self.rulers_on = !self.rulers_on;
@@ -3949,6 +4015,37 @@ impl VellumApp {
                         g.x = sx;
                         g.y = sy;
                         self.smart_guides = lines;
+                        // 角度类参考线(C2 第五类):拖动方向接近 45° 倍数
+                        // 时,过拖拽起点的世界向导线(仅提示,不吸附)
+                        if let Drag::MoveObj {
+                            grab_dx,
+                            grab_dy,
+                            start_geom,
+                            ..
+                        } = &self.drag
+                        {
+                            let ox = start_geom.x + grab_dx;
+                            let oy = start_geom.y + grab_dy;
+                            let (vx, vy) = (g.x + grab_dx - ox, g.y + grab_dy - oy);
+                            let len = vx.hypot(vy);
+                            if len > 12.0 / self.camera.zoom {
+                                let ang = vy.atan2(vx).to_degrees().rem_euclid(180.0);
+                                for t in [0.0f64, 45.0, 90.0, 135.0] {
+                                    if (t - ang).abs() < 3.0 {
+                                        let rad = t.to_radians();
+                                        let (dx, dy) = (rad.cos(), rad.sin());
+                                        let l = 4000.0;
+                                        self.smart_guides.push([
+                                            ox - dx * l,
+                                            oy - dy * l,
+                                            ox + dx * l,
+                                            oy + dy * l,
+                                        ]);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 // 多选:其余成员随主对象整体位移(含吸附量),
