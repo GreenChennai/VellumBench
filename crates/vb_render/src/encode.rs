@@ -148,7 +148,10 @@ pub fn parse_linear_gradient(
         if i == 0 {
             // 首段只认方向/角度;颜色(含命名色)一律当色标。
             // 此前 `to right` 因启发式误判被当色标吞掉,角度停在 180°。
-            if let Some(d) = t.strip_suffix("deg").and_then(|s| s.trim().parse::<f64>().ok()) {
+            if let Some(d) = t
+                .strip_suffix("deg")
+                .and_then(|s| s.trim().parse::<f64>().ok())
+            {
                 angle = d;
                 continue;
             }

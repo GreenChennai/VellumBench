@@ -184,8 +184,13 @@ fn tool_export(args: &Value) -> Result<Value, String> {
         let out = PathBuf::from(args.get("out").and_then(|v| v.as_str()).ok_or("缺少 out")?);
         match fmt.as_str() {
             "png" => {
-                let (png, warnings) =
-                    vb_export::export_artboard_png(&s.doc, ab, scale as f32, transparent, Some(&s.dir))?;
+                let (png, warnings) = vb_export::export_artboard_png(
+                    &s.doc,
+                    ab,
+                    scale as f32,
+                    transparent,
+                    Some(&s.dir),
+                )?;
                 std::fs::write(&out, &png).map_err(|e| e.to_string())?;
                 Ok(
                     json!({"ok": true, "out": out.display().to_string(), "bytes": png.len(), "warnings": warnings}),
@@ -198,7 +203,10 @@ fn tool_export(args: &Value) -> Result<Value, String> {
             }
             "pdf" | "gif" | "mp4" => {
                 let Some(wpi_dir) = vb_export::wpi::resolve_wpi_dir() else {
-                    return Err("WPI 不可用:未找到浏览器引擎(宿主可设置环境变量 VB_WPI_DIR 指向 WPI 仓库)".into());
+                    return Err(
+                        "WPI 不可用:未找到浏览器引擎(宿主可设置环境变量 VB_WPI_DIR 指向 WPI 仓库)"
+                            .into(),
+                    );
                 };
                 let wpi_fmt = match fmt.as_str() {
                     "pdf" => vb_export::wpi::WpiFormat::Pdf,

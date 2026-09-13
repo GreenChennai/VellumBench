@@ -211,7 +211,10 @@ fn gradient_direction_keywords_parse() {
     let p = |v: &str| vb_render::encode::parse_linear_gradient(&doc, v, 100.0, 50.0);
 
     let (angle, stops) = p("linear-gradient(to right, #ff0000, #0000ff)").expect("to right");
-    assert!((angle - 90.0).abs() < 1e-9, "to right 应为 90°,实际 {angle}");
+    assert!(
+        (angle - 90.0).abs() < 1e-9,
+        "to right 应为 90°,实际 {angle}"
+    );
     assert_eq!(stops.len(), 2);
     assert!((stops[0].pos - 0.0).abs() < 1e-6 && (stops[1].pos - 1.0).abs() < 1e-6);
 

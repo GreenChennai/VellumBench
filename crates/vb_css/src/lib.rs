@@ -592,7 +592,10 @@ mod a3_tests {
         assert!(color.contains("note"), "值内注释应保留:{color}");
 
         // 括号/引号感知不回退
-        let parts = split_top_level("background-image:url(data:image/png;base64,xx), red; color:#fff", ';');
+        let parts = split_top_level(
+            "background-image:url(data:image/png;base64,xx), red; color:#fff",
+            ';',
+        );
         assert_eq!(parts.len(), 2);
     }
 }

@@ -471,7 +471,7 @@ fn group_align_root_member_handled() {
                     h: 50.0,
                 }),
             },
-       }]),
+        }]),
     )
     .expect("插对象失败");
     let obj = doc
@@ -526,12 +526,8 @@ fn delete_last_artboard_rejected() {
     let mut doc = Document::new_default();
     let mut undo = UndoStack::new();
     let ab = ab0_sid(&doc);
-    let err = apply_patch(
-        &mut doc,
-        &mut undo,
-        &req(vec![PatchOp::Delete { id: ab }]),
-    )
-    .expect_err("删除最后一块画板应被拒绝");
+    let err = apply_patch(&mut doc, &mut undo, &req(vec![PatchOp::Delete { id: ab }]))
+        .expect_err("删除最后一块画板应被拒绝");
     assert!(err.to_string().contains("画板"), "错误信息:{err}");
     assert_eq!(doc.artboards.len(), 1, "画板数量不变");
 }

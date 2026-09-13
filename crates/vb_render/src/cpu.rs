@@ -152,8 +152,7 @@ fn draw_item(
                             // shader 坐标与路径同处 pre-transform 空间:局部
                             // 线段必须平移到节点原点。径向分支历来如此;线性
                             // 分支此前漏加,非原点节点渐变被 Pad 成纯色。
-                            let start =
-                                tiny_skia::Point::from_xy(sp.x + x as f32, sp.y + y as f32);
+                            let start = tiny_skia::Point::from_xy(sp.x + x as f32, sp.y + y as f32);
                             let end = tiny_skia::Point::from_xy(ep.x + x as f32, ep.y + y as f32);
                             match tiny_skia::LinearGradient::new(
                                 start,
@@ -162,9 +161,7 @@ fn draw_item(
                                 SpreadMode::Pad,
                                 Transform::identity(),
                             ) {
-                                Some(shader) => {
-                                    fill_shader(pixmap, &shape, shader, tf)
-                                }
+                                Some(shader) => fill_shader(pixmap, &shape, shader, tf),
                                 None => warnings.push("线性渐变非法(已跳过)".into()),
                             }
                         }
@@ -183,9 +180,7 @@ fn draw_item(
                                 SpreadMode::Pad,
                                 Transform::identity(),
                             ) {
-                                Some(shader) => {
-                                    fill_shader(pixmap, &shape, shader, tf)
-                                }
+                                Some(shader) => fill_shader(pixmap, &shape, shader, tf),
                                 None => warnings.push("径向渐变非法(已跳过)".into()),
                             }
                         }

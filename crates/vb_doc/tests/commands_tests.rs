@@ -465,10 +465,13 @@ fn delete_last_artboard_blocked() {
     let ab = doc.artboards[0];
     let sid = doc.nodes.get(ab).unwrap().sid.as_str().to_string();
     let err = stack
-        .push(&mut doc, Command::Delete {
-            target_sid: sid,
-            captured: None,
-        })
+        .push(
+            &mut doc,
+            Command::Delete {
+                target_sid: sid,
+                captured: None,
+            },
+        )
         .expect_err("删除最后一块画板应被拒绝");
     assert!(err.to_string().contains("画板"), "错误信息:{err}");
     assert_eq!(doc.artboards.len(), 1);
@@ -524,7 +527,12 @@ fn group_lands_at_top_member_z_order() {
             },
         )
         .expect("编组应成功");
-    let children: Vec<String> = doc.nodes.get(ab).unwrap().children.iter()
+    let children: Vec<String> = doc
+        .nodes
+        .get(ab)
+        .unwrap()
+        .children
+        .iter()
         .map(|&c| doc.nodes.get(c).unwrap().sid.as_str().to_string())
         .collect();
     assert_eq!(children.len(), 2);

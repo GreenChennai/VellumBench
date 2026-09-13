@@ -246,7 +246,12 @@ fn stylesheet_body_braces_in_comments() {
         .iter()
         .map(|d| d.prop.as_str())
         .collect();
-    assert_eq!(props, vec!["width", "height"], "{:?}", sheet.class_rules[0].1);
+    assert_eq!(
+        props,
+        vec!["width", "height"],
+        "{:?}",
+        sheet.class_rules[0].1
+    );
 }
 
 /// R3:声明值内的注释保留(合法 CSS,不损坏)。

@@ -70,9 +70,7 @@ pub fn render_svg(list: &DrawList, scale: u32, transparent: bool) -> String {
     out.push_str(&defs);
     out.push_str("</defs>\n");
 
-    if !transparent
-        && (!list.background.iter().all(|c| *c >= 0.999) || list.background[3] < 1.0)
-    {
+    if !transparent && (!list.background.iter().all(|c| *c >= 0.999) || list.background[3] < 1.0) {
         // 画板有自定义背景色时画底色矩形(透明导出跳过)
         let (r, g, b) = to_255(list.background);
         let _ = writeln!(

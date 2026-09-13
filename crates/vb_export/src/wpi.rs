@@ -99,8 +99,7 @@ pub fn export_via_wpi(
     let result = (|| -> Result<WpiExportResult, String> {
         write_project(doc, &tmp).map_err(|e| format!("临时 HTML 写出失败:{e}"))?;
         // 此前临时目录只有 HTML/CSS,<img> 全部 404,PDF/GIF/MP4 缺图
-        copy_project_extras(project_dir, &tmp)
-            .map_err(|e| format!("项目资产复制失败:{e}"))?;
+        copy_project_extras(project_dir, &tmp).map_err(|e| format!("项目资产复制失败:{e}"))?;
 
         let mut warnings = Vec::new();
         let mut cmd = Command::new("python");
@@ -198,7 +197,10 @@ mod tests {
     fn copy_project_extras_copies_assets_but_not_source_html() {
         let base = std::env::temp_dir().join(format!("vb-wpi-src-{}", std::process::id()));
         let tmp = std::env::temp_dir().join(format!("vb-wpi-tmp-{}", std::process::id()));
-        let _ = (std::fs::remove_dir_all(&base), std::fs::remove_dir_all(&tmp));
+        let _ = (
+            std::fs::remove_dir_all(&base),
+            std::fs::remove_dir_all(&tmp),
+        );
         std::fs::create_dir_all(base.join("assets")).unwrap();
         std::fs::create_dir_all(base.join("styles")).unwrap();
         std::fs::write(base.join("index.html"), "<html>old</html>").unwrap();
@@ -225,6 +227,9 @@ mod tests {
             "<html>new</html>",
             "旧 index.html 不得覆盖新渲染"
         );
-        let _ = (std::fs::remove_dir_all(&base), std::fs::remove_dir_all(&tmp));
+        let _ = (
+            std::fs::remove_dir_all(&base),
+            std::fs::remove_dir_all(&tmp),
+        );
     }
 }

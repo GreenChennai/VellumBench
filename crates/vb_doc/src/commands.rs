@@ -508,9 +508,7 @@ impl Command {
                     }
                     let first_parent = &slots[0].parent_sid;
                     if !slots.iter().all(|s| &s.parent_sid == first_parent) {
-                        return Err(VbError::Conflict(
-                            "编组成员必须同属一个父级".into(),
-                        ));
+                        return Err(VbError::Conflict("编组成员必须同属一个父级".into()));
                     }
                 }
                 // 编组落在最上层成员的原位置
@@ -571,10 +569,7 @@ impl Command {
                     // 成员已全部摘除:top 的原索引没有补偿「排在它之下、
                     // 已被移走的成员」,直接用会让编组越过它们(如
                     // [A,B,C] 选 A、B 编组 → 错成 [C,G],应为 [G,C])。
-                    let removed_below = slots
-                        .iter()
-                        .filter(|s| s.index < top_slot.index)
-                        .count();
+                    let removed_below = slots.iter().filter(|s| s.index < top_slot.index).count();
                     let idx = top_slot
                         .index
                         .saturating_sub(removed_below)

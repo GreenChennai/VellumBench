@@ -1469,9 +1469,9 @@ impl VellumApp {
     }
 
     fn is_artboard_sid(&self, sid: &str) -> bool {
-        self.doc
-            .find_by_sid(sid)
-            .is_some_and(|id| matches!(self.doc.nodes.get(id), Some(n) if matches!(n.kind, NodeKind::Artboard)))
+        self.doc.find_by_sid(sid).is_some_and(
+            |id| matches!(self.doc.nodes.get(id), Some(n) if matches!(n.kind, NodeKind::Artboard)),
+        )
     }
 
     fn group_selection(&mut self) {
