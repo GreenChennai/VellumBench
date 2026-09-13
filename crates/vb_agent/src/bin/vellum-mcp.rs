@@ -345,10 +345,18 @@ fn dispatch(method: &str, params: Value) -> Result<Value, Value> {
                     "content": [{"type": "text", "text": serde_json::to_string(&v).unwrap_or_default()}],
                     "isError": false,
                 })),
-                Err(e) => Ok(json!({
-                    "content": [{"type": "text", "text": e}],
-                    "isError": true,
-                })),
+                Err(e) => {
+                    // 未知工具:升级为 JSON-RPC 协议错误(MCP 规范要求
+                    // -32602,此前包成 isError 结果,严格客户端会判定违规)
+                    if e.starts_with("未知工具:") {
+                        Err(json!({"code": -32602, "message": e}))
+                    } else {
+                        Ok(json!({
+                            "content": [{"type": "text", "text": e}],
+                            "isError": true,
+                        }))
+                    }
+                }
             }
         }
         other => Err(json!({
@@ -359,11 +367,18 @@ fn dispatch(method: &str, params: Value) -> Result<Value, Value> {
 }
 
 fn main() {
-    // 可选启动参数:--doc <dir>(打开初始文档)
+    // 可选启动参数:--doc <dir>(打开初始文档);缺值必须报错,
+    // 不能静默跳过导致客户端首次调用才发现文档没开
     let args: Vec<String> = std::env::args().collect();
     if let Some(i) = args.iter().position(|a| a == "--doc") {
-        if let Some(p) = args.get(i + 1) {
-            let _ = tool_open(&json!({"path": p}));
+        match args.get(i + 1) {
+            Some(p) if !p.starts_with('-') => {
+                let _ = tool_open(&json!({"path": p}));
+            }
+            _ => {
+                eprintln!("错误:--doc 需要一个目录参数");
+                std::process::exit(1);
+            }
         }
     }
 
@@ -440,5 +455,30 @@ mod metadata_tests {
             schema["properties"]["transparent"].is_object(),
             "vellum_export schema 缺 transparent:{schema}"
         );
+    }
+}
+
+#[cfg(test)]
+mod b6_tests {
+    use super::*;
+
+    /// B6:未知工具返回 JSON-RPC 协议错误 -32602(MCP 规范),
+    /// 不再包成 isError 结果。
+    #[test]
+    fn unknown_tool_is_protocol_error() {
+        let resp = dispatch(
+            "tools/call",
+            json!({"name": "vellum_no_such_tool", "arguments": {}}),
+        );
+        match resp {
+            Ok(v) => panic!("未知工具不应返回成功结果:{v}"),
+            Err(err) => {
+                assert_eq!(err["code"], -32602, "{err}");
+                assert!(
+                    err["message"].as_str().unwrap_or("").contains("未知工具"),
+                    "{err}"
+                );
+            }
+        }
     }
 }

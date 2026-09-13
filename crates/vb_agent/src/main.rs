@@ -112,7 +112,15 @@ fn main() {
 }
 
 fn real_main() -> i32 {
-    let cli = Cli::parse();
+    // clap 默认以退出码 2 终止参数错误,与「2=文档未打开」约定冲突:
+    // try_parse 拦下后统一按 1 退出(文件头退出码表)
+    let cli = match Cli::try_parse() {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = e.print();
+            return 1;
+        }
+    };
     match run(cli) {
         Ok(()) => 0,
         Err(CliError::Usage(msg)) => {
@@ -244,9 +252,14 @@ fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Batch { csv, template } => {
             let (mut doc, mut undo, project_dir) = open_doc(&doc_path)?;
             // 解析 CSV(首行表头;支持带引号字段)
-            let csv_text = std::fs::read_to_string(&csv)
+            let mut csv_text = std::fs::read_to_string(&csv)
                 .with_context(|| format!("读取 {}", csv.display()))
                 .map_err(|e| CliError::Other(format!("{e:#}")))?;
+            // Windows 记事本等常带 UTF-8 BOM:不剥会让首列表头变成
+            // \u{feff}col,占位符静默替换失败
+            if let Some(rest) = csv_text.strip_prefix("\u{feff}") {
+                csv_text = rest.to_string();
+            }
             let mut rows: Vec<Vec<String>> = Vec::new();
             // RFC 4180 行切分:引号内的换行/逗号是字段内容,不得撕裂
             // (此前 .lines() 预切分,带换行的单元格破坏行结构)
