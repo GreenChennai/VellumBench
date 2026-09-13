@@ -1,5 +1,7 @@
 //! 回归测试:2026-09 审查修复的导入/CSS/序列化缺陷。
 
+mod common;
+
 use vb_doc::export::render_project;
 use vb_doc::import::import_html;
 use vb_doc::model::NodeKind;
@@ -218,4 +220,59 @@ fn body_style_link_not_dumped_into_css() {
         html_out.contains(".x { color: red; }"),
         "body 样式内容必须完整保留(转投 head):{html_out}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 15 号计划 A3:注释感知词法(R3)+ &nbsp; 保真(R4)
+// ---------------------------------------------------------------------------
+
+use vb_css::Decl;
+use vb_doc::import::parse_stylesheet;
+
+/// R3:注释内的 `{`/`}` 不得破坏规则切分(此前规则体被 `/* } */` 截断,
+/// 未闭合注释还随 raw 块落盘、毒化导出 CSS)。
+#[test]
+fn stylesheet_body_braces_in_comments() {
+    let sheet = parse_stylesheet(".p { color: red /* } */ ; background: blue }");
+    let rules = &sheet.class_rules;
+    assert_eq!(rules.len(), 1, "应切出一条 p 规则:{rules:?}");
+    let props: Vec<&str> = rules[0].1.iter().map(|d| d.prop.as_str()).collect();
+    assert_eq!(props, vec!["color", "background"], "注释内花括号破坏切分");
+
+    // 注释内的 '{' 不得把 '}' 吸进声明值
+    let sheet = parse_stylesheet(".a { width: 1px /* { */ ; height: 2px }");
+    assert_eq!(sheet.class_rules.len(), 1, "{:?}", sheet.class_rules);
+    let props: Vec<&str> = sheet.class_rules[0]
+        .1
+        .iter()
+        .map(|d| d.prop.as_str())
+        .collect();
+    assert_eq!(props, vec!["width", "height"], "{:?}", sheet.class_rules[0].1);
+}
+
+/// R3:声明值内的注释保留(合法 CSS,不损坏)。
+#[test]
+fn value_comment_preserved() {
+    let sheet = parse_stylesheet(".p { color: red /* note */ }");
+    let decls = &sheet.class_rules[0].1;
+    assert_eq!(decls.len(), 1);
+    assert!(decls[0].value.contains("note"), "{:?}", decls[0].value);
+}
+
+/// R4:&nbsp;(U+00A0)是内容不是空白 —— 折叠/剥除都丢「禁止换行」语义。
+#[test]
+fn nbsp_survives_roundtrip() {
+    use common::check_l0_l1;
+    let src = r#"<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>t</title></head>
+<body>
+  <section class="vb-artboard ab" data-vb-id="ab1234" data-vb-name="AB">
+    <p data-vb-id="p00001" style="position:absolute;left:0;top:0;width:200px;">A&nbsp;B</p>
+  </section>
+</body>
+</html>
+"#;
+    let nbsp_text = "A\u{00A0}B".to_string();
+    check_l0_l1("nbsp", src, &[nbsp_text]).expect("nbsp 应原样往返");
 }

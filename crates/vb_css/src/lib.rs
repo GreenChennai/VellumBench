@@ -122,7 +122,14 @@ pub struct Decl {
 impl Decl {
     /// 解析单条 `"prop: value"`(不含分号)。白名单外照样解析(unknown 保底)。
     pub fn parse(text: &str) -> Option<Decl> {
-        let (prop, value) = text.split_once(':')?;
+        // 前导注释(`; /* c */ color:red` 里注释落在 prop 侧)先剥掉;
+        // 未闭合注释 → 整条无效(与浏览器一致)
+        let mut rest = text.trim_start();
+        while let Some(r) = rest.strip_prefix("/*") {
+            let end = r.find("*/")?;
+            rest = r[end + 2..].trim_start();
+        }
+        let (prop, value) = rest.split_once(':')?;
         let raw = prop.trim();
         // 自定义属性(--*)区分大小写:--brandColor 与 --brandcolor 是两个变量,
         // 小写化会让 var(--brandColor) 引用断裂(CSS 规范行为)
@@ -165,16 +172,33 @@ impl Decl {
     }
 }
 
+/// 剥离末尾 `!important`(CSS 规范:只能出现在声明值末尾、字符串之外)。
+/// 此前 `rfind("!important")` 子串匹配不感知字符串,`content: "x !important"`
+/// 的值被拦腰截断并误标 important。
 fn strip_important(value: &str) -> (String, bool) {
     let t = value.trim();
-    if let Some(pos) = t.rfind("!important") {
-        // !important 通常在末尾(可能在 `red !important` 中)
-        let head = t[..pos].trim_end();
-        if head != t {
-            return (head.to_string(), true);
+    let mut in_string: Option<char> = None;
+    let mut candidate: Option<usize> = None;
+    let mut i = 0usize;
+    while i < t.len() {
+        let c = t[i..].chars().next().unwrap();
+        if let Some(q) = in_string {
+            if c == q {
+                in_string = None;
+            }
+        } else {
+            match c {
+                '"' | '\'' => in_string = Some(c),
+                '!' if t[i..].starts_with("!important") => candidate = Some(i),
+                _ => {}
+            }
         }
+        i += c.len_utf8();
     }
-    (t.to_string(), false)
+    match candidate {
+        Some(pos) => (t[..pos].trim_end().to_string(), true),
+        None => (t.to_string(), false),
+    }
 }
 
 /// 规范化属性值:
@@ -386,18 +410,47 @@ pub fn parse_decls(css_text: &str) -> Vec<Decl> {
     out
 }
 
-/// 在括号深度 0、不在字符串内时按 `sep` 切分。
+/// 在括号深度 0、不在字符串/注释内时按 `sep` 切分;注释内容保留在所在
+/// 分段里(值内注释是合法 CSS)。此前 `/* a;b */` 内的分号会吞掉后续声明。
 pub fn split_top_level(text: &str, sep: char) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
     let mut depth = 0usize;
     let mut in_string: Option<char> = None;
+    let mut in_comment = false;
+    let mut comment_close = false; // 注释内上一字符是 '*',可能构成 '*/'
+    let mut pending_slash = false; // 字符串外的 '/',等下一字符判断是否开注释
     for c in text.chars() {
+        if pending_slash {
+            pending_slash = false;
+            if c == '*' {
+                in_comment = true;
+                cur.push('/');
+                cur.push('*');
+                continue;
+            }
+            // '/' 是字面量(calc(1/2)、url 路径):补回,当前字符继续正常处理
+            cur.push('/');
+        }
+        if in_comment {
+            cur.push(c);
+            if comment_close && c == '/' {
+                in_comment = false;
+                comment_close = false;
+            } else {
+                comment_close = c == '*';
+            }
+            continue;
+        }
         if let Some(q) = in_string {
             cur.push(c);
             if c == q {
                 in_string = None;
             }
+            continue;
+        }
+        if c == '/' {
+            pending_slash = true;
             continue;
         }
         match c {
@@ -418,6 +471,9 @@ pub fn split_top_level(text: &str, sep: char) -> Vec<String> {
             }
             c => cur.push(c),
         }
+    }
+    if pending_slash {
+        cur.push('/');
     }
     if !cur.trim().is_empty() {
         out.push(cur);
@@ -496,6 +552,47 @@ mod tests {
             "background-image:url(data:image/png;base64,xx), red; color:#fff",
             ';',
         );
+        assert_eq!(parts.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod a3_tests {
+    use super::*;
+
+    /// R1:`!important` 出现在字符串内不得截断值(此前 rfind 子串匹配)。
+    #[test]
+    fn important_inside_string_is_not_stripped() {
+        let d = Decl::parse(r#"content: "x !important""#).unwrap();
+        assert_eq!(d.value, r#""x !important""#);
+        assert!(!d.important);
+
+        // 字符串外的末尾 !important 正常剥离
+        let d = Decl::parse("color: red !important").unwrap();
+        assert_eq!(d.value, "red");
+        assert!(d.important);
+
+        // url 里的子串也不误伤
+        let d = Decl::parse(r#"background-image: url("a!important.png")"#).unwrap();
+        assert_eq!(d.value, r#"url("a!important.png")"#);
+        assert!(!d.important);
+    }
+
+    /// R2:注释内的分号不得吞掉后续声明;未闭合注释不得泄漏到后续声明。
+    #[test]
+    fn comment_aware_decl_splitting() {
+        let decls = parse_decls("width:10px; /* a;b */ color:red");
+        let props: Vec<&str> = decls.iter().map(|d| d.prop.as_str()).collect();
+        assert_eq!(props, vec!["width", "color"], "注释内分号后声明丢失");
+
+        let decls = parse_decls("color:red /* note;here */; background:blue");
+        let props: Vec<&str> = decls.iter().map(|d| d.prop.as_str()).collect();
+        assert_eq!(props, vec!["color", "background"]);
+        let color = &decls[0].value;
+        assert!(color.contains("note"), "值内注释应保留:{color}");
+
+        // 括号/引号感知不回退
+        let parts = split_top_level("background-image:url(data:image/png;base64,xx), red; color:#fff", ';');
         assert_eq!(parts.len(), 2);
     }
 }

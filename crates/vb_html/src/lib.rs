@@ -319,12 +319,23 @@ fn escape_attr(s: &str) -> String {
     o
 }
 
+/// HTML 可折叠空白 = ASCII 空白(U+00A0 不换行空格是内容,折叠或剥除
+/// 都会丢「禁止换行」语义 —— 浏览器只折叠 ASCII 空白)。
+pub fn is_foldable_ws(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{0C}')
+}
+
+/// 按 HTML 空白定义剥除两端空白(区别于 str::trim:后者含 U+00A0)。
+pub fn trim_html_ws(s: &str) -> &str {
+    s.trim_matches(is_foldable_ws)
+}
+
 /// 折叠连续空白为单空格(行内上下文)。
 fn collapse_ws(s: &str) -> String {
     let mut o = String::with_capacity(s.len());
     let mut ws = false;
     for c in s.chars() {
-        if c.is_whitespace() {
+        if is_foldable_ws(c) {
             ws = true;
         } else {
             if ws && !o.is_empty() {

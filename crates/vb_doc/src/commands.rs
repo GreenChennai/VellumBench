@@ -459,6 +459,44 @@ impl Command {
                     *old_slots = Some(slots);
                 }
                 let slots = old_slots.as_ref().unwrap();
+                // 前置校验:成员必须同父、互不为祖先后代、不含画板。
+                // 此前注释声称「成员必须同父(v0.1 约束)」但代码未校验 ——
+                // 跨画板成员会被统一重定基到错误的坐标系(视觉瞬移);
+                // 祖先+后代编组会产生错乱几何;画板入组会绕过「至少一块
+                // 画板」的删除守卫。
+                {
+                    // 校验按「最具体错误优先」排列:画板 → 祖先后代 → 同父
+                    for m in member_sids.iter() {
+                        let id = doc.find_by_sid(m).ok_or_else(|| no_such(m))?;
+                        if matches!(doc.nodes.get(id),
+                                    Some(n) if matches!(n.kind, NodeKind::Artboard))
+                        {
+                            return Err(VbError::Conflict("画板不能编入组".into()));
+                        }
+                    }
+                    for m in member_sids.iter() {
+                        let id = doc.find_by_sid(m).ok_or_else(|| no_such(m))?;
+                        for other in member_sids.iter() {
+                            if other == m {
+                                continue;
+                            }
+                            let oid = doc.find_by_sid(other).ok_or_else(|| no_such(other))?;
+                            if doc.is_descendant_or_self(id, oid)
+                                || doc.is_descendant_or_self(oid, id)
+                            {
+                                return Err(VbError::Conflict(format!(
+                                    "编组成员不能互为祖先或后代: {m} / {other}"
+                                )));
+                            }
+                        }
+                    }
+                    let first_parent = &slots[0].parent_sid;
+                    if !slots.iter().all(|s| &s.parent_sid == first_parent) {
+                        return Err(VbError::Conflict(
+                            "编组成员必须同属一个父级".into(),
+                        ));
+                    }
+                }
                 // 编组落在最上层成员的原位置
                 let top = slots
                     .iter()
@@ -514,8 +552,16 @@ impl Command {
                     let parent = doc
                         .find_by_sid(&top_slot.parent_sid)
                         .ok_or_else(|| no_such(&top_slot.parent_sid))?;
+                    // 成员已全部摘除:top 的原索引没有补偿「排在它之下、
+                    // 已被移走的成员」,直接用会让编组越过它们(如
+                    // [A,B,C] 选 A、B 编组 → 错成 [C,G],应为 [G,C])。
+                    let removed_below = slots
+                        .iter()
+                        .filter(|s| s.index < top_slot.index)
+                        .count();
                     let idx = top_slot
                         .index
+                        .saturating_sub(removed_below)
                         .min(doc.nodes.get(parent).unwrap().children.len());
                     doc.nodes.get_mut(parent).unwrap().children.insert(idx, gid);
                     doc.nodes.get_mut(gid).unwrap().parent = Some(parent);

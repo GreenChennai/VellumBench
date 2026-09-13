@@ -13,7 +13,7 @@
 use std::path::{Path, PathBuf};
 
 use vb_css::{parse_decls, Decl};
-use vb_html::{Element, HtmlDom, HtmlNode, NodeData};
+use vb_html::{trim_html_ws, Element, HtmlDom, HtmlNode, NodeData};
 
 use crate::model::{Document, Geom, Node, NodeKind, TextMode};
 use crate::Result;
@@ -170,7 +170,7 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
                     loose.push(child);
                 }
             }
-            NodeData::Text(t) if !t.trim().is_empty() => loose.push(child),
+            NodeData::Text(t) if !trim_html_ws(t).is_empty() => loose.push(child),
             _ => {}
         }
     }
@@ -301,17 +301,38 @@ impl Stylesheet {
     }
 }
 
-/// 字符串/转义感知的扫描状态:`content: "}"`、`url(a;b)`、属性选择器里
-/// 的引号都不能当成块/规则边界(CSS 规范:字符串内无特殊字符)。
+/// 字符串/转义/注释感知的扫描状态:`content: "}"`、`url(a;b)`、属性选择器里
+/// 的引号、`/* } */` 注释内的花括号,都不能当成块/规则边界(CSS 规范:
+/// 字符串内无特殊字符;注释只在 `*/` 结束)。
 #[derive(Default)]
 struct CssScan {
     in_str: Option<char>,
     escape: bool,
+    in_comment: bool,
+    comment_close: bool,
+    pending_slash: bool,
 }
 
 impl CssScan {
-    /// 推进一个字符;返回 true 表示该字符位于字符串/转义内,不做边界判断。
+    /// 推进一个字符;返回 true 表示该字符位于字符串/转义/注释内,不做边界判断。
     fn step(&mut self, c: char) -> bool {
+        if self.pending_slash {
+            self.pending_slash = false;
+            if c == '*' {
+                self.in_comment = true;
+                return true;
+            }
+            // '/' 是字面量(calc(1/2) 等),当前字符继续正常判断
+        }
+        if self.in_comment {
+            if self.comment_close && c == '/' {
+                self.in_comment = false;
+                self.comment_close = false;
+            } else {
+                self.comment_close = c == '*';
+            }
+            return true;
+        }
         if let Some(q) = self.in_str {
             if self.escape {
                 self.escape = false;
@@ -325,6 +346,10 @@ impl CssScan {
         match c {
             '"' | '\'' => {
                 self.in_str = Some(c);
+                true
+            }
+            '/' => {
+                self.pending_slash = true;
                 true
             }
             _ => false,
@@ -707,11 +732,11 @@ impl<'a> NodeImporter<'a> {
             let has_element_children = node.children.iter().any(|c| c.as_element().is_some());
             let all_text = collect_text(node);
             if !has_element_children
-                && !all_text.trim().is_empty()
+                && !trim_html_ws(&all_text).is_empty()
                 && !matches!(el.name.as_str(), "div" | "section" | "li" | "ul" | "form")
             {
                 kind = NodeKind::Text {
-                    text: all_text.trim().to_string(),
+                    text: trim_html_ws(&all_text).to_string(),
                     mode: TextMode::Point,
                 };
             } else {

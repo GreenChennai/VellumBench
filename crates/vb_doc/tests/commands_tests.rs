@@ -495,3 +495,119 @@ fn delete_second_artboard_allowed() {
     stack.undo(&mut doc).unwrap();
     assert_eq!(doc.artboards.len(), 2);
 }
+
+// ---------------------------------------------------------------------------
+// 15 号计划 A3 / R5+R6:编组 z 序补偿与成员校验
+// ---------------------------------------------------------------------------
+
+use vb_doc::VbError;
+
+/// R5:[A,B,C] 框选 A、B 编组 → [G,C](此前 [C,G],组越过未选中的 C)。
+#[test]
+fn group_lands_at_top_member_z_order() {
+    let mut doc = Document::new_default();
+    let ab = doc.artboards[0];
+    let ab_sid = doc.nodes.get(ab).unwrap().sid.as_str().to_string();
+    let a = make_box(&mut doc, &ab_sid, 0.0, 0.0);
+    let b = make_box(&mut doc, &ab_sid, 10.0, 10.0);
+    let _c = make_box(&mut doc, &ab_sid, 20.0, 20.0);
+    let mut stack = UndoStack::new();
+    let gid = doc.alloc_sid().as_str().to_string();
+    stack
+        .push(
+            &mut doc,
+            Command::Group {
+                member_sids: vec![a, b],
+                name: "组".into(),
+                group_sid: gid.clone(),
+                old_slots: None,
+            },
+        )
+        .expect("编组应成功");
+    let children: Vec<String> = doc.nodes.get(ab).unwrap().children.iter()
+        .map(|&c| doc.nodes.get(c).unwrap().sid.as_str().to_string())
+        .collect();
+    assert_eq!(children.len(), 2);
+    assert_eq!(
+        children[0], gid,
+        "编组应落在最上层成员原位(在 C 之前),实际 {children:?}"
+    );
+}
+
+/// R6:跨父级编组被拒绝(此前静默产出错乱几何,成员视觉瞬移)。
+#[test]
+fn group_rejects_cross_parent_members() {
+    let mut doc = Document::new_default();
+    let ab0 = doc.artboards[0];
+    let ab0_sid = doc.nodes.get(ab0).unwrap().sid.as_str().to_string();
+    let ab1 = doc.new_artboard("画板 2", 800.0, 600.0);
+    let ab1_sid = doc.nodes.get(ab1).unwrap().sid.as_str().to_string();
+    let a = make_box(&mut doc, &ab0_sid, 0.0, 0.0);
+    let b = make_box(&mut doc, &ab1_sid, 0.0, 0.0);
+    let mut stack = UndoStack::new();
+    let gid = doc.alloc_sid().as_str().to_string();
+    let err = stack
+        .push(
+            &mut doc,
+            Command::Group {
+                member_sids: vec![a, b],
+                name: "组".into(),
+                group_sid: gid,
+                old_slots: None,
+            },
+        )
+        .expect_err("跨父级编组应被拒绝");
+    assert!(err.to_string().contains("父级"), "{err}");
+}
+
+/// R6:祖先+后代编组被拒绝(此前坐标重定基错乱)。
+#[test]
+fn group_rejects_ancestor_descendant() {
+    let mut doc = Document::new_default();
+    let ab = doc.artboards[0];
+    let ab_sid = doc.nodes.get(ab).unwrap().sid.as_str().to_string();
+    let parent = make_box(&mut doc, &ab_sid, 0.0, 0.0);
+    let child = make_box(&mut doc, &parent, 10.0, 10.0);
+    let mut stack = UndoStack::new();
+    let gid = doc.alloc_sid().as_str().to_string();
+    let err = stack
+        .push(
+            &mut doc,
+            Command::Group {
+                member_sids: vec![parent, child],
+                name: "组".into(),
+                group_sid: gid,
+                old_slots: None,
+            },
+        )
+        .expect_err("祖先+后代编组应被拒绝");
+    assert!(err.to_string().contains("祖先"), "{err}");
+}
+
+/// R6:画板不能编入组(否则可绕过「至少一块画板」删除守卫)。
+#[test]
+fn group_rejects_artboard_member() {
+    let mut doc = Document::new_default();
+    let ab0 = doc.artboards[0];
+    let ab0_sid = doc.nodes.get(ab0).unwrap().sid.as_str().to_string();
+    let ab1 = doc.new_artboard("画板 2", 800.0, 600.0);
+    let a = make_box(&mut doc, &ab0_sid, 0.0, 0.0);
+    let b = doc.nodes.get(ab1).unwrap().sid.as_str().to_string();
+    let mut stack = UndoStack::new();
+    let gid = doc.alloc_sid().as_str().to_string();
+    let err = stack
+        .push(
+            &mut doc,
+            Command::Group {
+                member_sids: vec![a, b],
+                name: "组".into(),
+                group_sid: gid,
+                old_slots: None,
+            },
+        )
+        .expect_err("画板入组应被拒绝");
+    assert!(err.to_string().contains("画板"), "{err}");
+}
+
+#[allow(dead_code)]
+fn ensure_vberror_import_used(_: Option<VbError>) {}
