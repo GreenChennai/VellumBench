@@ -283,7 +283,6 @@ impl Document {
         }
     }
 
-    /** 4e3a590d52364f53/patch 65b05efa828270b95206914d77ed7801(8bed4e49522b540d)3002 */
     pub fn alloc_sid_for_dup(&mut self) -> StableId {
         self.alloc_sid()
     }

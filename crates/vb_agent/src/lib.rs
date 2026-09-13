@@ -6,6 +6,6 @@
 pub mod patch;
 
 pub use patch::{
-    apply_patch, BoxSpec, InsertNodeSpec, OffsetSpec, PatchError, PatchOp, PatchOutcome,
-    PatchRequest,
+    apply_patch, patch_op_name, BoxSpec, InsertNodeSpec, OffsetSpec, PatchError, PatchOp,
+    PatchOutcome, PatchRequest, PATCH_OP_NAMES,
 };

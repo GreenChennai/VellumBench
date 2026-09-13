@@ -703,3 +703,45 @@ fn collect_affected(cmd: &Command, out: &mut PatchOutcome) {
         Command::SetToken { .. } => {}
     }
 }
+
+/// 全部 PatchOp 的 serde 名(穷尽 match:新增变体不补 arm 就编译不过,
+/// MCP tools/list 与文档据此保持同步 —— 此前硬编码「13 种 op」漂移成 16)。
+pub fn patch_op_name(op: &PatchOp) -> &'static str {
+    match op {
+        PatchOp::Insert { .. } => "insert",
+        PatchOp::SetText { .. } => "set_text",
+        PatchOp::SetStyle { .. } => "set_style",
+        PatchOp::SetAttr { .. } => "set_attr",
+        PatchOp::Move { .. } => "move",
+        PatchOp::SetBox { .. } => "set_box",
+        PatchOp::Rename { .. } => "rename",
+        PatchOp::SetTag { .. } => "set_tag",
+        PatchOp::Duplicate { .. } => "duplicate",
+        PatchOp::Delete { .. } => "delete",
+        PatchOp::Group { .. } => "group",
+        PatchOp::Ungroup { .. } => "ungroup",
+        PatchOp::Align { .. } => "align",
+        PatchOp::Order { .. } => "order",
+        PatchOp::SetToken { .. } => "set_token",
+        PatchOp::NewArtboard { .. } => "new_artboard",
+    }
+}
+
+pub const PATCH_OP_NAMES: &[&str] = &[
+    "insert",
+    "set_text",
+    "set_style",
+    "set_attr",
+    "move",
+    "set_box",
+    "rename",
+    "set_tag",
+    "duplicate",
+    "delete",
+    "group",
+    "ungroup",
+    "align",
+    "order",
+    "set_token",
+    "new_artboard",
+];

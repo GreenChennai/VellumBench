@@ -176,19 +176,23 @@ fn tool_export(args: &Value) -> Result<Value, String> {
             .unwrap_or("png")
             .to_ascii_lowercase();
         let scale = args.get("scale").and_then(|v| v.as_u64()).unwrap_or(2) as u32;
+        let transparent = args
+            .get("transparent")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let ab = need_artboard(&s.doc, args.get("artboard").and_then(|v| v.as_str()))?;
         let out = PathBuf::from(args.get("out").and_then(|v| v.as_str()).ok_or("缺少 out")?);
         match fmt.as_str() {
             "png" => {
                 let (png, warnings) =
-                    vb_export::export_artboard_png(&s.doc, ab, scale as f32, false, Some(&s.dir))?;
+                    vb_export::export_artboard_png(&s.doc, ab, scale as f32, transparent, Some(&s.dir))?;
                 std::fs::write(&out, &png).map_err(|e| e.to_string())?;
                 Ok(
                     json!({"ok": true, "out": out.display().to_string(), "bytes": png.len(), "warnings": warnings}),
                 )
             }
             "svg" => {
-                let svg = vb_export::export_artboard_svg(&s.doc, ab, scale, false)?;
+                let svg = vb_export::export_artboard_svg(&s.doc, ab, scale, transparent)?;
                 std::fs::write(&out, &svg).map_err(|e| e.to_string())?;
                 Ok(json!({"ok": true, "out": out.display().to_string(), "bytes": svg.len()}))
             }
@@ -211,7 +215,7 @@ fn tool_export(args: &Value) -> Result<Value, String> {
                         1
                     },
                     width: 1920,
-                    transparent: false,
+                    transparent,
                     out,
                     max_wait: 20.0,
                 };
@@ -278,8 +282,8 @@ const TOOLS_LIST: &str = r#"[
   {"name":"vellum_get_outline","description":"树形大纲(轻量,默认先调这个)","inputSchema":{"type":"object","properties":{"depth":{"type":"integer"}}}},
   {"name":"vellum_find","description":"按 name/text/tag 查找元素","inputSchema":{"type":"object","properties":{"name":{"type":"string"},"text":{"type":"string"},"tag":{"type":"string"}}}},
   {"name":"vellum_get_element","description":"取元素详情(样式/文本/几何)","inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}},
-  {"name":"vellum_apply_patch","description":"应用 patch 事务(13 种 op,支持 base_rev 乐观锁)","inputSchema":{"type":"object","properties":{"ops":{"type":"array"},"base_rev":{"type":"integer"}},"required":["ops"]}},
-  {"name":"vellum_export","description":"导出画板 png/svg/pdf/gif/mp4","inputSchema":{"type":"object","properties":{"artboard":{"type":"string"},"format":{"type":"string","enum":["png","svg","pdf","gif","mp4"]},"scale":{"type":"integer"},"out":{"type":"string"}},"required":["out"]}},
+  {"name":"vellum_apply_patch","description":"应用 patch 事务(op: insert/set_text/set_style/set_attr/move/set_box/rename/set_tag/duplicate/delete/group/ungroup/align/order/set_token/new_artboard;支持 base_rev 乐观锁)","inputSchema":{"type":"object","properties":{"ops":{"type":"array"},"base_rev":{"type":"integer"}},"required":["ops"]}},
+  {"name":"vellum_export","description":"导出画板 png/svg/pdf/gif/mp4","inputSchema":{"type":"object","properties":{"artboard":{"type":"string"},"format":{"type":"string","enum":["png","svg","pdf","gif","mp4"]},"scale":{"type":"integer"},"transparent":{"type":"boolean","description":"png/svg 有效:不铺画板底色"},"out":{"type":"string"}},"required":["out"]}},
   {"name":"vellum_screenshot","description":"画板截图 PNG(供多模态模型查看)","inputSchema":{"type":"object","properties":{"artboard":{"type":"string"},"out":{"type":"string"}},"required":["out"]}},
   {"name":"vellum_get_html","description":"取当前 HTML/CSS(共阅稿)","inputSchema":{"type":"object","properties":{"scope":{"type":"string","enum":["html","css"]}}}},
   {"name":"vellum_diff_since","description":"自某 rev 以来的变更摘要","inputSchema":{"type":"object","properties":{"rev":{"type":"integer"}}}},
@@ -386,5 +390,46 @@ fn main() {
                 stdout.flush().ok();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+
+    /// tools/list 的 op 名单必须覆盖全部 PatchOp 变体
+    /// (patch_op_name 是穷尽 match,新增变体编译期强制补名)。
+    #[test]
+    fn tools_list_lists_every_patch_op() {
+        let tools: Value = serde_json::from_str(TOOLS_LIST).expect("TOOLS_LIST 合法 JSON");
+        let desc = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "vellum_apply_patch")
+            .expect("apply_patch 工具存在")["description"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        for name in vb_agent::PATCH_OP_NAMES {
+            assert!(desc.contains(name), "tools/list 缺 op 名:{name}");
+        }
+    }
+
+    /// export 工具 schema 声明 transparent(与实现一致)。
+    #[test]
+    fn export_schema_has_transparent() {
+        let tools: Value = serde_json::from_str(TOOLS_LIST).unwrap();
+        let schema = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "vellum_export")
+            .unwrap()["inputSchema"]
+            .clone();
+        assert!(
+            schema["properties"]["transparent"].is_object(),
+            "vellum_export schema 缺 transparent:{schema}"
+        );
     }
 }

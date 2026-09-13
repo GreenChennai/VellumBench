@@ -1,26 +1,38 @@
-# Vellum Bench 命令表(v0.1 子集)
+# Vellum Bench 命令表
 # 单一真相:菜单 / 快捷键 / 面板 / Agent CLI 共用。
+# 本文件由注册表(cmds.yaml 门禁测试)校验同步;ID/label/键位以
+# vb_app::shortcuts 为准,undoable / expose_to_agent 为人工策展列。
 # expose_to_agent: 可通过 `vellum-cli patch {"op":"run","command":...}` 执行
 - id: file.new
-  label: 新建
+  label: 新建文档
   keys: { win: "Ctrl+N" }
   undoable: false
   expose_to_agent: true
 - id: file.open
-  label: 打开
+  label: 打开项目…
   keys: { win: "Ctrl+O" }
   undoable: false
-  expose_to_agent: false
+  expose_to_agent: true
 - id: file.save
-  label: 存储
+  label: 保存
   keys: { win: "Ctrl+S" }
   undoable: false
   expose_to_agent: true
-- id: file.export_png
-  label: 导出 PNG
+- id: file.export_dialog
+  label: 导出…
   keys: { win: "Ctrl+E" }
   undoable: false
   expose_to_agent: true
+- id: file.export_repeat
+  label: 上次导出(当前画板 PNG @2x)
+  keys: { win: "Ctrl+Shift+E" }
+  undoable: false
+  expose_to_agent: true
+- id: app.quit
+  label: 退出
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
 - id: edit.undo
   label: 撤销
   keys: { win: "Ctrl+Z" }
@@ -31,6 +43,31 @@
   keys: { win: "Ctrl+Shift+Z" }
   undoable: false
   expose_to_agent: true
+- id: edit.select_all
+  label: 全选(当前画板)
+  keys: { win: "Ctrl+A" }
+  undoable: false
+  expose_to_agent: true
+- id: edit.copy
+  label: 复制
+  keys: { win: "Ctrl+C" }
+  undoable: false
+  expose_to_agent: false
+- id: edit.cut
+  label: 剪切
+  keys: { win: "Ctrl+X" }
+  undoable: true
+  expose_to_agent: false
+- id: edit.paste
+  label: 粘贴
+  keys: { win: "Ctrl+V" }
+  undoable: true
+  expose_to_agent: false
+- id: edit.paste_in_place
+  label: 贴在前面(就地)
+  keys: { win: "Ctrl+F" }
+  undoable: true
+  expose_to_agent: false
 - id: object.group
   label: 编组
   keys: { win: "Ctrl+G" }
@@ -41,80 +78,54 @@
   keys: { win: "Ctrl+Shift+G" }
   undoable: true
   expose_to_agent: true
-- id: object.delete
-  label: 删除
-  keys: { win: "Delete" }
-  undoable: true
-  expose_to_agent: true
 - id: object.transform_again
   label: 再次变换
   keys: { win: "Ctrl+D" }
   undoable: true
   expose_to_agent: true
-- id: view.zoom_in
-  label: 放大
-  keys: { win: "Ctrl++" }
-  undoable: false
-  expose_to_agent: false
-- id: view.zoom_out
-  label: 缩小
-  keys: { win: "Ctrl+-" }
-  undoable: false
-  expose_to_agent: false
-- id: view.fit
-  label: 适合窗口
-  keys: { win: "Ctrl+0" }
-  undoable: false
-  expose_to_agent: false
-- id: view.actual_size
-  label: 实际大小
-  keys: { win: "Ctrl+1" }
-  undoable: false
-  expose_to_agent: false
-- id: tool.select
-  label: 选择工具
-  keys: { win: "V" }
-  undoable: false
-  expose_to_agent: false
-- id: tool.direct_select
-  label: 直接选择工具
-  keys: { win: "A" }
-  undoable: false
-  expose_to_agent: false
-- id: tool.rect
-  label: 矩形工具
-  keys: { win: "M" }
-  undoable: false
-  expose_to_agent: false
-- id: tool.ellipse
-  label: 椭圆工具
-  keys: { win: "L" }
-  undoable: false
-  expose_to_agent: false
-- id: tool.hand
-  label: 抓手工具
-  keys: { win: "H" }
-  undoable: false
-  expose_to_agent: false
-# ── P3 批次(剪贴板 / 对齐 / 锁定隐藏 / 命令面板) ──
-- id: edit.copy
-  label: 复制
-  keys: { win: "Ctrl+C" }
-  undoable: false
-  expose_to_agent: true
-- id: edit.cut
-  label: 剪切
-  keys: { win: "Ctrl+X" }
+- id: object.bring_forward
+  label: 前移一层
+  keys: { win: "Ctrl+]" }
   undoable: true
   expose_to_agent: true
-- id: edit.paste
-  label: 粘贴
-  keys: { win: "Ctrl+V" }
+- id: object.bring_to_front
+  label: 置于顶层
+  keys: { win: "Ctrl+Shift+]" }
   undoable: true
   expose_to_agent: true
-- id: edit.paste_in_place
-  label: 贴在前面(就地)
-  keys: { win: "Ctrl+F" }
+- id: object.send_backward
+  label: 后移一层
+  keys: { win: "Ctrl+[" }
+  undoable: true
+  expose_to_agent: true
+- id: object.send_to_back
+  label: 置于底层
+  keys: { win: "Ctrl+Shift+[" }
+  undoable: true
+  expose_to_agent: true
+- id: object.delete
+  label: 删除对象
+  keys: { win: "Del" }
+  undoable: true
+  expose_to_agent: true
+- id: object.lock
+  label: 锁定所选
+  keys: { win: "Ctrl+2" }
+  undoable: true
+  expose_to_agent: true
+- id: object.unlock_all
+  label: 解锁全部
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: true
+- id: object.hide
+  label: 隐藏所选
+  keys: { win: "Ctrl+3" }
+  undoable: true
+  expose_to_agent: true
+- id: object.show_all
+  label: 显示全部
+  keys: { win: "" }
   undoable: true
   expose_to_agent: true
 - id: align.left
@@ -147,38 +158,184 @@
   keys: { win: "Ctrl+Shift+B" }
   undoable: true
   expose_to_agent: true
-- id: object.lock
-  label: 锁定所选
-  keys: { win: "Ctrl+2" }
+- id: object.distribute_h
+  label: 水平等距分布
+  keys: { win: "" }
   undoable: true
   expose_to_agent: true
-- id: object.hide
-  label: 隐藏所选
-  keys: { win: "Ctrl+3" }
+- id: object.distribute_v
+  label: 垂直等距分布
+  keys: { win: "" }
   undoable: true
   expose_to_agent: true
-- id: object.unlock_all
-  label: 解锁全部
-  keys: { win: "Ctrl+Alt+2" }
+- id: view.zoom_in
+  label: 放大
+  keys: { win: "Ctrl++" }
   undoable: false
-  expose_to_agent: true
-- id: object.show_all
-  label: 显示全部
-  keys: { win: "Ctrl+Alt+3" }
+  expose_to_agent: false
+- id: view.zoom_out
+  label: 缩小
+  keys: { win: "Ctrl+−" }
   undoable: false
+  expose_to_agent: false
+- id: view.fit
+  label: 适合窗口
+  keys: { win: "Ctrl+0" }
+  undoable: false
+  expose_to_agent: false
+- id: view.actual_size
+  label: 实际大小 100%
+  keys: { win: "Ctrl+1" }
+  undoable: false
+  expose_to_agent: false
+- id: view.outline
+  label: 轮廓模式(线框)
+  keys: { win: "Ctrl+Y" }
+  undoable: false
+  expose_to_agent: false
+- id: view.toggle_grid
+  label: 显示 / 隐藏网格
+  keys: { win: "Ctrl+Quote" }
+  undoable: false
+  expose_to_agent: false
+- id: view.toggle_smart_guides
+  label: 智能参考线开关
+  keys: { win: "Ctrl+Shift+;" }
+  undoable: false
+  expose_to_agent: false
+- id: view.toggle_theme
+  label: 深色 / 浅色主题
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.select
+  label: 选择工具
+  keys: { win: "V" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.rect
+  label: 矩形工具
+  keys: { win: "M" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.ellipse
+  label: 椭圆工具
+  keys: { win: "L" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.line
+  label: 直线工具
+  keys: { win: "\" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.pen
+  label: 钢笔工具
+  keys: { win: "P" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.direct_select
+  label: 直接选择工具
+  keys: { win: "A" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.zoom
+  label: 缩放工具
+  keys: { win: "Z" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.hand
+  label: 抓手工具
+  keys: { win: "H" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.text
+  label: 文字工具
+  keys: { win: "T" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.eyedropper
+  label: 吸管工具
+  keys: { win: "I" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.artboard
+  label: 画板工具
+  keys: { win: "Shift+O" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.gradient
+  label: 渐变工具
+  keys: { win: "G" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.scissors
+  label: 剪刀工具
+  keys: { win: "C" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.group_select
+  label: 编组选择工具
+  keys: { win: "Y" }
+  undoable: false
+  expose_to_agent: false
+- id: canvas.cancel
+  label: 取消 / 清空选区
+  keys: { win: "Esc" }
+  undoable: false
+  expose_to_agent: false
+- id: canvas.pen_finish
+  label: 钢笔:结束路径
+  keys: { win: "Enter" }
+  undoable: true
+  expose_to_agent: false
+- id: canvas.nudge_left
+  label: 微移左 1px
+  keys: { win: "←" }
+  undoable: true
   expose_to_agent: true
+- id: canvas.nudge_right
+  label: 微移右 1px
+  keys: { win: "→" }
+  undoable: true
+  expose_to_agent: true
+- id: canvas.nudge_up
+  label: 微移上 1px
+  keys: { win: "↑" }
+  undoable: true
+  expose_to_agent: true
+- id: canvas.nudge_down
+  label: 微移下 1px
+  keys: { win: "↓" }
+  undoable: true
+  expose_to_agent: true
+- id: view.toggle_rulers
+  label: 显示 / 隐藏标尺
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: view.toggle_guides
+  label: 显示 / 隐藏参考线
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: view.lock_guides
+  label: 锁定参考线
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: view.guides_from_selection
+  label: 从选区生成参考线
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
 - id: app.command_palette
   label: 命令面板
   keys: { win: "Ctrl+K" }
   undoable: false
   expose_to_agent: false
-- id: object.distribute_h
-  label: 水平等距分布
-  keys: {}
-  undoable: true
-  expose_to_agent: true
-- id: object.distribute_v
-  label: 垂直等距分布
-  keys: {}
-  undoable: true
-  expose_to_agent: true
+- id: app.about
+  label: 关于
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+

@@ -115,7 +115,7 @@
 | R4 | **AMD/核显驱动兼容问题** | 中 | 中 | 后端回退链（Vulkan→DX12→GL）；驱动黑名单；设备丢失恢复；手工矩阵测试 | v0.1 / v0.9 |
 | R5 | **范围膨胀 / 半途而废** | **高** | **高** | 严格按 11 篇里程碑；"不做清单"；每版可演示；单一开发者纪律 | 每版评审 |
 | R6 | **自绘与浏览器视觉不一致**引发信任危机 | 中 | 高 | 校对视图（可测量差异）+ 导出引擎二选一 + 差异超阈值时自动建议浏览器引擎 | v0.5 |
-| R7 | 路径布尔不可用 → 路径查找器阉割 | 中 | 中 | Spike 5；降级为同色形状合并；明确提示 | Spike 5 |
+| R7 | 路径布尔不可用 → 路径查找器阉割 | 中 | 中 | Spike 5；降级为同色形状合并；明确提示 | **已关闭**（ADR-0012 结题，采纳 flo_curves 0.8） |
 | R8 | 大文档内存/显存爆炸 | 中 | 中 | R-tree + LOD + 纹理 LRU + 性能模式 | v0.9 基准 B3/B4 |
 | R9 | 快捷键与 AI 细微差异被吐槽 | 中 | 中 | 真机逐条校对；保留实测记录；键位可自定义 | v0.3 盲测 |
 | R10 | 依赖系统浏览器（WPI 链） | 中 | 低 | 缺失时提示 + 自动降级原生导出 | v0.5 |
@@ -167,20 +167,20 @@
 
 README 状态表只允许写**代码可验证**的内容。核对方式写在右列，任何人可复现。
 
-| 项 | 事实（v0.7 基线，2026-09-10） | 核对方式 |
+| 项 | 事实（批次 A 基线，2026-09-13，15 号计划 A1–A5 后） | 核对方式 |
 |---|---|---|
-| CLI 子命令 | **10 个**：batch / tree / find / get / patch / export / shot / save / info / selfcheck | `crates/vb_agent/src/main.rs` → `enum Cmd` |
-| CLI `outline` 子命令 | **不存在**（等价能力是 `tree`）；README 旧文案曾写 `outline`，已修正 | 同上 |
-| patch 操作数 | **16**：insert / set_text / set_style / set_attr / move / set_box / rename / set_tag / duplicate / delete / group / ungroup / align / order / set_token / new_artboard | `crates/vb_agent/src/patch.rs` → `enum PatchOp` 的 `serde(rename)` 计数 |
-| MCP 工具数 | **10** | `crates/vb_agent/src/bin/vellum-mcp.rs` → `TOOLS_LIST` |
-| GUI 工具数 | **4 / 13**（Select / Rect / Ellipse / Hand；06 篇 P0 要求 13） | `crates/vb_app/src/app.rs` → `enum Tool` |
-| 快捷键 | **34 条绑定 / 32 个命令**（另有 2 个仅菜单命令，合计 34 个已实现命令 ID）；`commands.yaml` 仅 **19** 条（02 篇目标 ~120） | `crates/vb_app/src/shortcuts.rs` → `SHORTCUTS` / `IMPLEMENTED_IDS` |
-| 菜单 | **5 个菜单 / 25 个菜单项**，键位文本全部自动查表 | `shortcuts.rs` → `MENUS` |
-| 剪贴板 | **零实现**（无 copy / cut / paste） | `grep -ri clipboard crates/vb_app/src` |
-| 空壳 crate | `vb_ui`(4 行) / `vb_layout`(4 行) / `vb_platform`(1 行) | `wc -l crates/*/src/*.rs` |
-| 空目录 | `tests/` `i18n/` `assets/` 均 0 条目 | `ls -A tests i18n assets` |
-| 主题 | 1 套深色，颜色为硬编码字面量（门禁 8 基线 24 处，P2 清零） | `pwsh tools/check_no_hardcoded_color.ps1 -List` |
-| 往返语料库 | 20 例 L0/L1 幂等 | `cargo test -p vb_doc --test corpus` |
-| 质量门禁 | 14 篇 §7.1 共列 **9 项**，`ci.ps1` 已自动化其中 **5 项**（格式 / clippy / 全量测试 / Agent 自检 / 颜色棘轮）；渲染快照、性能基准、i18n、输出校验 4 项未落地 | `pwsh tools/ci.ps1`（脚本头部列有覆盖清单） |
+| CLI 子命令 | **12 个**：validate / bench / batch / tree / find / get / patch / export / shot / save / info / selfcheck | `crates/vb_agent/src/main.rs` → `enum Cmd` |
+| patch 操作数 | **16**：insert / set_text / set_style / set_attr / move / set_box / rename / set_tag / duplicate / delete / group / ungroup / align / order / set_token / new_artboard | `patch.rs` → `patch_op_name`（穷尽 match，编译期强制）+ `PATCH_OP_NAMES` |
+| MCP 工具数 | **10**；`tools/list` 元数据有测试锁定（op 名单 / transparent schema） | `vellum-mcp.rs` → `TOOLS_LIST` + `metadata_tests` |
+| GUI 工具数 | **14**（06 篇 P0 13/13 齐备 + 剪刀提前自 P1） | `crates/vb_app/src/app.rs` → `enum Tool` |
+| 快捷键 | **58 条绑定 / 67 个命令**（02 篇目标 ~120）；`commands.yaml` **67 条**，有同步门禁测试 | `shortcuts.rs` → `SHORTCUTS` / `CMD_LABELS`；`cargo test -p vb_app --test commands_yaml` |
+| 菜单 | **5 个菜单**，键位文本全部自动查表 | `shortcuts.rs` → `MENUS` |
+| 剪贴板 | ✅ 已实现（Ctrl+C/X/V + 就地粘贴 Ctrl+F，事务粘贴） | `shortcuts.rs` → `edit.copy/cut/paste*` |
+| 空壳 crate | `vb_layout`(4 行) / `vb_platform`(1 行)；`vb_ui` 已实（theme/fonts/icons/components/cursor，~2.4k 行） | `wc -l crates/*/src/*.rs` |
+| 空目录 | 根 `tests/`、`i18n/`、`assets/`（字体）仍空；各 crate 自带 `tests/`（回归测试 ~60 条） | `ls -A tests i18n assets`；`cargo test --workspace` |
+| 主题 | 深/浅双令牌（`vb_ui/theme.rs`），硬编码颜色受门禁棘轮约束 | `pwsh tools/check_no_hardcoded_color.ps1 -List` |
+| 往返语料库 | 20 例 L0/L1 幂等 + A 批次新增针对性用例（注释实体 / nbsp / 编组） | `cargo test -p vb_doc --test corpus` |
+| 质量门禁 | `ci.ps1` **7 项**（格式 / clippy / 全量测试+快照 / Agent 无头自检 / 颜色棘轮 / 术语扫描 / 输出校验）+ `bench.ps1` 性能基线；i18n 双语未落 | `pwsh tools/ci.ps1` |
+| 15 号计划批次 A | P0×2 + P1×21 已清（W1–W8 / R1–R6 / G1–G7），回归测试 ≥25 条；批次 B/C 待做 | `git log --grep="W1-W8\|R1-R6\|G1-G7\|W1-W8"`；`docs/design/15-*.md` §2–§5 对照 |
 
 > 上表更新时机：**任何一项数值变化，与引起变化的 commit 同批**。若发现 README 与上表冲突，以上表为准并立刻修正 README。
