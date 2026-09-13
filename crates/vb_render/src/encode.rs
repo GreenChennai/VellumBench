@@ -114,6 +114,8 @@ pub struct TextHint {
     pub font_size: f64,
     pub color: [f32; 4],
     pub weight_bold: bool,
+    /// CSS font-family 首族(C4 真文本管线)。
+    pub font_family: String,
 }
 
 #[derive(Debug, Clone)]
@@ -546,6 +548,10 @@ fn encode_node(
                             .and_then(|v| parse_color_rgba_resolved(doc, v))
                             .unwrap_or([0.1, 0.1, 0.1, 1.0]),
                         weight_bold: bold,
+                        font_family: node
+                            .style_get("font-family")
+                            .unwrap_or_default()
+                            .to_string(),
                     })
                 }
                 _ => None,

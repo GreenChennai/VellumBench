@@ -71,7 +71,12 @@ fn cpu_render_text_and_frozen_warn() {
     let ab = r.doc.artboards[0];
     let list = vb_render::encode::encode_artboard(&r.doc, ab).unwrap();
     let out = cpu::render_png(&list, 1.0, true, Some(&dir)).unwrap();
-    assert!(out.warnings.iter().any(|w| w.contains("占位条")));
+    // C4 后文本走真字形管线,不再有占位条警告;冻结块仍为占位
+    assert!(
+        !out.warnings.iter().any(|w| w.contains("占位条")),
+        "文本应有真字形:{:?}",
+        out.warnings
+    );
     assert!(out.warnings.iter().any(|w| w.contains("冻结块")));
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -405,5 +410,48 @@ fn attached_bitmap_renders_without_project_dir() {
     let img = image::load_from_memory(&out.png).unwrap();
     let px = img.get_pixel(45, 45).0;
     assert!(px[1] > 200, "挂载位图应渲染为绿色,实际 {px:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---------------------------------------------------------------------------
+// 15 号计划 C4:真文本管线(fontique + swash)—— CPU 导出真字形
+// ---------------------------------------------------------------------------
+
+/// C4:文本导出为真字形(有墨迹、无占位条警告);中文字体解析成功。
+#[test]
+fn text_renders_real_glyphs() {
+    let dir = std::env::temp_dir().join(format!("vb-text4-{}", std::process::id()));
+    let doc = one_node_doc_raw(
+        r#"    <h1 data-vb-id="t00001" style="position:absolute;left:10px;top:10px;width:400px;height:60px;color:#111111;font-size:36px;font-family:'Microsoft YaHei'">绘台 Vellum</h1>
+"#,
+        &dir,
+    );
+    let ab = doc.artboards[0];
+    let list = vb_render::encode::encode_artboard(&doc, ab).expect("编码");
+    let out = vb_render::cpu::render_png(&list, 1.0, false, None).expect("渲染");
+    assert!(
+        !out.warnings.iter().any(|w| w.contains("占位条")),
+        "真字形路径不应有占位条警告:{:?}",
+        out.warnings
+    );
+    let img = image::load_from_memory(&out.png).unwrap();
+    // 字形墨迹采样:基线上下的多行都应有暗像素(占位条只在一条横带)
+    let mut rows_with_ink = 0usize;
+    for row in [20u32, 30, 38, 46, 55] {
+        let mut dark = 0usize;
+        for x in 10..300 {
+            let px = img.get_pixel(x, row).0;
+            if px[0] < 100 && px[1] < 100 && px[2] < 100 {
+                dark += 1;
+            }
+        }
+        if dark >= 3 {
+            rows_with_ink += 1;
+        }
+    }
+    assert!(
+        rows_with_ink >= 3,
+        "字形墨迹应覆盖多行(占位条只占一条),实际 {rows_with_ink}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

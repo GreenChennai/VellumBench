@@ -99,16 +99,7 @@ fn draw_item(
     }
 
     let text_hint: Option<&crate::encode::TextHint> = match item.kind {
-        DrawKind::Text => {
-            // ADR-0017:占位条(叠加在节点自身填充之上,见下方 Box|Text 臂)
-            if let Some(t) = &item.label {
-                warnings.push(format!(
-                    "文本「{}」以占位条渲染(原生文本管线 v0.2 接入)",
-                    t.text
-                ));
-            }
-            item.label.as_ref()
-        }
+        DrawKind::Text => item.label.as_ref(),
         _ => None,
     };
     match item.kind {
@@ -204,18 +195,44 @@ fn draw_item(
                     stroke_color(pixmap, &shape, border.color, bw as f32, item.opacity, tf);
                 }
             }
-            // 文本占位条(ADR-0017):画在自身填充之上
+            // C4 真文本:fontique 找字体 + swash 整形/轮廓(ADR-0017 兑付);
+            // 字体解析失败才回退占位条
             if let Some(t) = text_hint {
-                let bar_h = (t.font_size * 0.62).min(ih).max(4.0);
-                if let Some(path) = rect_path(
-                    x,
-                    y + (ih - bar_h).min(ih) * 0.25,
-                    (t.font_size * 0.55 * t.text.chars().count() as f64).min(iw),
-                    bar_h,
-                    [2.0; 4],
-                    false,
-                ) {
-                    fill_color(pixmap, &path, t.color, item.opacity * 0.9, tf);
+                let shaped = crate::text::shape_text(&t.text, &t.font_family, t.font_size as f32);
+                if let Some(run) = &shaped {
+                    let baseline =
+                        y + (ih - (run.ascent - run.descent) as f64) / 2.0 + run.ascent as f64;
+                    for gl in &run.glyphs {
+                        if let Some(gpath) = crate::text::glyph_outline(
+                            &run.font_data,
+                            run.font_index,
+                            t.font_size as f32,
+                            gl.id,
+                        ) {
+                            if let Some(sk) = kurbo_to_skia_path(
+                                &gpath,
+                                x + gl.x as f64,
+                                baseline - gl.y as f64,
+                                item.opacity,
+                                item,
+                            ) {
+                                fill_color(pixmap, &sk, t.color, item.opacity, tf);
+                            }
+                        }
+                    }
+                } else {
+                    warnings.push(format!("文本「{}」字体解析失败,以占位条渲染", t.text));
+                    let bar_h = (t.font_size * 0.62).min(ih).max(4.0);
+                    if let Some(path) = rect_path(
+                        x,
+                        y + (ih - bar_h).min(ih) * 0.25,
+                        (t.font_size * 0.55 * t.text.chars().count() as f64).min(iw),
+                        bar_h,
+                        [2.0; 4],
+                        false,
+                    ) {
+                        fill_color(pixmap, &path, t.color, item.opacity * 0.9, tf);
+                    }
                 }
             }
         }

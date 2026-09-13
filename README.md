@@ -39,7 +39,7 @@
 | 缺口 | 现状(代码实测) | 计划 |
 |---|---|---|
 | **工具集** | **P0 13/13 齐备**(06 篇 §二)—— Select/DirectSelect/GroupSelect/**Rect/Ellipse/Line/Pen**(平滑手柄)/Text(点+区域)/Hand/Zoom/Artboard/Eyedropper/Gradient;**剪刀(提前自 P1 落地)**;路径查找器见 [ADR-0012](docs/adr/0012-path-boolean-pending-spike.md)(Spike 已结题采纳 flo_curves,v0.4 落地) | 完成 |
-| **快捷键** | **注册表 67 命令 / 58 键位绑定**(`commands.yaml` 36 条已同步);02 篇目标 ~120 | P3 剩余批次 |
+| **快捷键** | **注册表 75 命令 / 61 键位绑定**(`commands.yaml` 75 条同步,门禁测试锁定);02 篇目标 ~120 | P3 剩余批次 |
 | **剪贴板** | ✅ 已实现 —— Ctrl+C/X/V + 就地粘贴 Ctrl+F(内部剪贴板,事务粘贴) | 完成 |
 | **对齐** | ✅ 已实现 —— 6 快捷键 + 属性面板按钮组(单选对齐画板/多选对齐集合) | 完成 |
 | **命令面板** | ✅ Ctrl+K,搜索 + 键位展示,直达派发 | 完成 |
@@ -47,8 +47,8 @@
 | **主题** | 深/浅双令牌 + 切换(`view.toggle_theme`); vb_ui 已落 theme/fonts/icons/components/cursor | P2 收尾 |
 | `vb_layout` / `vb_platform` | **空壳 crate** | P4 / P5 |
 | `i18n/` `assets/fonts/` | 仍为空(字体走系统 fallback 链) | P5 |
-| Parley 中文文本管线 | 未接入依赖(画布文本为 egui 近似,见 [ADR-0017](docs/adr/0017-canvas-text-approximation-v01.md)) | 待定 |
-| 路径布尔 / 剪刀 | 见 [ADR-0012](docs/adr/0012-path-boolean-pending-spike.md)(待 Spike 结论);钢笔直线段版已落地(平滑手柄待补) | P4 后半 |
+| 真文本管线(C4)| **CPU 导出真字形已落地**(fontique+swash);画布仍 egui 近似(见 [ADR-0017](docs/adr/0017-canvas-text-approximation-v01.md) 复议);Parley 多行/双向留后续 | 已部分兑付 |
+| 路径查找器 | ✅ 四基本运算落地(flo_curves,[ADR-0012](docs/adr/0012-path-boolean-pending-spike.md) 结题兑现):面板四键 + 对象菜单 + `boolean` patch op;扩展 6 运算留后续 | C1 完成 |
 | 响应式断点 / 伪类编辑 | 未开始 | P3 后半 |
 | **隔离模式** | ✅ 双击编组进入(嵌套栈)+ 画布遮罩压暗 + 隔离子树顶层重绘 + 拾取/框选限定子树 + 新建对象落隔离组 + Esc 逐层退 | 完成 |
 | **标尺参考线** | ✅ 标尺刻度随缩放/平移;从选区生成(Ctrl+5)/从标尺拖出;拖回标尺删除;`view.lock_guides` 锁定 | 完成 |

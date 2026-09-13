@@ -20,6 +20,8 @@
 | env_logger / log | 0.11/0.4 | 日志 | MIT/Apache-2.0 | |
 | pollster | 0.4 | (预留)阻塞异步 | MIT/Apache-2.0 | |
 | resvg / usvg | 0.48 | **仅 dev 依赖**(vb_export):SVG 参考栅格化,三端一致性门禁(门禁 10) | MIT/Apache-2.0 | 自带 tiny-skia 0.11 栈,不进 release 二进制 |
+| fontique | 0.11 | vb_render:系统字体发现(C4 真文本管线) | MIT/Apache-2.0 | Windows 走 DirectWrite;CJK 兜底族名硬编码见 text.rs |
+| swash | 0.2 | vb_render:文本整形 + 字形轮廓缩放(C4) | MIT/Apache-2.0 | Han 引擎空字形问题,统一 Latin 引擎;zeno 随之引入(轮廓→路径) |
 | base64 | 0.23 | vb_export:SVG 位图 data URL 嵌入(B3) | MIT/Apache-2.0 | image 在 vb_export 从 dev 提升为正式依赖(同一用途) |
 | flo_curves | 0.8 | vb_tools 正式依赖:路径布尔运算(ADR-0012,C1 路径查找器) | MIT/Apache-2.0 | 0.8.1 无 path_xor,Xor=(A-B)∪(B-A) 合成 | |
 

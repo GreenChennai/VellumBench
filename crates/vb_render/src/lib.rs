@@ -8,5 +8,6 @@
 pub mod cpu;
 pub mod encode;
 pub mod gpu;
+pub mod text;
 
 pub use encode::{BorderDef, DrawItem, DrawKind, DrawList, FillDef, GradientStop};
