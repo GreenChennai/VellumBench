@@ -312,7 +312,6 @@ fn write_item(out: &mut String, i: usize, item: &DrawItem, scale: f64) {
 /// RGBA 位图 → `data:image/png;base64,…`(导出一次性成本)。
 fn bitmap_data_url(bmp: &vb_render::encode::BitmapData) -> Option<String> {
     use base64::Engine as _;
-    use std::io::Write as _;
     let img = image::RgbaImage::from_raw(bmp.width, bmp.height, (*bmp.rgba).clone())?;
     let mut png = std::io::Cursor::new(Vec::new());
     img.write_to(&mut png, image::ImageFormat::Png).ok()?;

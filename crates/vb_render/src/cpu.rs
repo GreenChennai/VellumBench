@@ -366,6 +366,7 @@ fn draw_bitmap(
 }
 
 /// 把 RGBA 位图绘制到设备坐标(B3 核心;文件路径与 GPU 挂载共用)。
+#[allow(clippy::too_many_arguments)]
 fn draw_bitmap_rgba(
     pixmap: &mut Pixmap,
     bmp: &crate::encode::BitmapData,
