@@ -68,6 +68,8 @@ fn insert_artboard_registers_in_artboards() {
 fn delete_artboard_no_dangling_id() {
     let mut doc = Document::new_default();
     let mut undo = UndoStack::new();
+    // 文档至少保留一块画板(15 号计划 A1 不变量),先补第二块再删第一块
+    doc.new_artboard("画板 2", 800.0, 600.0);
     let ab_sid = doc
         .nodes
         .get(doc.artboards[0])
@@ -83,9 +85,9 @@ fn delete_artboard_no_dangling_id() {
             captured: None,
         },
     );
-    assert!(doc.artboards.is_empty());
+    assert_eq!(doc.artboards.len(), 1, "删一块后仍剩一块");
     undo.undo(&mut doc).expect("撤销删除失败");
-    assert_eq!(doc.artboards.len(), 1, "撤销后画板应恢复注册");
+    assert_eq!(doc.artboards.len(), 2, "撤销后画板应恢复注册");
     let ab = doc.artboards[0];
     assert!(doc.nodes.get(ab).is_some());
     assert_eq!(doc.nodes.get(ab).unwrap().geom.w, 1440.0);

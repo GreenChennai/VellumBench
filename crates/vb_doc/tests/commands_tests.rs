@@ -453,3 +453,45 @@ fn unused_decl_helper() -> Decl {
         important: false,
     }
 }
+
+// ---------------------------------------------------------------------------
+// 15 号计划 A1 / P0-2:文档至少保留一块画板(Delete 命令层硬守卫)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn delete_last_artboard_blocked() {
+    let mut doc = Document::new_default();
+    let mut stack = UndoStack::new();
+    let ab = doc.artboards[0];
+    let sid = doc.nodes.get(ab).unwrap().sid.as_str().to_string();
+    let err = stack
+        .push(&mut doc, Command::Delete {
+            target_sid: sid,
+            captured: None,
+        })
+        .expect_err("删除最后一块画板应被拒绝");
+    assert!(err.to_string().contains("画板"), "错误信息:{err}");
+    assert_eq!(doc.artboards.len(), 1);
+    assert!(doc.nodes.get(ab).is_some(), "画板节点仍在");
+}
+
+#[test]
+fn delete_second_artboard_allowed() {
+    let mut doc = Document::new_default();
+    let mut stack = UndoStack::new();
+    let second = doc.new_artboard("画板 2", 800.0, 600.0);
+    let second_sid = doc.nodes.get(second).unwrap().sid.as_str().to_string();
+    stack
+        .push(
+            &mut doc,
+            Command::Delete {
+                target_sid: second_sid,
+                captured: None,
+            },
+        )
+        .expect("有两块画板时删除其中一块应成功");
+    assert_eq!(doc.artboards.len(), 1);
+    // 撤销后画板回来
+    stack.undo(&mut doc).unwrap();
+    assert_eq!(doc.artboards.len(), 2);
+}

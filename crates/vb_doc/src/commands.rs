@@ -250,6 +250,18 @@ impl Command {
                 target_sid,
                 captured,
             } => {
+                // 不变量:文档至少保留一块画板。Delete 是画板的唯一删除
+                // 通道(面板按钮/画板工具/Delete 键),守卫放在命令层才能
+                // 同时约束 GUI 与 Agent 两条路径;redo 分支同守,防
+                // 「删 A→撤销→删 B→重做删 A」绕过。
+                if let Some(id) = doc.find_by_sid(target_sid) {
+                    if matches!(doc.nodes.get(id),
+                                Some(n) if matches!(n.kind, NodeKind::Artboard))
+                        && doc.artboards.len() <= 1
+                    {
+                        return Err(VbError::Conflict("至少保留一块画板".into()));
+                    }
+                }
                 if captured.is_none() {
                     // 首次:必须先捕获槽位再取出(extract 会销毁父级信息)
                     let slot = Self::slot_of(doc, target_sid)?;

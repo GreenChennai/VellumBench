@@ -394,3 +394,144 @@ fn align_groups_by_artboard() {
     let g3 = doc.nodes.get(doc.find_by_sid(&b1).unwrap()).unwrap().geom;
     assert_eq!(g3.x, 10.0, "跨画板成员不得被拖进另一画板的坐标");
 }
+
+// ---------------------------------------------------------------------------
+// 15 号计划 A1:root sid 守卫(root 曾击穿 MCP 主循环)+ 画板下限
+// ---------------------------------------------------------------------------
+
+fn root_sid(doc: &Document) -> String {
+    doc.nodes.get(doc.root).unwrap().sid.as_str().to_string()
+}
+
+/// P0-1:order 作用于 root sid 必须返回结构化错误,而不是 panic。
+#[test]
+fn order_on_root_sid_is_rejected() {
+    let mut doc = Document::new_default();
+    let mut undo = UndoStack::new();
+    let rs = root_sid(&doc);
+    let err = apply_patch(
+        &mut doc,
+        &mut undo,
+        &req(vec![PatchOp::Order {
+            id: rs,
+            to: "front".into(),
+        }]),
+    )
+    .expect_err("order root 应被拒绝");
+    assert!(err.to_string().contains("根节点"), "错误信息:{err}");
+}
+
+/// P0-1 家族:move / delete / ungroup 作用于 root 同样拒绝。
+#[test]
+fn structural_ops_on_root_are_rejected() {
+    let mut doc = Document::new_default();
+    let rs = root_sid(&doc);
+    for (label, ops) in [
+        (
+            "move",
+            vec![PatchOp::Move {
+                id: rs.clone(),
+                parent: ab0_sid(&doc),
+                index: 0,
+            }],
+        ),
+        ("delete", vec![PatchOp::Delete { id: rs.clone() }]),
+        ("ungroup", vec![PatchOp::Ungroup { id: rs.clone() }]),
+    ] {
+        let mut undo = UndoStack::new();
+        let err = apply_patch(&mut doc, &mut undo, &req(ops))
+            .expect_err(&format!("{label} root 应被拒绝"));
+        assert!(err.to_string().contains("根节点"), "{label} 错误信息:{err}");
+    }
+}
+
+/// group 成员含 root 时拒绝;align 含 root 时跳过并 warning(不动 root geom)。
+#[test]
+fn group_align_root_member_handled() {
+    let mut doc = Document::new_default();
+    let rs = root_sid(&doc);
+    let ab = ab0_sid(&doc);
+    let mut undo = UndoStack::new();
+    apply_patch(
+        &mut doc,
+        &mut undo,
+        &req(vec![PatchOp::Insert {
+            parent: ab.clone(),
+            index: None,
+            node: vb_agent::InsertNodeSpec {
+                tag: "div".into(),
+                name: None,
+                text: None,
+                style: None,
+                attrs: None,
+                r#box: Some(vb_agent::BoxSpec {
+                    x: 10.0,
+                    y: 10.0,
+                    w: 50.0,
+                    h: 50.0,
+                }),
+            },
+       }]),
+    )
+    .expect("插对象失败");
+    let obj = doc
+        .nodes
+        .get(doc.find_by_sid(&ab).unwrap())
+        .unwrap()
+        .children
+        .iter()
+        .find_map(|&c| {
+            let n = doc.nodes.get(c).unwrap();
+            (!matches!(n.kind, NodeKind::Artboard)).then(|| n.sid.as_str().to_string())
+        })
+        .expect("应有刚插入的对象");
+    let root_geom = doc.nodes.get(doc.root).unwrap().geom;
+
+    let err = apply_patch(
+        &mut doc,
+        &mut undo,
+        &req(vec![PatchOp::Group {
+            ids: vec![obj.clone(), rs.clone()],
+            name: None,
+        }]),
+    )
+    .expect_err("group 含 root 应被拒绝");
+    assert!(err.to_string().contains("根节点"), "错误信息:{err}");
+
+    let out = apply_patch(
+        &mut doc,
+        &mut undo,
+        &req(vec![PatchOp::Align {
+            ids: vec![obj, rs.clone()],
+            mode: "left".into(),
+            to: None,
+        }]),
+    )
+    .expect("align 含 root 应跳过而非报错");
+    assert!(
+        out.warnings.iter().any(|w| w.contains("根节点")),
+        "应产生 root 跳过 warning:{:?}",
+        out.warnings
+    );
+    assert_eq!(
+        doc.nodes.get(doc.root).unwrap().geom,
+        root_geom,
+        "root geom 不得被 align 改动"
+    );
+}
+
+/// P0-2(agent 侧):delete 最后一块画板被命令层守卫拒绝。
+#[test]
+fn delete_last_artboard_rejected() {
+    let mut doc = Document::new_default();
+    let mut undo = UndoStack::new();
+    let ab = ab0_sid(&doc);
+    let err = apply_patch(
+        &mut doc,
+        &mut undo,
+        &req(vec![PatchOp::Delete { id: ab }]),
+    )
+    .expect_err("删除最后一块画板应被拒绝");
+    assert!(err.to_string().contains("画板"), "错误信息:{err}");
+    assert_eq!(doc.artboards.len(), 1, "画板数量不变");
+}

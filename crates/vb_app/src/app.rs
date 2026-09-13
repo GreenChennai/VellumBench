@@ -640,13 +640,23 @@ impl VellumApp {
     }
 
     /// 新对象的插入目标:隔离模式下落进隔离组(06 篇 §4.3),否则所属画板。
-    fn insert_target(&self, wx: f64, wy: f64) -> vb_doc::model::NodeId {
+    fn insert_target(&mut self, wx: f64, wy: f64) -> vb_doc::model::NodeId {
         if let Some(iso) = self.isolate_top() {
             return iso;
         }
-        self.artboard_at_world(wx, wy)
+        match self
+            .artboard_at_world(wx, wy)
             .or(self.doc.artboards.first().copied())
-            .expect("文档至少有一块画板")
+        {
+            Some(ab) => ab,
+            // 兜底:命令层「至少一块画板」守卫之外的第二道保险(导入 0 画板
+            // 文档后直接开画等)。恢复路径直接落一块默认画板,不走 undo。
+            None => {
+                let id = self.doc.new_artboard("画板 1", 1440.0, 900.0);
+                self.status = "画布为空,已重建默认画板".into();
+                id
+            }
+        }
     }
 
     /// 世界坐标 → 指定父级的本地坐标(累计父级 geom 偏移,止于画板)。
@@ -1421,6 +1431,17 @@ impl VellumApp {
     }
 
     fn delete_selection(&mut self) {
+        // 预检:选中含画板且会删到不足一块时提前拦截(命令层有硬守卫,
+        // 这里保住选区并给出可读提示,而不是吃掉选区后逐条报错)
+        let artboards_in_selection = self
+            .selection
+            .iter()
+            .filter(|sid| self.is_artboard_sid(sid))
+            .count();
+        if artboards_in_selection >= self.doc.artboards.len() && artboards_in_selection > 0 {
+            self.status = "至少保留一块画板".into();
+            return;
+        }
         let sids = std::mem::take(&mut self.selection);
         for sid in sids {
             self.exec(Command::Delete {
@@ -1429,6 +1450,12 @@ impl VellumApp {
             });
         }
         self.status = "已删除(Ctrl+Z 撤销)".into();
+    }
+
+    fn is_artboard_sid(&self, sid: &str) -> bool {
+        self.doc
+            .find_by_sid(sid)
+            .is_some_and(|id| matches!(self.doc.nodes.get(id), Some(n) if matches!(n.kind, NodeKind::Artboard)))
     }
 
     fn group_selection(&mut self) {

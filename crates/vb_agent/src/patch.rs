@@ -186,6 +186,20 @@ impl From<VbError> for PatchError {
     }
 }
 
+/// 解析元素 sid 并拒绝文档根节点。root 挂在 arena 里且有确定性 sid
+/// (`from_seed(0)`),`find_by_sid` 搜得到;但 root 无 parent、不属于任何
+/// 画板,结构类 op 作用于它会 panic(曾击穿 MCP 主循环)或产出不可见节点。
+/// 返回的 NodeId 保证非 root,调用方随后可以安全解包 parent。
+fn require_child(doc: &Document, id: &str, op: &str) -> Result<vb_doc::model::NodeId, PatchError> {
+    let nid = doc
+        .find_by_sid(id)
+        .ok_or_else(|| PatchError::Op(format!("{id} 不存在")))?;
+    if nid == doc.root {
+        return Err(PatchError::Op(format!("{op} 不能作用于文档根节点")));
+    }
+    Ok(nid)
+}
+
 fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<(Vec<Command>, Vec<String>), PatchError> {
     let sid_str = |s: &str| s.to_string();
     let mut warnings = Vec::new();
@@ -275,6 +289,7 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<(Vec<Command>, Vec<Str
             }]
         }
         PatchOp::Move { id, parent, index } => {
+            require_child(doc, id, "move")?;
             vec![Command::Move {
                 sid: sid_str(id),
                 new_parent_sid: sid_str(parent),
@@ -335,12 +350,16 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<(Vec<Command>, Vec<Str
             }]
         }
         PatchOp::Delete { id } => {
+            require_child(doc, id, "delete")?;
             vec![Command::Delete {
                 target_sid: sid_str(id),
                 captured: None,
             }]
         }
         PatchOp::Group { ids, name } => {
+            for id in ids {
+                require_child(doc, id, "group")?;
+            }
             let group_sid = doc.alloc_sid_for_dup().as_str().to_string();
             vec![Command::Group {
                 member_sids: ids.clone(),
@@ -350,6 +369,7 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<(Vec<Command>, Vec<Str
             }]
         }
         PatchOp::Ungroup { id } => {
+            require_child(doc, id, "ungroup")?;
             vec![Command::Ungroup {
                 group_sid: sid_str(id),
                 captured: None,
@@ -362,10 +382,13 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<(Vec<Command>, Vec<Str
             c
         }
         PatchOp::Order { id, to } => {
-            let nid = doc
-                .find_by_sid(id)
-                .ok_or_else(|| PatchError::Op(format!("{id} 不存在")))?;
-            let parent = doc.nodes.get(nid).unwrap().parent.unwrap();
+            let nid = require_child(doc, id, "order")?;
+            let parent = doc
+                .nodes
+                .get(nid)
+                .unwrap()
+                .parent
+                .ok_or_else(|| PatchError::Op(format!("{id} 没有父级,无法调序")))?;
             let len = doc.nodes.get(parent).unwrap().children.len();
             let new_index = match to.as_str() {
                 "front" => len.saturating_sub(1),
@@ -463,10 +486,17 @@ fn align_cmds(
 ) -> Result<(Vec<Command>, Vec<String>), PatchError> {
     // 按公共画板分组(保序)
     let mut groups: Vec<(vb_doc::model::NodeId, Vec<(String, Geom)>)> = Vec::new();
+    let mut warnings = Vec::new();
     for id in ids {
         let nid = doc
             .find_by_sid(id)
             .ok_or_else(|| PatchError::Op(format!("{id} 不存在")))?;
+        if nid == doc.root {
+            // root 的 geom 无意义且不属于任何画板:跳过而不是把它
+            // 混进 root 哨兵分组一起挪动
+            warnings.push("align 跳过文档根节点".to_string());
+            continue;
+        }
         let ab = artboard_of(doc, nid);
         let g = doc.nodes.get(nid).unwrap().geom;
         if let Some(entry) = groups.iter_mut().find(|(a, _)| *a == ab) {
@@ -475,7 +505,6 @@ fn align_cmds(
             groups.push((ab, vec![(id.clone(), g)]));
         }
     }
-    let mut warnings = Vec::new();
     let mut cmds = Vec::new();
     for (ab, members) in &groups {
         if members.len() < 2 {

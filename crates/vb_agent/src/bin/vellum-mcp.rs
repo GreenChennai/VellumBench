@@ -302,7 +302,9 @@ fn dispatch(method: &str, params: Value) -> Result<Value, Value> {
                 .and_then(|v| v.as_str())
                 .unwrap_or_default();
             let args = params.get("arguments").cloned().unwrap_or(Value::Null);
-            let result = match name {
+            // panic 隔离:任何工具内的 bug 不得击穿主循环(此前 root sid
+            // order 会 panic 掉整个 server,客户端只能等超时)。
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match name {
                 "vellum_open_document" => tool_open(&args),
                 "vellum_get_outline" => tool_outline(&args),
                 "vellum_find" => tool_find(&args),
@@ -314,7 +316,15 @@ fn dispatch(method: &str, params: Value) -> Result<Value, Value> {
                 "vellum_diff_since" => tool_diff_since(&args),
                 "vellum_save" => tool_save(&args),
                 other => Err(format!("未知工具:{other}")),
-            };
+            }))
+            .unwrap_or_else(|p| {
+                let msg = p
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| p.downcast_ref::<&str>().map(|s| (*s).to_string()))
+                    .unwrap_or_else(|| "工具执行异常".into());
+                Err(format!("内部错误:{msg}"))
+            });
             match result {
                 Ok(v) => Ok(json!({
                     "content": [{"type": "text", "text": serde_json::to_string(&v).unwrap_or_default()}],
