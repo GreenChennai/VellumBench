@@ -92,6 +92,15 @@ pub enum PatchOp {
         #[serde(default)]
         after: Option<String>,
     },
+    /// 路径查找器(批次 C1):lhs 替换为布尔结果,rhs 删除。
+    /// `mode` 避开 serde 内部 tag 字段名 `op`。
+    #[serde(rename = "boolean")]
+    Boolean {
+        /// union / subtract / intersect / xor
+        mode: String,
+        lhs: String,
+        rhs: String,
+    },
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -477,6 +486,23 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<(Vec<Command>, Vec<Str
                 },
             }]
         }
+        PatchOp::Boolean { mode, lhs, rhs } => {
+            let op_kind = vb_tools::boolean::BooleanOp::parse(mode)
+                .ok_or_else(|| PatchError::Op(format!("未知布尔运算:{mode}")))?;
+            let lhs_id = require_child(doc, lhs, "boolean")?;
+            let rhs_id = require_child(doc, rhs, "boolean")?;
+            let (new_path, new_geom) =
+                vb_tools::boolean::path_boolean_nodes(doc, op_kind, lhs_id, rhs_id)
+                    .map_err(PatchError::Op)?;
+            vec![Command::PathBoolean {
+                op: op_kind.as_str().to_string(),
+                lhs_sid: lhs.clone(),
+                rhs_sid: rhs.clone(),
+                new_path,
+                new_geom,
+                captured: None,
+            }]
+        }
     };
     Ok((cmds, warnings))
 }
@@ -667,6 +693,13 @@ fn collect_affected(cmd: &Command, out: &mut PatchOutcome) {
             out.changed_ids.push(sid);
         }
         Command::Delete { target_sid, .. } => out.changed_ids.push(target_sid.clone()),
+        Command::PathBoolean {
+            lhs_sid, rhs_sid, ..
+        } => {
+            // lhs 保留(变为结果),rhs 被删除
+            out.changed_ids.push(lhs_sid.clone());
+            out.changed_ids.push(rhs_sid.clone());
+        }
         Command::Move { sid, .. }
         | Command::SetGeom { sid, .. }
         | Command::SetStyle { sid, .. }
@@ -724,6 +757,7 @@ pub fn patch_op_name(op: &PatchOp) -> &'static str {
         PatchOp::Order { .. } => "order",
         PatchOp::SetToken { .. } => "set_token",
         PatchOp::NewArtboard { .. } => "new_artboard",
+        PatchOp::Boolean { .. } => "boolean",
     }
 }
 
@@ -744,4 +778,5 @@ pub const PATCH_OP_NAMES: &[&str] = &[
     "order",
     "set_token",
     "new_artboard",
+    "boolean",
 ];

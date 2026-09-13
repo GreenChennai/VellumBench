@@ -7,6 +7,8 @@
 
 use vb_css::Decl;
 
+use vb_common::geom::BezPath;
+
 use crate::model::{Document, Geom, Node, NodeKind, NodeTree};
 use crate::Result;
 use crate::VbError;
@@ -59,6 +61,7 @@ pub enum CmdKind {
     Ungroup,
     Compound,
     SetToken,
+    PathBoolean,
 }
 
 /// 结构变更的落点(父 sid + 位置)。
@@ -150,6 +153,21 @@ pub enum Command {
         /// Some(None) = 原先不存在;Some(Some((原索引, 原值))) = 原先存在。
         old: Option<Option<(usize, String)>>,
     },
+    /// 路径查找器(批次 C1,ADR-0012):lhs 替换为布尔结果,rhs 删除。
+    /// 结果路径由调用方(vb_app / vb_agent)经 `vb_tools::boolean`
+    /// 预计算;命令只负责可逆应用(ADR-0008)。
+    PathBoolean {
+        /// union / subtract / intersect / xor(仅展示用)
+        op: String,
+        lhs_sid: String,
+        rhs_sid: String,
+        /// 结果路径(lhs 节点本地,已重定基到新包围盒原点)
+        new_path: BezPath,
+        /// lhs 节点新几何(父级帧)
+        new_geom: Geom,
+        /// 应用快照:lhs 原 (path, geom) + rhs 槽位与子树
+        captured: Option<(Option<BezPath>, Geom, Slot, NodeTree)>,
+    },
 }
 
 fn no_such(sid: &str) -> VbError {
@@ -174,6 +192,7 @@ impl Command {
             Command::Ungroup { .. } => CmdKind::Ungroup,
             Command::Compound { .. } => CmdKind::Compound,
             Command::SetToken { .. } => CmdKind::SetToken,
+            Command::PathBoolean { .. } => CmdKind::PathBoolean,
         }
     }
 
@@ -237,6 +256,7 @@ impl Command {
             Command::Ungroup { .. } => "取消编组",
             Command::Compound { .. } => "复合操作",
             Command::SetToken { .. } => "修改设计令牌",
+            Command::PathBoolean { .. } => "路径查找器",
         }
     }
 
@@ -663,6 +683,43 @@ impl Command {
                 doc.sync_artboards();
                 Ok(ChangeSet::full())
             }
+            Command::PathBoolean {
+                lhs_sid,
+                rhs_sid,
+                new_path,
+                new_geom,
+                captured,
+                ..
+            } => {
+                if captured.is_none() {
+                    // 首次:捕获 lhs 原 (path, geom) + rhs 槽位/子树
+                    let lhs_id = doc.find_by_sid(lhs_sid).ok_or_else(|| no_such(lhs_sid))?;
+                    let lhs_old = match doc.nodes.get(lhs_id).unwrap().kind {
+                        NodeKind::Vector { ref path } => Some(path.clone()),
+                        _ => {
+                            return Err(VbError::Conflict("路径查找器只作用于矢量路径节点".into()))
+                        }
+                    };
+                    let lhs_geom = doc.nodes.get(lhs_id).unwrap().geom;
+                    let slot = Self::slot_of(doc, rhs_sid)?;
+                    let (_, tree) = doc
+                        .extract_subtree(rhs_sid)
+                        .ok_or_else(|| no_such(rhs_sid))?;
+                    *captured = Some((lhs_old, lhs_geom, slot, tree));
+                }
+                // lhs 换成结果
+                let lhs_id = doc.find_by_sid(lhs_sid).ok_or_else(|| no_such(lhs_sid))?;
+                {
+                    let n = doc.nodes.get_mut(lhs_id).unwrap();
+                    match &mut n.kind {
+                        NodeKind::Vector { path } => *path = new_path.clone(),
+                        _ => return Err(VbError::Conflict("lhs 节点已不是矢量路径".into())),
+                    }
+                    n.geom = *new_geom;
+                }
+                doc.sync_artboards();
+                Ok(ChangeSet::full())
+            }
             Command::SetToken { name, new, old } => {
                 if old.is_none() {
                     *old = Some(
@@ -878,6 +935,30 @@ impl Command {
                 for c in cmds.iter_mut().rev() {
                     c.revert(doc)?;
                 }
+                Ok(ChangeSet::full())
+            }
+            Command::PathBoolean {
+                lhs_sid,
+                rhs_sid,
+                captured,
+                ..
+            } => {
+                let (lhs_old, lhs_geom, slot, tree) = captured
+                    .as_ref()
+                    .ok_or_else(|| VbError::Parse("PathBoolean 未捕获快照".into()))?;
+                // lhs 还原
+                let lhs_id = doc.find_by_sid(lhs_sid).ok_or_else(|| no_such(lhs_sid))?;
+                {
+                    let n = doc.nodes.get_mut(lhs_id).unwrap();
+                    if let (NodeKind::Vector { path }, Some(old_path)) = (&mut n.kind, lhs_old) {
+                        *path = old_path.clone();
+                    }
+                    n.geom = *lhs_geom;
+                }
+                // rhs 放回原槽位
+                doc.insert_tree_at(tree, &slot.parent_sid, slot.index)
+                    .ok_or_else(|| no_such(rhs_sid))?;
+                doc.sync_artboards();
                 Ok(ChangeSet::full())
             }
             Command::SetToken { name, old, .. } => {

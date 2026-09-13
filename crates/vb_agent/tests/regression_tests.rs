@@ -596,3 +596,93 @@ fn consecutive_patches_stay_separate_undo_entries() {
         .any(|d| d.prop == "background-color" && d.value == "#f00");
     assert!(has_red, "第一次 undo 后应回到第一次 patch 的红色");
 }
+
+/// C1:boolean patch op:两矩形联集 → lhs 变为合并结果,rhs 删除,
+/// undo 后双双还原。
+#[test]
+fn boolean_patch_op_union() {
+    use vb_common::geom::{BezPath, PathEl, Point};
+
+    fn rect_path(x: f64, y: f64, w: f64, h: f64) -> BezPath {
+        let mut p = BezPath::new();
+        p.push(PathEl::MoveTo(Point::new(x, y)));
+        p.push(PathEl::LineTo(Point::new(x + w, y)));
+        p.push(PathEl::LineTo(Point::new(x + w, y + h)));
+        p.push(PathEl::LineTo(Point::new(x, y + h)));
+        p.push(PathEl::ClosePath);
+        p
+    }
+
+    let mut doc = Document::new_default();
+    let mut undo = UndoStack::new();
+    let ab = ab0_sid(&doc);
+    // 两个重叠的矢量矩形(v0.2 面积语义:vector 插入 op 不存在,
+    // 用 insert + set vector 组合:v0.1 patch 无矢量 op → 直接造节点)
+    let lhs_id = {
+        let sid = doc.alloc_sid();
+        let mut n = vb_doc::model::Node::new(
+            vb_doc::model::NodeKind::Vector {
+                path: rect_path(0.0, 0.0, 200.0, 200.0),
+            },
+            "A",
+            sid.clone(),
+        );
+        n.geom = vb_doc::model::Geom {
+            x: 0.0,
+            y: 0.0,
+            w: 200.0,
+            h: 200.0,
+        };
+        let pid = doc.find_by_sid(&ab).unwrap();
+        let id = doc.nodes.insert(n);
+        doc.nodes.get_mut(id).unwrap().parent = Some(pid);
+        doc.nodes.get_mut(pid).unwrap().children.push(id);
+        sid.as_str().to_string()
+    };
+    let rhs_id = {
+        let sid = doc.alloc_sid();
+        let mut n = vb_doc::model::Node::new(
+            vb_doc::model::NodeKind::Vector {
+                path: rect_path(0.0, 0.0, 300.0, 100.0),
+            },
+            "B",
+            sid.clone(),
+        );
+        n.geom = vb_doc::model::Geom {
+            x: 100.0,
+            y: 0.0,
+            w: 300.0,
+            h: 100.0,
+        };
+        let pid = doc.find_by_sid(&ab).unwrap();
+        let id = doc.nodes.insert(n);
+        doc.nodes.get_mut(id).unwrap().parent = Some(pid);
+        doc.nodes.get_mut(pid).unwrap().children.push(id);
+        sid.as_str().to_string()
+    };
+
+    let out = apply_patch(
+        &mut doc,
+        &mut undo,
+        &req(vec![PatchOp::Boolean {
+            mode: "union".into(),
+            lhs: lhs_id.clone(),
+            rhs: rhs_id.clone(),
+        }]),
+    )
+    .expect("布尔联集应成功");
+    assert!(out.changed_ids.contains(&rhs_id), "rhs 应在变更表(已删除)");
+    assert!(!doc.find_by_sid(&rhs_id).is_some(), "rhs 应已删除");
+    let lhs_n = doc.nodes.get(doc.find_by_sid(&lhs_id).unwrap()).unwrap();
+    assert!(
+        matches!(lhs_n.kind, vb_doc::model::NodeKind::Vector { .. }),
+        "lhs 应仍是矢量"
+    );
+    assert!(lhs_n.geom.w >= 399.0, "联集宽应 ≥400,实际 {}", lhs_n.geom.w);
+
+    // undo:rhs 回来,lhs 还原
+    undo.undo(&mut doc).expect("撤销失败");
+    assert!(doc.find_by_sid(&rhs_id).is_some(), "撤销后 rhs 应恢复");
+    let lhs_n = doc.nodes.get(doc.find_by_sid(&lhs_id).unwrap()).unwrap();
+    assert_eq!(lhs_n.geom.w, 200.0, "lhs 几何应还原");
+}

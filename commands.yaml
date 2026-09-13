@@ -158,6 +158,26 @@
   keys: { win: "Ctrl+Shift+B" }
   undoable: true
   expose_to_agent: true
+- id: path.union
+  label: 路径查找器:联集
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: path.subtract
+  label: 路径查找器:减去顶层
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: path.intersect
+  label: 路径查找器:交集
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: path.xor
+  label: 路径查找器:差集
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
 - id: object.distribute_h
   label: 水平等距分布
   keys: { win: "" }

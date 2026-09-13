@@ -1253,6 +1253,11 @@ impl VellumApp {
             "edit.paste" => self.clipboard_paste(false),
             "edit.paste_in_place" => self.clipboard_paste(true),
             // ── P3.8 对齐 ──
+            // ── C1 路径查找器(四基本运算;两两矢量路径) ──
+            "path.union" => self.path_boolean(vb_tools::boolean::BooleanOp::Union),
+            "path.subtract" => self.path_boolean(vb_tools::boolean::BooleanOp::Subtract),
+            "path.intersect" => self.path_boolean(vb_tools::boolean::BooleanOp::Intersect),
+            "path.xor" => self.path_boolean(vb_tools::boolean::BooleanOp::Xor),
             "align.left" => self.align_selection("left"),
             "align.hcenter" => self.align_selection("hcenter"),
             "align.right" => self.align_selection("right"),
@@ -1906,6 +1911,61 @@ impl VellumApp {
     }
 
     /// 对齐(P3.8):多选 → 在选择包围盒内对齐;单选 → 对齐所属画板。
+    /// 路径查找器(C1):对选中的两个矢量路径执行布尔运算。
+    /// AI 语义:减去顶层 = z 序在上者减去在下者;联集/交集/差集与顺序无关。
+    fn path_boolean(&mut self, op: vb_tools::boolean::BooleanOp) {
+        if self.selection.len() != 2 {
+            self.status = "路径查找器:需要恰好选中 2 个对象".into();
+            return;
+        }
+        let (sid_a, sid_b) = (self.selection[0].clone(), self.selection[1].clone());
+        let (id_a, id_b) = match (self.doc.find_by_sid(&sid_a), self.doc.find_by_sid(&sid_b)) {
+            (Some(a), Some(b)) => (a, b),
+            _ => return,
+        };
+        for id in [id_a, id_b] {
+            if !matches!(
+                self.doc.nodes.get(id).map(|n| &n.kind),
+                Some(NodeKind::Vector { .. })
+            ) {
+                self.status = "路径查找器:只支持矢量路径(钢笔创建的形状)".into();
+                return;
+            }
+        }
+        // subtract:z 序在上者为 lhs(减数)
+        let (lhs, rhs) = if op == vb_tools::boolean::BooleanOp::Subtract {
+            let za = z_order(&self.doc, id_a);
+            let zb = z_order(&self.doc, id_b);
+            if za >= zb {
+                (sid_a, sid_b)
+            } else {
+                (sid_b, sid_a)
+            }
+        } else {
+            (sid_a.clone(), sid_b.clone())
+        };
+        let lhs_id = self.doc.find_by_sid(&lhs).unwrap();
+        let rhs_id = self.doc.find_by_sid(&rhs).unwrap();
+        let (new_path, new_geom) =
+            match vb_tools::boolean::path_boolean_nodes(&self.doc, op, lhs_id, rhs_id) {
+                Ok(v) => v,
+                Err(e) => {
+                    self.status = format!("路径查找器:{e}");
+                    return;
+                }
+            };
+        self.exec(Command::PathBoolean {
+            op: op.as_str().into(),
+            lhs_sid: lhs.clone(),
+            rhs_sid: rhs.clone(),
+            new_path,
+            new_geom,
+            captured: None,
+        });
+        self.selection = vec![lhs];
+        self.status = format!("路径查找器:{}", op.as_str());
+    }
+
     fn align_selection(&mut self, mode: &str) {
         if self.selection.is_empty() {
             self.status = "对齐:未选中对象".into();
@@ -2398,6 +2458,23 @@ impl VellumApp {
                                     }
                                     if ui.button("↕ 等距").clicked() {
                                         self.run_command("object.distribute_v", false, false);
+                                    }
+                                });
+
+                                // --- 路径查找器(C1:四基本运算,两两矢量路径) ---
+                                ui.separator();
+                                ui.label("路径查找器");
+                                ui.horizontal(|ui| {
+                                    let btns: [(&str, &str); 4] = [
+                                        ("path.union", "联集"),
+                                        ("path.subtract", "减去顶层"),
+                                        ("path.intersect", "交集"),
+                                        ("path.xor", "差集"),
+                                    ];
+                                    for (id, label) in btns {
+                                        if ui.button(label).clicked() {
+                                            self.run_command(id, false, false);
+                                        }
                                     }
                                 });
 
@@ -4862,6 +4939,21 @@ fn set_style_prop(style: Vec<vb_css::Decl>, prop: &str, value: &str) -> Vec<vb_c
         });
     }
     s
+}
+
+/// 节点在父级 children 中的 z 序(同父;不同父时按 id 序兜底)。
+fn z_order(doc: &vb_doc::model::Document, id: vb_doc::model::NodeId) -> usize {
+    doc.nodes
+        .get(id)
+        .and_then(|n| n.parent)
+        .and_then(|p| doc.nodes.get(p))
+        .map(|p| {
+            p.children
+                .iter()
+                .position(|&c| c == id)
+                .unwrap_or(usize::MAX)
+        })
+        .unwrap_or(usize::MAX)
 }
 
 fn draw_grid(painter: &egui::Painter, rect: Rect, cam: &Camera, dark: bool) {

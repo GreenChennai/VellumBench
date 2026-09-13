@@ -9,6 +9,4 @@ description = "Vellum Bench 工具状态机(选择/矩形/钢笔…,产出可逆
 [dependencies]
 vb_common = { workspace = true }
 vb_doc = { workspace = true }
-
-[dev-dependencies]
 flo_curves = "0.8"

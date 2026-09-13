@@ -21,7 +21,7 @@
 | pollster | 0.4 | (预留)阻塞异步 | MIT/Apache-2.0 | |
 | resvg / usvg | 0.48 | **仅 dev 依赖**(vb_export):SVG 参考栅格化,三端一致性门禁(门禁 10) | MIT/Apache-2.0 | 自带 tiny-skia 0.11 栈,不进 release 二进制 |
 | base64 | 0.23 | vb_export:SVG 位图 data URL 嵌入(B3) | MIT/Apache-2.0 | image 在 vb_export 从 dev 提升为正式依赖(同一用途) |
-| flo_curves | 0.8 | **仅 dev 依赖**(vb_tools 测试域):路径布尔 Spike(ADR-0012),批次 C 落地转正式依赖 | MIT/Apache-2.0 | |
+| flo_curves | 0.8 | vb_tools 正式依赖:路径布尔运算(ADR-0012,C1 路径查找器) | MIT/Apache-2.0 | 0.8.1 无 path_xor,Xor=(A-B)∪(B-A) 合成 | |
 
 目标:release 二进制 + 资源 < 120MB(当前 ~35MB,远低于预算)。
 排期:taffy(v0.7 flex)、parley/swash(v0.2 文本)、rmcp 或自研(v0.6 已自研 stdio)、printpdf(v0.5 原生 PDF)。

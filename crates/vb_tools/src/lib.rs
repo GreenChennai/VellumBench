@@ -4,6 +4,10 @@
 //! 随 v0.3「像 AI 的编辑体验」落地;本 crate 现在提供工具与宿主共用的
 //! **无副作用纯函数** —— 拾取、框选、约束、预览几何 —— 并以单元测试锁定
 //! AI 行为语义(相交即选中、Shift 约束、Alt 从中心等)。
+//!
+//! 路径布尔运算见 `boolean` 模块(ADR-0012,批次 C1)。
+
+pub mod boolean;
 
 use vb_common::geom::Rect;
 use vb_doc::model::{Document, Geom, NodeId, NodeKind};

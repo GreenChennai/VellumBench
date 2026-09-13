@@ -676,6 +676,10 @@ pub const IMPLEMENTED_IDS: &[&str] = &[
     "view.toggle_rulers",
     "view.toggle_guides",
     "view.lock_guides",
+    "path.union",
+    "path.subtract",
+    "path.intersect",
+    "path.xor",
 ];
 
 /// 全部命令的中文名(命令面板 / 菜单 / 状态提示共用)。
@@ -711,6 +715,10 @@ pub const CMD_LABELS: &[(&str, &str)] = &[
     ("align.top", "垂直顶对齐"),
     ("align.vcenter", "垂直居中对齐"),
     ("align.bottom", "垂直底对齐"),
+    ("path.union", "路径查找器:联集"),
+    ("path.subtract", "路径查找器:减去顶层"),
+    ("path.intersect", "路径查找器:交集"),
+    ("path.xor", "路径查找器:差集"),
     ("object.distribute_h", "水平等距分布"),
     ("object.distribute_v", "垂直等距分布"),
     ("view.zoom_in", "放大"),
@@ -882,6 +890,22 @@ pub const MENU_OBJECT: &[MenuItem] = &[
     MenuItem {
         id: "object.delete",
         label: "删除",
+    },
+    MenuItem {
+        id: "path.union",
+        label: "联集",
+    },
+    MenuItem {
+        id: "path.subtract",
+        label: "减去顶层",
+    },
+    MenuItem {
+        id: "path.intersect",
+        label: "交集",
+    },
+    MenuItem {
+        id: "path.xor",
+        label: "差集",
     },
 ];
 

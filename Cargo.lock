@@ -4636,6 +4636,7 @@ dependencies = [
  "vb_export",
  "vb_html",
  "vb_render",
+ "vb_tools",
 ]
 
 [[package]]
