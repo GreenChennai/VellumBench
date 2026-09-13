@@ -4671,7 +4671,7 @@ dependencies = [
 
 [[package]]
 name = "vb_agent"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -4690,7 +4690,7 @@ dependencies = [
 
 [[package]]
 name = "vb_app"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "eframe",
@@ -4714,7 +4714,7 @@ dependencies = [
 
 [[package]]
 name = "vb_common"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "kurbo",
  "serde",
@@ -4722,14 +4722,14 @@ dependencies = [
 
 [[package]]
 name = "vb_css"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "vb_common",
 ]
 
 [[package]]
 name = "vb_doc"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "kurbo",
  "slotmap",
@@ -4741,7 +4741,7 @@ dependencies = [
 
 [[package]]
 name = "vb_export"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "base64",
  "image",
@@ -4756,7 +4756,7 @@ dependencies = [
 
 [[package]]
 name = "vb_html"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "html5ever",
  "markup5ever_rcdom",
@@ -4764,15 +4764,15 @@ dependencies = [
 
 [[package]]
 name = "vb_layout"
-version = "0.1.0"
+version = "0.3.0"
 
 [[package]]
 name = "vb_platform"
-version = "0.1.0"
+version = "0.3.0"
 
 [[package]]
 name = "vb_render"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "fontique",
  "image",
@@ -4787,7 +4787,7 @@ dependencies = [
 
 [[package]]
 name = "vb_tools"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "flo_curves",
  "vb_common",
@@ -4796,7 +4796,7 @@ dependencies = [
 
 [[package]]
 name = "vb_ui"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "egui",
  "iconflow",
