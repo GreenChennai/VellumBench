@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 
 use vb_render::encode::{DrawItem, DrawKind, DrawList, FillDef};
 
-pub fn render_svg(list: &DrawList, scale: u32) -> String {
+pub fn render_svg(list: &DrawList, scale: u32, transparent: bool) -> String {
     let w = list.w * scale as f64;
     let h = list.h * scale as f64;
     let mut out = String::with_capacity(64 * 1024);
@@ -17,42 +17,50 @@ pub fn render_svg(list: &DrawList, scale: u32) -> String {
     );
     let _ = writeln!(out, "<defs>");
 
-    // 渐变收集到 defs
+    // 渐变收集到 defs。SVG 渐变默认 objectBoundingBox(坐标按包围盒比例
+    // 解释),这里写的是像素,必须显式 userSpaceOnUse;坐标乘 scale 并加
+    // 节点偏移,与 CPU/GPU 端的 shader 坐标同帧。
     let mut defs = String::new();
+    let s = scale as f64;
     for (i, item) in list.items.iter().enumerate() {
         if let Some(FillDef::LinearGradient { angle_css, stops }) = &item.fill {
-            let (sp, ep) = vb_render::cpu::gradient_line(*angle_css, item.rect[2], item.rect[3]);
-            let (sx, sy, ex, ey) = (sp.x as u32, sp.y as u32, ep.x as u32, ep.y as u32);
+            let [x, y, iw, ih] = item.rect;
+            let (sp, ep) = vb_render::cpu::gradient_line(*angle_css, iw, ih);
+            let (sx, sy) = ((x + sp.x as f64) * s, (y + sp.y as f64) * s);
+            let (ex, ey) = ((x + ep.x as f64) * s, (y + ep.y as f64) * s);
             let _ = write!(
                 defs,
-                r#"  <linearGradient id="g{i}" x1="{sx}" y1="{sy}" x2="{ex}" y2="{ey}">"#
+                r#"  <linearGradient id="g{i}" gradientUnits="userSpaceOnUse" x1="{sx}" y1="{sy}" x2="{ex}" y2="{ey}">"#
             );
             defs.push('\n');
-            for s in stops {
-                let (r, g, b) = to_255(s.color);
+            for st in stops {
+                let (r, g, b) = to_255(st.color);
                 let _ = write!(
                     defs,
                     r#"    <stop offset="{}" stop-color="rgb({r},{g},{b})" stop-opacity="{}"/>"#,
-                    s.pos, s.color[3]
+                    st.pos, st.color[3]
                 );
                 defs.push('\n');
             }
             let _ = writeln!(defs, "  </linearGradient>");
         }
         if let Some(FillDef::RadialGradient { cx, cy, stops }) = &item.fill {
+            let [x, y, iw, ih] = item.rect;
+            let ccx = (x + iw * *cx as f64) * s;
+            let ccy = (y + ih * *cy as f64) * s;
+            // 引擎两端(CPU/GPU)的半径公式:sqrt(w²+h²)/2
+            let r = (iw * iw + ih * ih).sqrt() / 2.0 * s;
             let _ = write!(
                 defs,
-                r#"  <radialGradient id="g{i}" cx="{}" cy="{}" r="0.7">"#,
-                item.rect[2] * *cx as f64,
-                item.rect[3] * *cy as f64
+                r#"  <radialGradient id="g{i}" gradientUnits="userSpaceOnUse" cx="{ccx}" cy="{ccy}" r="{r}">"#
             );
             defs.push('\n');
-            for s in stops {
-                let (r, g, b) = to_255(s.color);
+            for st in stops {
+                let (r2, g2, b2) = to_255(st.color);
                 let _ = write!(
                     defs,
-                    r#"    <stop offset="{}" stop-color="rgb({r},{g},{b})" stop-opacity="{}"/>"#,
-                    s.pos, s.color[3]
+                    r#"    <stop offset="{}" stop-color="rgb({r2},{g2},{b2})" stop-opacity="{}"/>"#,
+                    st.pos, st.color[3]
                 );
                 defs.push('\n');
             }
@@ -62,8 +70,10 @@ pub fn render_svg(list: &DrawList, scale: u32) -> String {
     out.push_str(&defs);
     out.push_str("</defs>\n");
 
-    if !list.background.iter().all(|c| *c >= 0.999) || list.background[3] < 1.0 {
-        // 画板有自定义背景色时画底色矩形
+    if !transparent
+        && (!list.background.iter().all(|c| *c >= 0.999) || list.background[3] < 1.0)
+    {
+        // 画板有自定义背景色时画底色矩形(透明导出跳过)
         let (r, g, b) = to_255(list.background);
         let _ = writeln!(
             out,
@@ -97,7 +107,8 @@ fn fill_attr(item: &DrawItem, i: usize) -> String {
             )
         }
         Some(FillDef::LinearGradient { .. }) | Some(FillDef::RadialGradient { .. }) => {
-            format!(r#"fill="url(#g{i})""#)
+            // 节点 opacity:渐变端此前完全不输出,CPU/GPU 端都乘进色标
+            format!(r#"fill="url(#g{i})" fill-opacity="{}""#, item.opacity)
         }
         None => r#"fill="none""#.into(),
     }
@@ -109,24 +120,16 @@ fn write_item(out: &mut String, i: usize, item: &DrawItem, scale: f64) {
         return;
     }
     let s = scale;
+    // 几何一次性乘 scale;不得再加 scale() transform(此前两者叠加,
+    // scale≠1 时内容被放大 s²,只看得到左上角一块)
     let (x, y, w, h) = (x * s, y * s, w * s, h * s);
 
-    // 旋转 + 缩放统一 transform
+    // 旋转(绕缩放后的中心,与几何同帧)
     let mut tf = String::new();
-    if (item.rot.abs() > 1e-9) || scale != 1.0 {
+    if item.rot.abs() > 1e-9 {
         let cx = x + w / 2.0;
         let cy = y + h / 2.0;
-        let rot = if item.rot.abs() > 1e-9 {
-            format!("rotate({} {cx} {cy}) ", item.rot)
-        } else {
-            String::new()
-        };
-        let sc = if scale != 1.0 {
-            format!("scale({scale}) ")
-        } else {
-            String::new()
-        };
-        tf = format!(r#" transform="{}{}""#, rot, sc);
+        tf = format!(r#" transform="rotate({} {cx} {cy})""#, item.rot);
     }
 
     // P4 矢量路径 → <path d>
@@ -226,7 +229,9 @@ fn write_item(out: &mut String, i: usize, item: &DrawItem, scale: f64) {
             let radius = if item.ellipse {
                 String::new()
             } else {
-                let r = item.radii[0].min(w.min(h) / 2.0) * s;
+                // 先对未缩放尺寸取 clamp 再乘 scale(此前对已缩放尺寸二次
+                // 乘 s,圆角被放大 s²)
+                let r = item.radii[0].min(item.rect[2].min(item.rect[3]) / 2.0) * s;
                 format!(r#" rx="{r}""#)
             };
             if item.ellipse {
@@ -259,7 +264,7 @@ fn write_item(out: &mut String, i: usize, item: &DrawItem, scale: f64) {
                         b.color[3] * item.opacity
                     );
                 } else {
-                    let rr = item.radii[0].min(w.min(h) / 2.0) * s;
+                    let rr = item.radii[0].min(item.rect[2].min(item.rect[3]) / 2.0) * s;
                     let _ = write!(
                         out,
                         r#"<rect x="{}" y="{}" width="{}" height="{}" rx="{rr}" fill="none" stroke="rgb({r},{g},{b2})" stroke-width="{bw}" stroke-opacity="{}"{tf}/>"#,

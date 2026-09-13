@@ -127,7 +127,15 @@ fn px(v: &str) -> Option<f64> {
 }
 
 /// 解析 `linear-gradient(135deg, #a 0, #b 60%)` → (angle_css, stops)。
-pub fn parse_linear_gradient(doc: &Document, value: &str) -> Option<(f64, Vec<GradientStop>)> {
+/// 方向关键字(`to right` / `to top right` 等)按 CSS css-images-3 换算:
+/// 角关键字的方向垂直于目标角两邻角的连线,等价于 α = ±atan(h/w) 及其
+/// 补角 —— 因此必须知道盒子尺寸,由 encode_node 传入。
+pub fn parse_linear_gradient(
+    doc: &Document,
+    value: &str,
+    w: f64,
+    h: f64,
+) -> Option<(f64, Vec<GradientStop>)> {
     let inner = value
         .trim()
         .strip_prefix("linear-gradient(")?
@@ -137,13 +145,23 @@ pub fn parse_linear_gradient(doc: &Document, value: &str) -> Option<(f64, Vec<Gr
     let mut stops_raw: Vec<&str> = Vec::new();
     for (i, p) in parts.iter().enumerate() {
         let t = p.trim();
-        if i == 0
-            && (t.ends_with("deg")
-                || t.ends_with("turn")
-                || !t.starts_with('#') && !t.contains('('))
-        {
-            if let Some(d) = t.strip_suffix("deg") {
-                angle = d.trim().parse().unwrap_or(180.0);
+        if i == 0 {
+            // 首段只认方向/角度;颜色(含命名色)一律当色标。
+            // 此前 `to right` 因启发式误判被当色标吞掉,角度停在 180°。
+            if let Some(d) = t.strip_suffix("deg").and_then(|s| s.trim().parse::<f64>().ok()) {
+                angle = d;
+                continue;
+            }
+            if let Some(d) = t
+                .strip_suffix("turn")
+                .and_then(|s| s.trim().parse::<f64>().ok())
+            {
+                angle = d * 360.0;
+                continue;
+            }
+            if let Some(kw) = t.strip_prefix("to ") {
+                // 未知方向:整条声明无效
+                angle = resolve_direction(kw.trim(), w, h)?;
                 continue;
             }
         }
@@ -176,6 +194,23 @@ pub fn parse_linear_gradient(doc: &Document, value: &str) -> Option<(f64, Vec<Gr
         return None;
     }
     Some((angle, stops))
+}
+
+/// `to <方向关键字>` → CSS 角度(0 = 向上,顺时针为正)。
+/// 角关键字随盒子尺寸变化:方向垂直于目标角两邻角的连线。
+fn resolve_direction(kw: &str, w: f64, h: f64) -> Option<f64> {
+    let slope = (h.max(1e-6) / w.max(1e-6)).atan().to_degrees();
+    match kw {
+        "top" => Some(0.0),
+        "right" => Some(90.0),
+        "bottom" => Some(180.0),
+        "left" => Some(270.0),
+        "top right" | "right top" => Some(slope),
+        "bottom right" | "right bottom" => Some(180.0 - slope),
+        "bottom left" | "left bottom" => Some(180.0 + slope),
+        "top left" | "left top" => Some(360.0 - slope),
+        _ => None,
+    }
 }
 
 /// 解析 `radial-gradient(circle at 35% 35%, #a 0, #b 70%)`。
@@ -242,11 +277,11 @@ pub fn parse_radial_gradient(doc: &Document, value: &str) -> Option<(f32, f32, V
     Some((cx, cy, stops))
 }
 
-fn parse_fill(doc: &Document, node: &Node) -> Option<FillDef> {
+fn parse_fill(doc: &Document, node: &Node, w: f64, h: f64) -> Option<FillDef> {
     let bg_image = node.style_get("background-image");
     if let Some(bgi) = bg_image {
         if bgi.starts_with("linear-gradient") {
-            if let Some((angle, stops)) = parse_linear_gradient(doc, bgi) {
+            if let Some((angle, stops)) = parse_linear_gradient(doc, bgi, w, h) {
                 return Some(FillDef::LinearGradient {
                     angle_css: angle,
                     stops,
@@ -314,8 +349,18 @@ fn parse_border(doc: &Document, node: &Node) -> Option<BorderDef> {
     Some(BorderDef { width, color })
 }
 
-/// 编码单个画板为 DrawList。
+/// 编码单个画板为 DrawList(含画板底色矩形;GPU 画布据此画出画板矩形)。
 pub fn encode_artboard(doc: &Document, artboard: NodeId) -> Result<DrawList, VbError> {
+    encode_artboard_opts(doc, artboard, false)
+}
+
+/// 透明导出走 `transparent = true`:不铺底色矩形,CPU/SVG 导出与
+/// 画布共用同一编码路径。
+pub fn encode_artboard_opts(
+    doc: &Document,
+    artboard: NodeId,
+    transparent: bool,
+) -> Result<DrawList, VbError> {
     let ab = doc
         .nodes
         .get(artboard)
@@ -334,20 +379,21 @@ pub fn encode_artboard(doc: &Document, artboard: NodeId) -> Result<DrawList, VbE
         background,
         items: Vec::new(),
     };
-    // 画板自身底色(GPU 画布据此画出画板矩形)
-    list.items.push(crate::DrawItem {
-        rect: [0.0, 0.0, ab.geom.w, ab.geom.h],
-        ellipse: false,
-        radii: [0.0; 4],
-        fill: Some(FillDef::Solid(background)),
-        border: None,
-        opacity: 1.0,
-        kind: crate::DrawKind::Box,
-        label: None,
-        src: None,
-        rot: 0.0,
-        path: None,
-    });
+    if !transparent {
+        list.items.push(crate::DrawItem {
+            rect: [0.0, 0.0, ab.geom.w, ab.geom.h],
+            ellipse: false,
+            radii: [0.0; 4],
+            fill: Some(FillDef::Solid(background)),
+            border: None,
+            opacity: 1.0,
+            kind: crate::DrawKind::Box,
+            label: None,
+            src: None,
+            rot: 0.0,
+            path: None,
+        });
+    }
     let children = ab.children.clone();
     for c in children {
         encode_node(doc, c, 0.0, 0.0, 1.0, &mut list);
@@ -406,7 +452,7 @@ fn encode_node(
             rect: [x, y, w, h],
             ellipse,
             radii,
-            fill: parse_fill(doc, node),
+            fill: parse_fill(doc, node, w, h),
             border: parse_border(doc, node),
             opacity: op,
             kind: match &node.kind {

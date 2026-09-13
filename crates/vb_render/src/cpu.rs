@@ -148,16 +148,22 @@ fn draw_item(
                     match fill {
                         FillDef::Solid(c) => fill_color(pixmap, &shape, *c, item.opacity, tf),
                         FillDef::LinearGradient { angle_css, stops } => {
-                            let (start, end) = gradient_line(*angle_css, iw, ih);
+                            let (sp, ep) = gradient_line(*angle_css, iw, ih);
+                            // shader 坐标与路径同处 pre-transform 空间:局部
+                            // 线段必须平移到节点原点。径向分支历来如此;线性
+                            // 分支此前漏加,非原点节点渐变被 Pad 成纯色。
+                            let start =
+                                tiny_skia::Point::from_xy(sp.x + x as f32, sp.y + y as f32);
+                            let end = tiny_skia::Point::from_xy(ep.x + x as f32, ep.y + y as f32);
                             match tiny_skia::LinearGradient::new(
                                 start,
                                 end,
-                                to_skia_stops(stops),
+                                to_skia_stops(stops, item.opacity),
                                 SpreadMode::Pad,
                                 Transform::identity(),
                             ) {
                                 Some(shader) => {
-                                    fill_shader(pixmap, &shape, shader, item.opacity, tf)
+                                    fill_shader(pixmap, &shape, shader, tf)
                                 }
                                 None => warnings.push("线性渐变非法(已跳过)".into()),
                             }
@@ -173,12 +179,12 @@ fn draw_item(
                                 0.0,
                                 center,
                                 radius,
-                                to_skia_stops(stops),
+                                to_skia_stops(stops, item.opacity),
                                 SpreadMode::Pad,
                                 Transform::identity(),
                             ) {
                                 Some(shader) => {
-                                    fill_shader(pixmap, &shape, shader, item.opacity, tf)
+                                    fill_shader(pixmap, &shape, shader, tf)
                                 }
                                 None => warnings.push("径向渐变非法(已跳过)".into()),
                             }
@@ -295,7 +301,7 @@ fn with_alpha(color: [f32; 4], opacity: f32) -> Color {
     .unwrap_or(Color::BLACK)
 }
 
-fn fill_shader(pixmap: &mut Pixmap, path: &SkPath, shader: Shader, _opacity: f32, tf: Transform) {
+fn fill_shader(pixmap: &mut Pixmap, path: &SkPath, shader: Shader, tf: Transform) {
     let paint = Paint {
         shader,
         anti_alias: true,
@@ -356,11 +362,17 @@ fn draw_bitmap(
     Ok(())
 }
 
-fn to_skia_stops(stops: &[crate::encode::GradientStop]) -> Vec<tiny_skia::GradientStop> {
+/// 色标 → tiny-skia 色标。节点 opacity 乘进每档 alpha(与 GPU 端一致,
+/// 此前 CPU 渐变完全忽略节点不透明度,三端各一种结果)。
+fn to_skia_stops(
+    stops: &[crate::encode::GradientStop],
+    opacity: f32,
+) -> Vec<tiny_skia::GradientStop> {
+    let opacity = opacity.clamp(0.0, 1.0);
     stops
         .iter()
         .filter_map(|s| {
-            Color::from_rgba(s.color[0], s.color[1], s.color[2], s.color[3])
+            Color::from_rgba(s.color[0], s.color[1], s.color[2], s.color[3] * opacity)
                 .map(|c| tiny_skia::GradientStop::new(s.pos.clamp(0.0, 1.0), c))
         })
         .collect()

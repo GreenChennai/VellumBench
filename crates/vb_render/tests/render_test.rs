@@ -4,6 +4,8 @@
 
 use std::path::{Path, PathBuf};
 
+use image::GenericImageView;
+
 use vb_doc::import::import_project;
 use vb_render::cpu;
 
@@ -90,4 +92,141 @@ fn export_project_writes_files() {
     assert!(written.iter().any(|p| p.ends_with("index.html")));
     assert!(written.iter().any(|p| p.ends_with("main.css")));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---------------------------------------------------------------------------
+// 15 号计划 A2:所见即所得修复(渐变偏移/透明导出/方向关键字/节点透明度)
+// ---------------------------------------------------------------------------
+
+/// 带一个节点的最小文档构造器:left/top/width/height/extra_style。
+fn one_node_doc(
+    dir: &Path,
+    left: f64,
+    top: f64,
+    w: f64,
+    h: f64,
+    extra_style: &str,
+) -> vb_doc::Document {
+    let _ = std::fs::remove_dir_all(dir);
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(
+        dir.join("index.html"),
+        format!(
+            r#"<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>t</title></head>
+<body>
+  <section class="vb-artboard ab" data-vb-id="ab1234" data-vb-name="AB">
+    <div data-vb-id="n00001" style="position:absolute; left:{left}px; top:{top}px; width:{w}px; height:{h}px; {extra_style}"></div>
+  </section>
+</body>
+</html>
+"#
+        ),
+    )
+    .unwrap();
+    import_project(dir).expect("导入").doc
+}
+
+fn sample(img: &image::DynamicImage, x: u32, y: u32) -> [u8; 4] {
+    img.get_pixel(x, y).0
+}
+
+/// W1:非原点节点的线性渐变必须有方向(此前整块被 Pad 成末档色)。
+#[test]
+fn linear_gradient_reaches_non_origin_node() {
+    let dir = std::env::temp_dir().join(format!("vb-grad-{}", std::process::id()));
+    let doc = one_node_doc(
+        &dir,
+        200.0,
+        100.0,
+        100.0,
+        100.0,
+        "background-image: linear-gradient(180deg, #ff0000, #0000ff);",
+    );
+    let ab = doc.artboards[0];
+    let list = vb_render::encode::encode_artboard_opts(&doc, ab, true).expect("编码");
+    let out = cpu::render_png(&list, 1.0, true, Some(&dir)).expect("渲染");
+    let img = image::load_from_memory(&out.png).unwrap();
+    let top = sample(&img, 250, 115);
+    let bottom = sample(&img, 250, 185);
+    assert!(
+        top[0] > 180 && top[2] < 120,
+        "节点上缘应为红,实际 rgba={top:?}"
+    );
+    assert!(
+        bottom[2] > 180 && bottom[0] < 120,
+        "节点下缘应为蓝,实际 rgba={bottom:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// W3:节点 opacity 必须作用于渐变填充(CPU 端此前完全忽略)。
+#[test]
+fn node_opacity_applies_to_gradient() {
+    let dir = std::env::temp_dir().join(format!("vb-grad-op-{}", std::process::id()));
+    let doc = one_node_doc(
+        &dir,
+        0.0,
+        0.0,
+        100.0,
+        100.0,
+        "opacity: 0.5; background-image: linear-gradient(180deg, #ff0000, #ff0000);",
+    );
+    let ab = doc.artboards[0];
+    let list = vb_render::encode::encode_artboard_opts(&doc, ab, true).expect("编码");
+    let out = cpu::render_png(&list, 1.0, true, Some(&dir)).expect("渲染");
+    let img = image::load_from_memory(&out.png).unwrap();
+    let px = sample(&img, 50, 50);
+    assert!(
+        (px[3] as i32 - 127).abs() <= 6,
+        "半透明节点渐变的 alpha 应≈127,实际 {px:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// W2:--transparent 导出必须真的透明(此前底色矩形无条件铺满)。
+#[test]
+fn transparent_export_is_actually_transparent() {
+    let dir = std::env::temp_dir().join(format!("vb-tsp-{}", std::process::id()));
+    let doc = one_node_doc(&dir, 10.0, 10.0, 50.0, 50.0, "background-color: #123456;");
+    let ab = doc.artboards[0];
+    let list = vb_render::encode::encode_artboard_opts(&doc, ab, true).expect("编码");
+    let out = cpu::render_png(&list, 1.0, true, Some(&dir)).expect("渲染");
+    let img = image::load_from_memory(&out.png).unwrap();
+    let corner = sample(&img, 0, 0);
+    assert_eq!(corner[3], 0, "透明导出四角 alpha 应为 0,实际 {corner:?}");
+
+    let list2 = vb_render::encode::encode_artboard_opts(&doc, ab, false).expect("编码");
+    let out2 = cpu::render_png(&list2, 1.0, false, Some(&dir)).expect("渲染");
+    let img2 = image::load_from_memory(&out2.png).unwrap();
+    assert_eq!(sample(&img2, 0, 0)[3], 255, "默认导出应有不透明底");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// W6:方向关键字与 turn 单位解析(此前 `to right` 被当色标吞掉)。
+#[test]
+fn gradient_direction_keywords_parse() {
+    let doc = vb_doc::Document::new_default();
+    let p = |v: &str| vb_render::encode::parse_linear_gradient(&doc, v, 100.0, 50.0);
+
+    let (angle, stops) = p("linear-gradient(to right, #ff0000, #0000ff)").expect("to right");
+    assert!((angle - 90.0).abs() < 1e-9, "to right 应为 90°,实际 {angle}");
+    assert_eq!(stops.len(), 2);
+    assert!((stops[0].pos - 0.0).abs() < 1e-6 && (stops[1].pos - 1.0).abs() < 1e-6);
+
+    // to top right:α = atan(h/w) = atan(0.5) ≈ 26.565°
+    let (angle, _) = p("linear-gradient(to top right, #ff0000, #0000ff)").expect("corner");
+    assert!((angle - 26.565_051).abs() < 1e-3, "实际 {angle}");
+
+    let (angle, _) = p("linear-gradient(0.5turn, #ff0000, #0000ff)").expect("turn");
+    assert!((angle - 180.0).abs() < 1e-9);
+
+    // 命名色开头不得被误判为方向
+    let (angle, stops) = p("linear-gradient(red, blue)").expect("named colors");
+    assert!((angle - 180.0).abs() < 1e-9);
+    assert_eq!(stops.len(), 2);
+
+    // 未知方向:整条无效
+    assert!(p("linear-gradient(to somewhere, red, blue)").is_none());
 }

@@ -479,7 +479,7 @@ impl VellumApp {
                 },
                 Err(e) => self.status = format!("导出失败:{e}"),
             },
-            1 => match vb_export::export_artboard_svg(&self.doc, ab, scale) {
+            1 => match vb_export::export_artboard_svg(&self.doc, ab, scale, false) {
                 Ok(svg) => match std::fs::write(&out, &svg) {
                     Ok(()) => {
                         self.status = format!(
@@ -494,7 +494,10 @@ impl VellumApp {
                 Err(e) => self.status = format!("导出失败:{e}"),
             },
             browser_fmt => {
-                let wpi_dir = std::path::PathBuf::from(vb_export::wpi::DEFAULT_WPI_DIR);
+                let Some(wpi_dir) = vb_export::wpi::resolve_wpi_dir() else {
+                    self.status = "WPI 不可用:请设置环境变量 VB_WPI_DIR 指向 WPI 仓库".into();
+                    return;
+                };
                 let wpi_fmt = match browser_fmt {
                     2 => vb_export::wpi::WpiFormat::Pdf,
                     3 => vb_export::wpi::WpiFormat::Gif,

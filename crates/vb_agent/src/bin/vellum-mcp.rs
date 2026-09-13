@@ -188,12 +188,14 @@ fn tool_export(args: &Value) -> Result<Value, String> {
                 )
             }
             "svg" => {
-                let svg = vb_export::export_artboard_svg(&s.doc, ab, scale)?;
+                let svg = vb_export::export_artboard_svg(&s.doc, ab, scale, false)?;
                 std::fs::write(&out, &svg).map_err(|e| e.to_string())?;
                 Ok(json!({"ok": true, "out": out.display().to_string(), "bytes": svg.len()}))
             }
             "pdf" | "gif" | "mp4" => {
-                let wpi_dir = PathBuf::from(vb_export::wpi::DEFAULT_WPI_DIR);
+                let Some(wpi_dir) = vb_export::wpi::resolve_wpi_dir() else {
+                    return Err("WPI 不可用:未找到浏览器引擎(宿主可设置环境变量 VB_WPI_DIR 指向 WPI 仓库)".into());
+                };
                 let wpi_fmt = match fmt.as_str() {
                     "pdf" => vb_export::wpi::WpiFormat::Pdf,
                     "gif" => vb_export::wpi::WpiFormat::Gif,

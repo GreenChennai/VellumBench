@@ -19,7 +19,8 @@ pub fn export_artboard_png(
     transparent: bool,
     project_dir: Option<&Path>,
 ) -> Result<(Vec<u8>, Vec<String>), String> {
-    let list = vb_render::encode::encode_artboard(doc, artboard).map_err(|e| e.to_string())?;
+    let list =
+        vb_render::encode::encode_artboard_opts(doc, artboard, transparent).map_err(|e| e.to_string())?;
     let res = vb_render::cpu::render_png(&list, scale, transparent, project_dir)?;
     Ok((res.png, res.warnings))
 }
@@ -29,9 +30,11 @@ pub fn export_artboard_svg(
     doc: &Document,
     artboard: vb_doc::model::NodeId,
     scale: u32,
+    transparent: bool,
 ) -> Result<String, String> {
-    let list = vb_render::encode::encode_artboard(doc, artboard).map_err(|e| e.to_string())?;
-    Ok(svg::render_svg(&list, scale))
+    let list =
+        vb_render::encode::encode_artboard_opts(doc, artboard, transparent).map_err(|e| e.to_string())?;
+    Ok(svg::render_svg(&list, scale, transparent))
 }
 
 /// 命名模板展开(设计文档 07 篇 §六):`{doc} {artboard} {scale} {ext} {index} {width} {height}`。

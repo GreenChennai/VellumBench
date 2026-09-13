@@ -508,7 +508,11 @@ fn run(cli: Cli) -> Result<(), CliError> {
                     None => doc.artboards.first().copied(),
                 }
                 .ok_or_else(|| CliError::Export("未找到画板".into()))?;
-                let wpi_dir = std::path::PathBuf::from(vb_export::wpi::DEFAULT_WPI_DIR);
+                let Some(wpi_dir) = vb_export::wpi::resolve_wpi_dir() else {
+                    return Err(CliError::Export(
+                        "WPI 不可用:未找到浏览器引擎。请设置环境变量 VB_WPI_DIR 指向 WPI 仓库(原生 PNG/SVG 导出不受影响)".into(),
+                    ));
+                };
                 let wpi_fmt = match fmt.as_str() {
                     "pdf" => vb_export::wpi::WpiFormat::Pdf,
                     "gif" => vb_export::wpi::WpiFormat::Gif,
@@ -589,7 +593,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                     out.clone()
                 };
                 if is_svg {
-                    let svg = vb_export::export_artboard_svg(&doc, *id, scale)
+                    let svg = vb_export::export_artboard_svg(&doc, *id, scale, transparent)
                         .map_err(CliError::Export)?;
                     std::fs::write(&out_path, &svg)
                         .with_context(|| format!("写出 {}", out_path.display()))

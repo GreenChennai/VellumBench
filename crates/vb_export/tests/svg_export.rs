@@ -1,0 +1,89 @@
+//! SVG 导出回归测试(15 号计划 A2:双重缩放 / 渐变 userSpaceOnUse / 透明导出)。
+
+use vb_doc::import::import_project;
+
+fn doc_with_node(style: &str) -> (vb_doc::Document, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("vb-svg-{}-{}", style.len(), std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("index.html"),
+        format!(
+            r#"<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>t</title></head>
+<body>
+  <section class="vb-artboard ab" data-vb-id="ab1234" data-vb-name="AB" style="background-color:#ff0000">
+    <div data-vb-id="n00001" style="position:absolute; left:100px; top:50px; width:200px; height:100px; {style}"></div>
+  </section>
+</body>
+</html>
+"#
+        ),
+    )
+    .unwrap();
+    (import_project(&dir).expect("导入").doc, dir)
+}
+
+/// W4:scale=2 不得产生 scale() transform(此前几何乘 s 又叠 scale(s),内容放大 s²)。
+#[test]
+fn svg_no_double_scale_at_2x() {
+    let (doc, dir) = doc_with_node("background-color:#00ff00;");
+    let ab = doc.artboards[0];
+    let svg = vb_export::export_artboard_svg(&doc, ab, 2, false).expect("SVG 导出");
+    assert!(svg.contains(r#"width="2880""#), "画板 1440@2x 应宽 2880");
+    assert!(!svg.contains("scale("), "不得出现 scale() transform:{svg}");
+    // 节点 x=100 → 缩放一次 = 200
+    assert!(svg.contains(r#"x="200""#), "几何应只缩放一次:{svg}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// W5/W3:渐变必须 userSpaceOnUse + 节点偏移;渐变端要输出 fill-opacity。
+#[test]
+fn svg_gradient_userspace_and_opacity() {
+    let (doc, dir) =
+        doc_with_node("opacity: 0.5; background-image: linear-gradient(90deg, #ff0000, #0000ff);");
+    let ab = doc.artboards[0];
+    let svg = vb_export::export_artboard_svg(&doc, ab, 1, false).expect("SVG 导出");
+    assert!(
+        svg.contains(r#"gradientUnits="userSpaceOnUse""#),
+        "缺 userSpaceOnUse(否则像素坐标被当比例读):{svg}"
+    );
+    // 节点在 x=100:渐变起点应带偏移,而不是从 0 开始
+    assert!(svg.contains(r#"x1="100""#), "渐变起点缺节点偏移:{svg}");
+    assert!(
+        svg.contains("fill-opacity=\"0.5\""),
+        "渐变端缺节点 opacity:{svg}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// W5:径向渐变半径用引擎公式 sqrt(w²+h²)/2,不再是硬编码 0.7。
+#[test]
+fn svg_radial_gradient_radius_matches_engine() {
+    let (doc, dir) =
+        doc_with_node("background-image: radial-gradient(circle at 50% 50%, #ff0000, #0000ff);");
+    let ab = doc.artboards[0];
+    let svg = vb_export::export_artboard_svg(&doc, ab, 1, false).expect("SVG 导出");
+    // 200×100 节点:r = sqrt(200²+100²)/2 ≈ 111.8
+    assert!(svg.contains("r=\"111.8"), "径向半径应≈111.8:{svg}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// W2:透明导出跳过画板底色矩形(画板带 #ff0000 背景)。
+#[test]
+fn svg_transparent_skips_background() {
+    let (doc, dir) = doc_with_node("background-color:#00ff00;");
+    let ab = doc.artboards[0];
+    let opaque = vb_export::export_artboard_svg(&doc, ab, 1, false).expect("SVG 导出");
+    assert!(
+        opaque.contains(r#"fill="rgb(255,0,0)""#),
+        "不透明导出应有底色矩形"
+    );
+    let clear = vb_export::export_artboard_svg(&doc, ab, 1, true).expect("SVG 导出");
+    assert!(
+        !clear.contains(r#"fill="rgb(255,0,0)""#),
+        "透明导出不得铺底色:{clear}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
