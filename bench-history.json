@@ -1,0 +1,30 @@
+{
+  "ts": "2026-09-13T12:11:27+08:00",
+  "git": "0c569e7",
+  "runs": [
+    {
+      "build_ms": 0,
+      "encode_ms": 0,
+      "objects": 200,
+      "png_bytes": 43145,
+      "render_ms": 18,
+      "total_ms": 18
+    },
+    {
+      "build_ms": 6,
+      "encode_ms": 0,
+      "objects": 2000,
+      "png_bytes": 400954,
+      "render_ms": 129,
+      "total_ms": 135
+    },
+    {
+      "build_ms": 160,
+      "encode_ms": 3,
+      "objects": 10000,
+      "png_bytes": 1986959,
+      "render_ms": 611,
+      "total_ms": 774
+    }
+  ]
+}
