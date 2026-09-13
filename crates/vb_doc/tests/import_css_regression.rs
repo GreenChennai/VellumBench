@@ -226,7 +226,6 @@ fn body_style_link_not_dumped_into_css() {
 // 15 号计划 A3:注释感知词法(R3)+ &nbsp; 保真(R4)
 // ---------------------------------------------------------------------------
 
-use vb_css::Decl;
 use vb_doc::import::parse_stylesheet;
 
 /// R3:注释内的 `{`/`}` 不得破坏规则切分(此前规则体被 `/* } */` 截断,
