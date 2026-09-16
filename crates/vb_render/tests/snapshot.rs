@@ -21,8 +21,8 @@ fn fixed_scene() -> DrawList {
             rot: 0.0,
             path: None,
             image: None,
-        clip: None,
-        filter: None,
+            clip: None,
+            filter: None,
         },
         // 蓝色圆角矩形
         DrawItem {
@@ -42,8 +42,8 @@ fn fixed_scene() -> DrawList {
             rot: 0.0,
             path: None,
             image: None,
-        clip: None,
-        filter: None,
+            clip: None,
+            filter: None,
         },
     ];
     items.push(DrawItem {

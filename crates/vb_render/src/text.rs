@@ -92,6 +92,11 @@ fn font_collection() -> &'static Mutex<()> {
 }
 
 /// swash FontRef 生命周期问题的解法:整形在锁内一次完成,输出拷贝。
+/// 按家庭+字重取字体字节(公开;PDF CID 嵌入用)。
+pub fn font_data_for(family: &str, weight: u16) -> Option<(Arc<Vec<u8>>, usize)> {
+    resolve_font_weighted(family, weight, " ")
+}
+
 /// 字重感知选字:项目注册表优先,系统字体回退。
 fn resolve_font_weighted(family: &str, weight: u16, text: &str) -> Option<(Arc<Vec<u8>>, usize)> {
     if let Some(hit) = registry_font(family, weight) {
@@ -362,6 +367,10 @@ pub struct LinePart<'a> {
     pub seg: Option<usize>,
     /// 部件起点相对行首的 x 偏移(含字距)。
     pub x: f64,
+    /// 部件覆盖的字形 id(与 text 字符一一对应;CID 嵌入用)。
+    pub gids: Vec<u16>,
+    /// 对应字形 advance(px)。
+    pub advances: Vec<f32>,
 }
 
 /// 把一个视觉行按段边界切片(供 SVG/PDF/PPTX 逐段上色)。
@@ -410,6 +419,11 @@ pub fn split_line_segments<'a>(
             text: &hard[start_in_hard..end_in_hard],
             seg,
             x: (first.x as f64 + p0 as f64 * ls as f64) - line_x0,
+            gids: line[p0..p1].iter().map(|&gi| run.glyphs[gi].id).collect(),
+            advances: line[p0..p1]
+                .iter()
+                .map(|&gi| run.glyphs[gi].advance)
+                .collect(),
         });
         let _ = last;
         p0 = p1;

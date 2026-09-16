@@ -64,7 +64,9 @@ pub struct FilterDef {
 
 impl FilterDef {
     pub fn is_identity(&self) -> bool {
-        self.blur <= 0.0 && (self.brightness - 1.0).abs() < 1e-6 && (self.saturate - 1.0).abs() < 1e-6
+        self.blur <= 0.0
+            && (self.brightness - 1.0).abs() < 1e-6
+            && (self.saturate - 1.0).abs() < 1e-6
     }
 }
 
@@ -177,12 +179,8 @@ pub fn parse_filter(v: &str) -> Option<FilterDef> {
                     j += 1;
                 }
                 let inner = &t[pstart..j.min(t.len())];
-                let val = vb_common::units::parse_px(inner).unwrap_or_else(|| {
-                    inner
-                        .trim()
-                        .parse::<f64>()
-                        .unwrap_or(1.0)
-                });
+                let val = vb_common::units::parse_px(inner)
+                    .unwrap_or_else(|| inner.trim().parse::<f64>().unwrap_or(1.0));
                 match name {
                     "blur" => {
                         f.blur = val;

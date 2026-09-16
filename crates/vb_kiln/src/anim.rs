@@ -722,12 +722,18 @@ pub struct FrameState {
     pub opacity: Option<f64>,
     /// transform 文本(none = 无)
     pub transform: Option<String>,
+    /// clip-path 文本(动画帧间插值)
+    pub clip_path: Option<String>,
+    /// filter 文本
+    pub filter: Option<String>,
 }
 
 /// 节点全部动画在 t 时刻合成状态。
 pub fn eval_node(node_anim: &NodeAnim, t: f64) -> FrameState {
     let mut opacity: Option<f64> = None;
     let mut transform: Option<String> = None;
+    let mut clip_path: Option<String> = None;
+    let mut filter: Option<String> = None;
     for (inst, kf) in &node_anim.instances {
         if let Some(v) = track_value_at(inst, kf, "opacity", t) {
             if let Ok(o) = v.trim().parse::<f64>() {
@@ -739,6 +745,17 @@ pub fn eval_node(node_anim: &NodeAnim, t: f64) -> FrameState {
                 transform = Some(v);
             }
         }
+        if let Some(v) = track_value_at(inst, kf, "clip-path", t) {
+            clip_path = Some(v);
+        }
+        if let Some(v) = track_value_at(inst, kf, "filter", t) {
+            filter = Some(v);
+        }
     }
-    FrameState { opacity, transform }
+    FrameState {
+        opacity,
+        transform,
+        clip_path,
+        filter,
+    }
 }

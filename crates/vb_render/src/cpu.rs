@@ -79,12 +79,7 @@ fn draw_item(
             crate::encode::ClipDef::Inset(t, r, b, l) => {
                 let mut trimmed = item.clone();
                 trimmed.clip = None;
-                trimmed.rect = [
-                    x + l,
-                    y + t,
-                    (iw - l - r).max(0.0),
-                    (ih - t - b).max(0.0),
-                ];
+                trimmed.rect = [x + l, y + t, (iw - l - r).max(0.0), (ih - t - b).max(0.0)];
                 draw_item(pixmap, &trimmed, scale, tf, project_dir, warnings);
                 return;
             }
@@ -572,7 +567,14 @@ fn apply_clip_mask(
     let shift = Transform::from_translate(-(bx as f32), -(by as f32));
     let mut trimmed = item.clone();
     trimmed.clip = None;
-    draw_item(&mut sub, &trimmed, scale, tf.post_concat(shift), project_dir, warnings);
+    draw_item(
+        &mut sub,
+        &trimmed,
+        scale,
+        tf.post_concat(shift),
+        project_dir,
+        warnings,
+    );
     let Some(mut mask) = Pixmap::new(bw, bh) else {
         return;
     };
@@ -679,7 +681,11 @@ fn apply_filter_region(
         for dx in 0..rw {
             if let Some(px) = pixmap.pixel((x0 + dx as i32) as u32, (y0 + dy as i32) as u32) {
                 let c = px.demultiply();
-                crop.put_pixel(dx, dy, image::Rgba([c.red(), c.green(), c.blue(), c.alpha()]));
+                crop.put_pixel(
+                    dx,
+                    dy,
+                    image::Rgba([c.red(), c.green(), c.blue(), c.alpha()]),
+                );
             }
         }
     }
@@ -693,24 +699,24 @@ fn apply_filter_region(
         let sat: f32 = f.saturate as f32;
         let bri: f32 = f.brightness as f32;
         if let Some(img) = worked.as_mut_rgba8() {
-        for p in img.pixels_mut() {
-            let mut rgb = [p[0], p[1], p[2]];
-            if need_sat {
-                let l =
-                    0.2126 * rgb[0] as f32 + 0.7152 * rgb[1] as f32 + 0.0722 * rgb[2] as f32;
-                for ch in 0..3 {
-                    let v = l + (rgb[ch] as f32 - l) * sat;
-                    rgb[ch] = v.clamp(0.0, 255.0) as u8;
+            for p in img.pixels_mut() {
+                let mut rgb = [p[0], p[1], p[2]];
+                if need_sat {
+                    let l =
+                        0.2126 * rgb[0] as f32 + 0.7152 * rgb[1] as f32 + 0.0722 * rgb[2] as f32;
+                    for ch in 0..3 {
+                        let v = l + (rgb[ch] as f32 - l) * sat;
+                        rgb[ch] = v.clamp(0.0, 255.0) as u8;
+                    }
                 }
-            }
-            if need_bri {
-                for ch in 0..3 {
-                    rgb[ch] = ((rgb[ch] as f32) * bri).clamp(0.0, 255.0) as u8;
+                if need_bri {
+                    for ch in 0..3 {
+                        rgb[ch] = ((rgb[ch] as f32) * bri).clamp(0.0, 255.0) as u8;
+                    }
                 }
-            }
-            p[0] = rgb[0];
-            p[1] = rgb[1];
-            p[2] = rgb[2];
+                p[0] = rgb[0];
+                p[1] = rgb[1];
+                p[2] = rgb[2];
             }
         }
     }
