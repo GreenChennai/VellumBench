@@ -208,7 +208,6 @@ fn draw_item_shape(id: usize, item: &DrawItem, page_h: f64) -> String {
                     .iter()
                     .position(|sg| b >= sg.start && b < sg.end);
                 // 同段连续区间
-                let mut p1 = p0;
                 let mut end = p0;
                 for &(i, clen) in &chars {
                     if i < p0 {
