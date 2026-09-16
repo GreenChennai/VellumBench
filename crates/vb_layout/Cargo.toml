@@ -4,6 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Vellum Bench 占位 crate(v0.x 后续填充)"
+description = "Vellum Bench 文档流布局求值(taffy 封装):flow/flex/absolute → 具体矩形"
 
 [dependencies]
+taffy = "0.14.0"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+vb_common = { path = "../vb_common" }
+vb_css = { path = "../vb_css" }
+vb_doc = { path = "../vb_doc" }
+vb_render = { path = "../vb_render" }

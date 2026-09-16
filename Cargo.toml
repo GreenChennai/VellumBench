@@ -29,6 +29,7 @@ vb_css = { path = "crates/vb_css" }
 vb_html = { path = "crates/vb_html" }
 vb_doc = { path = "crates/vb_doc" }
 vb_tools = { path = "crates/vb_tools" }
+vb_layout = { path = "crates/vb_layout" }
 
 kurbo = "0.13"
 slotmap = "1"

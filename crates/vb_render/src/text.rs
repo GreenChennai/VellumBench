@@ -184,5 +184,61 @@ pub fn first_family(style_get: impl Fn(&str) -> Option<String>) -> String {
     style_get("font-family").unwrap_or_default()
 }
 
+/// 布局量测:与 cpu.rs 渲染同一贪心断行策略(CJK 逐字可断、空白/标点后断,
+/// 行首空白丢弃),另支持 `\n` 硬断行。返回(最长行宽 px, 行数)。
+/// `max_width` 为 f32::MAX 时不折行(max-content)。
+pub fn measure_text(
+    text: &str,
+    font_family: &str,
+    font_size: f32,
+    max_width: f32,
+    letter_spacing: f32,
+) -> (f32, usize) {
+    let Some(run) = shape_text(text, font_family, font_size) else {
+        // 字体解析失败:退化为字数估宽(与 cpu.rs 占位条同式)
+        let n = text.split('\n').count();
+        let w = text
+            .split('\n')
+            .map(|l| l.chars().count() as f32 * (font_size * 0.55 + letter_spacing))
+            .fold(0.0f32, f32::max);
+        return (w, n);
+    };
+    let glyph_char = |gi: usize| -> char { text.chars().nth(gi).unwrap_or(' ') };
+    let mut max_line_w = 0.0f32;
+    let mut lines = 0usize;
+    let mut cur_w = 0.0f32;
+    let mut cur_started = false;
+    let n = run.glyphs.len();
+    for gi in 0..n {
+        let ch = glyph_char(gi);
+        if ch == '\n' {
+            max_line_w = max_line_w.max(cur_w);
+            lines += 1;
+            cur_w = 0.0;
+            cur_started = false;
+            continue;
+        }
+        let gw = run.glyphs[gi].advance + letter_spacing;
+        let too_wide = cur_w + gw > max_width && cur_started && max_width.is_finite();
+        let cjk = (ch as u32) > 0x2E00;
+        if too_wide && (ch.is_whitespace() || cjk || ch.is_ascii_punctuation()) {
+            max_line_w = max_line_w.max(cur_w);
+            lines += 1;
+            cur_w = 0.0;
+            cur_started = false;
+            if ch.is_whitespace() {
+                continue;
+            }
+        }
+        cur_w += gw;
+        cur_started = true;
+    }
+    if cur_started || lines == 0 {
+        max_line_w = max_line_w.max(cur_w);
+        lines += 1;
+    }
+    (max_line_w, lines)
+}
+
 /// 形状结果缓存键(text + family + size)—— 简单拼接;导出一次性成本。
 pub type ShapeCache = HashMap<(String, String, u32), Option<ShapedRun>>;

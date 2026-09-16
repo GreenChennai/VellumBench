@@ -154,7 +154,7 @@ fn run_export(
         return 2;
     };
 
-    let imported = match import_project(&import_path) {
+    let mut imported = match import_project(&import_path) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("{{\"ok\":false,\"error\":\"导入失败:{e}\"}}");
@@ -165,6 +165,12 @@ fn run_export(
         eprintln!("{{\"ok\":false,\"error\":\"项目无画板\"}}");
         return 3;
     };
+
+    // 文档流布局求值(M1.0):flow/flex/absolute → 具体矩形写回 geom;
+    // 矢量模式文档(全显式定位)求值结果与作者输入一致,无副作用
+    for w in vb_layout::apply_to_doc(&mut imported.doc, ab, Some(&dir)) {
+        eprintln!("{{\"warn\":\"{w}\"}}");
+    }
 
     let req = ExportRequest {
         format: fmt,
