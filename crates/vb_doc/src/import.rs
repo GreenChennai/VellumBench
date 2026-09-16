@@ -971,7 +971,6 @@ impl<'a> NodeImporter<'a> {
                 .is_some(),
         ];
         // 几何属性从 style 移除(导出时由 geom 重建,避免双写)
-        let mut style = style;
         for p in ["position", "left", "top", "width", "height"] {
             style.retain(|d| d.prop != p);
         }
@@ -1402,7 +1401,6 @@ impl<'a> NodeImporter<'a> {
         ];
 
         // 几何属性从 style 中移除(导出时由 geom 字段重建,避免双写)
-        let mut style = style;
         for p in ["left", "top", "width", "height", "position"] {
             style.retain(|d| d.prop != p);
         }

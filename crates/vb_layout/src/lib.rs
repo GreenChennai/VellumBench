@@ -55,7 +55,8 @@ pub fn apply_to_doc(
     };
     // 父绝对坐标必须取自**未改写**的绝对表:若边遍历边写 geom,
     // 先改写的父节点会让后处理的子节点读到父相对值,几何混叠
-    let abs: Vec<(NodeId, Geom, Option<(f64, f64)>)> = outcome
+    type AbsRow = (NodeId, Geom, Option<(f64, f64)>);
+    let abs: Vec<AbsRow> = outcome
         .rects
         .iter()
         .filter_map(|(sid, r)| {
@@ -667,7 +668,7 @@ impl<'a> BuildCtx<'a> {
             .unwrap_or_default();
         let side = |v: Option<&str>, i: usize| -> Option<LengthPercentageAuto> {
             v.or(inset_all.get(i).map(|s| s.as_str()))
-                .and_then(|v| lpa(&v))
+                .and_then(|v| lpa(v))
         };
         // 绝对定位:authored 的 left/top 已在 geom(相对包含块)回退读取
         let inset = Rect {

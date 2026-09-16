@@ -18,8 +18,10 @@ use swash::{shape, text::Script, FontRef, GlyphId};
 use vb_common::geom::{BezPath, Point};
 
 /// 项目 webfont 注册表(@font-face):家庭(小写)→ (字重 → 字体文件字节)。
-fn font_registry() -> &'static Mutex<HashMap<String, Vec<(u16, Arc<Vec<u8>>)>>> {
-    static INIT: OnceLock<Mutex<HashMap<String, Vec<(u16, Arc<Vec<u8>>)>>>> = OnceLock::new();
+type FontRegistry = HashMap<String, Vec<(u16, Arc<Vec<u8>>)>>;
+
+fn font_registry() -> &'static Mutex<FontRegistry> {
+    static INIT: OnceLock<Mutex<FontRegistry>> = OnceLock::new();
     INIT.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -90,10 +92,6 @@ fn font_collection() -> &'static Mutex<()> {
 }
 
 /// swash FontRef 生命周期问题的解法:整形在锁内一次完成,输出拷贝。
-fn resolve_font(family: &str, text: &str) -> Option<(Arc<Vec<u8>>, usize)> {
-    resolve_font_weighted(family, 400, text)
-}
-
 /// 字重感知选字:项目注册表优先,系统字体回退。
 fn resolve_font_weighted(family: &str, weight: u16, text: &str) -> Option<(Arc<Vec<u8>>, usize)> {
     if let Some(hit) = registry_font(family, weight) {
