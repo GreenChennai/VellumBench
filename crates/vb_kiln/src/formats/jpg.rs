@@ -27,7 +27,9 @@ impl FormatWriter for JpgWriter {
             rgba
         };
         let rgb: Vec<u8> = img
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|p| [p[0], p[1], p[2]])
             .collect();
         let mut jpg = Vec::with_capacity(rgb.len() / 2);
@@ -43,7 +45,9 @@ impl FormatWriter for JpgWriter {
 
 /// RGBA → 白底混合。
 fn blend_white(rgba: &[u8]) -> Vec<u8> {
-    rgba.chunks_exact(4)
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|p| {
             let a = p[3] as f32 / 255.0;
             [
