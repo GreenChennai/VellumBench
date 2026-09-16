@@ -87,8 +87,18 @@ fn main() {
             r#loop,
             bitrate,
         } => run_export(
-            source, output, format, width, scale, transparent, max_wait, jpeg_quality, fps,
-            duration, r#loop, bitrate,
+            source,
+            output,
+            format,
+            width,
+            scale,
+            transparent,
+            max_wait,
+            jpeg_quality,
+            fps,
+            duration,
+            r#loop,
+            bitrate,
         ),
         Cmd::Selfcheck => run_selfcheck(),
     };
@@ -175,9 +185,7 @@ fn run_export(
     }
 
     // 输出尺寸:光栅格式 = 像素;矢量格式 = 逻辑尺寸 × scale
-    let logical_w = report
-        .engine
-        .len(); // 占位防 unused;实际宽高见下
+    let logical_w = report.engine.len(); // 占位防 unused;实际宽高见下
     let _ = logical_w;
     let (w, h) = raster_dims(&imported, ab, &req);
     let _ = width; // WPI 兼容:Kiln 以画板几何为准
@@ -227,8 +235,13 @@ fn run_selfcheck() -> i32 {
     {
         use vb_doc::model::Geom;
         let n = doc.nodes.get_mut(card).unwrap();
-        n.geom = Geom { x: 20.0, y: 20.0, w: 280.0, h: 120.0 };
-        n.style_set("background-color", "#10b981");
+        n.geom = Geom {
+            x: 20.0,
+            y: 20.0,
+            w: 280.0,
+            h: 120.0,
+        };
+        n.style_set("background-color", "rgb(16,185,129)"); // vb-token-ok selfcheck 样例数据
         n.style_set("border-radius", "12px");
         doc.nodes.get_mut(ab).unwrap().children.push(card);
         doc.nodes.get_mut(card).unwrap().parent = Some(ab);

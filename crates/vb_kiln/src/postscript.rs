@@ -1,4 +1,4 @@
-﻿//! PostScript 家族:EPS 3.0 + Ai(PDF 兼容流 + Illustrator 头)。
+//! PostScript 家族:EPS 3.0 + Ai(PDF 兼容流 + Illustrator 头)。
 //!
 //! EPS:DOCN 头 + BoundingBox/HiResBoundingBox + Level 2 操作符,
 //! 文本 show(印刷可编辑)。
@@ -19,7 +19,10 @@ pub fn write_eps(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
     let mut s = String::with_capacity(32 * 1024);
     s.push_str("%!PS-Adobe-3.0 EPSF-3.0\n");
     s.push_str("%%Creator: Kiln/VellumBench\n");
-    s.push_str(&format!("%%Title: ({})\n", escape_pdf_string(&ctx.artboard_name)));
+    s.push_str(&format!(
+        "%%Title: ({})\n",
+        escape_pdf_string(&ctx.artboard_name)
+    ));
     s.push_str(&format!(
         "%%BoundingBox: 0 0 {} {}\n",
         w.ceil() as i64,
@@ -53,8 +56,7 @@ pub fn write_ai(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
         "Adobe Illustrator(R) 24.0 (Kiln compatible PDF stream)",
     )?;
     // Illustrator 兼容注释(插在 PDF 头二进制注释行前,不影响解析)
-    let head: &[u8] =
-        b"%AI9_PrivateDataBegin\n%%AI8_CreatorVersion: 24.0.0\n%AI5_FileFormat 9.0\n";
+    let head: &[u8] = b"%AI9_PrivateDataBegin\n%%AI8_CreatorVersion: 24.0.0\n%AI5_FileFormat 9.0\n";
     if bytes.starts_with(b"%PDF-1.7\n") {
         let mut with_head = Vec::with_capacity(bytes.len() + head.len());
         with_head.extend_from_slice(&bytes[..9]);
@@ -67,6 +69,7 @@ pub fn write_ai(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
 
 /// 文本 -> PS 字形轮廓(PS 用户空间 Y 向上;字形路径 Y 向下取负写出)。
 #[allow(unused_variables)]
+#[allow(clippy::too_many_arguments)]
 fn outline_text_ps(
     s: &mut String,
     text: &str,
@@ -88,7 +91,11 @@ fn outline_text_ps(
             vb_render::text::glyph_outline(&run.font_data, run.font_index, font_size as f32, g.id)
         {
             s.push_str("gsave\n");
-            s.push_str(&format!("{} {} translate\n", fnum(x + g.x as f64), fnum(baseline_ps)));
+            s.push_str(&format!(
+                "{} {} translate\n",
+                fnum(x + g.x as f64),
+                fnum(baseline_ps)
+            ));
             s.push_str(&kurbo_path_ops_ps(&path));
             s.push_str("fill\ngrestore\n");
         }
@@ -200,16 +207,22 @@ fn draw_item_ps(s: &mut String, item: &DrawItem, page_h: f64) {
             fnum(c[1] as f64),
             fnum(c[2] as f64)
         ));
-        let has_cjk = label
-            .text
-            .chars()
-            .any(|ch| {
-                let cp = ch as u32;
-                !(0x20..0x7f).contains(&cp) && !(0xa0..0xff).contains(&cp)
-            });
+        let has_cjk = label.text.chars().any(|ch| {
+            let cp = ch as u32;
+            !(0x20..0x7f).contains(&cp) && !(0xa0..0xff).contains(&cp)
+        });
         if has_cjk {
             // CJK:字形轮廓矢量填充(与 PDF 分支同源 swash 整形)
-            outline_text_ps(s, &label.text, &label.font_family, label.font_size, x, y, h, page_h);
+            outline_text_ps(
+                s,
+                &label.text,
+                &label.font_family,
+                label.font_size,
+                x,
+                y,
+                h,
+                page_h,
+            );
         } else {
             let font = if label.weight_bold {
                 "Helvetica-Bold"
@@ -222,7 +235,10 @@ fn draw_item_ps(s: &mut String, item: &DrawItem, page_h: f64) {
             ));
             let baseline = page_h - (y + h * 0.78);
             s.push_str(&format!("{} {} moveto\n", fnum(x), fnum(baseline)));
-            s.push_str(&format!("({}) show\n", escape_pdf_string(&winansi_escaped(&label.text))));
+            s.push_str(&format!(
+                "({}) show\n",
+                escape_pdf_string(&winansi_escaped(&label.text))
+            ));
         }
     }
     if item.kind == DrawKind::Image {

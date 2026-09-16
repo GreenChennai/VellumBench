@@ -1,4 +1,4 @@
-﻿//! Kiln 错误模型:全分类、不 panic、可追踪。
+//! Kiln 错误模型:全分类、不 panic、可追踪。
 //!
 //! 设计纪律:异常输入(超大画布/缺失字体/损坏动画数据)不崩溃 ——
 //! 返回带行动建议的错误或降级输出,并在 KilnReport 留痕。
@@ -15,7 +15,12 @@ pub enum KilnError {
     CanvasTooLarge { w: u32, h: u32, max: u32 },
 
     #[error("画布面积超限:{w}x{h} = {pixels} 像素,上限 {max}(降低 scale 后重试)")]
-    CanvasAreaTooLarge { w: u32, h: u32, pixels: u64, max: u64 },
+    CanvasAreaTooLarge {
+        w: u32,
+        h: u32,
+        pixels: u64,
+        max: u64,
+    },
 
     #[error("非法参数:{0}")]
     BadParam(String),
@@ -60,9 +65,7 @@ pub enum KilnWarning {
 impl KilnWarning {
     pub fn message(&self) -> String {
         match self {
-            KilnWarning::StaticCanvasAnimation => {
-                "静态画布:GIF/MP4 动画参数被忽略,输出单帧".into()
-            }
+            KilnWarning::StaticCanvasAnimation => "静态画布:GIF/MP4 动画参数被忽略,输出单帧".into(),
             KilnWarning::ScaleClamped(v) => format!("倍率 {v} 超上限 8,已钳制为 8"),
             KilnWarning::JpgOpaqueForced => "JPG 不支持透明,已垫白底".into(),
             KilnWarning::ImageMissing { src } => format!("位图资产缺失:{src}(已画占位框)"),

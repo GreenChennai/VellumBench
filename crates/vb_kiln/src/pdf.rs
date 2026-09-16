@@ -114,9 +114,7 @@ pub fn write_pdf(ctx: &ExportContext, producer: &str) -> KilnResult<Vec<u8>> {
         offsets.push(out.len() as u64);
         out.extend_from_slice(format!("{} 0 obj\n", idx + 1).as_bytes());
         if idx + 1 == content_id {
-            out.extend_from_slice(
-                format!("/Length {}\nstream\n", content_z.len()).as_bytes(),
-            );
+            out.extend_from_slice(format!("/Length {}\nstream\n", content_z.len()).as_bytes());
             out.extend_from_slice(&content_z);
             out.extend_from_slice(b"\nendstream\nendobj\n");
         } else {
@@ -231,13 +229,10 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64) {
     }
     if let Some(label) = &item.label {
         let c = label.color;
-        let has_cjk = label
-            .text
-            .chars()
-            .any(|ch| {
-                let cp = ch as u32;
-                !(0x20..0x7f).contains(&cp) && !(0xa0..0xff).contains(&cp)
-            });
+        let has_cjk = label.text.chars().any(|ch| {
+            let cp = ch as u32;
+            !(0x20..0x7f).contains(&cp) && !(0xa0..0xff).contains(&cp)
+        });
         if has_cjk {
             // CJK 等非 WinAnsi 文本:swash 整形 → 字形轮廓矢量填充
             // (PDF 内仍为矢量、可选中;文本层降级在 report 告警)
@@ -251,7 +246,7 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64) {
                 s,
                 &label.text,
                 &label.font_family,
-                label.font_size as f64,
+                label.font_size,
                 x,
                 y,
                 h,
@@ -267,18 +262,18 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64) {
             ));
             let fref = if label.weight_bold { "/F2" } else { "/F1" };
             s.push_str(&format!("{fref} {} Tf\n", fnum(label.font_size)));
-            let metrics = vb_render::text::shape_text(&label.text, &label.font_family, label.font_size as f32);
+            let metrics = vb_render::text::shape_text(
+                &label.text,
+                &label.font_family,
+                label.font_size as f32,
+            );
             let (asc, _desc, fsize) = metrics
                 .as_ref()
                 .map(|r| (r.ascent as f64, r.descent as f64, label.font_size))
                 .unwrap_or((h * 0.78, 0.0, label.font_size));
             let half_lead = 0.0 * fsize;
             let baseline = page_h - (y + half_lead + asc);
-            s.push_str(&format!(
-                "1 0 0 1 {} {} Tm\n",
-                fnum(x),
-                fnum(baseline)
-            ));
+            s.push_str(&format!("1 0 0 1 {} {} Tm\n", fnum(x), fnum(baseline)));
             let text = winansi_escaped(&label.text);
             s.push_str(&format!("({text}) Tj\nET\n"));
         }
@@ -347,6 +342,7 @@ fn ellipse_path(s: &mut String, x: f64, py: f64, w: f64, h: f64) {
 /// advance,glyph_outline 取轮廓,Y 翻转后以 f 填充。与 CPU 光栅
 /// 同一整形源,PDF 内视觉与 PNG 一致。
 #[allow(unused_variables)]
+#[allow(clippy::too_many_arguments)]
 fn outline_text_pdf(
     s: &mut String,
     text: &str,

@@ -1,4 +1,4 @@
-﻿//! 应用主体:画布(Vello 纹理合成)+ AI 式交互 + 属性/图层/状态面板。
+//! 应用主体:画布(Vello 纹理合成)+ AI 式交互 + 属性/图层/状态面板。
 //!
 //! v0.1 范围(路线图 11 篇):选择/矩形/椭圆工具、Alt 复制、Shift 约束、
 //! 框选(相交即选中)、Undo/Redo、属性面板、图层列表、状态栏、保存/导出。
@@ -540,7 +540,13 @@ impl VellumApp {
             };
             let req = vb_export::wpi::WpiExportRequest {
                 format: wpi_fmt,
-                scale: if scale >= 4 { 4 } else if scale >= 2 { 2 } else { 1 },
+                scale: if scale >= 4 {
+                    4
+                } else if scale >= 2 {
+                    2
+                } else {
+                    1
+                },
                 width: 1920,
                 transparent: self.export_transparent,
                 out,

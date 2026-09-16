@@ -1,4 +1,4 @@
-﻿//! Kiln CLI:导出与基准入口(kiln export / kiln bench)。
+//! Kiln CLI:导出与基准入口(kiln export / kiln bench)。
 //!
 //! `kiln export` 把 HTML 项目导入 vb_doc 后按九格式导出(引擎热路径
 //! 与 GUI 完全一致);`kiln bench` 输出计时 JSON 供对比报告消费。
@@ -55,7 +55,14 @@ enum Cmd {
 fn main() {
     let cli = Cli::parse();
     match cli.cmd {
-        Cmd::Export { source, output, scale, transparent, fps, duration } => {
+        Cmd::Export {
+            source,
+            output,
+            scale,
+            transparent,
+            fps,
+            duration,
+        } => {
             let dir = if source.is_dir() {
                 source.clone()
             } else {
@@ -84,7 +91,11 @@ fn main() {
                 t.elapsed().as_millis()
             );
         }
-        Cmd::Bench { source, out_dir, scale } => {
+        Cmd::Bench {
+            source,
+            out_dir,
+            scale,
+        } => {
             std::fs::create_dir_all(&out_dir).expect("建目录失败");
             let dir = if source.is_dir() {
                 source.clone()
@@ -104,10 +115,9 @@ fn main() {
                 };
                 let out = out_dir.join(format!("sample.{}", fmt.ext()));
                 let t = Instant::now();
-                let report = vb_kiln::export_artboard_to_file(
-                    &imported.doc, ab, &req, Some(&dir), &out,
-                )
-                .unwrap_or_else(|e| panic!("{fmt:?} 失败:{e}"));
+                let report =
+                    vb_kiln::export_artboard_to_file(&imported.doc, ab, &req, Some(&dir), &out)
+                        .unwrap_or_else(|e| panic!("{fmt:?} 失败:{e}"));
                 let ms = t.elapsed().as_millis() as u64;
                 println!("{fmt:?} {ms}ms {} bytes", report.bytes);
                 rows.push(format!(

@@ -1,4 +1,4 @@
-﻿//! `vb_kiln` — Kiln 窑:VellumBench 下一代导出核心。
+//! `vb_kiln` — Kiln 窑:VellumBench 下一代导出核心。
 //!
 //! 命名:Vellum(羔皮纸)入窑,烧出九种成品 —— PNG/JPG/GIF/MP4(媒体)
 //! 与 SVG/PDF/EPS/Ai/PPTX(可编辑矢量)。全面取代 WPI 浏览器导出路径;
@@ -13,13 +13,13 @@
 
 pub mod context;
 pub mod error;
+pub mod formats;
 pub mod frames;
 pub mod ooxml;
 pub mod pdf;
 pub mod postscript;
 pub mod raster;
 pub mod report;
-pub mod formats;
 pub mod writer;
 
 pub use context::ExportContext;

@@ -1,4 +1,4 @@
-﻿//! FormatWriter trait 与九格式分发。
+//! FormatWriter trait 与九格式分发。
 
 use vb_render::encode::{DrawItem, DrawKind, DrawList, FillDef};
 
@@ -83,7 +83,8 @@ impl Format {
 pub trait FormatWriter: Send + Sync {
     fn format(&self) -> Format;
     /// 写入字节流;返回带 warnings 与耗时的报告。
-    fn write(&self, ctx: &ExportContext, out: &mut Vec<u8>) -> crate::error::KilnResult<KilnReport>;
+    fn write(&self, ctx: &ExportContext, out: &mut Vec<u8>)
+        -> crate::error::KilnResult<KilnReport>;
 }
 
 /// 按格式取写入器(writer 均无状态单例)。
@@ -166,8 +167,24 @@ pub fn collect_layers(list: &DrawList) -> Vec<String> {
 pub fn fill_hex(f: &FillDef) -> String {
     let c = match f {
         FillDef::Solid(c) => c,
-        FillDef::LinearGradient { stops, .. } => &stops.first().unwrap_or(&vb_render::GradientStop { pos: 0.0, color: [0.0, 0.0, 0.0, 1.0] }).color,
-        FillDef::RadialGradient { stops, .. } => &stops.first().unwrap_or(&vb_render::GradientStop { pos: 0.0, color: [0.0, 0.0, 0.0, 1.0] }).color,
+        FillDef::LinearGradient { stops, .. } => {
+            &stops
+                .first()
+                .unwrap_or(&vb_render::GradientStop {
+                    pos: 0.0,
+                    color: [0.0, 0.0, 0.0, 1.0],
+                })
+                .color
+        }
+        FillDef::RadialGradient { stops, .. } => {
+            &stops
+                .first()
+                .unwrap_or(&vb_render::GradientStop {
+                    pos: 0.0,
+                    color: [0.0, 0.0, 0.0, 1.0],
+                })
+                .color
+        }
     };
     format!(
         "#{:02X}{:02X}{:02X}",

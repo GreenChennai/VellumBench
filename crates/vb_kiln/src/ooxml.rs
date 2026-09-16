@@ -1,4 +1,4 @@
-﻿//! PPTX(OOXML)写入器:自研最小 OOXML + stored zip。
+//! PPTX(OOXML)写入器:自研最小 OOXML + stored zip。
 //!
 //! 结构:[Content_Types].xml + _rels + ppt/presentation.xml + slide +
 //! slideLayout + slideMaster + theme。每个 DrawItem → p:sp shape:
@@ -135,9 +135,15 @@ pub fn write_pptx(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
         ("ppt/slides/slide1.xml", slide),
         ("ppt/slides/_rels/slide1.xml.rels", slide_rels.into()),
         ("ppt/slideLayouts/slideLayout1.xml", slide_layout.into()),
-        ("ppt/slideLayouts/_rels/slideLayout1.xml.rels", layout_rels2.into()),
+        (
+            "ppt/slideLayouts/_rels/slideLayout1.xml.rels",
+            layout_rels2.into(),
+        ),
         ("ppt/slideMasters/slideMaster1.xml", slide_master.into()),
-        ("ppt/slideMasters/_rels/slideMaster1.xml.rels", master_rels.into()),
+        (
+            "ppt/slideMasters/_rels/slideMaster1.xml.rels",
+            master_rels.into(),
+        ),
         ("ppt/theme/theme1.xml", theme.into()),
     ];
 
@@ -172,7 +178,10 @@ fn draw_item_shape(id: usize, item: &DrawItem, page_h: f64) -> String {
     let mut geom = format!(
         r#"<a:xfrm rot="{}"><a:off x="{}" y="{}"/><a:ext cx="{}" cy="{}"/></a:xfrm>"#,
         ((-item.rot * 60000.0).round() as i64).rem_euclid(21600000),
-        xe, ye, we, he
+        xe,
+        ye,
+        we,
+        he
     );
     let _ = page_h;
 
@@ -192,7 +201,8 @@ fn draw_item_shape(id: usize, item: &DrawItem, page_h: f64) -> String {
             text = text
         )
     } else {
-        r#"<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr lang="zh-CN"/></a:p></p:txBody>"#.to_string()
+        r#"<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr lang="zh-CN"/></a:p></p:txBody>"#
+            .to_string()
     };
 
     format!(
@@ -211,7 +221,8 @@ fn shape_visual(item: &DrawItem) -> (String, String, String) {
     let prst = if item.ellipse {
         r#"<a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom>"#.to_string()
     } else if item.radii.iter().any(|r| *r > 0.0) {
-        let adj = (item.radii[0] / (item.rect[2].min(item.rect[3]) / 2.0) * 50000.0).clamp(0.0, 50000.0) as i64;
+        let adj = (item.radii[0] / (item.rect[2].min(item.rect[3]) / 2.0) * 50000.0)
+            .clamp(0.0, 50000.0) as i64;
         format!(
             r#"<a:prstGeom prst="roundRect"><a:avLst><a:gd name="adj" fmla="val {}"/></a:avLst></a:prstGeom>"#,
             adj
@@ -224,10 +235,14 @@ fn shape_visual(item: &DrawItem) -> (String, String, String) {
             if item.kind == DrawKind::Text {
                 "<a:noFill/>".to_string()
             } else {
-                format!(r#"<a:solidFill><a:srgbClr val="{}"/></a:solidFill>"#, rgb_hex(c))
+                format!(
+                    r#"<a:solidFill><a:srgbClr val="{}"/></a:solidFill>"#,
+                    rgb_hex(c)
+                )
             }
         }
-        Some(FillDef::LinearGradient { stops, .. }) | Some(FillDef::RadialGradient { stops, .. }) => {
+        Some(FillDef::LinearGradient { stops, .. })
+        | Some(FillDef::RadialGradient { stops, .. }) => {
             let gs: Vec<String> = stops
                 .iter()
                 .map(|s| {
@@ -339,7 +354,11 @@ pub fn crc32(data: &[u8]) -> u32 {
     for (i, e) in table.iter_mut().enumerate() {
         let mut c = i as u32;
         for _ in 0..8 {
-            c = if c & 1 != 0 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 };
+            c = if c & 1 != 0 {
+                0xEDB88320 ^ (c >> 1)
+            } else {
+                c >> 1
+            };
         }
         *e = c;
     }

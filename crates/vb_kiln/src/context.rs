@@ -1,4 +1,4 @@
-﻿//! ExportContext:导出上下文 = DrawList + 光栅帧 + 动画参数 + 元数据。
+//! ExportContext:导出上下文 = DrawList + 光栅帧 + 动画参数 + 元数据。
 //!
 //! 单一构建入口 `build`:尺寸守门(防 OOM)、scale 钳制、动画参数校验、
 //! 透明度语义归一;所有 writer 只读 ctx,不重复做守门。
@@ -132,8 +132,7 @@ impl ExportContext {
                 let mut f_list = list.clone();
                 // v1 动画语义:顶层非背景项透明度正弦脉冲(0.65..1.0)
                 let last = f_list.items.len() - 1;
-                f_list.items[last].opacity *=
-                    0.65 + 0.35 * (t * std::f32::consts::TAU).sin().abs();
+                f_list.items[last].opacity *= 0.65 + 0.35 * (t * std::f32::consts::TAU).sin().abs();
                 let rgba = crate::raster::rasterize_rgba(&f_list, scale as f64)?;
                 frames.push(Frame {
                     rgba,
@@ -153,8 +152,11 @@ impl ExportContext {
         }
 
         // 透明度语义:JPG/EPS/Ai/PPTX 不支持透明
-        let transparent =
-            req.transparent && matches!(req.format, Format::Png | Format::Gif | Format::Svg | Format::Pdf);
+        let transparent = req.transparent
+            && matches!(
+                req.format,
+                Format::Png | Format::Gif | Format::Svg | Format::Pdf
+            );
 
         Ok(ExportContext {
             artboard_name,

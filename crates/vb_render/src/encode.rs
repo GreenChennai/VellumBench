@@ -1,4 +1,4 @@
-﻿//! Document → `DrawList`:引擎中立的绘制指令编码(CPU/GPU 单一来源,ADR-0016)。
+//! Document → `DrawList`:引擎中立的绘制指令编码(CPU/GPU 单一来源,ADR-0016)。
 //!
 //! 坐标:画板本地 px(Y 向下);嵌套节点的绝对位置 = 沿祖先链累加 x/y
 //! (导入/导出按"相对最近定位祖先"存储,见设计文档 04 篇 §二)。
@@ -314,15 +314,12 @@ fn parse_fill(doc: &Document, node: &Node, w: f64, h: f64) -> Option<FillDef> {
     // background-image(CSS 简写展开);此前只认 background-image,
     // 简写形式的渐变整块丢失(画板/卡片背景变白)。
     let shorthand = node.style_get("background");
-    let bg_image = node
-        .style_get("background-image")
-        .or_else(|| {
-            shorthand.and_then(|s| {
-                let t = s.trim();
-                (t.starts_with("linear-gradient") || t.starts_with("radial-gradient"))
-                    .then_some(t)
-            })
-        });
+    let bg_image = node.style_get("background-image").or_else(|| {
+        shorthand.and_then(|s| {
+            let t = s.trim();
+            (t.starts_with("linear-gradient") || t.starts_with("radial-gradient")).then_some(t)
+        })
+    });
     if let Some(bgi) = bg_image {
         if bgi.starts_with("linear-gradient") {
             if let Some((angle, stops)) = parse_linear_gradient(doc, bgi, w, h) {
@@ -462,8 +459,8 @@ pub fn encode_artboard_opts(
     if !transparent {
         // 画板自身背景走 parse_fill(渐变简写/背景图降级链路与普通节点一致);
         // 此前只认纯色,`background: linear-gradient(...)` 的画板整版白底。
-        let bg_fill = parse_fill(doc, ab, ab.geom.w, ab.geom.h)
-            .unwrap_or(FillDef::Solid(background));
+        let bg_fill =
+            parse_fill(doc, ab, ab.geom.w, ab.geom.h).unwrap_or(FillDef::Solid(background));
         list.items.push(crate::DrawItem {
             rect: [0.0, 0.0, ab.geom.w, ab.geom.h],
             ellipse: false,

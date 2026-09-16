@@ -1,4 +1,4 @@
-﻿//! JPG 写入器:光栅 → quality 可调 JPEG;透明强制垫白底。
+//! JPG 写入器:光栅 → quality 可调 JPEG;透明强制垫白底。
 
 use std::time::Instant;
 
@@ -21,8 +21,15 @@ impl FormatWriter for JpgWriter {
         let t = Instant::now();
         let warnings = common_warnings(ctx, Format::Jpg);
         let rgba = rasterize_rgba(&ctx.list, ctx.scale as f64)?;
-        let img = if ctx.transparent { blend_white(&rgba) } else { rgba };
-        let rgb: Vec<u8> = img.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
+        let img = if ctx.transparent {
+            blend_white(&rgba)
+        } else {
+            rgba
+        };
+        let rgb: Vec<u8> = img
+            .chunks_exact(4)
+            .flat_map(|p| [p[0], p[1], p[2]])
+            .collect();
         let mut jpg = Vec::with_capacity(rgb.len() / 2);
         let mut enc = JpegEncoder::new_with_quality(&mut jpg, ctx.jpeg_quality);
         enc.encode(&rgb, ctx.out_w, ctx.out_h, image::ExtendedColorType::Rgb8)

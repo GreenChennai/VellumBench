@@ -1,4 +1,4 @@
-﻿//! 帧序列与 ffmpeg 进程桥(GIF/MP4)。
+//! 帧序列与 ffmpeg 进程桥(GIF/MP4)。
 //!
 //! GIF:Kiln 自研编码(image crate 感知量化 + LZW),零外部依赖。
 //! MP4:探测 ffmpeg → libx264/yuv420p;无 ffmpeg 降级 GIF 流并告警。
@@ -77,7 +77,10 @@ fn encode_gif_ffmpeg(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
         if !output.status.success() {
             return Err(KilnError::FfmpegFailed {
                 code: output.status.code(),
-                stderr: String::from_utf8_lossy(&output.stderr).chars().take(300).collect(),
+                stderr: String::from_utf8_lossy(&output.stderr)
+                    .chars()
+                    .take(300)
+                    .collect(),
             });
         }
         std::fs::read(&out_path).map_err(KilnError::Io)
@@ -93,7 +96,8 @@ fn encode_gif_image(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
         .frames
         .first()
         .ok_or_else(|| KilnError::BadAnimation("空帧序列".into()))?;
-    let mut out = Vec::with_capacity(512 * 1024.max(first.width as usize * first.height as usize / 2));
+    let mut out =
+        Vec::with_capacity(512 * 1024.max(first.width as usize * first.height as usize / 2));
     let mut encoder = GifEncoder::new(&mut out);
     encoder
         .set_repeat(if ctx.gif_loops == 0 {

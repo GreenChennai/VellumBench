@@ -1,4 +1,4 @@
-﻿//! CPU 光栅化引擎(tiny-skia,ADR-0016):CLI 导出 / CI 渲染快照用,无 GPU 依赖。
+//! CPU 光栅化引擎(tiny-skia,ADR-0016):CLI 导出 / CI 渲染快照用,无 GPU 依赖。
 //!
 //! 视觉范围 v0.1:纯色/线性/径向渐变填充、圆角矩形、椭圆、描边、透明度、位图;
 //! 文本按 ADR-0017 画占位条;冻结块画灰色占位框 —— 两者均产生 warnings。
@@ -205,9 +205,7 @@ fn draw_item(
                     // 行进距 = 1.4x 字号(Chrome 雅黑 normal 行高实测)
                     let max_w = iw.max(1.0);
                     let line_h = t.font_size * 1.32;
-                    let glyph_char = |gi: usize| -> char {
-                        t.text.chars().nth(gi).unwrap_or(' ')
-                    };
+                    let glyph_char = |gi: usize| -> char { t.text.chars().nth(gi).unwrap_or(' ') };
                     let mut lines: Vec<Vec<usize>> = Vec::new();
                     let mut cur: Vec<usize> = Vec::new();
                     let mut cur_w = 0.0f64;
