@@ -1,4 +1,4 @@
-﻿//! Kiln PDF 写入器(自研 PDF 1.7 子集,零外部依赖)。
+//! Kiln PDF 写入器(自研 PDF 1.7 子集,零外部依赖)。
 //!
 //! 算法资产(源自 artboard 管线实测经验):
 //! - 真实文本(Type1 WinAnsi + Tj):PDF 阅读器/Illustrator 可选中改字
@@ -233,6 +233,15 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64) {
             let cp = ch as u32;
             !(0x20..0x7f).contains(&cp) && !(0xa0..0xff).contains(&cp)
         });
+        let line_h = if label.line_height > 0.0 {
+            label.line_height
+        } else {
+            label.font_size * 1.32
+        };
+        let max_w = w.max(1.0) as f32;
+        let ls = label.letter_spacing as f32;
+        let seg_ranges: Vec<(usize, usize)> =
+            label.segments.iter().map(|sg| (sg.start, sg.end)).collect();
         if has_cjk {
             // CJK 等非 WinAnsi 文本:swash 整形 → 字形轮廓矢量填充
             // (PDF 内仍为矢量、可选中;文本层降级在 report 告警)
@@ -242,40 +251,77 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64) {
                 fnum(c[1]),
                 fnum(c[2])
             ));
-            outline_text_pdf(
-                s,
-                &label.text,
-                &label.font_family,
-                label.font_size,
-                x,
-                y,
-                h,
-                page_h,
-            );
-        } else {
-            s.push_str("BT\n");
-            s.push_str(&format!(
-                "{} {} {} rg\n",
-                fnum(c[0]),
-                fnum(c[1]),
-                fnum(c[2])
-            ));
-            let fref = if label.weight_bold { "/F2" } else { "/F1" };
-            s.push_str(&format!("{fref} {} Tf\n", fnum(label.font_size)));
-            let metrics = vb_render::text::shape_text(
+            vb_render::text::for_each_visual_line(
                 &label.text,
                 &label.font_family,
                 label.font_size as f32,
+                label.weight,
+                max_w,
+                ls,
+                |vi, hard, run, line, _bb| {
+                    let s0: usize = hard.chars().take(line[0]).map(|ch| ch.len_utf8()).sum();
+                    let last = *line.last().expect("nonempty");
+                    let s1: usize = hard.chars().take(last + 1).map(|ch| ch.len_utf8()).sum();
+                    let sub = &hard[s0..s1];
+                    outline_text_pdf(
+                        s,
+                        sub,
+                        &label.font_family,
+                        label.font_size,
+                        label.weight,
+                        x,
+                        y + vi as f64 * line_h,
+                        h,
+                        page_h,
+                    );
+                    let _ = run;
+                },
             );
-            let (asc, _desc, fsize) = metrics
-                .as_ref()
-                .map(|r| (r.ascent as f64, r.descent as f64, label.font_size))
-                .unwrap_or((h * 0.78, 0.0, label.font_size));
-            let half_lead = 0.0 * fsize;
-            let baseline = page_h - (y + half_lead + asc);
-            s.push_str(&format!("1 0 0 1 {} {} Tm\n", fnum(x), fnum(baseline)));
-            let text = winansi_escaped(&label.text);
-            s.push_str(&format!("({text}) Tj\nET\n"));
+        } else {
+            let fref = if label.weight >= 600 { "/F2" } else { "/F1" };
+            vb_render::text::for_each_visual_line(
+                &label.text,
+                &label.font_family,
+                label.font_size as f32,
+                label.weight,
+                max_w,
+                ls,
+                |vi, hard, run, line, byte_base| {
+                    let asc = run.ascent as f64;
+                    let baseline = page_h - (y + asc + vi as f64 * line_h);
+                    s.push_str("BT\n");
+                    s.push_str(&format!("{fref} {} Tf\n", fnum(label.font_size)));
+                    let parts = vb_render::text::split_line_segments(
+                        hard,
+                        line,
+                        run,
+                        byte_base,
+                        &seg_ranges,
+                        ls,
+                    );
+                    for part in parts {
+                        let color = part
+                            .seg
+                            .and_then(|i| label.segments.get(i))
+                            .and_then(|sg| sg.color)
+                            .unwrap_or(label.color);
+                        s.push_str(&format!(
+                            "{} {} {} rg\n",
+                            fnum(color[0]),
+                            fnum(color[1]),
+                            fnum(color[2])
+                        ));
+                        s.push_str(&format!(
+                            "1 0 0 1 {} {} Tm\n",
+                            fnum(x + part.x),
+                            fnum(baseline)
+                        ));
+                        let text = winansi_escaped(part.text);
+                        s.push_str(&format!("({text}) Tj\n"));
+                    }
+                    s.push_str("ET\n");
+                },
+            );
         }
     }
     if item.kind == DrawKind::Image {
@@ -348,12 +394,15 @@ fn outline_text_pdf(
     text: &str,
     font_family: &str,
     font_size: f64,
+    weight: u16,
     x: f64,
     y: f64,
     box_h: f64,
     page_h: f64,
 ) {
-    let Some(run) = vb_render::text::shape_text(text, font_family, font_size as f32) else {
+    let Some(run) =
+        vb_render::text::shape_text_weighted(text, font_family, font_size as f32, weight)
+    else {
         return;
     };
     // 基线:盒顶 + 半行距 + ascent(浏览器 normal line-height 1.14 语义)

@@ -327,6 +327,96 @@ pub fn layout_text_lines(
         .collect()
 }
 
+/// 视觉行遍历(写出器共用):按硬行整形 + 贪心断行,逐视觉行回调
+/// `(视觉行序, 硬行文本, run, 字形索引, 硬行字节基址)`。
+pub fn for_each_visual_line(
+    text: &str,
+    font_family: &str,
+    font_size: f32,
+    weight: u16,
+    max_width: f32,
+    letter_spacing: f32,
+    mut f: impl FnMut(usize, &str, &ShapedRun, &[usize], usize),
+) {
+    let mut vi = 0usize;
+    let mut byte_base = 0usize;
+    for hard in text.split('\n') {
+        if let Some(run) = shape_text_weighted(hard, font_family, font_size, weight) {
+            for line in break_lines(hard, &run, max_width, letter_spacing) {
+                if !line.is_empty() {
+                    f(vi, hard, &run, &line, byte_base);
+                }
+                vi += 1;
+            }
+        } else {
+            vi += 1;
+        }
+        byte_base += hard.len() + 1;
+    }
+}
+
+/// 行内富文本段切片:连续同段(或段外)字形合为一个部件。
+pub struct LinePart<'a> {
+    pub text: &'a str,
+    /// 段在 `segments` 中的索引;None = 段外(继承节点样式)。
+    pub seg: Option<usize>,
+    /// 部件起点相对行首的 x 偏移(含字距)。
+    pub x: f64,
+}
+
+/// 把一个视觉行按段边界切片(供 SVG/PDF/PPTX 逐段上色)。
+/// `segments`: 字节区间表;`byte_base`: 硬行在全文中的字节基址;
+/// `char_bytes`: 行内字形序 → 行内字符序的字节宽(逐字形累计)。
+pub fn split_line_segments<'a>(
+    hard: &'a str,
+    line: &[usize],
+    run: &ShapedRun,
+    byte_base: usize,
+    segments: &[(usize, usize)],
+    ls: f32,
+) -> Vec<LinePart<'a>> {
+    let line_x0 = run.glyphs[line[0]].x as f64;
+    let mut parts: Vec<LinePart> = Vec::new();
+    // 每字形的行内字节偏移
+    let mut char_offsets: Vec<usize> = Vec::with_capacity(line.len());
+    let mut acc = 0usize;
+    for &gi in line {
+        char_offsets.push(acc);
+        let ch = hard.chars().nth(gi).unwrap_or(' ');
+        acc += ch.len_utf8();
+    }
+    let mut p0 = 0usize;
+    while p0 < line.len() {
+        let b = byte_base + char_offsets[p0];
+        let seg = segments.iter().position(|sg| b >= sg.0 && b < sg.1);
+        let mut p1 = p0 + 1;
+        while p1 < line.len() {
+            let b1 = byte_base + char_offsets[p1];
+            let s1 = segments.iter().position(|sg| b1 >= sg.0 && b1 < sg.1);
+            if s1 != seg {
+                break;
+            }
+            p1 += 1;
+        }
+        let first = &run.glyphs[line[p0]];
+        let last = &run.glyphs[line[p1 - 1]];
+        let start_in_hard: usize = hard.chars().take(line[p0]).map(|c| c.len_utf8()).sum();
+        let end_in_hard: usize = hard
+            .chars()
+            .take(line[p1 - 1] + 1)
+            .map(|c| c.len_utf8())
+            .sum();
+        parts.push(LinePart {
+            text: &hard[start_in_hard..end_in_hard],
+            seg,
+            x: (first.x as f64 + p0 as f64 * ls as f64) - line_x0,
+        });
+        let _ = last;
+        p0 = p1;
+    }
+    parts
+}
+
 /// 布局量测(字重感知版):返回(最长行宽 px, 行数)。
 pub fn measure_text_weighted(
     text: &str,

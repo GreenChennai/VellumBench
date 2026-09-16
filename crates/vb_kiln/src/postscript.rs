@@ -75,12 +75,15 @@ fn outline_text_ps(
     text: &str,
     font_family: &str,
     font_size: f64,
+    weight: u16,
     x: f64,
     y: f64,
     box_h: f64,
     page_h: f64,
 ) {
-    let Some(run) = vb_render::text::shape_text(text, font_family, font_size as f32) else {
+    let Some(run) =
+        vb_render::text::shape_text_weighted(text, font_family, font_size as f32, weight)
+    else {
         return;
     };
     // 基线:盒顶 + 半行距 + ascent(浏览器 normal line-height 1.14 语义)
@@ -201,44 +204,100 @@ fn draw_item_ps(s: &mut String, item: &DrawItem, page_h: f64) {
     }
     if let Some(label) = &item.label {
         let c = label.color;
-        s.push_str(&format!(
-            "{} {} {} setrgbcolor\n",
-            fnum(c[0] as f64),
-            fnum(c[1] as f64),
-            fnum(c[2] as f64)
-        ));
         let has_cjk = label.text.chars().any(|ch| {
             let cp = ch as u32;
             !(0x20..0x7f).contains(&cp) && !(0xa0..0xff).contains(&cp)
         });
+        let line_h = if label.line_height > 0.0 {
+            label.line_height
+        } else {
+            label.font_size * 1.32
+        };
+        let max_w = w.max(1.0) as f32;
+        let ls = label.letter_spacing as f32;
         if has_cjk {
-            // CJK:字形轮廓矢量填充(与 PDF 分支同源 swash 整形)
-            outline_text_ps(
-                s,
+            // CJK:字形轮廓矢量填充(与 PDF 分支同源 swash 整形),逐视觉行
+            vb_render::text::for_each_visual_line(
                 &label.text,
                 &label.font_family,
-                label.font_size,
-                x,
-                y,
-                h,
-                page_h,
+                label.font_size as f32,
+                label.weight,
+                max_w,
+                ls,
+                |vi, hard, run, line, _bb| {
+                    s.push_str(&format!(
+                        "{} {} {} setrgbcolor\n",
+                        fnum(c[0] as f64),
+                        fnum(c[1] as f64),
+                        fnum(c[2] as f64)
+                    ));
+                    let s0: usize = hard.chars().take(line[0]).map(|ch| ch.len_utf8()).sum();
+                    let last = *line.last().expect("nonempty");
+                    let s1: usize = hard.chars().take(last + 1).map(|ch| ch.len_utf8()).sum();
+                    let sub = &hard[s0..s1];
+                    outline_text_ps(
+                        s,
+                        sub,
+                        &label.font_family,
+                        label.font_size,
+                        label.weight,
+                        x,
+                        y + vi as f64 * line_h,
+                        h,
+                        page_h,
+                    );
+                    let _ = run;
+                },
             );
         } else {
-            let font = if label.weight_bold {
+            let font = if label.weight >= 600 {
                 "Helvetica-Bold"
             } else {
                 "Helvetica"
             };
-            s.push_str(&format!(
-                "/{font} findfont {} scalefont setfont\n",
-                fnum(label.font_size)
-            ));
-            let baseline = page_h - (y + h * 0.78);
-            s.push_str(&format!("{} {} moveto\n", fnum(x), fnum(baseline)));
-            s.push_str(&format!(
-                "({}) show\n",
-                escape_pdf_string(&winansi_escaped(&label.text))
-            ));
+            vb_render::text::for_each_visual_line(
+                &label.text,
+                &label.font_family,
+                label.font_size as f32,
+                label.weight,
+                max_w,
+                ls,
+                |vi, hard, run, line, byte_base| {
+                    s.push_str(&format!(
+                        "/{font} findfont {} scalefont setfont\n",
+                        fnum(label.font_size)
+                    ));
+                    let baseline = page_h - (y + run.ascent as f64 + vi as f64 * line_h);
+                    let seg_ranges: Vec<(usize, usize)> =
+                        label.segments.iter().map(|sg| (sg.start, sg.end)).collect();
+                    let parts = vb_render::text::split_line_segments(
+                        hard,
+                        line,
+                        run,
+                        byte_base,
+                        &seg_ranges,
+                        ls,
+                    );
+                    for part in parts {
+                        let color = part
+                            .seg
+                            .and_then(|i| label.segments.get(i))
+                            .and_then(|sg| sg.color)
+                            .unwrap_or(label.color);
+                        s.push_str(&format!(
+                            "{} {} {} setrgbcolor\n",
+                            fnum(color[0] as f64),
+                            fnum(color[1] as f64),
+                            fnum(color[2] as f64)
+                        ));
+                        s.push_str(&format!("{} {} moveto\n", fnum(x + part.x), fnum(baseline)));
+                        s.push_str(&format!(
+                            "({}) show\n",
+                            escape_pdf_string(&winansi_escaped(part.text))
+                        ));
+                    }
+                },
+            );
         }
     }
     if item.kind == DrawKind::Image {

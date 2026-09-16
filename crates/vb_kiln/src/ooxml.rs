@@ -190,15 +190,67 @@ fn draw_item_shape(id: usize, item: &DrawItem, page_h: f64) -> String {
 
     let text_xml = if let Some(label) = &item.label {
         let size_hundred = (label.font_size * 100.0).round() as i64;
-        let color = rgb_hex(&label.color);
-        let bold = if label.weight_bold { " b=\"1\"" } else { "" };
-        let text = xml_escape(&label.text);
+        // 逐硬行段落 + 逐段上色/加粗(PPTX 自身换行关闭,断行由 Kiln 决定)
+        let mut paras = String::new();
+        let mut byte_base = 0usize;
+        for hard in label.text.split('\n') {
+            paras.push_str("<a:p>");
+            let mut p0 = 0usize;
+            let chars: Vec<(usize, usize)> = hard
+                .char_indices()
+                .map(|(i, c)| (i, c.len_utf8()))
+                .collect();
+            let _ = &chars;
+            while p0 < hard.len() {
+                let b = byte_base + p0;
+                let seg = label
+                    .segments
+                    .iter()
+                    .position(|sg| b >= sg.start && b < sg.end);
+                // 同段连续区间
+                let mut p1 = p0;
+                let mut end = p0;
+                for &(i, clen) in &chars {
+                    if i < p0 {
+                        continue;
+                    }
+                    let bb = byte_base + i;
+                    let s1 = label
+                        .segments
+                        .iter()
+                        .position(|sg| bb >= sg.start && bb < sg.end);
+                    if s1 != seg {
+                        break;
+                    }
+                    end = i + clen;
+                    p1 = i;
+                }
+                let part = &hard[p0..end.max(p0 + 1)];
+                let color = seg
+                    .and_then(|i| label.segments.get(i))
+                    .and_then(|sg| sg.color)
+                    .map(|c| rgb_hex(&c))
+                    .unwrap_or_else(|| rgb_hex(&label.color));
+                let bold = seg
+                    .and_then(|i| label.segments.get(i))
+                    .and_then(|sg| sg.bold)
+                    .map(|b| if b { 700 } else { 400 })
+                    .unwrap_or(label.weight);
+                let bold_attr = if bold >= 600 { " b=\"1\"" } else { "" };
+                let text = xml_escape(part);
+                paras.push_str(&format!(
+                    r#"<a:r><a:rPr lang="zh-CN" sz="{size_hundred}" {bold_attr} dirty="0"><a:solidFill><a:srgbClr val="{color}"/></a:solidFill></a:rPr><a:t>{text}</a:t></a:r>"#
+                ));
+                if end <= p0 {
+                    break;
+                }
+                p0 = end;
+            }
+            paras.push_str("</a:p>");
+            byte_base += hard.len() + 1;
+        }
         format!(
-            r#"<p:txBody><a:bodyPr wrap="none" lIns="0" tIns="0" rIns="0" bIns="0" anchor="t"/><a:lstStyle/><a:p><a:r><a:rPr lang="zh-CN" sz="{size}" {bold} dirty="0"><a:solidFill><a:srgbClr val="{color}"/></a:solidFill></a:rPr><a:t>{text}</a:t></a:r></a:p></p:txBody>"#,
-            size = size_hundred,
-            bold = bold,
-            color = color,
-            text = text
+            r#"<p:txBody><a:bodyPr wrap="none" lIns="0" tIns="0" rIns="0" bIns="0" anchor="t"/><a:lstStyle/>{paras}</p:txBody>"#
         )
     } else {
         r#"<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr lang="zh-CN"/></a:p></p:txBody>"#

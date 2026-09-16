@@ -667,8 +667,7 @@ impl<'a> BuildCtx<'a> {
             })
             .unwrap_or_default();
         let side = |v: Option<&str>, i: usize| -> Option<LengthPercentageAuto> {
-            v.or(inset_all.get(i).map(|s| s.as_str()))
-                .and_then(&lpa)
+            v.or(inset_all.get(i).map(|s| s.as_str())).and_then(&lpa)
         };
         // 绝对定位:authored 的 left/top 已在 geom(相对包含块)回退读取
         let inset = Rect {

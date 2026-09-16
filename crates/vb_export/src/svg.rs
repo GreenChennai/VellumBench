@@ -201,18 +201,61 @@ fn write_item(out: &mut String, i: usize, item: &DrawItem, scale: f64) {
     match item.kind {
         DrawKind::VectorPath | DrawKind::Text => {
             if let Some(t) = &item.label {
-                let (r, g, b) = to_255(t.color);
-                let weight = if t.weight_bold { "600" } else { "400" };
-                let _ = write!(
-                    out,
-                    r#"<text x="{}" y="{}" font-size="{}" font-weight="{weight}" fill="rgb({r},{g},{b})" fill-opacity="{}"{tf}>{}</text>"#,
-                    x,
-                    y + t.font_size * s,
-                    t.font_size * s,
-                    t.color[3] * item.opacity,
-                    escape_xml(&t.text),
+                let line_h = (if t.line_height > 0.0 {
+                    t.line_height
+                } else {
+                    t.font_size * 1.32
+                }) * s;
+                let ls = t.letter_spacing * s;
+                let max_w = (item.rect[2] * s as f64).max(1.0) as f32;
+                let seg_ranges: Vec<(usize, usize)> =
+                    t.segments.iter().map(|sg| (sg.start, sg.end)).collect();
+                let (br, bg2, bb) = to_255(t.color);
+                vb_render::text::for_each_visual_line(
+                    &t.text,
+                    &t.font_family,
+                    t.font_size as f32,
+                    t.weight,
+                    max_w,
+                    ls as f32,
+                    |vi, hard, run, line, byte_base| {
+                        let baseline = y + run.ascent as f64 * s + vi as f64 * line_h;
+                        let _ = write!(
+                            out,
+                            r#"<text x="{x}" y="{baseline}" font-size="{}" font-weight="{}" letter-spacing="{ls}" fill="rgb({br},{bg2},{bb})" fill-opacity="{}"{tf}>"#,
+                            t.font_size * s,
+                            t.weight,
+                            t.color[3] * item.opacity,
+                        );
+                        for part in vb_render::text::split_line_segments(
+                            hard,
+                            line,
+                            run,
+                            byte_base,
+                            &seg_ranges,
+                            ls as f32,
+                        ) {
+                            match part.seg.and_then(|i| t.segments.get(i)) {
+                                Some(sg) => {
+                                    let (r, g, b) = sg.color.map(to_255).unwrap_or((br, bg2, bb));
+                                    let fw = sg
+                                        .bold
+                                        .map(|b| if b { 700 } else { 400 })
+                                        .unwrap_or(t.weight);
+                                    let fs = sg.font_size.map(|f| f * s).unwrap_or(t.font_size * s);
+                                    let _ = write!(
+                                        out,
+                                        r#"<tspan fill="rgb({r},{g},{b})" font-weight="{fw}" font-size="{fs}">{}</tspan>"#,
+                                        escape_xml(part.text),
+                                    );
+                                }
+                                None => out.push_str(&escape_xml(part.text)),
+                            }
+                        }
+                        out.push_str("</text>");
+                        out.push('\n');
+                    },
                 );
-                out.push('\n');
             }
         }
         DrawKind::FrozenPlaceholder => {
