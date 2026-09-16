@@ -207,7 +207,7 @@ fn write_item(out: &mut String, i: usize, item: &DrawItem, scale: f64) {
                     t.font_size * 1.32
                 }) * s;
                 let ls = t.letter_spacing * s;
-                let max_w = (item.rect[2] * s as f64).max(1.0) as f32;
+                let max_w = (item.rect[2] * s).max(1.0) as f32;
                 let seg_ranges: Vec<(usize, usize)> =
                     t.segments.iter().map(|sg| (sg.start, sg.end)).collect();
                 let (br, bg2, bb) = to_255(t.color);

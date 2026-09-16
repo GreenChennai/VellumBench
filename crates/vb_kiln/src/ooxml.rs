@@ -223,7 +223,6 @@ fn draw_item_shape(id: usize, item: &DrawItem, page_h: f64) -> String {
                         break;
                     }
                     end = i + clen;
-                    p1 = i;
                 }
                 let part = &hard[p0..end.max(p0 + 1)];
                 let color = seg
