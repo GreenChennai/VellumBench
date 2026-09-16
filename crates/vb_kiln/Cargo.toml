@@ -1,0 +1,19 @@
+﻿[package]
+name = "vb_kiln"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Kiln - VellumBench 下一代导出核心:九格式(PNG/JPG/GIF/MP4/SVG/PDF/EPS/Ai/PPTX)统一写入器"
+
+[dependencies]
+clap = { workspace = true }
+image.workspace = true
+thiserror.workspace = true
+vb_common = { workspace = true }
+vb_doc = { workspace = true }
+vb_render = { path = "../vb_render" }
+vb_export = { path = "../vb_export" }
+
+[dev-dependencies]
+tempfile = "3"

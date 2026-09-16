@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "vb_app"
 version.workspace = true
 edition.workspace = true
@@ -19,6 +19,7 @@ vb_doc = { workspace = true }
 vb_tools = { workspace = true }
 vb_render = { path = "../vb_render" }
 vb_export = { path = "../vb_export" }
+vb_kiln = { path = "../vb_kiln" }
 image = { workspace = true }
 anyhow = { workspace = true }
 eframe = { version = "0.35.0", features = ["wgpu"] }

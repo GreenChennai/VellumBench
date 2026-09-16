@@ -1,4 +1,4 @@
-//! 应用主体:画布(Vello 纹理合成)+ AI 式交互 + 属性/图层/状态面板。
+﻿//! 应用主体:画布(Vello 纹理合成)+ AI 式交互 + 属性/图层/状态面板。
 //!
 //! v0.1 范围(路线图 11 篇):选择/矩形/椭圆工具、Alt 复制、Shift 约束、
 //! 框选(相交即选中)、Undo/Redo、属性面板、图层列表、状态栏、保存/导出。
@@ -494,106 +494,93 @@ impl VellumApp {
         let name = self.doc.nodes.get(ab).unwrap().name.clone();
         let scale = self.export_scale;
         let fmt = self.export_format;
+        let kiln_format = match fmt {
+            0 => vb_kiln::Format::Png,
+            1 => vb_kiln::Format::Jpg,
+            2 => vb_kiln::Format::Gif,
+            3 => vb_kiln::Format::Mp4,
+            4 => vb_kiln::Format::Svg,
+            5 => vb_kiln::Format::Pdf,
+            6 => vb_kiln::Format::Eps,
+            7 => vb_kiln::Format::Ai,
+            _ => vb_kiln::Format::Pptx,
+        };
         let out_name = vb_export::expand_name_template(
             vb_export::DEFAULT_TEMPLATE,
             &self.doc.meta.title,
             &name,
             scale,
-            match fmt {
-                0 => "png",
-                1 => "svg",
-                2 => "pdf",
-                3 => "gif",
-                _ => "mp4",
-            },
+            kiln_format.ext(),
             1,
             0,
             0,
         );
         let out = dir.join(out_name);
-        match fmt {
-            0 => match vb_export::export_artboard_png(
-                &self.doc,
-                ab,
-                scale as f32,
-                self.export_transparent,
-                Some(&dir),
-            ) {
-                Ok((png, _warnings)) => match std::fs::write(&out, &png) {
-                    Ok(()) => {
-                        self.status = format!(
-                            "导出 {} @{}x({} KB)",
-                            out.display(),
-                            scale,
-                            png.len() / 1024
-                        );
-                    }
-                    Err(e) => self.status = format!("写文件失败:{e}"),
-                },
-                Err(e) => self.status = format!("导出失败:{e}"),
-            },
-            1 => match vb_export::export_artboard_svg(
-                &self.doc,
-                ab,
-                scale,
-                false,
-                self.project_dir.as_deref(),
-            ) {
-                Ok(svg) => match std::fs::write(&out, &svg) {
-                    Ok(()) => {
-                        self.status = format!(
-                            "导出 SVG {} @{}x({} KB)",
-                            out.display(),
-                            scale,
-                            svg.len() / 1024
-                        );
-                    }
-                    Err(e) => self.status = format!("写文件失败:{e}"),
-                },
-                Err(e) => self.status = format!("导出失败:{e}"),
-            },
-            browser_fmt => {
-                let Some(wpi_dir) = vb_export::wpi::resolve_wpi_dir() else {
-                    self.status = "WPI 不可用:请设置环境变量 VB_WPI_DIR 指向 WPI 仓库".into();
-                    return;
-                };
-                let wpi_fmt = match browser_fmt {
-                    2 => vb_export::wpi::WpiFormat::Pdf,
-                    3 => vb_export::wpi::WpiFormat::Gif,
-                    _ => vb_export::wpi::WpiFormat::Mp4,
-                };
-                let req = vb_export::wpi::WpiExportRequest {
-                    format: wpi_fmt,
-                    scale: if scale >= 4 {
-                        4
-                    } else if scale >= 2 {
-                        2
-                    } else {
-                        1
-                    },
-                    width: 1920,
-                    transparent: self.export_transparent,
-                    out,
-                    max_wait: 20.0,
-                };
-                match vb_export::wpi::export_via_wpi(&self.doc, &dir, &req, &wpi_dir) {
-                    Ok(res) => {
-                        self.status = format!(
-                            "浏览器引擎导出 {}({} KB){}",
-                            res.out.display(),
-                            std::fs::metadata(&res.out)
-                                .map(|m| m.len() / 1024)
-                                .unwrap_or(0),
-                            if res.warnings.is_empty() {
-                                String::new()
-                            } else {
-                                format!(";{} 条警告", res.warnings.len())
-                            }
-                        );
-                    }
-                    Err(e) => self.status = format!("WPI 导出失败:{e}"),
+
+        // 引擎选择:Kiln 为默认;VB_EXPORT_ENGINE=wpi 时 PDF/GIF/MP4 回退
+        // 旧浏览器路径(回滚开关,文档见 docs/kiln-rollback.md)。
+        let engine_wpi = std::env::var("VB_EXPORT_ENGINE")
+            .map(|v| v.eq_ignore_ascii_case("wpi"))
+            .unwrap_or(false);
+        let use_wpi_fallback = engine_wpi
+            && matches!(
+                kiln_format,
+                vb_kiln::Format::Pdf | vb_kiln::Format::Gif | vb_kiln::Format::Mp4
+            );
+
+        if use_wpi_fallback {
+            let Some(wpi_dir) = vb_export::wpi::resolve_wpi_dir() else {
+                self.status = "WPI 回退不可用:请设置 VB_WPI_DIR 指向 WPI 仓库".into();
+                return;
+            };
+            let wpi_fmt = match kiln_format {
+                vb_kiln::Format::Pdf => vb_export::wpi::WpiFormat::Pdf,
+                vb_kiln::Format::Gif => vb_export::wpi::WpiFormat::Gif,
+                _ => vb_export::wpi::WpiFormat::Mp4,
+            };
+            let req = vb_export::wpi::WpiExportRequest {
+                format: wpi_fmt,
+                scale: if scale >= 4 { 4 } else if scale >= 2 { 2 } else { 1 },
+                width: 1920,
+                transparent: self.export_transparent,
+                out,
+                max_wait: 20.0,
+            };
+            match vb_export::wpi::export_via_wpi(&self.doc, &dir, &req, &wpi_dir) {
+                Ok(res) => {
+                    self.status = format!(
+                        "WPI 回退导出 {}({} KB)",
+                        res.out.display(),
+                        std::fs::metadata(&res.out)
+                            .map(|m| m.len() / 1024)
+                            .unwrap_or(0),
+                    );
                 }
+                Err(e) => self.status = format!("WPI 回退导出失败:{e}"),
             }
+            return;
+        }
+
+        // Kiln 默认路径(九格式统一)
+        let req = vb_kiln::ExportRequest {
+            format: kiln_format,
+            scale,
+            transparent: self.export_transparent,
+            ..Default::default()
+        };
+        match vb_kiln::export_artboard(&self.doc, ab, &req, Some(&dir)) {
+            Ok((bytes, report)) => match std::fs::write(&out, &bytes) {
+                Ok(()) => {
+                    self.status = format!(
+                        "Kiln 导出 {} @{}x({})",
+                        out.display(),
+                        scale,
+                        report.summary()
+                    );
+                }
+                Err(e) => self.status = format!("写文件失败:{e}"),
+            },
+            Err(e) => self.status = format!("Kiln 导出失败:{e}"),
         }
     }
 
@@ -860,18 +847,22 @@ impl eframe::App for VellumApp {
                 .open(&mut open)
                 .collapsible(false)
                 .show(ui.ctx(), |ui| {
-                    const FORMATS: [&str; 5] = [
-                        "PNG @N(原生)",
-                        "SVG 矢量(原生)",
-                        "PDF(浏览器/WPI)",
-                        "GIF(浏览器/WPI)",
-                        "MP4(浏览器/WPI)",
+                    const FORMATS: [&str; 9] = [
+                        "PNG(Kiln)",
+                        "JPG(Kiln)",
+                        "GIF(Kiln)",
+                        "MP4(Kiln)",
+                        "SVG(Kiln)",
+                        "PDF(Kiln)",
+                        "EPS(Kiln)",
+                        "AI(Kiln)",
+                        "PPTX(Kiln)",
                     ];
                     ui.horizontal(|ui| {
                         ui.label("格式");
                         let mut f = self.export_format;
                         let label = FORMATS[f].to_string();
-                        ui.add(egui::Slider::new(&mut f, 0..=4).text(label));
+                        ui.add(egui::Slider::new(&mut f, 0..=8).text(label));
                         self.export_format = f;
                     });
                     if self.export_format == 0 || self.export_format == 1 {

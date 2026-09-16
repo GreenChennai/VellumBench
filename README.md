@@ -1,6 +1,6 @@
-# Vellum Bench · 绘台
+﻿# Vellum Bench · 绘台
 
-> 用 Adobe Illustrator 的操作心智,编辑 100% 标准 HTML/CSS 文档;GPU(Vulkan) 原生渲染;Agent 可直接读写;可导出 PNG / PDF / GIF / MP4。
+> 用 Adobe Illustrator 的操作心智,编辑 100% 标准 HTML/CSS 文档;GPU(Vulkan) 原生渲染;Agent 可直接读写;可导出 PNG / JPG / GIF / MP4 / SVG / PDF / EPS / Ai / PPTX(九格式,由内置导出核心 **Kiln** 驱动,详见 [crates/vb_kiln/docs/README.md](crates/vb_kiln/docs/README.md))。
 
 **HTML 是文档格式,不是编译产物。** 任何人和任何 Agent 都能继续改输出文件。Vellum Bench 把「Agent 出草稿 → 人类像画矢量图一样精修 → HTML 回到 Agent 继续迭代」变成一个无限循环。
 

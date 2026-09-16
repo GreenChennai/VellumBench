@@ -4705,6 +4705,7 @@ dependencies = [
  "vb_css",
  "vb_doc",
  "vb_export",
+ "vb_kiln",
  "vb_render",
  "vb_tools",
  "vb_ui",
@@ -4760,6 +4761,20 @@ version = "0.3.0"
 dependencies = [
  "html5ever",
  "markup5ever_rcdom",
+]
+
+[[package]]
+name = "vb_kiln"
+version = "0.3.0"
+dependencies = [
+ "clap",
+ "image",
+ "tempfile",
+ "thiserror 2.0.20",
+ "vb_common",
+ "vb_doc",
+ "vb_export",
+ "vb_render",
 ]
 
 [[package]]
