@@ -155,6 +155,13 @@ impl ExportContext {
                         if let Some(tr) = &st.transform {
                             crate::anim::apply_transform(item, tr);
                         }
+                        let [_, _, iw, ih] = item.rect;
+                        if let Some(cp) = &st.clip_path {
+                            item.clip = vb_render::encode::parse_clip_path(cp, iw, ih);
+                        }
+                        if let Some(fl) = &st.filter {
+                            item.filter = vb_render::encode::parse_filter(fl);
+                        }
                     }
                 }
                 let rgba = crate::raster::rasterize_rgba(&f_list, scale as f64)?;
