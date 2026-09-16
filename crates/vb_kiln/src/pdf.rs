@@ -135,7 +135,6 @@ pub fn write_pdf(ctx: &ExportContext, producer: &str) -> KilnResult<Vec<u8>> {
                 .position(|x| std::ptr::eq(x, f))
                 .unwrap_or(0) as u32)
                 * 5) as usize;
-        let type0_id = base;
         let cid_id = base + 1;
         let fd_id = base + 2;
         let ff_id = base + 3;
@@ -285,12 +284,6 @@ pub struct CjkFont {
     pub subset_len1: usize,
 }
 
-impl CjkFont {
-    fn base_name(&self) -> String {
-        sanitize_font_name(&self.name)
-    }
-}
-
 /// PDF 文本串:非 ASCII 时用 UTF-16BE 十六进制串(OCG /Name 等需严格
 /// PDFDocEncoding/UTF-16 语义;裸 UTF-8 会被严格解析器拒绝)。
 fn pdf_text_string(s: &str) -> String {
@@ -400,7 +393,7 @@ fn finalize_cjk_fonts(usage: &mut CjkUsage) {
         };
         f.ascent = if f.ascent == 800.0 { 800.0 } else { f.ascent };
         let gids: Vec<u16> = f.glyphs.keys().copied().collect();
-        let mut remapper = subsetter::GlyphRemapper::new_from_glyphs_sorted(&gids);
+        let remapper = subsetter::GlyphRemapper::new_from_glyphs_sorted(&gids);
         match subsetter::subset(&data, index as u32, &remapper) {
             Ok(sub) if !sub.is_empty() => {
                 f.subset_len1 = sub.len();

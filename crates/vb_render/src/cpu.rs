@@ -578,9 +578,11 @@ fn apply_clip_mask(
     let Some(mut mask) = Pixmap::new(bw, bh) else {
         return;
     };
-    let mut white = Paint::default();
-    white.anti_alias = true;
-    white.set_color(Color::WHITE);
+    let white = Paint {
+        anti_alias: true,
+        shader: tiny_skia::Shader::SolidColor(Color::WHITE),
+        ..Paint::default()
+    };
     if let Some(shape) = clip_shape_path(item, scale) {
         let local = Transform::from_translate(bx as f32, by as f32)
             .invert()
@@ -704,14 +706,15 @@ fn apply_filter_region(
                 if need_sat {
                     let l =
                         0.2126 * rgb[0] as f32 + 0.7152 * rgb[1] as f32 + 0.0722 * rgb[2] as f32;
-                    for ch in 0..3 {
-                        let v = l + (rgb[ch] as f32 - l) * sat;
-                        rgb[ch] = v.clamp(0.0, 255.0) as u8;
+                    #[allow(clippy::needless_range_loop)]
+                    for i in 0..3 {
+                        let v = l + (rgb[i] as f32 - l) * sat;
+                        rgb[i] = v.clamp(0.0, 255.0) as u8;
                     }
                 }
                 if need_bri {
-                    for ch in 0..3 {
-                        rgb[ch] = ((rgb[ch] as f32) * bri).clamp(0.0, 255.0) as u8;
+                    for ch in rgb.iter_mut().take(3) {
+                        *ch = ((*ch as f32) * bri).clamp(0.0, 255.0) as u8;
                     }
                 }
                 p[0] = rgb[0];

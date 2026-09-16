@@ -108,21 +108,21 @@ artboard 技能(E:\平日资料\GitHub\.agents\skills\artboard,v1.8.0)现以 WPI
 - [ ] M4.6 EPS 导入显式报错文案
 - [ ] M4.7 验收:自家 SVG 圆环(export→import→HTML diff)+ 外部 PDF 抽样
 
-### Phase 1 发布 ⬜
-- [ ] P1.1 ci.ps1 全绿;bench/suite 回归 ≥97%;BENCHMARK.md 增 v0.5 章
-- [ ] P1.2 FORMAT-MATRIX/MIGRATION/README 更新;dist/README 刷新
-- [ ] P1.3 `cargo build -p vb_kiln --release --bin kiln-cli`;dist exe 更新;**tag v0.5.0-kiln**
+### Phase 1 发布 ✅(tag v0.5.0-kiln 已推送,发行页资产已挂 artboard)
+- [x] P1.1 ci.ps1 全绿;bench/suite 回归 ≥97%;BENCHMARK.md 增 v0.5 章
+- [x] P1.2 FORMAT-MATRIX/MIGRATION/README 更新;dist/README 刷新
+- [x] P1.3 `cargo build -p vb_kiln --release --bin kiln-cli`;dist exe 更新;**tag v0.5.0-kiln**
 
-### Phase 2 · artboard v1.9.0 换血 ⬜
-- [ ] P2.1 export.py:Kiln 主引擎(去 --height/--max-wait 传参, absorbing 忽略语义)→ export_fallback PNG 保底;错误码 KILN_NOT_FOUND
-- [ ] P2.2 配置面:kiln_cli_exe 单键 + ARTBOARD_KILN_CLI + near_workspace 兜底;config.json/example/config_gui/preflight/_config ENV_MAP 全套替换
-- [ ] P2.3 setup_wpi.py → setup_kiln.py(本机探测 + release 下载 + cargo build 指引);setup_vector.py/requirements-vector.txt 删
-- [ ] P2.4 删 WPI:export_local.py 改调 Kiln;gzh_cover 错误码;make_bats;selfcheck 用例;WPI_FFMPEG 消亡
-- [ ] P2.5 矢量壳改造:to_vector/ai_export 内部改调 Kiln(SVG/PDF/EPS/AI/PPTX);删 webhtml2vectoredit.py/text_run_merger.py
-- [ ] P2.6 逆向壳新增:vectoredit→Kiln import 包装(自家 SVG 圆环 + 外部 PDF);删 vectoredit2webhtml.py
-- [ ] P2.7 文档全套:SKILL/README/references{export,vector-export,animation}/glossary/setup/CHANGELOG v1.9.0/ADR-0018(仅本地勿 push)
-- [ ] P2.8 exe 挂 artboard Release(tag kiln-cli-v0.5.0-<shorthash>);本机 config.json 更新
-- [ ] P2.9 artboard selfcheck + 抽样案例 Kiln 导出 vs WPI 基线 ≥97%
+### Phase 2 · artboard v1.9.0 换血 ✅(v1.9.0 已推送,release kiln-cli-v0.5.0 已挂)
+- [x] P2.1 export.py:Kiln 主引擎(去 --height/--max-wait 传参, absorbing 忽略语义)→ export_fallback PNG 保底;错误码 KILN_NOT_FOUND
+- [x] P2.2 配置面:kiln_cli_exe 单键 + ARTBOARD_KILN_CLI + near_workspace 兜底;config.json/example/config_gui/preflight/_config ENV_MAP 全套替换
+- [x] P2.3 setup_wpi.py → setup_kiln.py(本机探测 + release 下载 + cargo build 指引);setup_vector.py/requirements-vector.txt 删
+- [x] P2.4 删 WPI:export_local.py 改调 Kiln;gzh_cover 错误码;make_bats;selfcheck 用例;WPI_FFMPEG 消亡
+- [x] P2.5 矢量壳改造:to_vector/ai_export 内部改调 Kiln(SVG/PDF/EPS/AI/PPTX);删 webhtml2vectoredit.py/text_run_merger.py
+- [x] P2.6 逆向壳新增:vectoredit→Kiln import 包装(自家 SVG 圆环 + 外部 PDF);删 vectoredit2webhtml.py
+- [x] P2.7 文档全套:SKILL/README/references{export,vector-export,animation}/glossary/setup/CHANGELOG v1.9.0/ADR-0018(仅本地勿 push)
+- [x] P2.8 exe 挂 artboard Release(tag kiln-cli-v0.5.0-<shorthash>);本机 config.json 更新
+- [x] P2.9 artboard selfcheck + 抽样案例 Kiln 导出 vs WPI 基线 ≥97%
 - [ ] P2.10 最终总结报告 → 确认全绿 → shutdown /s /t 120
 
 ## 五、M0 缺口清单(2026-09-17 实测,22 案例)

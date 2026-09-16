@@ -78,7 +78,7 @@ pub fn parse_clip_path(v: &str, w: f64, h: f64) -> Option<ClipDef> {
             .strip_suffix(')')
             .map(|s| s.to_string())
     };
-    let nums = |s: &str| -> Vec<f64> {
+    let _nums = |s: &str| -> Vec<f64> {
         s.split_whitespace()
             .filter_map(|tok| {
                 if let Some(p) = tok.strip_suffix('%') {

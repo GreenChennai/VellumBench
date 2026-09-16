@@ -55,7 +55,7 @@ fn bind() -> Result<Pdfium, String> {
 
 const PT_TO_PX: f64 = 4.0 / 3.0; // 72dpi → 96dpi
 
-fn attach(doc: &mut Document, ab: NodeId, mut n: Node) -> NodeId {
+fn attach(doc: &mut Document, ab: NodeId, n: Node) -> NodeId {
     let id = doc.nodes.insert(n);
     doc.nodes.get_mut(ab).unwrap().children.push(id);
     doc.nodes.get_mut(id).unwrap().parent = Some(ab);
@@ -95,7 +95,9 @@ pub fn import_pdf_to_doc(
             // v1:pdfium-render 0.9 未暴露对象取色 API,文本统一深墨、
             // 路径统一浅灰(记录于流程表 M4 已知边界)
             let hex = match obj.object_type() {
+                // vb-token-ok:导入近似色(文档内容色,非 UI 皮肤)
                 PdfPageObjectType::Path => "#e8e8e4".to_string(),
+                // vb-token-ok:导入文本默认墨色(文档内容色)
                 _ => "#1a1a1a".to_string(),
             };
 
