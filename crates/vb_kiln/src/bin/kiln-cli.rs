@@ -66,6 +66,15 @@ enum Cmd {
         #[arg(long, default_value_t = 8000)]
         bitrate: u32,
     },
+    /// 导入外部 PDF/AI/SVG → 规范化 HTML 项目(M4 反向能力)
+    Import {
+        /// 源文件(pdf/ai)
+        #[arg(long)]
+        source: PathBuf,
+        /// 输出项目目录(写入 index.html + styles/main.css + assets/)
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// 内置样例自检:验证部署环境与九格式引擎
     Selfcheck,
 }
@@ -100,6 +109,7 @@ fn main() {
             r#loop,
             bitrate,
         ),
+        Cmd::Import { source, output } => run_import(source, output),
         Cmd::Selfcheck => run_selfcheck(),
     };
     std::process::exit(code);
@@ -239,6 +249,50 @@ fn raster_dims(
     let w = ((n.geom.w * req.scale as f64).round() as u32).max(1);
     let h = ((n.geom.h * req.scale as f64).round() as u32).max(1);
     (w, h)
+}
+
+fn run_import(source: PathBuf, output: PathBuf) -> i32 {
+    let ext = source
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    if !matches!(ext.as_str(), "pdf" | "ai") {
+        eprintln!("{{\"ok\":false,\"error\":\"import 仅支持 pdf/ai(SVG 导入将在后续版本提供)\"}}");
+        return 2;
+    }
+    let assets = output.join("assets");
+    match vb_kiln::import_pdf::import_pdf_to_doc(&source, Some(&assets)) {
+        Ok((mut doc, mut warnings)) => {
+            // 布局求值:导入文档全为绝对定位,此调用保持几何并回填画板尺寸
+            let abs: Vec<vb_doc::model::NodeId> = doc.artboards.clone();
+            for &ab in &abs {
+                warnings.extend(vb_layout::apply_to_doc(&mut doc, ab, Some(&output), true));
+            }
+            match vb_doc::export::write_project(&doc, &output) {
+                Ok(files) => {
+                    let list: Vec<String> = files
+                        .iter()
+                        .map(|p| p.display().to_string().replace('\\', "/"))
+                        .collect();
+                    println!(
+                        "{{\"ok\":true,\"files\":[\"{}\"],\"count\":{}}}",
+                        list.join("\",\""),
+                        list.len()
+                    );
+                    0
+                }
+                Err(e) => {
+                    eprintln!("{{\"ok\":false,\"error\":\"HTML 写出失败:{e}\"}}");
+                    4
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("{{\"ok\":false,\"error\":\"{e}\"}}");
+            3
+        }
+    }
 }
 
 fn run_selfcheck() -> i32 {

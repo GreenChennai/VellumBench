@@ -17,6 +17,7 @@ vb_layout = { workspace = true }
 vb_render = { path = "../vb_render" }
 vb_export = { path = "../vb_export" }
 subsetter = "0.2.6"
+pdfium-render = "0.9.4"
 
 [dev-dependencies]
 tempfile = "3"
