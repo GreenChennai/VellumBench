@@ -20,8 +20,75 @@ pub fn ffmpeg_available() -> bool {
         .unwrap_or(false)
 }
 
-/// RGBA 帧序列 → GIF 字节(循环控制;帧延迟单位 10ms,最小 20ms)。
+/// RGBA 帧序列 → GIF 字节。
+///
+/// 双通道:优先 ffmpeg palettegen/paletteuse(WPI 同款,体积更优、
+/// 动态调色板);无 ffmpeg 时回退 image 感知量化 LZW(纯 Rust 零依赖)。
 pub fn encode_gif(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
+    if ffmpeg_available() {
+        match encode_gif_ffmpeg(ctx) {
+            Ok(bytes) => return Ok(bytes),
+            Err(e) => {
+                // 桥失败(参数/编码异常)降级纯 Rust 路径,不中断导出
+                let _ = e;
+            }
+        }
+    }
+    encode_gif_image(ctx)
+}
+
+/// ffmpeg 调色板双通道 GIF(参照 WPI gif_exporter 实测方案)。
+fn encode_gif_ffmpeg(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
+    let seq = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let tmp = std::env::temp_dir().join(format!("kiln-gif-{}-{seq}", std::process::id()));
+    std::fs::create_dir_all(&tmp).map_err(KilnError::Io)?;
+
+    let result = (|| -> KilnResult<Vec<u8>> {
+        for (i, f) in ctx.frames.iter().enumerate() {
+            let img = image::RgbaImage::from_raw(f.width, f.height, f.rgba.clone())
+                .ok_or_else(|| KilnError::BadAnimation("帧尺寸不一致".into()))?;
+            img.save_with_format(tmp.join(format!("f{i:05}.png")), image::ImageFormat::Png)
+                .map_err(|e| KilnError::Encode(format!("帧落盘失败:{e}")))?;
+        }
+        let out_path = tmp.join("out.gif");
+        let output = Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-loglevel",
+                "error",
+                "-framerate",
+                &ctx.fps.to_string(),
+                "-i",
+                tmp.join("f%05d.png").to_str().unwrap_or("f%05d.png"),
+                "-filter_complex",
+                "[0:v]split[x][y];[x]palettegen=stats_mode=diff[p];[y][p]paletteuse=dither=sierra2_4a",
+                "-loop",
+                &ctx.gif_loops.to_string(),
+                out_path.to_str().unwrap_or("out.gif"),
+            ])
+            .output()
+            .map_err(|e| KilnError::FfmpegFailed {
+                code: None,
+                stderr: e.to_string(),
+            })?;
+        if !output.status.success() {
+            return Err(KilnError::FfmpegFailed {
+                code: output.status.code(),
+                stderr: String::from_utf8_lossy(&output.stderr).chars().take(300).collect(),
+            });
+        }
+        std::fs::read(&out_path).map_err(KilnError::Io)
+    })();
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    result
+}
+
+/// 纯 Rust 回退:image 感知量化 + LZW(循环控制;帧延迟最小 20ms)。
+fn encode_gif_image(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
     let first = ctx
         .frames
         .first()

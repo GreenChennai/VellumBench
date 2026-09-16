@@ -65,6 +65,79 @@ pub fn write_ai(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
     Ok(bytes)
 }
 
+/// 文本 -> PS 字形轮廓(PS 用户空间 Y 向上;字形路径 Y 向下取负写出)。
+#[allow(unused_variables)]
+fn outline_text_ps(
+    s: &mut String,
+    text: &str,
+    font_family: &str,
+    font_size: f64,
+    x: f64,
+    y: f64,
+    box_h: f64,
+    page_h: f64,
+) {
+    let Some(run) = vb_render::text::shape_text(text, font_family, font_size as f32) else {
+        return;
+    };
+    // 基线:盒顶 + 半行距 + ascent(浏览器 normal line-height 1.14 语义)
+    let half_lead = 0.0 * font_size;
+    let baseline_ps = page_h - (y + half_lead + run.ascent as f64);
+    for g in &run.glyphs {
+        if let Some(path) =
+            vb_render::text::glyph_outline(&run.font_data, run.font_index, font_size as f32, g.id)
+        {
+            s.push_str("gsave\n");
+            s.push_str(&format!("{} {} translate\n", fnum(x + g.x as f64), fnum(baseline_ps)));
+            s.push_str(&kurbo_path_ops_ps(&path));
+            s.push_str("fill\ngrestore\n");
+        }
+    }
+}
+
+/// kurbo BezPath -> PS path 操作符(Y 取负)。
+fn kurbo_path_ops_ps(path: &vb_common::geom::BezPath) -> String {
+    use vb_common::geom::PathEl;
+    let mut out = String::with_capacity(256);
+    for el in path.elements() {
+        match el {
+            PathEl::MoveTo(p) => {
+                out.push_str(&format!("{} {} moveto\n", fnum(p.x), fnum(-p.y)));
+            }
+            PathEl::LineTo(p) => {
+                out.push_str(&format!("{} {} lineto\n", fnum(p.x), fnum(-p.y)));
+            }
+            PathEl::QuadTo(c, p) => {
+                let c1x = c.x * 2.0 / 3.0 + p.x / 3.0;
+                let c1y = c.y * 2.0 / 3.0 + p.y / 3.0;
+                let c2x = p.x * 2.0 / 3.0 + c.x / 3.0;
+                let c2y = p.y * 2.0 / 3.0 + c.y / 3.0;
+                out.push_str(&format!(
+                    "{} {} {} {} {} {} curveto\n",
+                    fnum(c1x),
+                    fnum(-c1y),
+                    fnum(c2x),
+                    fnum(-c2y),
+                    fnum(p.x),
+                    fnum(-p.y)
+                ));
+            }
+            PathEl::CurveTo(c1, c2, p) => {
+                out.push_str(&format!(
+                    "{} {} {} {} {} {} curveto\n",
+                    fnum(c1.x),
+                    fnum(-c1.y),
+                    fnum(c2.x),
+                    fnum(-c2.y),
+                    fnum(p.x),
+                    fnum(-p.y)
+                ));
+            }
+            PathEl::ClosePath => out.push_str("closepath\n"),
+        }
+    }
+    out
+}
 fn draw_item_ps(s: &mut String, item: &DrawItem, page_h: f64) {
     let [x, y, w, h] = item.rect;
     let py = page_h - y - h;
@@ -121,24 +194,36 @@ fn draw_item_ps(s: &mut String, item: &DrawItem, page_h: f64) {
     }
     if let Some(label) = &item.label {
         let c = label.color;
-        let font = if label.weight_bold {
-            "Helvetica-Bold"
-        } else {
-            "Helvetica"
-        };
-        s.push_str(&format!(
-            "/{font} findfont {} scalefont setfont\n",
-            fnum(label.font_size)
-        ));
         s.push_str(&format!(
             "{} {} {} setrgbcolor\n",
             fnum(c[0] as f64),
             fnum(c[1] as f64),
             fnum(c[2] as f64)
         ));
-        let baseline = page_h - (y + h * 0.78);
-        s.push_str(&format!("{} {} moveto\n", fnum(x), fnum(baseline)));
-        s.push_str(&format!("({}) show\n", escape_pdf_string(&winansi_escaped(&label.text))));
+        let has_cjk = label
+            .text
+            .chars()
+            .any(|ch| {
+                let cp = ch as u32;
+                !(0x20..0x7f).contains(&cp) && !(0xa0..0xff).contains(&cp)
+            });
+        if has_cjk {
+            // CJK:字形轮廓矢量填充(与 PDF 分支同源 swash 整形)
+            outline_text_ps(s, &label.text, &label.font_family, label.font_size, x, y, h, page_h);
+        } else {
+            let font = if label.weight_bold {
+                "Helvetica-Bold"
+            } else {
+                "Helvetica"
+            };
+            s.push_str(&format!(
+                "/{font} findfont {} scalefont setfont\n",
+                fnum(label.font_size)
+            ));
+            let baseline = page_h - (y + h * 0.78);
+            s.push_str(&format!("{} {} moveto\n", fnum(x), fnum(baseline)));
+            s.push_str(&format!("({}) show\n", escape_pdf_string(&winansi_escaped(&label.text))));
+        }
     }
     if item.kind == DrawKind::Image {
         s.push_str("0.8 0.8 0.8 setrgbcolor 0.6 setlinewidth newpath\n");

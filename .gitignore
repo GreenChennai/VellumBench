@@ -1,4 +1,4 @@
-# Generated
+﻿# Generated
 /target/
 **/*.rs.bk
 Cargo.lock.orig
@@ -10,3 +10,5 @@ Cargo.lock.orig
 # OS
 Thumbs.db
 .DS_Store
+
+dist/*.exe

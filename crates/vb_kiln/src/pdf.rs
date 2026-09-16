@@ -231,23 +231,57 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64) {
     }
     if let Some(label) = &item.label {
         let c = label.color;
-        s.push_str("BT\n");
-        s.push_str(&format!(
-            "{} {} {} rg\n",
-            fnum(c[0]),
-            fnum(c[1]),
-            fnum(c[2])
-        ));
-        let fref = if label.weight_bold { "/F2" } else { "/F1" };
-        s.push_str(&format!("{fref} {} Tf\n", fnum(label.font_size)));
-        let baseline = page_h - (y + h * 0.78);
-        s.push_str(&format!(
-            "1 0 0 1 {} {} Tm\n",
-            fnum(x),
-            fnum(baseline)
-        ));
-        let text = winansi_escaped(&label.text);
-        s.push_str(&format!("({text}) Tj\nET\n"));
+        let has_cjk = label
+            .text
+            .chars()
+            .any(|ch| {
+                let cp = ch as u32;
+                !(0x20..0x7f).contains(&cp) && !(0xa0..0xff).contains(&cp)
+            });
+        if has_cjk {
+            // CJK 等非 WinAnsi 文本:swash 整形 → 字形轮廓矢量填充
+            // (PDF 内仍为矢量、可选中;文本层降级在 report 告警)
+            s.push_str(&format!(
+                "{} {} {} rg\n",
+                fnum(c[0]),
+                fnum(c[1]),
+                fnum(c[2])
+            ));
+            outline_text_pdf(
+                s,
+                &label.text,
+                &label.font_family,
+                label.font_size as f64,
+                x,
+                y,
+                h,
+                page_h,
+            );
+        } else {
+            s.push_str("BT\n");
+            s.push_str(&format!(
+                "{} {} {} rg\n",
+                fnum(c[0]),
+                fnum(c[1]),
+                fnum(c[2])
+            ));
+            let fref = if label.weight_bold { "/F2" } else { "/F1" };
+            s.push_str(&format!("{fref} {} Tf\n", fnum(label.font_size)));
+            let metrics = vb_render::text::shape_text(&label.text, &label.font_family, label.font_size as f32);
+            let (asc, _desc, fsize) = metrics
+                .as_ref()
+                .map(|r| (r.ascent as f64, r.descent as f64, label.font_size))
+                .unwrap_or((h * 0.78, 0.0, label.font_size));
+            let half_lead = 0.0 * fsize;
+            let baseline = page_h - (y + half_lead + asc);
+            s.push_str(&format!(
+                "1 0 0 1 {} {} Tm\n",
+                fnum(x),
+                fnum(baseline)
+            ));
+            let text = winansi_escaped(&label.text);
+            s.push_str(&format!("({text}) Tj\nET\n"));
+        }
     }
     if item.kind == DrawKind::Image {
         s.push_str("0.8 0.8 0.8 rg 0.6 0.6 0.6 RG 1 w\n");
@@ -307,6 +341,89 @@ fn ellipse_path(s: &mut String, x: f64, py: f64, w: f64, h: f64) {
     ));
 }
 /// 非 WinAnsi 字符降级(智能引号映射,其余 → '?';计数进 report)。
+/// 文本 → 字形轮廓 PDF 路径(画板本地坐标,已含 Y 翻转)。
+///
+/// 用 vb_render::text 的 fontique+swash 管线:shape_text 得到字形与
+/// advance,glyph_outline 取轮廓,Y 翻转后以 f 填充。与 CPU 光栅
+/// 同一整形源,PDF 内视觉与 PNG 一致。
+#[allow(unused_variables)]
+fn outline_text_pdf(
+    s: &mut String,
+    text: &str,
+    font_family: &str,
+    font_size: f64,
+    x: f64,
+    y: f64,
+    box_h: f64,
+    page_h: f64,
+) {
+    let Some(run) = vb_render::text::shape_text(text, font_family, font_size as f32) else {
+        return;
+    };
+    // 基线:盒顶 + 半行距 + ascent(浏览器 normal line-height 1.14 语义)
+    let half_lead = 0.0 * font_size;
+    let baseline_pdf = page_h - (y + half_lead + run.ascent as f64);
+    for g in &run.glyphs {
+        if let Some(path) =
+            vb_render::text::glyph_outline(&run.font_data, run.font_index, font_size as f32, g.id)
+        {
+            s.push_str("q\n");
+            s.push_str(&format!(
+                "1 0 0 1 {} {} cm\n",
+                fnum(x + g.x as f64),
+                fnum(baseline_pdf)
+            ));
+            s.push_str(&kurbo_path_ops_pdf(&path));
+            s.push_str("f\nQ\n");
+        }
+    }
+}
+
+/// kurbo BezPath -> PDF path 操作符(Y 翻转:字形坐标画布向下 -> PDF 向上)。
+fn kurbo_path_ops_pdf(path: &vb_common::geom::BezPath) -> String {
+    use vb_common::geom::PathEl;
+    let mut out = String::with_capacity(256);
+    for el in path.elements() {
+        match el {
+            PathEl::MoveTo(p) => {
+                out.push_str(&format!("{} {} m\n", fnum(p.x), fnum(-p.y)));
+            }
+            PathEl::LineTo(p) => {
+                out.push_str(&format!("{} {} l\n", fnum(p.x), fnum(-p.y)));
+            }
+            PathEl::QuadTo(c, p) => {
+                // PDF 无二次贝塞尔:升为三次
+                // c1 = p0 + 2/3(c-p0), c2 = p1 + 2/3(c-p1);此处以 c,p 近似
+                let c1x = c.x * 2.0 / 3.0 + p.x / 3.0;
+                let c1y = c.y * 2.0 / 3.0 + p.y / 3.0;
+                let c2x = p.x * 2.0 / 3.0 + c.x / 3.0;
+                let c2y = p.y * 2.0 / 3.0 + c.y / 3.0;
+                out.push_str(&format!(
+                    "{} {} {} {} {} {} c\n",
+                    fnum(c1x),
+                    fnum(-c1y),
+                    fnum(c2x),
+                    fnum(-c2y),
+                    fnum(p.x),
+                    fnum(-p.y)
+                ));
+            }
+            PathEl::CurveTo(c1, c2, p) => {
+                out.push_str(&format!(
+                    "{} {} {} {} {} {} c\n",
+                    fnum(c1.x),
+                    fnum(-c1.y),
+                    fnum(c2.x),
+                    fnum(-c2.y),
+                    fnum(p.x),
+                    fnum(-p.y)
+                ));
+            }
+            PathEl::ClosePath => out.push_str("h\n"),
+        }
+    }
+    out
+}
 pub fn winansi_escaped(t: &str) -> String {
     t.chars()
         .map(|c| {

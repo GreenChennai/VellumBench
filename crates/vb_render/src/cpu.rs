@@ -1,4 +1,4 @@
-//! CPU 光栅化引擎(tiny-skia,ADR-0016):CLI 导出 / CI 渲染快照用,无 GPU 依赖。
+﻿//! CPU 光栅化引擎(tiny-skia,ADR-0016):CLI 导出 / CI 渲染快照用,无 GPU 依赖。
 //!
 //! 视觉范围 v0.1:纯色/线性/径向渐变填充、圆角矩形、椭圆、描边、透明度、位图;
 //! 文本按 ADR-0017 画占位条;冻结块画灰色占位框 —— 两者均产生 warnings。
@@ -200,23 +200,59 @@ fn draw_item(
             if let Some(t) = text_hint {
                 let shaped = crate::text::shape_text(&t.text, &t.font_family, t.font_size as f32);
                 if let Some(run) = &shaped {
-                    let baseline =
-                        y + (ih - (run.ascent - run.descent) as f64) / 2.0 + run.ascent as f64;
-                    for gl in &run.glyphs {
-                        if let Some(gpath) = crate::text::glyph_outline(
-                            &run.font_data,
-                            run.font_index,
-                            t.font_size as f32,
-                            gl.id,
-                        ) {
-                            if let Some(sk) = kurbo_to_skia_path(
-                                &gpath,
-                                x + gl.x as f64,
-                                baseline - gl.y as f64,
-                                item.opacity,
-                                item,
+                    // CSS 顶对齐:首行基线 = 盒顶 + ascent(实测与 Chrome 一致)
+                    // 自动换行:按盒宽贪心断行(CJK 逐字可断,行首不留空白),
+                    // 行进距 = 1.4x 字号(Chrome 雅黑 normal 行高实测)
+                    let max_w = iw.max(1.0);
+                    let line_h = t.font_size * 1.32;
+                    let glyph_char = |gi: usize| -> char {
+                        t.text.chars().nth(gi).unwrap_or(' ')
+                    };
+                    let mut lines: Vec<Vec<usize>> = Vec::new();
+                    let mut cur: Vec<usize> = Vec::new();
+                    let mut cur_w = 0.0f64;
+                    let n = run.glyphs.len();
+                    for gi in 0..n {
+                        let ch = glyph_char(gi);
+                        let gw = run.glyphs[gi].advance as f64;
+                        let too_wide = cur_w + gw > max_w && !cur.is_empty();
+                        let cjk = (ch as u32) > 0x2E00;
+                        if too_wide && (ch.is_whitespace() || cjk || ch.is_ascii_punctuation()) {
+                            lines.push(std::mem::take(&mut cur));
+                            cur_w = 0.0;
+                            if ch.is_whitespace() {
+                                continue;
+                            }
+                        }
+                        cur.push(gi);
+                        cur_w += gw;
+                    }
+                    if !cur.is_empty() {
+                        lines.push(cur);
+                    }
+                    for (li, line) in lines.iter().enumerate() {
+                        if line.is_empty() {
+                            continue;
+                        }
+                        let line_x0 = run.glyphs[line[0]].x as f64;
+                        let baseline = y + run.ascent as f64 + li as f64 * line_h;
+                        for &gi in line {
+                            let g = &run.glyphs[gi];
+                            if let Some(gpath) = crate::text::glyph_outline(
+                                &run.font_data,
+                                run.font_index,
+                                t.font_size as f32,
+                                g.id,
                             ) {
-                                fill_color(pixmap, &sk, t.color, item.opacity, tf);
+                                if let Some(sk) = kurbo_to_skia_path(
+                                    &gpath,
+                                    x + g.x as f64 - line_x0,
+                                    baseline - g.y as f64,
+                                    item.opacity,
+                                    item,
+                                ) {
+                                    fill_color(pixmap, &sk, t.color, item.opacity, tf);
+                                }
                             }
                         }
                     }
