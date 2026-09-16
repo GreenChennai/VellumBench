@@ -45,6 +45,7 @@ pub fn apply_to_doc(
     doc: &mut Document,
     artboard: NodeId,
     project_dir: Option<&Path>,
+    synthetic: bool,
 ) -> Vec<String> {
     // 图像固有尺寸探测的项目根(量测叶用)
     set_image_dir(project_dir);
@@ -52,38 +53,41 @@ pub fn apply_to_doc(
         Ok(o) => o,
         Err(e) => return vec![format!("vb_layout:布局求值失败({e}),保持导入几何")],
     };
-    let abs: Vec<(NodeId, Geom)> = outcome
+    // 父绝对坐标必须取自**未改写**的绝对表:若边遍历边写 geom,
+    // 先改写的父节点会让后处理的子节点读到父相对值,几何混叠
+    let abs: Vec<(NodeId, Geom, Option<(f64, f64)>)> = outcome
         .rects
         .iter()
         .filter_map(|(sid, r)| {
-            doc.find_by_sid(sid).map(|id| {
-                (
-                    id,
-                    Geom {
-                        x: r[0],
-                        y: r[1],
-                        w: r[2],
-                        h: r[3],
-                    },
-                )
-            })
+            let id = doc.find_by_sid(sid)?;
+            let parent_abs = doc.node(id).and_then(|n| n.parent).and_then(|pid| {
+                doc.node(pid)
+                    .and_then(|pn| outcome.rects.get(pn.sid.as_str()))
+                    .map(|pr| (pr[0], pr[1]))
+            });
+            Some((
+                id,
+                Geom {
+                    x: r[0],
+                    y: r[1],
+                    w: r[2],
+                    h: r[3],
+                },
+                parent_abs,
+            ))
         })
         .collect();
     let mut applied = 0usize;
-    for (id, g) in abs {
+    for (id, g, parent_abs) in abs {
         let Some(node) = doc.node(id) else { continue };
         if matches!(node.kind, NodeKind::Artboard) {
             continue;
         }
-        let parent_abs = node
-            .parent
-            .and_then(|p| doc.node(p))
-            .map(|p| (p.geom.x, p.geom.y))
-            .unwrap_or((0.0, 0.0));
+        let (px0, py0) = parent_abs.unwrap_or((0.0, 0.0));
         if let Some(n) = doc.node_mut(id) {
             n.geom = Geom {
-                x: g.x - parent_abs.0,
-                y: g.y - parent_abs.1,
+                x: g.x - px0,
+                y: g.y - py0,
                 w: g.w,
                 h: g.h,
             };
@@ -92,6 +96,25 @@ pub fn apply_to_doc(
     }
     let mut ws = outcome.warnings;
     ws.push(format!("vb_layout:已求值 {applied} 个节点几何"));
+    // 合成画板(无 vb-artboard 标记):画布尺寸 = 内容包围盒(浏览器 full_page 语义)
+    if synthetic {
+        let (mut max_w, mut max_h) = (0.0f64, 0.0f64);
+        let ab_sid = doc.node(artboard).map(|n| n.sid.as_str().to_string());
+        for (sid, r) in &outcome.rects {
+            if Some(sid.as_str()) == ab_sid.as_deref() {
+                continue;
+            }
+            max_w = max_w.max(r[0] + r[2]);
+            max_h = max_h.max(r[1] + r[3]);
+        }
+        if max_w > 0.0 && max_h > 0.0 {
+            if let Some(n) = doc.node_mut(artboard) {
+                n.geom.w = max_w;
+                n.geom.h = max_h;
+            }
+            ws.push(format!("vb_layout:合成画板尺寸回填 {max_w:.0}x{max_h:.0}"));
+        }
+    }
     ws
 }
 
@@ -121,6 +144,7 @@ fn compute_outcome(doc: &Document, artboard: NodeId) -> Result<LayoutOutcome, St
     let font0 = FontCtx {
         size: 16.0,
         family: String::new(),
+        weight: 400,
         line_height: 0.0,
         letter_spacing: 0.0,
     };
@@ -141,6 +165,35 @@ fn compute_outcome(doc: &Document, artboard: NodeId) -> Result<LayoutOutcome, St
         .map_err(|e| format!("taffy 求值失败:{e}"))?;
 
     ctx.collect(root);
+    if std::env::var("KILN_DUMP_RECTS").is_ok() {
+        let mut names: Vec<String> = Vec::new();
+        for (id, tid) in &ctx.taffy_of {
+            if let Some(n) = ctx.doc.node(*id) {
+                if let Some(r) = ctx.rects.get(n.sid.as_str()) {
+                    names.push(format!(
+                        "{:?} name={} rect=({:.0},{:.0},{:.0},{:.0}) geom=({:.0},{:.0},{:.0},{:.0}) authored={:?} pos={:?}",
+                        n.kind.kind_name(),
+                        n.name,
+                        r[0],
+                        r[1],
+                        r[2],
+                        r[3],
+                        n.geom.x,
+                        n.geom.y,
+                        n.geom.w,
+                        n.geom.h,
+                        n.authored,
+                        n.style_get("position"),
+                    ));
+                }
+            }
+            let _ = tid;
+        }
+        names.sort();
+        for n in &names {
+            eprintln!("[rect] {n}");
+        }
+    }
     Ok(LayoutOutcome {
         rects: ctx.rects,
         warnings: ctx.warnings,
@@ -155,6 +208,7 @@ enum LeafCtx {
         text: String,
         font_size: f64,
         family: String,
+        weight: u16,
         line_height: f64,
         letter_spacing: f64,
         nowrap: bool,
@@ -184,6 +238,7 @@ fn measure_leaf(input: LayoutInput, node_ctx: Option<&mut LeafCtx>) -> LayoutOut
             text,
             font_size,
             family,
+            weight,
             line_height,
             letter_spacing,
             nowrap,
@@ -195,15 +250,27 @@ fn measure_leaf(input: LayoutInput, node_ctx: Option<&mut LeafCtx>) -> LayoutOut
             } as f32;
             let ls = *letter_spacing as f32;
             if *nowrap {
-                let (mw, _n) =
-                    vb_render::text::measure_text(text, family, *font_size as f32, f32::MAX, ls);
+                let (mw, _n) = vb_render::text::measure_text_weighted(
+                    text,
+                    family,
+                    *font_size as f32,
+                    *weight,
+                    f32::MAX,
+                    ls,
+                );
                 (
                     known_w.unwrap_or(mw.max(1.0)),
                     known_h.unwrap_or(lh.max(1.0).ceil()),
                 )
             } else {
-                let (mw, lines) =
-                    vb_render::text::measure_text(text, family, *font_size as f32, max_w, ls);
+                let (mw, lines) = vb_render::text::measure_text_weighted(
+                    text,
+                    family,
+                    *font_size as f32,
+                    *weight,
+                    max_w,
+                    ls,
+                );
                 let total_h = lines as f32 * lh;
                 (
                     known_w.unwrap_or(mw.max(1.0)),
@@ -260,6 +327,7 @@ fn probe_image(src: &str) -> Option<(f64, f64)> {
 struct FontCtx {
     size: f64,
     family: String,
+    weight: u16,
     /// px;0 = 未指定(渲染期默认 1.32×size)
     line_height: f64,
     letter_spacing: f64,
@@ -304,6 +372,13 @@ impl<'a> BuildCtx<'a> {
         }
         if let Some(fam) = get("font-family") {
             f.family = fam;
+        }
+        if let Some(w) = get("font-weight").and_then(|w| match w.trim() {
+            "bold" => Some(700u16),
+            "normal" => Some(400u16),
+            other => other.parse::<u16>().ok(),
+        }) {
+            f.weight = w;
         }
         if let Some(lh) = get("line-height") {
             let t = lh.trim();
@@ -410,6 +485,7 @@ impl<'a> BuildCtx<'a> {
         let font = self.font_of.get(&id).cloned().unwrap_or(FontCtx {
             size: 16.0,
             family: String::new(),
+            weight: 400,
             line_height: 0.0,
             letter_spacing: 0.0,
         });
@@ -439,6 +515,7 @@ impl<'a> BuildCtx<'a> {
                     text: text.clone(),
                     font_size: font.size,
                     family: font.family.clone(),
+                    weight: font.weight,
                     line_height: font.line_height,
                     letter_spacing: font.letter_spacing,
                     nowrap,
@@ -487,17 +564,35 @@ impl<'a> BuildCtx<'a> {
                 _ => Display::Block,
             }
         };
+        // 规范文档:position 显式;flow 导入:position 被摘进 geom,以
+        // 「声明了 left/top」推断为绝对(浏览器对 static 的 left/top 不生效,
+        // 模板不会给 static 元素写 left/top,此推断可靠)
         let position = match get("position").as_deref() {
             Some("absolute") | Some("fixed") => Position::Absolute,
-            _ => Position::Relative,
+            Some("static") => Position::Relative,
+            other => {
+                let _ = other;
+                if node.authored[0] || node.authored[1] {
+                    Position::Absolute
+                } else {
+                    Position::Relative
+                }
+            }
         };
 
+        // 显式尺寸:style 声明优先;导入期摘进 geom 的(authored)回退读取
         let size = Size {
             width: get("width")
                 .and_then(|v| dim_of(self, &v, vars, font.size))
+                .or_else(|| {
+                    node.authored[2].then_some(taffy::Dimension::length(node.geom.w as f32))
+                })
                 .unwrap_or(taffy::Dimension::auto()),
             height: get("height")
                 .and_then(|v| dim_of(self, &v, vars, font.size))
+                .or_else(|| {
+                    node.authored[3].then_some(taffy::Dimension::length(node.geom.h as f32))
+                })
                 .unwrap_or(taffy::Dimension::auto()),
         };
         let min_size = Size {
@@ -556,19 +651,38 @@ impl<'a> BuildCtx<'a> {
             bottom: zero(),
         });
 
+        // inset 简写(1-4 值)作为各边回退
+        let inset_all: Vec<String> = get("inset")
+            .as_deref()
+            .map(|v| {
+                let toks: Vec<&str> = v.split_whitespace().collect();
+                let order: Vec<&str> = match toks.len() {
+                    1 => vec![toks[0]; 4],
+                    2 => vec![toks[0], toks[1], toks[0], toks[1]],
+                    3 => vec![toks[0], toks[1], toks[2], toks[1]],
+                    _ => toks.iter().take(4).copied().collect(),
+                };
+                order.into_iter().map(String::from).collect()
+            })
+            .unwrap_or_default();
+        let side = |v: Option<&str>, i: usize| -> Option<LengthPercentageAuto> {
+            v.or(inset_all.get(i).map(|s| s.as_str()))
+                .and_then(|v| lpa(&v))
+        };
+        // 绝对定位:authored 的 left/top 已在 geom(相对包含块)回退读取
         let inset = Rect {
-            left: get("left")
-                .and_then(|v| lpa(&v))
+            left: side(get("left").as_deref(), 0)
+                .or_else(|| {
+                    node.authored[0].then_some(LengthPercentageAuto::length(node.geom.x as f32))
+                })
                 .unwrap_or(auto()),
-            right: get("right")
-                .and_then(|v| lpa(&v))
+            right: side(get("right").as_deref(), 1).unwrap_or(auto()),
+            top: side(get("top").as_deref(), 3)
+                .or_else(|| {
+                    node.authored[1].then_some(LengthPercentageAuto::length(node.geom.y as f32))
+                })
                 .unwrap_or(auto()),
-            top: get("top")
-                .and_then(|v| lpa(&v))
-                .unwrap_or(auto()),
-            bottom: get("bottom")
-                .and_then(|v| lpa(&v))
-                .unwrap_or(auto()),
+            bottom: side(get("bottom").as_deref(), 2).unwrap_or(auto()),
         };
 
         let flex_direction = match get("flex-direction").as_deref() {
@@ -593,6 +707,7 @@ impl<'a> BuildCtx<'a> {
         let align_items = match get("align-items").as_deref() {
             Some("center") => Some(taffy::AlignItems::CENTER),
             Some("flex-end") | Some("end") => Some(taffy::AlignItems::FLEX_END),
+            Some("flex-start") | Some("start") => Some(taffy::AlignItems::FLEX_START),
             Some("baseline") => Some(taffy::AlignItems::BASELINE),
             Some("stretch") => Some(taffy::AlignItems::STRETCH),
             _ => None,

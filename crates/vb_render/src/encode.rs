@@ -114,8 +114,14 @@ pub struct TextHint {
     pub font_size: f64,
     pub color: [f32; 4],
     pub weight_bold: bool,
+    /// CSS font-weight 数值(400/600/700…;选字与 SVG/PPTX 输出用)。
+    pub weight: u16,
     /// CSS font-family 首族(C4 真文本管线)。
     pub font_family: String,
+    /// 行高 px(0 = 未指定,渲染用 1.32×字号)。
+    pub line_height: f64,
+    /// 字距 px。
+    pub letter_spacing: f64,
     /// 富文本段(字节区间样式覆盖;升序不重叠,区间外继承节点样式)。
     pub segments: Vec<TextSpanHint>,
 }
@@ -352,7 +358,10 @@ fn parse_fill(doc: &Document, node: &Node, w: f64, h: f64) -> Option<FillDef> {
         // 回退到 background-color 兜底(CSS 中 image 盖在 color 之上),
         // 此前直接 None 把填充整个丢掉
     }
-    if let Some(bg) = node.style_get("background-color") {
+    if let Some(bg) = node
+        .style_get("background-color")
+        .or_else(|| node.style_get("background"))
+    {
         if let Some(c) = parse_color_rgba_resolved(doc, bg) {
             return Some(FillDef::Solid(c));
         }
@@ -561,12 +570,26 @@ fn encode_node(
             label: match &node.kind {
                 NodeKind::Text { text, .. } => {
                     let fs = node.style_get("font-size").and_then(px).unwrap_or(16.0);
-                    let bold = node
-                        .style_get("font-weight")
-                        .map(|w| {
-                            w == "bold" || w == "700" || w == "600" || w == "800" || w == "900"
-                        })
-                        .unwrap_or(matches!(node.tag.as_str(), "h1" | "h2" | "h3"));
+                    let weight_raw = node.style_get("font-weight").unwrap_or("");
+                    let weight = weight_raw.parse::<u16>().unwrap_or(
+                        if matches!(weight_raw, "bold" | "bolder")
+                            || matches!(node.tag.as_str(), "h1" | "h2" | "h3")
+                        {
+                            700
+                        } else {
+                            400
+                        },
+                    );
+                    let bold = matches!(weight, 600..=900);
+                    let line_height = match node.style_get("line-height") {
+                        Some(v) => match v.trim().parse::<f64>() {
+                            Ok(n) => n * fs,
+                            Err(_) => px(v).unwrap_or(0.0),
+                        },
+                        None => 0.0,
+                    };
+                    let letter_spacing =
+                        node.style_get("letter-spacing").and_then(px).unwrap_or(0.0);
                     let segments = match &node.kind {
                         NodeKind::Text { segments, .. } => segments
                             .iter()
@@ -595,10 +618,13 @@ fn encode_node(
                             .and_then(|v| parse_color_rgba_resolved(doc, v))
                             .unwrap_or([0.1, 0.1, 0.1, 1.0]),
                         weight_bold: bold,
+                        weight,
                         font_family: node
                             .style_get("font-family")
                             .unwrap_or_default()
                             .to_string(),
+                        line_height,
+                        letter_spacing,
                         segments,
                     })
                 }

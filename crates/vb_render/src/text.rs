@@ -9,12 +9,60 @@
 //! - 换行:v0.1 文本节点不自动换行(单行),与画布近似行为一致。
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use swash::shape::Direction;
 use swash::{shape, text::Script, FontRef, GlyphId};
 
 use vb_common::geom::{BezPath, Point};
+
+/// 项目 webfont 注册表(@font-face):家庭(小写)→ (字重 → 字体文件字节)。
+fn font_registry() -> &'static Mutex<HashMap<String, Vec<(u16, Arc<Vec<u8>>)>>> {
+    static INIT: OnceLock<Mutex<HashMap<String, Vec<(u16, Arc<Vec<u8>>)>>>> = OnceLock::new();
+    INIT.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 注册项目内字体文件(@font-face 导入侧调用;懒读盘)。
+pub fn register_font_file(family: &str, weight: u16, path: PathBuf) {
+    let key = family.trim().to_ascii_lowercase();
+    if let Ok(mut reg) = font_registry().lock() {
+        let slot = reg.entry(key).or_default();
+        if !slot.iter().any(|(w, _)| *w == weight) {
+            slot.push((weight, Arc::new(std::fs::read(&path).unwrap_or_default())));
+            slot.sort_by_key(|(w, _)| *w);
+        }
+    }
+}
+
+/// 清空注册表(换项目导入时)。
+pub fn clear_font_registry() {
+    if let Ok(mut reg) = font_registry().lock() {
+        reg.clear();
+    }
+}
+
+/// 按家庭+字重取注册字体(CSS 字重匹配:就近,先高后低)。
+fn registry_font(family: &str, weight: u16) -> Option<(Arc<Vec<u8>>, usize)> {
+    let key = family.trim().to_ascii_lowercase();
+    let reg = font_registry().lock().ok()?;
+    let faces = reg.get(&key)?;
+    if faces.is_empty() {
+        return None;
+    }
+    let pick = faces
+        .iter()
+        .min_by_key(|(w, _)| {
+            // CSS 5.2 简化:就近字重(差值最小;同差取较小字重)
+            let d = (*w as i32 - weight as i32).abs();
+            (d, *w)
+        })
+        .map(|(_, bytes)| bytes)?;
+    if pick.is_empty() {
+        return None;
+    }
+    Some((pick.clone(), 0))
+}
 
 /// 一个字形(位置为**文本起点相对**坐标,Y 向下)。
 #[derive(Debug, Clone)]
@@ -43,6 +91,14 @@ fn font_collection() -> &'static Mutex<()> {
 
 /// swash FontRef 生命周期问题的解法:整形在锁内一次完成,输出拷贝。
 fn resolve_font(family: &str, text: &str) -> Option<(Arc<Vec<u8>>, usize)> {
+    resolve_font_weighted(family, 400, text)
+}
+
+/// 字重感知选字:项目注册表优先,系统字体回退。
+fn resolve_font_weighted(family: &str, weight: u16, text: &str) -> Option<(Arc<Vec<u8>>, usize)> {
+    if let Some(hit) = registry_font(family, weight) {
+        return Some(hit);
+    }
     use fontique::{Collection, CollectionOptions, QueryStatus, SourceCache, SourceCacheOptions};
 
     let _guard = font_collection().lock().ok()?;
@@ -107,12 +163,22 @@ fn resolve_font(family: &str, text: &str) -> Option<(Arc<Vec<u8>>, usize)> {
     picked
 }
 
-/// 文本 → 字形运行(单字体;C4 已知限制见模块注释)。
+/// 文本 → 字形运行(默认字重 400;兼容旧调用方)。
 pub fn shape_text(text: &str, font_family: &str, font_size: f32) -> Option<ShapedRun> {
+    shape_text_weighted(text, font_family, font_size, 400)
+}
+
+/// 文本 → 字形运行(单字体;C4 已知限制见模块注释)。weight 参与选字。
+pub fn shape_text_weighted(
+    text: &str,
+    font_family: &str,
+    font_size: f32,
+    weight: u16,
+) -> Option<ShapedRun> {
     if text.trim().is_empty() || font_size <= 0.0 {
         return None;
     }
-    let (font_data, font_index) = resolve_font(font_family, text)?;
+    let (font_data, font_index) = resolve_font_weighted(font_family, weight, text)?;
     let font = FontRef::from_index(&font_data[..], font_index)?;
 
     let mut shape_ctx = shape::ShapeContext::new();
@@ -194,51 +260,108 @@ pub fn measure_text(
     max_width: f32,
     letter_spacing: f32,
 ) -> (f32, usize) {
-    let Some(run) = shape_text(text, font_family, font_size) else {
-        // 字体解析失败:退化为字数估宽(与 cpu.rs 占位条同式)
-        let n = text.split('\n').count();
-        let w = text
-            .split('\n')
-            .map(|l| l.chars().count() as f32 * (font_size * 0.55 + letter_spacing))
-            .fold(0.0f32, f32::max);
-        return (w, n);
-    };
+    measure_text_weighted(text, font_family, font_size, 400, max_width, letter_spacing)
+}
+
+/// 共享贪心断行(与 cpu.rs 渲染同策略):CJK 逐字可断、空白/ASCII 标点后断。
+/// 输入必须是单个硬行(不含 `\n`;调用方先用 [`split_hard_lines`] 拆分,
+/// 避免整形器跳过控制字符导致的字形/字符错位)。返回每行的字形索引。
+pub fn break_lines(
+    text: &str,
+    run: &ShapedRun,
+    max_width: f32,
+    letter_spacing: f32,
+) -> Vec<Vec<usize>> {
     let glyph_char = |gi: usize| -> char { text.chars().nth(gi).unwrap_or(' ') };
-    let mut max_line_w = 0.0f32;
-    let mut lines = 0usize;
+    let mut lines: Vec<Vec<usize>> = Vec::new();
+    let mut cur: Vec<usize> = Vec::new();
     let mut cur_w = 0.0f32;
-    let mut cur_started = false;
-    let n = run.glyphs.len();
-    for gi in 0..n {
+    let finite = max_width.is_finite();
+    for gi in 0..run.glyphs.len() {
         let ch = glyph_char(gi);
-        if ch == '\n' {
-            max_line_w = max_line_w.max(cur_w);
-            lines += 1;
-            cur_w = 0.0;
-            cur_started = false;
-            continue;
-        }
         let gw = run.glyphs[gi].advance + letter_spacing;
-        let too_wide = cur_w + gw > max_width && cur_started && max_width.is_finite();
+        let too_wide = finite && cur_w + gw > max_width && !cur.is_empty();
         let cjk = (ch as u32) > 0x2E00;
         if too_wide && (ch.is_whitespace() || cjk || ch.is_ascii_punctuation()) {
-            max_line_w = max_line_w.max(cur_w);
-            lines += 1;
+            lines.push(std::mem::take(&mut cur));
             cur_w = 0.0;
-            cur_started = false;
             if ch.is_whitespace() {
                 continue;
             }
         }
+        cur.push(gi);
         cur_w += gw;
-        cur_started = true;
     }
-    if cur_started || lines == 0 {
-        max_line_w = max_line_w.max(cur_w);
-        lines += 1;
-    }
-    (max_line_w, lines)
+    lines.push(cur);
+    lines
 }
 
-/// 形状结果缓存键(text + family + size)—— 简单拼接;导出一次性成本。
-pub type ShapeCache = HashMap<(String, String, u32), Option<ShapedRun>>;
+/// 按硬行(`\n`)分段整形并断行:每硬行 = (行字符串, run, 视觉行字形索引集)。
+/// 同一硬行的多个视觉行共享 run(一次整形,断行只挑索引)。
+pub fn layout_text_lines(
+    text: &str,
+    font_family: &str,
+    font_size: f32,
+    weight: u16,
+    max_width: f32,
+    letter_spacing: f32,
+) -> Vec<(String, ShapedRun, Vec<Vec<usize>>)> {
+    text.split('\n')
+        .map(
+            |hard| match shape_text_weighted(hard, font_family, font_size, weight) {
+                Some(run) => {
+                    let lines = break_lines(hard, &run, max_width, letter_spacing);
+                    (hard.to_string(), run, lines)
+                }
+                None => (
+                    hard.to_string(),
+                    ShapedRun {
+                        font_data: Arc::new(Vec::new()),
+                        font_index: 0,
+                        glyphs: Vec::new(),
+                        ascent: font_size * 0.8,
+                        descent: font_size * 0.2,
+                    },
+                    vec![Vec::new()],
+                ),
+            },
+        )
+        .collect()
+}
+
+/// 布局量测(字重感知版):返回(最长行宽 px, 行数)。
+pub fn measure_text_weighted(
+    text: &str,
+    font_family: &str,
+    font_size: f32,
+    weight: u16,
+    max_width: f32,
+    letter_spacing: f32,
+) -> (f32, usize) {
+    let hard_lines = layout_text_lines(
+        text,
+        font_family,
+        font_size,
+        weight,
+        max_width,
+        letter_spacing,
+    );
+    let mut max_line_w = 0.0f32;
+    let mut count = 0usize;
+    for (_, run, visual_lines) in &hard_lines {
+        for line in visual_lines {
+            count += 1;
+            if line.is_empty() {
+                continue;
+            }
+            let first = &run.glyphs[line[0]];
+            let last = &run.glyphs[*line.last().expect("nonempty")];
+            let w = (last.x + last.advance) - first.x + letter_spacing;
+            max_line_w = max_line_w.max(w);
+        }
+    }
+    if count == 0 {
+        count = 1;
+    }
+    (max_line_w, count)
+}

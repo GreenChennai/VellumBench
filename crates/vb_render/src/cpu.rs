@@ -195,66 +195,68 @@ fn draw_item(
                     stroke_color(pixmap, &shape, border.color, bw as f32, item.opacity, tf);
                 }
             }
-            // C4 真文本:fontique 找字体 + swash 整形/轮廓(ADR-0017 兑付);
-            // 字体解析失败才回退占位条
+            // C4 真文本:fontique/注册表选字 + swash 整形/轮廓;
+            // 硬行分行整形(避免控制字符打乱字形映射),贪心断行、
+            // 字重选字、字距、富文本段逐字取色
             if let Some(t) = text_hint {
-                let shaped = crate::text::shape_text(&t.text, &t.font_family, t.font_size as f32);
-                if let Some(run) = &shaped {
-                    // CSS 顶对齐:首行基线 = 盒顶 + ascent(实测与 Chrome 一致)
-                    // 自动换行:按盒宽贪心断行(CJK 逐字可断,行首不留空白),
-                    // 行进距 = 1.4x 字号(Chrome 雅黑 normal 行高实测)
-                    let max_w = iw.max(1.0);
-                    let line_h = t.font_size * 1.32;
-                    let glyph_char = |gi: usize| -> char { t.text.chars().nth(gi).unwrap_or(' ') };
-                    let mut lines: Vec<Vec<usize>> = Vec::new();
-                    let mut cur: Vec<usize> = Vec::new();
-                    let mut cur_w = 0.0f64;
-                    let n = run.glyphs.len();
-                    for gi in 0..n {
-                        let ch = glyph_char(gi);
-                        let gw = run.glyphs[gi].advance as f64;
-                        let too_wide = cur_w + gw > max_w && !cur.is_empty();
-                        let cjk = (ch as u32) > 0x2E00;
-                        if too_wide && (ch.is_whitespace() || cjk || ch.is_ascii_punctuation()) {
-                            lines.push(std::mem::take(&mut cur));
-                            cur_w = 0.0;
-                            if ch.is_whitespace() {
-                                continue;
-                            }
-                        }
-                        cur.push(gi);
-                        cur_w += gw;
-                    }
-                    if !cur.is_empty() {
-                        lines.push(cur);
-                    }
-                    for (li, line) in lines.iter().enumerate() {
+                let max_w = iw.max(1.0) as f32;
+                let line_h = if t.line_height > 0.0 {
+                    t.line_height
+                } else {
+                    t.font_size * 1.32
+                };
+                let ls = t.letter_spacing as f32;
+                let hard_lines = crate::text::layout_text_lines(
+                    &t.text,
+                    &t.font_family,
+                    t.font_size as f32,
+                    t.weight,
+                    max_w,
+                    ls,
+                );
+                let mut visual = 0usize;
+                let mut byte_base = 0usize;
+                for (hard, run, lines) in &hard_lines {
+                    for line in lines {
                         if line.is_empty() {
                             continue;
                         }
                         let line_x0 = run.glyphs[line[0]].x as f64;
-                        let baseline = y + run.ascent as f64 + li as f64 * line_h;
+                        let baseline = y + run.ascent as f64 + visual as f64 * line_h;
                         for &gi in line {
                             let g = &run.glyphs[gi];
+                            // 行内字符序 → 全文字节偏移(富文本段按字节区间)
+                            let b = byte_base
+                                + hard.chars().take(gi).map(|c| c.len_utf8()).sum::<usize>();
+                            let color = t
+                                .segments
+                                .iter()
+                                .find(|sg| b >= sg.start && b < sg.end)
+                                .and_then(|sg| sg.color)
+                                .unwrap_or(t.color);
                             if let Some(gpath) = crate::text::glyph_outline(
                                 &run.font_data,
                                 run.font_index,
                                 t.font_size as f32,
                                 g.id,
                             ) {
+                                let gx = x + (g.x as f64 + gi as f64 * ls as f64) - line_x0;
                                 if let Some(sk) = kurbo_to_skia_path(
                                     &gpath,
-                                    x + g.x as f64 - line_x0,
+                                    gx,
                                     baseline - g.y as f64,
                                     item.opacity,
                                     item,
                                 ) {
-                                    fill_color(pixmap, &sk, t.color, item.opacity, tf);
+                                    fill_color(pixmap, &sk, color, item.opacity, tf);
                                 }
                             }
                         }
+                        visual += 1;
                     }
-                } else {
+                    byte_base += hard.len() + 1; // +1 = 换行符
+                }
+                if visual == 0 {
                     warnings.push(format!("文本「{}」字体解析失败,以占位条渲染", t.text));
                     let bar_h = (t.font_size * 0.62).min(ih).max(4.0);
                     if let Some(path) = rect_path(

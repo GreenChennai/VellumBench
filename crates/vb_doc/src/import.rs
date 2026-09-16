@@ -83,6 +83,19 @@ pub struct ImportResult {
     pub warnings: Vec<String>,
     /// 文档根目录(index.html 所在目录)。
     pub project_dir: PathBuf,
+    /// 无画板标记时合成了单一画板(画布尺寸应由内容包围盒回填)。
+    pub synthetic_artboard: bool,
+    /// @font-face 声明(项目内 webfont;渲染期按 家庭+字重 选字)。
+    pub font_faces: Vec<FontFace>,
+}
+
+/// 一条 @font-face(仅保留项目内渲染所需的最小集)。
+#[derive(Debug, Clone)]
+pub struct FontFace {
+    pub family: String,
+    pub weight: u16,
+    /// src url(相对项目根;http 外链忽略)。
+    pub src: String,
 }
 
 /// 导入项目目录或 index.html 文件。
@@ -199,8 +212,9 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
 
     // ---- 样式表 → 类规则 ----
     let mut sheet = Stylesheet::default();
+    let mut font_faces: Vec<FontFace> = Vec::new();
     for t in &css_texts {
-        sheet.extend(parse_stylesheet(t));
+        font_faces.extend(parse_font_faces(t, &mut sheet));
     }
 
     // ---- body → 画板/节点 ----
@@ -226,6 +240,8 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
         tag_counter: Default::default(),
         pending_comments: Vec::new(),
         matched_classes: Default::default(),
+        ancestors: vec![("body".to_string(), Vec::new())],
+        matched_rules: Default::default(),
     };
 
     let mut artboard_nodes: Vec<NodeIdT> = Vec::new();
@@ -247,8 +263,10 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
         }
     }
 
+    let mut synthetic_flag = false;
     if artboard_nodes.is_empty() {
         // 无画板标记:整个 body 内容收进一个合成画板
+        synthetic_flag = true;
         let name = if doc_title.is_empty() {
             "画板 1".to_string()
         } else {
@@ -291,6 +309,7 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
 
     // 结束 importer 对 doc 的可变借用
     let matched = std::mem::take(&mut importer.matched_classes);
+    let importer_matched = std::mem::take(&mut importer.matched_rules);
     drop(importer);
     if let Some(joined) = trailing_comments {
         doc.trailing_raw.push(format!("<!--{joined}-->"));
@@ -305,6 +324,18 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
                 .collect::<Vec<_>>()
                 .join("; ");
             doc.raw_css.push(format!(".{cls} {{{body}}}"));
+        }
+    }
+    // 未命中的链规则同样回写 raw(选择器原文保真)
+    for (ri, rule) in sheet.rules.iter().enumerate() {
+        if !importer_matched.contains(&ri) {
+            let body = rule
+                .decls
+                .iter()
+                .map(|d| d.to_css())
+                .collect::<Vec<_>>()
+                .join("; ");
+            doc.raw_css.push(format!("{} {{{}}}", rule.selector, body));
         }
     }
 
@@ -324,7 +355,59 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
         doc,
         warnings,
         project_dir: project_dir.to_path_buf(),
+        synthetic_artboard: synthetic_flag,
+        font_faces,
     })
+}
+
+/// 从样式表抽取 @font-face(家庭/字重/src);块仍按原样进 raw 保真。
+fn parse_font_faces(text: &str, sheet: &mut Stylesheet) -> Vec<FontFace> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(pos) = rest.find("@font-face") {
+        let after = &rest[pos..];
+        let Some(brace) = after.find('{') else { break };
+        let Some(end_rel) = after[brace..].find('}') else {
+            break;
+        };
+        let body = &after[brace + 1..brace + end_rel];
+        let decls = parse_decls(body);
+        let get = |p: &str| decls.iter().find(|d| d.prop == p).map(|d| d.value.clone());
+        let family = get("font-family").map(|v| {
+            let q = '\u{0027}';
+            v.trim_matches('"').trim_matches(q).trim().to_string()
+        });
+        let src = get("src").and_then(|v| {
+            let inner = v.strip_prefix("url(").and_then(|s| s.strip_suffix(')'))?;
+            let q = '\u{0027}';
+            let u = inner
+                .split(',')
+                .next()?
+                .trim()
+                .trim_matches('"')
+                .trim_matches(q);
+            if u.starts_with("http") || u.starts_with("//") {
+                None
+            } else {
+                Some(u.to_string())
+            }
+        });
+        if let (Some(family), Some(src)) = (family, src) {
+            let weight = get("font-weight")
+                .and_then(|w| w.trim().parse::<u16>().ok())
+                .unwrap_or(400);
+            out.push(FontFace {
+                family,
+                weight,
+                src,
+            });
+        }
+        rest = &rest[pos + brace + end_rel + 1..];
+    }
+    // 原 stylesheet 解析照常(font-face 块在 at-rule 分支进 raw)
+    let parsed = parse_stylesheet(text);
+    sheet.extend(parsed);
+    out
 }
 
 type NodeIdT = crate::model::NodeId;
@@ -368,15 +451,53 @@ fn write_fragment(node: &HtmlNode, out: &mut String) {
 pub struct Stylesheet {
     /// 简单类选择器 → 声明(`.foo` / `tag.foo`)。
     pub class_rules: Vec<(String, bool, Vec<Decl>)>,
+    /// 后代链选择器(`.hero .tt` / `h3` / `*` 等;含原文供孤儿回写)。
+    pub rules: Vec<SelectorRule>,
     /// at-rules / 复杂选择器(verbatim)。
     pub raw_blocks: Vec<String>,
     /// `:root` 中的 CSS 变量。
     pub root_vars: Vec<(String, String)>,
 }
 
+/// 一条后代链规则;chain 从祖先到自身,匹配从右往左贪心。
+#[derive(Debug, Clone)]
+pub struct SelectorRule {
+    pub selector: String,
+    pub chain: Vec<Compound>,
+    pub decls: Vec<Decl>,
+}
+
+/// 复合选择器单元:可选 tag + 类集(或 `*`)。
+#[derive(Debug, Clone)]
+pub struct Compound {
+    pub tag: Option<String>,
+    pub classes: Vec<String>,
+    pub universal: bool,
+}
+
+impl Compound {
+    /// 特异度 (类数, tag 数)。
+    fn spec(&self) -> (usize, usize) {
+        (
+            self.classes.len(),
+            usize::from(self.tag.is_some() || self.universal),
+        )
+    }
+}
+
+impl SelectorRule {
+    /// 特异度 (类总数, tag 总数)。
+    fn spec(&self) -> (usize, usize) {
+        self.chain
+            .iter()
+            .fold((0, 0), |(b, c), cp| (b + cp.spec().0, c + cp.spec().1))
+    }
+}
+
 impl Stylesheet {
     fn extend(&mut self, other: Stylesheet) {
         self.class_rules.extend(other.class_rules);
+        self.rules.extend(other.rules);
         self.raw_blocks.extend(other.raw_blocks);
         self.root_vars.extend(other.root_vars);
     }
@@ -556,6 +677,15 @@ pub fn parse_stylesheet(text: &str) -> Stylesheet {
             sheet
                 .class_rules
                 .push((class, tag_qualified, parse_decls(&body)));
+        } else if let Some(selectors) = parse_selector_list(selector) {
+            // 多选择器逐条解析为链规则(全部失败才回 raw)
+            for chain in selectors {
+                sheet.rules.push(SelectorRule {
+                    selector: chain.0,
+                    chain: chain.1,
+                    decls: parse_decls(&body),
+                });
+            }
         } else if !selector.is_empty() {
             sheet
                 .raw_blocks
@@ -563,6 +693,99 @@ pub fn parse_stylesheet(text: &str) -> Stylesheet {
         }
     }
     sheet
+}
+
+/// 选择器列表(逗号分隔)→ 每条的复合链;全部解析失败返回 None。
+#[allow(clippy::type_complexity)]
+fn parse_selector_list(sel: &str) -> Option<Vec<(String, Vec<Compound>)>> {
+    let mut out = Vec::new();
+    for part in sel.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if part.contains('>')
+            || part.contains('+')
+            || part.contains('~')
+            || part.contains('[')
+            || part.contains(':')
+            || part.contains('(')
+        {
+            return None;
+        }
+        let mut chain = Vec::new();
+        for tok in part.split_whitespace() {
+            let (tag, classes, universal) = parse_compound(tok)?;
+            chain.push(Compound {
+                tag,
+                classes,
+                universal,
+            });
+        }
+        if chain.is_empty() {
+            return None;
+        }
+        out.push((part.to_string(), chain));
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+/// 复合单元:`div.foo.bar` / `.foo` / `h3` / `*`。
+fn parse_compound(tok: &str) -> Option<(Option<String>, Vec<String>, bool)> {
+    if tok == "*" {
+        return Some((None, Vec::new(), true));
+    }
+    let mut parts = tok.split('.');
+    let first = parts.next()?;
+    let tag = if first.is_empty() {
+        None
+    } else if first.chars().all(|c| c.is_ascii_alphanumeric()) {
+        Some(first.to_ascii_lowercase())
+    } else {
+        return None;
+    };
+    let mut classes = Vec::new();
+    for c in parts {
+        if !valid_class(c) {
+            return None;
+        }
+        classes.push(c.to_string());
+    }
+    if tag.is_none() && classes.is_empty() {
+        return None;
+    }
+    Some((tag, classes, false))
+}
+
+/// 复合单元匹配元素(tag 一致 + 类全含;universal 恒真)。
+fn compound_matches_el(c: &Compound, el: &Element) -> bool {
+    if c.universal {
+        return true;
+    }
+    if let Some(t) = &c.tag {
+        if el.name.to_ascii_lowercase() != *t {
+            return false;
+        }
+    }
+    let classes = el.class_list();
+    c.classes.iter().all(|k| classes.iter().any(|x| x == k))
+}
+
+/// 复合单元匹配祖先上下文。
+fn compound_matches_ctx(c: &Compound, tag: &str, classes: &[String]) -> bool {
+    if c.universal {
+        return true;
+    }
+    if let Some(t) = &c.tag {
+        if tag.to_ascii_lowercase() != *t {
+            return false;
+        }
+    }
+    c.classes.iter().all(|k| classes.iter().any(|x| x == k))
 }
 
 /// `.foo` / `tag.foo` → Some("foo");其余 None(逗号/组合器/伪类都不算)。
@@ -689,6 +912,10 @@ struct NodeImporter<'a> {
 
     ///79c16709:51fa73b08fc77684 class(5b64513f89c4521956de586b7528)
     matched_classes: std::collections::BTreeSet<String>,
+    /// 祖先上下文(元素构建栈;body 起)
+    ancestors: Vec<(String, Vec<String>)>,
+    /// 已匹配的链规则索引(孤儿判定)
+    matched_rules: std::collections::BTreeSet<usize>,
 }
 
 impl<'a> NodeImporter<'a> {
@@ -722,12 +949,27 @@ impl<'a> NodeImporter<'a> {
         for c in el.class_list() {
             self.matched_classes.insert(c.to_string());
         }
+        self.ancestors.push((
+            el.name.clone(),
+            el.class_list().iter().map(|s| s.to_string()).collect(),
+        ));
         let class_rule_decls = self.merged_class_decls(el);
         let inline = el.attr("style").map(parse_decls).unwrap_or_default();
-        let style = merge_decls(class_rule_decls, inline);
+        let mut style = merge_decls(class_rule_decls, inline);
+        expand_font_shorthand(&mut style);
         let get = |p: &str| style.iter().find(|d| d.prop == p).map(|d| d.value.clone());
         let w = vb_common::units::parse_px(get("width").as_deref().unwrap_or("")).unwrap_or(1440.0);
         let h = vb_common::units::parse_px(get("height").as_deref().unwrap_or("")).unwrap_or(900.0);
+        let authored_wh = [
+            false,
+            false,
+            get("width")
+                .and_then(|v| vb_common::units::parse_px(&v))
+                .is_some(),
+            get("height")
+                .and_then(|v| vb_common::units::parse_px(&v))
+                .is_some(),
+        ];
         // 几何属性从 style 移除(导出时由 geom 重建,避免双写)
         let mut style = style;
         for p in ["position", "left", "top", "width", "height"] {
@@ -760,12 +1002,16 @@ impl<'a> NodeImporter<'a> {
             comment,
             sid,
         );
+        if let Some(n) = self.doc.node_mut(id) {
+            n.authored = authored_wh;
+        }
         let child_refs: Vec<&HtmlNode> = el_node.children.iter().collect();
         self.build_children(id, &child_refs);
+        self.ancestors.pop();
         id
     }
 
-    fn merged_class_decls(&self, el: &Element) -> Vec<Decl> {
+    fn merged_class_decls(&mut self, el: &Element) -> Vec<Decl> {
         let classes = el.class_list();
         let is_marker = |c: &str| {
             ARTBOARD_CLASSES.contains(&c)
@@ -773,19 +1019,43 @@ impl<'a> NodeImporter<'a> {
                 || GROUP_CLASSES.contains(&c)
         };
         let mut out = Vec::new();
-        // CSS 级联:同特异度规则按**样式表出现顺序**后者胜。
-        // 按元素 class 属性顺序拼接会让 `class="b a"` 推翻样式表里 .a 在后
-        // 的正确结果(导入→导出的级联语义漂移)。
-        //
-        // 特异性(B5):tag 限定选择器(div.foo)高于裸类(.foo) ——
-        // 稳定排序把 tag 限定规则排到后面,与「后者胜」合并后语义一致。
-        let mut matched: Vec<(bool, &Vec<Decl>)> = Vec::new();
+        // CSS 级联:同特异度规则按**样式表出现顺序**后者胜;不同特异度按
+        // (类数, tag数) 升序(特异性高的排后面,合并时后写胜)。
+        // (b, c, 规则序, 声明) —— 简单类规则特异度 = (1, tag_qualified)。
+        let mut matched: Vec<((usize, usize), &Vec<Decl>)> = Vec::new();
         for (c, tag_qualified, decls) in &self.sheet.class_rules {
             if classes.iter().any(|k| k == c) && !is_marker(c) {
-                matched.push((*tag_qualified, decls));
+                matched.push(((1usize, usize::from(*tag_qualified)), decls));
             }
         }
-        matched.sort_by_key(|(tq, _)| *tq);
+        // 链规则:自身复合匹配 + 祖先贪心向近到远
+        for (ri, rule) in self.sheet.rules.iter().enumerate() {
+            let last = rule.chain.len() - 1;
+            if !compound_matches_el(&rule.chain[last], el) {
+                continue;
+            }
+            if last == 0 {
+                self.matched_rules.insert(ri);
+                matched.push((rule.spec(), &rule.decls));
+                continue;
+            }
+            let mut ci = last - 1;
+            let mut hit = false;
+            for (tag, anc_classes) in self.ancestors.iter().rev() {
+                if compound_matches_ctx(&rule.chain[ci], tag, anc_classes) {
+                    if ci == 0 {
+                        hit = true;
+                        break;
+                    }
+                    ci -= 1;
+                }
+            }
+            if hit {
+                self.matched_rules.insert(ri);
+                matched.push((rule.spec(), &rule.decls));
+            }
+        }
+        matched.sort_by_key(|(spec, _)| *spec);
         for (_, decls) in matched {
             out.extend(decls.iter().cloned());
         }
@@ -941,7 +1211,7 @@ impl<'a> NodeImporter<'a> {
     }
 
     /// 元素是否打断行内分组(显式 display 覆盖优先,span.tl{display:block} 是块)。
-    fn is_block_boundary(&self, el: &Element) -> bool {
+    fn is_block_boundary(&mut self, el: &Element) -> bool {
         // 链接保持独立节点(href/aria 等属性与身份不丢);冻结标签同理
         if el.name == "a" || FROZEN_TAGS.contains(&el.name.as_str()) {
             return true;
@@ -949,6 +1219,19 @@ impl<'a> NodeImporter<'a> {
         let mut decls = self.merged_class_decls(el);
         if let Some(s) = el.attr("style") {
             decls = merge_decls(decls, parse_decls(s));
+        }
+        // 定位框(absolute/fixed,或声明了 left/top)必须独立成节点:
+        // 否则贴纸/角标这类定位行内元素会被并进文本段丢失定位与背景
+        let mut has_left_top = false;
+        for d in &decls {
+            match d.prop.as_str() {
+                "position" if matches!(d.value.trim(), "absolute" | "fixed") => return true,
+                "left" | "top" => has_left_top = true,
+                _ => {}
+            }
+        }
+        if has_left_top {
+            return true;
         }
         if let Some(d) = decls
             .iter()
@@ -966,7 +1249,7 @@ impl<'a> NodeImporter<'a> {
 
     /// 行内元素的样式覆盖(color/粗斜体/字号/字族)。
     /// 语义标签的 UA 默认样式(b/strong→粗,em/i→斜)在此落为显式覆盖。
-    fn inline_style_of(&self, el: &Element) -> SegStyle {
+    fn inline_style_of(&mut self, el: &Element) -> SegStyle {
         let mut decls = self.merged_class_decls(el);
         if let Some(s) = el.attr("style") {
             decls = merge_decls(decls, parse_decls(s));
@@ -990,7 +1273,7 @@ impl<'a> NodeImporter<'a> {
     }
 
     /// 子内容是否全部可内联(决定元素成为叶文本还是容器 Box)。
-    fn all_inline(&self, node: &HtmlNode) -> bool {
+    fn all_inline(&mut self, node: &HtmlNode) -> bool {
         node.children.iter().all(|c| match &c.data {
             NodeData::Text(_) | NodeData::Comment(_) => true,
             NodeData::Element(el) => match el.name.as_str() {
@@ -1028,7 +1311,8 @@ impl<'a> NodeImporter<'a> {
         }
         let class_rule_decls = self.merged_class_decls(el);
         let inline = el.attr("style").map(parse_decls).unwrap_or_default();
-        let style = merge_decls(class_rule_decls, inline);
+        let mut style = merge_decls(class_rule_decls, inline);
+        expand_font_shorthand(&mut style);
 
         let (attrs, sid) = split_attrs(el, self.doc);
         let name = el
@@ -1109,6 +1393,13 @@ impl<'a> NodeImporter<'a> {
                 }
                 _ => 100.0,
             });
+        // 作者显式声明的维度(布局层区分「显式」与「默认占位」)
+        let authored = [
+            px(&get("left")).is_some(),
+            px(&get("top")).is_some(),
+            px(&get("width")).is_some(),
+            px(&get("height")).is_some(),
+        ];
 
         // 几何属性从 style 中移除(导出时由 geom 字段重建,避免双写)
         let mut style = style;
@@ -1134,17 +1425,24 @@ impl<'a> NodeImporter<'a> {
         n.hidden = hidden;
         n.comment_before = comment;
         n.geom = Geom { x, y, w, h };
+        n.authored = authored;
         let id = self.attach(parent, n);
 
-        // 容器:递归子节点(行内内容分组进富文本段)
+        // 容器:递归子节点(行内内容分组进富文本段);压栈自身上下文供
+        // 后代链选择器匹配
         if self
             .doc
             .node(id)
             .map(|n| n.kind.is_container())
             .unwrap_or(false)
         {
+            self.ancestors.push((
+                el.name.clone(),
+                el.class_list().iter().map(|s| s.to_string()).collect(),
+            ));
             let children: Vec<&HtmlNode> = node.children.iter().collect();
             self.build_children(id, &children);
+            self.ancestors.pop();
         }
         Some(id)
     }
@@ -1237,6 +1535,84 @@ fn merge_decls(base: Vec<Decl>, over: Vec<Decl>) -> Vec<Decl> {
         }
     }
     out
+}
+
+/// 展开font 简写为单项声明(导入期一次性;此后 L1 在展开形态上稳定)。
+/// 语法:`[<style> || <variant> || <weight>]? <size>[/<line-height>]? <family>`。
+/// artboard 模板大量使用 `font:700 26px/1 'MiSans'` 形态,不展开则字号全丢。
+fn expand_font_shorthand(style: &mut Vec<Decl>) {
+    let Some(pos) = style.iter().position(|d| d.prop == "font") else {
+        return;
+    };
+    let raw = style[pos].value.trim().to_string();
+    let tokens: Vec<&str> = raw.split_whitespace().collect();
+    if tokens.len() < 2 {
+        return;
+    }
+    let mut i = 0usize;
+    let mut weight: Option<String> = None;
+    let mut fstyle: Option<String> = None;
+    while i < tokens.len() {
+        let t = tokens[i];
+        if t == "normal" {
+            i += 1;
+            continue;
+        }
+        if t == "italic" || t == "oblique" {
+            fstyle = Some(t.to_string());
+            i += 1;
+            continue;
+        }
+        if t == "small-caps" {
+            i += 1;
+            continue;
+        }
+        if t == "bold" || t == "bolder" || t == "lighter" || t.parse::<u16>().is_ok() {
+            weight = Some(t.to_string());
+            i += 1;
+            continue;
+        }
+        break;
+    }
+    if i >= tokens.len() {
+        return;
+    }
+    // 字号 [/ 行高]
+    let size_tok = tokens[i];
+    let (size_raw, lh_raw) = match size_tok.split_once('/') {
+        Some((s, l)) => (s, Some(l)),
+        None => (size_tok, None),
+    };
+    let size_ok = size_raw
+        .strip_suffix('%')
+        .map(|_| true)
+        .unwrap_or_else(|| vb_common::units::parse_px(size_raw).is_some());
+    if !size_ok {
+        return;
+    }
+    let family = tokens[i + 1..].join(" ");
+    if family.is_empty() {
+        return;
+    }
+    let d = |p: &str, v: String| Decl {
+        prop: p.into(),
+        value: v,
+        important: false,
+    };
+    let mut expanded = Vec::new();
+    expanded.push(d("font-size", size_raw.to_string()));
+    if let Some(l) = lh_raw {
+        expanded.push(d("line-height", l.to_string()));
+    }
+    if let Some(w) = weight {
+        expanded.push(d("font-weight", w));
+    }
+    if let Some(st) = fstyle {
+        expanded.push(d("font-style", st));
+    }
+    expanded.push(d("font-family", family));
+    // 就地替换 font 声明
+    style.splice(pos..=pos, expanded);
 }
 
 impl Document {

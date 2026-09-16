@@ -1,4 +1,4 @@
-﻿//! Kiln-noGUI-CLI:无 GUI 纯命令行导出器(WPI 参数兼容)。
+//! Kiln-noGUI-CLI:无 GUI 纯命令行导出器(WPI 参数兼容)。
 //!
 //! 与 artboard 技能的调用约定对齐:同款 `--source/--output/--format/
 //! --width/--scale/--transparent/--max-wait` 参数面,同款单行 JSON 结果
@@ -166,9 +166,16 @@ fn run_export(
         return 3;
     };
 
+    // 项目 webfont(@font-face)注册:家庭+字重 → 字体文件
+    vb_render::text::clear_font_registry();
+    for f in &imported.font_faces {
+        vb_render::text::register_font_file(&f.family, f.weight, dir.join(&f.src));
+    }
+
     // 文档流布局求值(M1.0):flow/flex/absolute → 具体矩形写回 geom;
     // 矢量模式文档(全显式定位)求值结果与作者输入一致,无副作用
-    for w in vb_layout::apply_to_doc(&mut imported.doc, ab, Some(&dir)) {
+    let synthetic = imported.synthetic_artboard;
+    for w in vb_layout::apply_to_doc(&mut imported.doc, ab, Some(&dir), synthetic) {
         eprintln!("{{\"warn\":\"{w}\"}}");
     }
 

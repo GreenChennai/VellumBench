@@ -153,6 +153,9 @@ pub struct Node {
     /// 节点前注释(导入保序,导出还原)。
     pub comment_before: Vec<String>,
     pub geom: Geom,
+    /// 四维 [x, y, w, h] 是否为作者 CSS 显式声明(导入记录;布局层据此
+    /// 区分「显式尺寸」与「默认占位」,未声明者走 auto 语义)。
+    pub authored: [bool; 4],
     pub hidden: bool,
     pub locked: bool,
 }
@@ -182,6 +185,7 @@ impl Node {
             style: Vec::new(),
             comment_before: Vec::new(),
             geom: Geom::default(),
+            authored: [false; 4],
             hidden: false,
             locked: false,
         }
