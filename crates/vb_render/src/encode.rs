@@ -38,6 +38,180 @@ pub struct BorderDef {
     pub color: [f32; 4],
 }
 
+/// clip-path(L2 动画白名单;几何相对项矩形,px 已解析)。
+#[derive(Debug, Clone)]
+pub enum ClipDef {
+    /// top right bottom left
+    Inset(f64, f64, f64, f64),
+    /// cx cy r
+    Circle(f64, f64, f64),
+    /// cx cy rx ry
+    Ellipse(f64, f64, f64, f64),
+    /// 多边形顶点(px)
+    Polygon(Vec<(f64, f64)>),
+}
+
+/// filter(L3;CPU 栅格路径区域后处理)。
+#[derive(Debug, Clone, Default)]
+pub struct FilterDef {
+    /// 高斯模糊半径 px。
+    pub blur: f64,
+    /// 亮度乘子(1 = 不变)。
+    pub brightness: f64,
+    /// 饱和度乘子(1 = 不变)。
+    pub saturate: f64,
+}
+
+impl FilterDef {
+    pub fn is_identity(&self) -> bool {
+        self.blur <= 0.0 && (self.brightness - 1.0).abs() < 1e-6 && (self.saturate - 1.0).abs() < 1e-6
+    }
+}
+
+/// 解析 clip-path 声明(相对项矩形;百分比按宽/高)。
+pub fn parse_clip_path(v: &str, w: f64, h: f64) -> Option<ClipDef> {
+    let t = v.trim();
+    let args = |name: &str| -> Option<String> {
+        t.strip_prefix(name)?
+            .strip_suffix(')')
+            .map(|s| s.to_string())
+    };
+    let nums = |s: &str| -> Vec<f64> {
+        s.split_whitespace()
+            .filter_map(|tok| {
+                if let Some(p) = tok.strip_suffix('%') {
+                    p.parse::<f64>().ok()
+                } else {
+                    vb_common::units::parse_px(tok)
+                }
+            })
+            .collect()
+    };
+    let pct = |tok: &str, base: f64| -> f64 {
+        if let Some(p) = tok.strip_suffix('%') {
+            p.parse::<f64>().unwrap_or(0.0) / 100.0 * base
+        } else {
+            vb_common::units::parse_px(tok).unwrap_or(0.0)
+        }
+    };
+    if let Some(a) = args("inset(") {
+        let toks: Vec<&str> = a.split_whitespace().collect();
+        if toks.is_empty() {
+            return None;
+        }
+        let one = |tok: &str, base: f64| pct(tok, base);
+        let (top, right, bottom, left) = match toks.len() {
+            1 => (toks[0], toks[0], toks[0], toks[0]),
+            2 => (toks[0], toks[1], toks[0], toks[1]),
+            3 => (toks[0], toks[1], toks[2], toks[1]),
+            _ => (toks[0], toks[1], toks[2], toks[3]),
+        };
+        return Some(ClipDef::Inset(
+            one(top, h),
+            one(right, w),
+            one(bottom, h),
+            one(left, w),
+        ));
+    }
+    if let Some(a) = args("circle(") {
+        let mut it = a.split("at");
+        let r_tok = it.next().unwrap_or("").trim();
+        let r = if let Some(p) = r_tok.strip_suffix('%') {
+            p.parse::<f64>().unwrap_or(50.0) / 100.0 * w.min(h)
+        } else {
+            vb_common::units::parse_px(r_tok).unwrap_or(w.min(h) / 2.0)
+        };
+        let pos = it.next().unwrap_or("50% 50%");
+        let mut it2 = pos.split_whitespace();
+        let cx = pct(it2.next().unwrap_or("50%"), w);
+        let cy = pct(it2.next().unwrap_or("50%"), h);
+        return Some(ClipDef::Circle(cx, cy, r));
+    }
+    if let Some(a) = args("ellipse(") {
+        let mut it = a.split("at");
+        let r_toks: Vec<&str> = it.next().unwrap_or("").split_whitespace().collect();
+        let rx = pct(r_toks.first().copied().unwrap_or("50%"), w);
+        let ry = pct(r_toks.get(1).copied().unwrap_or("50%"), h);
+        let pos = it.next().unwrap_or("50% 50%");
+        let mut it2 = pos.split_whitespace();
+        let cx = pct(it2.next().unwrap_or("50%"), w);
+        let cy = pct(it2.next().unwrap_or("50%"), h);
+        return Some(ClipDef::Ellipse(cx, cy, rx, ry));
+    }
+    if let Some(a) = args("polygon(") {
+        let mut pts = Vec::new();
+        for pair in a.split(',') {
+            let mut it = pair.split_whitespace();
+            let x = pct(it.next()?, w);
+            let y = pct(it.next()?, h);
+            pts.push((x, y));
+        }
+        if pts.len() >= 3 {
+            return Some(ClipDef::Polygon(pts));
+        }
+    }
+    None
+}
+
+/// 解析 filter 声明(blur/brightness/saturate 组合)。
+pub fn parse_filter(v: &str) -> Option<FilterDef> {
+    let t = v.trim();
+    if t.is_empty() || t == "none" {
+        return None;
+    }
+    let mut f = FilterDef::default();
+    let mut any = false;
+    let bytes = t.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_alphabetic() {
+            let start = i;
+            while i < bytes.len() && (bytes[i].is_ascii_alphabetic() || bytes[i] == b'-') {
+                i += 1;
+            }
+            let name = &t[start..i];
+            if i < bytes.len() && bytes[i] == b'(' {
+                let pstart = i + 1;
+                let mut j = pstart;
+                while j < bytes.len() && bytes[j] != b')' {
+                    j += 1;
+                }
+                let inner = &t[pstart..j.min(t.len())];
+                let val = vb_common::units::parse_px(inner).unwrap_or_else(|| {
+                    inner
+                        .trim()
+                        .parse::<f64>()
+                        .unwrap_or(1.0)
+                });
+                match name {
+                    "blur" => {
+                        f.blur = val;
+                        any = true;
+                    }
+                    "brightness" => {
+                        f.brightness = val;
+                        any = true;
+                    }
+                    "saturate" => {
+                        f.saturate = val;
+                        any = true;
+                    }
+                    _ => {}
+                }
+                i = j + 1;
+                continue;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    if any {
+        Some(f)
+    } else {
+        None
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DrawKind {
     VectorPath,
@@ -70,6 +244,10 @@ pub struct DrawItem {
     pub path: Option<vb_common::geom::BezPath>,
     /// 已解码位图(B3):由 attach_images 挂载;缺失时各端回退占位。
     pub image: Option<BitmapData>,
+    /// clip-path(L2;动画逐帧可变)。
+    pub clip: Option<ClipDef>,
+    /// filter(L3;动画逐帧可变)。
+    pub filter: Option<FilterDef>,
 }
 
 /// 已解码位图(RGBA8 直 alpha)。挂在 DrawItem 上供 GPU/SVG 消费;
@@ -500,6 +678,8 @@ pub fn encode_artboard_opts(
             rot: 0.0,
             path: None,
             image: None,
+            clip: None,
+            filter: None,
         });
     }
     let children = ab.children.clone();
@@ -647,6 +827,10 @@ fn encode_node(
                 .and_then(parse_rotate_deg)
                 .unwrap_or(0.0),
             image: None,
+            clip: node
+                .style_get("clip-path")
+                .and_then(|v| parse_clip_path(v, w, h)),
+            filter: node.style_get("filter").and_then(parse_filter),
         });
     }
     let children = node.children.clone();

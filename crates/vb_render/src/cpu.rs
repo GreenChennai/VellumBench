@@ -48,6 +48,11 @@ pub fn render_png(
             base
         };
         draw_item(&mut pixmap, item, scale, tf, project_dir, &mut warnings);
+        if let Some(f) = &item.filter {
+            if !f.is_identity() {
+                apply_filter_region(&mut pixmap, item, scale, f);
+            }
+        }
     }
 
     let png = pixmap
@@ -67,6 +72,27 @@ fn draw_item(
     let [x, y, iw, ih] = item.rect;
     if iw <= 0.0 || ih <= 0.0 {
         return;
+    }
+    // clip-path(L2):inset 快路径直接缩矩形;圆/椭圆/多边形走离屏蒙版
+    if let Some(clip) = &item.clip {
+        match clip {
+            crate::encode::ClipDef::Inset(t, r, b, l) => {
+                let mut trimmed = item.clone();
+                trimmed.clip = None;
+                trimmed.rect = [
+                    x + l,
+                    y + t,
+                    (iw - l - r).max(0.0),
+                    (ih - t - b).max(0.0),
+                ];
+                draw_item(pixmap, &trimmed, scale, tf, project_dir, warnings);
+                return;
+            }
+            _ => {
+                apply_clip_mask(pixmap, item, scale, tf, project_dir, warnings);
+                return;
+            }
+        }
     }
     // P4 矢量路径:kurbo BezPath -> tiny_skia Path
     if let Some(kpath) = &item.path {
@@ -521,4 +547,186 @@ pub fn kurbo_to_skia_path(
         }
     }
     pb.finish()
+}
+
+/// 圆/椭圆/多边形 clip:离屏渲染该项 → 以裁剪形状 alpha 为蒙版相乘 → 合成。
+fn apply_clip_mask(
+    pixmap: &mut Pixmap,
+    item: &DrawItem,
+    scale: f32,
+    tf: Transform,
+    project_dir: Option<&std::path::Path>,
+    warnings: &mut Vec<String>,
+) {
+    let [x, y, w, h] = item.rect;
+    let bx = ((x * scale as f64).floor() as i32 - 2).max(0);
+    let by = ((y * scale as f64).floor() as i32 - 2).max(0);
+    let bw = ((w * scale as f64).ceil() as u32 + 4).min(pixmap.width().saturating_sub(bx as u32));
+    let bh = ((h * scale as f64).ceil() as u32 + 4).min(pixmap.height().saturating_sub(by as u32));
+    if bw == 0 || bh == 0 {
+        return;
+    }
+    let Some(mut sub) = Pixmap::new(bw, bh) else {
+        return;
+    };
+    let shift = Transform::from_translate(-(bx as f32), -(by as f32));
+    let mut trimmed = item.clone();
+    trimmed.clip = None;
+    draw_item(&mut sub, &trimmed, scale, tf.post_concat(shift), project_dir, warnings);
+    let Some(mut mask) = Pixmap::new(bw, bh) else {
+        return;
+    };
+    let mut white = Paint::default();
+    white.anti_alias = true;
+    white.set_color(Color::WHITE);
+    if let Some(shape) = clip_shape_path(item, scale) {
+        let local = Transform::from_translate(bx as f32, by as f32)
+            .invert()
+            .unwrap_or_default();
+        mask.fill_path(&shape, &white, FillRule::Winding, local, None);
+    }
+    let mask_px = mask.pixels();
+    let sub_px = sub.pixels_mut();
+    for (i, px) in sub_px.iter_mut().enumerate() {
+        let m = mask_px[i].alpha();
+        if m == 255 {
+            continue;
+        }
+        let c = px.demultiply();
+        let a = (c.alpha() as u32 * m as u32 / 255).min(255) as u8;
+        *px = tiny_skia::ColorU8::from_rgba(c.red(), c.green(), c.blue(), a).premultiply();
+    }
+    pixmap.draw_pixmap(
+        bx,
+        by,
+        sub.as_ref(),
+        &tiny_skia::PixmapPaint::default(),
+        Transform::identity(),
+        None,
+    );
+}
+
+/// 裁剪形状(画布坐标 skia path)。
+fn clip_shape_path(item: &DrawItem, scale: f32) -> Option<SkPath> {
+    let [x, y, w, h] = item.rect;
+    let sc = scale as f64;
+    let mut pb = PathBuilder::new();
+    match &item.clip {
+        Some(crate::encode::ClipDef::Circle(cx, cy, r)) => {
+            pb.push_circle((cx * sc) as f32, (cy * sc) as f32, (*r * sc) as f32);
+        }
+        Some(crate::encode::ClipDef::Ellipse(cx, cy, rx, ry)) => {
+            let rect = tiny_skia::Rect::from_ltrb(
+                ((cx - rx) * sc) as f32,
+                ((cy - ry) * sc) as f32,
+                ((cx + rx) * sc) as f32,
+                ((cy + ry) * sc) as f32,
+            )?;
+            pb.push_oval(rect);
+        }
+        Some(crate::encode::ClipDef::Polygon(pts)) => {
+            for (i, (px, py)) in pts.iter().enumerate() {
+                let px = (px * sc) as f32;
+                let py = (py * sc) as f32;
+                if i == 0 {
+                    pb.move_to(px, py);
+                } else {
+                    pb.line_to(px, py);
+                }
+            }
+            pb.close();
+        }
+        Some(crate::encode::ClipDef::Inset(t, r, b, l)) => {
+            let rect = tiny_skia::Rect::from_ltrb(
+                ((x + l) * sc) as f32,
+                ((y + t) * sc) as f32,
+                ((x + w - r) * sc) as f32,
+                ((y + h - b) * sc) as f32,
+            )?;
+            pb.push_rect(rect);
+        }
+        None => return None,
+    }
+    pb.finish()
+}
+
+/// filter(L3)区域后处理:模糊 + 亮度 + 饱和度(项 bbox 外扩模糊半径)。
+fn apply_filter_region(
+    pixmap: &mut Pixmap,
+    item: &DrawItem,
+    scale: f32,
+    f: &crate::encode::FilterDef,
+) {
+    let [x, y, w, h] = item.rect;
+    let margin = (f.blur * scale as f64 * 2.0).ceil() as i32;
+    let bw = pixmap.width() as i32;
+    let bh = pixmap.height() as i32;
+    if bw < 2 || bh < 2 {
+        return;
+    }
+    let x0 = ((x * scale as f64).floor() as i32 - margin).clamp(0, bw - 1);
+    let y0 = ((y * scale as f64).floor() as i32 - margin).clamp(0, bh - 1);
+    let x1 = (((x + w) * scale as f64).ceil() as i32 + margin).clamp(x0 + 1, bw);
+    let y1 = (((y + h) * scale as f64).ceil() as i32 + margin).clamp(y0 + 1, bh);
+    let rw = (x1 - x0) as u32;
+    let rh = (y1 - y0) as u32;
+    if rw == 0 || rh == 0 {
+        return;
+    }
+    // 区域像素 → 直 alpha RGBA
+    let mut crop = image::RgbaImage::new(rw, rh);
+    for dy in 0..rh {
+        for dx in 0..rw {
+            if let Some(px) = pixmap.pixel((x0 + dx as i32) as u32, (y0 + dy as i32) as u32) {
+                let c = px.demultiply();
+                crop.put_pixel(dx, dy, image::Rgba([c.red(), c.green(), c.blue(), c.alpha()]));
+            }
+        }
+    }
+    let mut worked = image::DynamicImage::ImageRgba8(crop);
+    if f.blur > 0.0 {
+        worked = worked.blur(((f.blur * scale as f64) as f32).max(0.5));
+    }
+    let need_sat = (f.saturate - 1.0).abs() > 1e-3;
+    let need_bri = (f.brightness - 1.0).abs() > 1e-3;
+    if need_sat || need_bri {
+        let sat: f32 = f.saturate as f32;
+        let bri: f32 = f.brightness as f32;
+        if let Some(img) = worked.as_mut_rgba8() {
+        for p in img.pixels_mut() {
+            let mut rgb = [p[0], p[1], p[2]];
+            if need_sat {
+                let l =
+                    0.2126 * rgb[0] as f32 + 0.7152 * rgb[1] as f32 + 0.0722 * rgb[2] as f32;
+                for ch in 0..3 {
+                    let v = l + (rgb[ch] as f32 - l) * sat;
+                    rgb[ch] = v.clamp(0.0, 255.0) as u8;
+                }
+            }
+            if need_bri {
+                for ch in 0..3 {
+                    rgb[ch] = ((rgb[ch] as f32) * bri).clamp(0.0, 255.0) as u8;
+                }
+            }
+            p[0] = rgb[0];
+            p[1] = rgb[1];
+            p[2] = rgb[2];
+            }
+        }
+    }
+    let out = worked.to_rgba8();
+    let pw = pixmap.width();
+    for dy in 0..rh {
+        for dx in 0..rw {
+            let p = out.get_pixel(dx, dy);
+            let c = tiny_skia::ColorU8::from_rgba(p[0], p[1], p[2], p[3]).premultiply();
+            let gx = (x0 + dx as i32) as u32;
+            let gy = (y0 + dy as i32) as u32;
+            let idx = (gy * pw + gx) as usize;
+            let total = (pw * pixmap.height()) as usize;
+            if idx < total {
+                pixmap.pixels_mut()[idx] = c;
+            }
+        }
+    }
 }
