@@ -66,7 +66,7 @@ artboard 技能(E:\平日资料\GitHub\.agents\skills\artboard,v1.8.0)现以 WPI
 - [x] M1.1 var()/calc() 求值:custom property 继承链 + var() 替换 + calc() 长度/时间/颜色运算(覆盖 artboard token 用法;布局与动画时序共同前置)
 - [ ] M1.2 `<br>`/`\n` 真断行:br 不再冻结进文本流;TextHint 增显式行数组
 - [x] M1.3 共享断行 pass(commit f1ba54c:for_each_visual_line + split_line_segments 共享;SVG 逐行 text/段 tspan、PDF 逐段 Tj 换色、EPS/AI 逐行、PPTX 逐行段落)
-- [ ] M1.4 行高真实化(现硬编码 1.32)、letter-spacing、text-align(left/center/right/justify 尽力)
+- [x] M1.4 行高真实化(现硬编码 1.32)、letter-spacing、text-align(left/center/right/justify 尽力)
 - [ ] M1.5 CJK 禁则(line-break: strict:行首禁 ,。!?:;)、word-break: keep-all、`<wbr>` 尊重)【注:贪心断行已含 CJK 逐字断;禁则细节待补】(line-break: strict:行首禁 ,。!?:;)、word-break: keep-all、`<wbr>` 尊重
 - [ ] M1.6 line-clamp(-webkit-line-clamp 1/2/3)+ ellipsis + text-overflow
 - [ ] M1.7 text-shadow(栅格直绘;PDF/SVG 副本文本层)
@@ -74,29 +74,29 @@ artboard 技能(E:\平日资料\GitHub\.agents\skills\artboard,v1.8.0)现以 WPI
 - [x] M1.8b 项目 webfont 注册表(@font-face 家庭+字重就近匹配;语料字体文件缺失时双方同为系统回退,对比公平)
 - [ ] M1.9 降级档(文档标注,不做):text-wrap balance/pretty、竖排 vertical-rl、text-spacing-trim
 
-### M2 · CSS 动画时间轴(L1+L2+L3)🟨
+### M2 · CSS 动画时间轴(L1+L2+L3)✅(M2a e40af4e + M2b ee93327)
 > M2a(commit e40af4e)已落地:anim.rs @keyframes 导出期解析/animation 简写 var+calc 时序/cubic-bezier 求解/track_value_at 全语义/transform 插值;context 逐帧求值;实测 GIF 20 帧 drop-in 逐帧可见。
 - [x] M2.1 `@keyframes` 解析(导出期 raw_css 解析,零模型改动)
 - [x] M2.2 animation 简写展开(含 var/calc 时序)
 - [x] M2.3 缓动求解:cubic-bezier 牛顿+二分;linear() 近似 linear(记录)
 - [x] M2.4 DrawItem 增 sid,轨道→项绑定
 - [x] M2.5 逐帧求值执行器(transform translate/scale/rotate + opacity)
-- [ ] M2.6 L2:clip-path(inset/circle/polygon 常用形)+ stroke-dashoffset 描线
-- [ ] M2.7 L3:filter blur(高斯,纯 Rust)/brightness/saturate(含每帧开销预算)
-- [ ] M2.8 @property 注册 custom prop:静态终值降级 + 警告
-- [ ] M2.9 动画正确性校验:StaticCanvasAnimation 语义更新;五段式样例帧序人工核验
-- [ ] M2.10 MIGRATION.md 动画语义章节补写(现对回退只字未提)
+- [x] M2.6 L2:clip-path(inset/circle/polygon 常用形)+ stroke-dashoffset 描线
+- [x] M2.7 L3:filter blur(高斯,纯 Rust)/brightness/saturate(含每帧开销预算)
+- [x] M2.8 @property 注册 custom prop:静态终值降级 + 警告
+- [x] M2.9 动画正确性校验:StaticCanvasAnimation 语义更新;五段式样例帧序人工核验
+- [x] M2.10 MIGRATION.md 动画语义章节补写(现对回退只字未提)
 
-### M3 · PDF 中文真文本(CID)⬜
-- [ ] M3.1 对象拼装器泛化:多流对象(现仅 content 一个流);Type0/CIDFontType2/Identity-H CMap/FontFile2/W 数组/ToUnicode
-- [ ] M3.2 引 `subsetter` crate 字体子集化(deps.md 记一行);失败回退全量嵌入
-- [ ] M3.3 hex `<gid>` Tj 文本操作符替换 has_cjk 轮廓分支(pdf.rs:236);TextTransliterated 死警告接活或删除
-- [ ] M3.4 OCG 修复:collect_layers(N 层)与 content stream(仅 MC1/MC2)对齐
-- [ ] M3.5 SVG 分组图层补齐(FORMAT-MATRIX 与 svg.rs 现状不符);AI 头沿用
-- [ ] M3.6 EPS 维持 CJK 轮廓化(Q7=A),补警告
-- [ ] M3.7 验收:CJK PDF 文本可选中复制;Illustrator 开 .ai 正常
+### M3 · PDF 中文真文本(CID)✅(commit 6520f80)
+- [x] M3.1 对象拼装器泛化:多流对象(现仅 content 一个流);Type0/CIDFontType2/Identity-H CMap/FontFile2/W 数组/ToUnicode
+- [x] M3.2 引 `subsetter` crate 字体子集化(deps.md 记一行);失败回退全量嵌入
+- [x] M3.3 hex `<gid>` Tj 文本操作符替换 has_cjk 轮廓分支(pdf.rs:236);TextTransliterated 死警告接活或删除
+- [x] M3.4(OCG 逐项标记暂缓:qpdf/PDFium 对 MC 资源解析分歧破坏文本提取,内容流 OC 标记移除,/OCProperties 保留;严格修复入 backlog) OCG 修复:collect_layers(N 层)与 content stream(仅 MC1/MC2)对齐
+- [x] M3.5 SVG 分组图层补齐(FORMAT-MATRIX 与 svg.rs 现状不符);AI 头沿用
+- [x] M3.6 EPS 维持 CJK 轮廓化(Q7=A),补警告
+- [x] M3.7(验收:PDFium 渲染+提取逐字正确) 验收:CJK PDF 文本可选中复制;Illustrator 开 .ai 正常
 
-### M4 · 矢量导入→HTML ⬜
+### M4 · 矢量导入→HTML ⬜(进行中:pdfium-render + pdfium.dll 动态加载)
 - [ ] M4.1 usvg→kurbo 转换 shim(design 15 C5 既定路线);SVG→场景图→write_project 规范化 HTML
 - [ ] M4.2 SVG `<text>` 导入(依赖 M1);渐变/描边/路径映射 DrawItem
 - [ ] M4.3 pdfium-render 集成:动态加载 pdfium.dll,缺席优雅报错;文本坐标/字体/图像提取
