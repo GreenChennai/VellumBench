@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use vb_css::{parse_decls, Decl};
 use vb_html::{trim_html_ws, Element, HtmlDom, HtmlNode, NodeData};
 
-use crate::model::{Document, Geom, Node, NodeKind, TextMode};
+use crate::model::{Document, Geom, Node, NodeKind, SegStyle, TextMode, TextSeg};
 use crate::Result;
 use crate::VbError;
 
@@ -24,8 +24,58 @@ const ARTBOARD_CLASSES: &[&str] = &["vb-artboard", "vs-artboard", "vsm-artboard"
 const LAYER_CLASSES: &[&str] = &["vb-layer", "vs-layer", "vsm-layer"];
 const GROUP_CLASSES: &[&str] = &["vb-group", "vs-group", "vsm-group"];
 /// 无法建模为可编辑对象的标签 → 冻结块 / 透传。
+/// pre 空白敏感(折叠会毁排版),整体冻结保真。
 const FROZEN_TAGS: &[&str] = &[
     "svg", "iframe", "video", "audio", "canvas", "object", "embed", "template", "map", "math",
+    "pre",
+];
+/// 块级容器标签:打断行内分组,子内容递归建树(浏览器默认 display:block 语义)。
+const BLOCK_TAGS: &[&str] = &[
+    "div",
+    "section",
+    "article",
+    "header",
+    "footer",
+    "main",
+    "aside",
+    "nav",
+    "ul",
+    "ol",
+    "li",
+    "table",
+    "thead",
+    "tbody",
+    "tfoot",
+    "tr",
+    "td",
+    "th",
+    "form",
+    "fieldset",
+    "blockquote",
+    "pre",
+    "figure",
+    "figcaption",
+    "details",
+    "summary",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "p",
+    "address",
+    "dl",
+    "dt",
+    "dd",
+    "figure",
+    "figcaption",
+    "center",
+];
+/// 即便只含行内内容也保持为容器 Box 的标签(承载自身视觉/层级语义)。
+const CONTAINER_BOX_TAGS: &[&str] = &[
+    "div", "section", "article", "header", "footer", "main", "aside", "nav", "ul", "ol", "form",
+    "fieldset", "table", "thead", "tbody", "tfoot", "tr", "figure", "details",
 ];
 
 pub struct ImportResult {
@@ -205,9 +255,8 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
             doc_title.clone()
         };
         let ab = importer.doc.doc_new_artboard(&name);
-        for child in loose {
-            importer.build_into(ab, child);
-        }
+        let loose_refs: Vec<&HtmlNode> = loose.to_vec();
+        importer.build_children(ab, &loose_refs);
         // 估算画板高度:内容最大 y+h(下限 900)
         let mut maxb = 900.0f64;
         if let Some(ab_node) = importer.doc.node_mut(ab) {
@@ -224,9 +273,8 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
             .push("未找到 vb-artboard 画板标记:已合成单一画板".to_string());
     } else if !loose.is_empty() {
         let first = artboard_nodes[0];
-        for child in loose {
-            importer.build_into(first, child);
-        }
+        let loose_refs: Vec<&HtmlNode> = loose.to_vec();
+        importer.build_children(first, &loose_refs);
         importer
             .warnings
             .push("画板外存在游离内容:已并入第一个画板".to_string());
@@ -271,7 +319,6 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
             y += h + 80.0;
         }
     }
-
     // body 内的 script 等透传已在 build 时进入 trailing_raw
     Ok(ImportResult {
         doc,
@@ -559,7 +606,79 @@ fn valid_class(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-// ---------- 节点构建 ----------
+// ---------- 行内内容分组 ----------
+
+/// 行内内容累积器:同一行内格式化上下文的文本/`<br>`/行内元素收进一个
+/// 富文本 Text 节点;`\n` 是结构性换行(来自 `<br>`),普通空白折叠为空格。
+/// 空白状态跨片段连续(浏览器语义):「Hello 」+`<b>`world`</b>` 的词间空格
+/// 落在后段行内,不因元素边界丢失;组首/行首空白吸收。
+#[derive(Default)]
+struct InlineGroup {
+    text: String,
+    segs: Vec<(usize, usize, SegStyle)>,
+    styles: Vec<SegStyle>,
+    /// 上一片段以空白结尾(下一个非空白字符前要补一个空格)。
+    ends_with_ws: bool,
+    /// 位于组首或 `\n` 之后(行首空白吸收)。
+    line_start: bool,
+}
+
+impl InlineGroup {
+    fn cur(&self) -> SegStyle {
+        self.styles.last().cloned().unwrap_or_default()
+    }
+
+    fn push_text(&mut self, raw: &str) {
+        let st = self.cur();
+        let styled = st != SegStyle::default();
+        let mut out = String::new();
+        let mut pending_ws = self.ends_with_ws;
+        // 只折叠 ASCII 空白(NBSP 等不空白折叠,CSS/HTML 规范语义)
+        for c in raw.chars() {
+            if c.is_ascii_whitespace() {
+                pending_ws = true;
+                continue;
+            }
+            if pending_ws && !(self.text.is_empty() && out.is_empty()) && !self.line_start {
+                out.push(' ');
+            }
+            pending_ws = false;
+            self.line_start = false;
+            out.push(c);
+        }
+        if out.is_empty() {
+            self.ends_with_ws = self.ends_with_ws || pending_ws;
+            return;
+        }
+        self.ends_with_ws = pending_ws;
+        if styled {
+            let start = self.text.len();
+            self.text.push_str(&out);
+            self.segs.push((start, self.text.len(), st));
+        } else {
+            self.text.push_str(&out);
+        }
+    }
+
+    fn push_break(&mut self) {
+        let st = self.cur();
+        let start = self.text.len();
+        self.text.push('\n');
+        if st != SegStyle::default() {
+            self.segs.push((start, start + 1, st));
+        }
+        self.ends_with_ws = false;
+        self.line_start = true;
+    }
+
+    fn push_style(&mut self, s: SegStyle) {
+        self.styles.push(s);
+    }
+
+    fn pop_style(&mut self) {
+        self.styles.pop();
+    }
+}
 
 struct NodeImporter<'a> {
     doc: &'a mut Document,
@@ -641,9 +760,8 @@ impl<'a> NodeImporter<'a> {
             comment,
             sid,
         );
-        for child in &el_node.children {
-            self.build_into(id, child);
-        }
+        let child_refs: Vec<&HtmlNode> = el_node.children.iter().collect();
+        self.build_children(id, &child_refs);
         id
     }
 
@@ -681,56 +799,208 @@ impl<'a> NodeImporter<'a> {
         std::mem::take(&mut self.pending_comments)
     }
 
-    /// 把一个 body/画板子元素构建为节点并挂到 parent 下。
-    fn build_into(&mut self, parent: NodeIdT, node: &HtmlNode) {
-        match &node.data {
-            NodeData::Comment(c) => {
-                // 连续注释进队列,下一个节点全部带走(此前单槽后到覆盖,
-                // `<!-- one --><!-- two -->` 只剩 two)
-                self.pending_comments.push(c.clone());
-            }
-            NodeData::Text(t) => {
-                if !t.trim().is_empty() {
-                    let sid = self.doc.alloc_sid();
-                    let mut n = Node::new(
-                        NodeKind::Text {
-                            text: t.clone(),
-                            mode: TextMode::Point,
-                        },
-                        "文本",
-                        sid,
-                    );
-                    n.tag = "#text".to_string();
-                    self.attach(parent, n);
-                }
-            }
-            NodeData::Element(el) => {
-                // 透传类(script):进入 trailing_raw,不参与画布
-                if el.name == "script" {
-                    let raw = serialize_node(node);
-                    self.doc.trailing_raw.push(raw.trim().to_string());
-                    return;
-                }
-                if el.name == "style" || el.name == "link" {
-                    // body 里的样式表/样式链接进 head_extra(HTML 侧透传)。
-                    // 此前进 raw_css 会把 HTML 标签字面写进 main.css 损坏样式表;
-                    // 其规则不参与 v0.1 画布样式合并(与 head style 等价收窄)。
-                    let raw = serialize_node(node);
-                    self.doc.head_extra.push(raw.trim().to_string());
-                    return;
-                }
-                let id = self.build_node(node, parent);
-                if id.is_some() && !has_explicit_position(node, self.sheet) {
-                    if let Some(el2) = node.as_element() {
-                        self.warnings.push(format!(
-                            "元素 <{}> 无 left/top 定位(流式页面),已摆到 (0,0)",
-                            el2.name
-                        ));
+    /// 把一组 body/画板子元素构建为节点(行内内容分组进富文本段)。
+    fn build_children(&mut self, parent: NodeIdT, children: &[&HtmlNode]) {
+        let mut g = InlineGroup::default();
+        self.build_children_inner(Some(parent), children, &mut g);
+        self.flush_group(parent, g);
+    }
+
+    fn build_children_inner(
+        &mut self,
+        parent: Option<NodeIdT>,
+        children: &[&HtmlNode],
+        g: &mut InlineGroup,
+    ) {
+        // parent=None:叶文本收集模式(调用方已保证无块级边界),只填组不建节点
+        for child in children {
+            match &child.data {
+                NodeData::Comment(c) => {
+                    // 连续注释进队列,下一个节点全部带走
+                    if parent.is_some() {
+                        self.pending_comments.push(c.clone());
                     }
                 }
+                NodeData::Text(t) => g.push_text(t),
+                NodeData::Element(el) => {
+                    match el.name.as_str() {
+                        // 透传类(script):进入 trailing_raw,不参与画布
+                        "script" => {
+                            if let Some(p) = parent {
+                                self.flush_group(p, std::mem::take(g));
+                                let raw = serialize_node(child);
+                                self.doc.trailing_raw.push(raw.trim().to_string());
+                            }
+                        }
+                        // body 里的样式表/样式链接进 head_extra(HTML 侧透传)
+                        "style" | "link" => {
+                            if let Some(p) = parent {
+                                self.flush_group(p, std::mem::take(g));
+                                let raw = serialize_node(child);
+                                self.doc.head_extra.push(raw.trim().to_string());
+                            }
+                        }
+                        "br" => g.push_break(),
+                        "wbr" => {}
+                        "hr" | "img" => {
+                            if let Some(p) = parent {
+                                self.flush_group(p, std::mem::take(g));
+                                self.build_node_into(p, child);
+                            }
+                        }
+                        _ if self.is_block_boundary(el) => {
+                            if let Some(p) = parent {
+                                self.flush_group(p, std::mem::take(g));
+                                self.build_node_into(p, child);
+                            }
+                        }
+                        _ => {
+                            // 行内元素:样式入栈,子内容续入同一分组
+                            let st = self.inline_style_of(el);
+                            let styled = st != SegStyle::default();
+                            if styled {
+                                g.push_style(st);
+                            }
+                            let inner: Vec<&HtmlNode> = child.children.iter().collect();
+                            self.build_children_inner(parent, &inner, g);
+                            if styled {
+                                g.pop_style();
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
+    }
+
+    /// 单个块级子元素 → 节点(含「无 left/top 定位」告警)。
+    fn build_node_into(&mut self, parent: NodeIdT, node: &HtmlNode) {
+        let id = self.build_node(node, parent);
+        if id.is_some() && !has_explicit_position(node, self.sheet) {
+            if let Some(el2) = node.as_element() {
+                self.warnings.push(format!(
+                    "元素 <{}> 无 left/top 定位(流式页面),已摆到 (0,0)",
+                    el2.name
+                ));
+            }
+        }
+    }
+
+    /// 分组定稿:修剪首尾空白(偏移平移),合并相邻同样式段;空文本返回 None。
+    fn finalize_group(g: &InlineGroup) -> Option<(String, Vec<TextSeg>)> {
+        let raw = &g.text;
+        // 只修剪 ASCII 空白(NBSP 是可见内容)
+        let text = raw.trim_matches(|c: char| c.is_ascii_whitespace());
+        if text.is_empty() {
+            return None;
+        }
+        let lead = raw.len() - raw.trim_start().len();
+        let end_lim = lead + text.len();
+        let mut segs: Vec<TextSeg> = Vec::new();
+        for (s, e, st) in &g.segs {
+            let (ns, ne) = (
+                s.saturating_sub(lead).min(text.len()),
+                (*e).clamp(lead, end_lim) - lead,
+            );
+            if ns >= ne {
+                continue;
+            }
+            // 相邻同样式段合并(包括与无样式邻接的边界情形不做——无样式不记段)
+            if let Some(last) = segs.last_mut() {
+                if last.style == *st && last.end == ns {
+                    last.end = ne;
+                    continue;
+                }
+            }
+            segs.push(TextSeg {
+                start: ns,
+                end: ne,
+                style: st.clone(),
+            });
+        }
+        Some((text.to_string(), segs))
+    }
+
+    fn flush_group(&mut self, parent: NodeIdT, g: InlineGroup) {
+        let Some((text, segments)) = Self::finalize_group(&g) else {
+            return;
+        };
+        let sid = self.doc.alloc_sid();
+        let mut n = Node::new(
+            NodeKind::Text {
+                text,
+                mode: TextMode::Point,
+                segments,
+            },
+            "文本",
+            sid,
+        );
+        n.tag = "#text".to_string();
+        self.attach(parent, n);
+    }
+
+    /// 元素是否打断行内分组(显式 display 覆盖优先,span.tl{display:block} 是块)。
+    fn is_block_boundary(&self, el: &Element) -> bool {
+        // 链接保持独立节点(href/aria 等属性与身份不丢);冻结标签同理
+        if el.name == "a" || FROZEN_TAGS.contains(&el.name.as_str()) {
+            return true;
+        }
+        let mut decls = self.merged_class_decls(el);
+        if let Some(s) = el.attr("style") {
+            decls = merge_decls(decls, parse_decls(s));
+        }
+        if let Some(d) = decls
+            .iter()
+            .find(|d| d.prop == "display")
+            .map(|d| d.value.trim().to_string())
+        {
+            match d.as_str() {
+                "inline" => {}
+                // display:none 单独成节点(hidden 保真),同样打断分组
+                _ => return true,
+            }
+        }
+        BLOCK_TAGS.contains(&el.name.as_str())
+    }
+
+    /// 行内元素的样式覆盖(color/粗斜体/字号/字族)。
+    /// 语义标签的 UA 默认样式(b/strong→粗,em/i→斜)在此落为显式覆盖。
+    fn inline_style_of(&self, el: &Element) -> SegStyle {
+        let mut decls = self.merged_class_decls(el);
+        if let Some(s) = el.attr("style") {
+            decls = merge_decls(decls, parse_decls(s));
+        }
+        let get = |p: &str| decls.iter().find(|d| d.prop == p).map(|d| d.value.clone());
+        let semantic_bold =
+            matches!(el.name.as_str(), "b" | "strong") && get("font-weight").is_none();
+        let semantic_italic = matches!(el.name.as_str(), "em" | "i" | "cite" | "dfn" | "var")
+            && get("font-style").is_none();
+        SegStyle {
+            color: get("color"),
+            bold: get("font-weight")
+                .map(|v| matches!(v.as_str(), "bold" | "600" | "700" | "800" | "900"))
+                .or(if semantic_bold { Some(true) } else { None }),
+            italic: get("font-style")
+                .map(|v| v == "italic" || v == "oblique")
+                .or(if semantic_italic { Some(true) } else { None }),
+            font_size: get("font-size").and_then(|v| vb_common::units::parse_px(&v)),
+            font_family: get("font-family"),
+        }
+    }
+
+    /// 子内容是否全部可内联(决定元素成为叶文本还是容器 Box)。
+    fn all_inline(&self, node: &HtmlNode) -> bool {
+        node.children.iter().all(|c| match &c.data {
+            NodeData::Text(_) | NodeData::Comment(_) => true,
+            NodeData::Element(el) => match el.name.as_str() {
+                "br" | "wbr" => true,
+                "img" | "script" | "style" | "link" | "hr" => false,
+                _ if self.is_block_boundary(el) => false,
+                _ => self.all_inline(c),
+            },
+            _ => true,
+        })
     }
 
     fn attach(&mut self, parent: NodeIdT, n: Node) -> NodeIdT {
@@ -787,15 +1057,21 @@ impl<'a> NodeImporter<'a> {
             let raw = serialize_node(node);
             kind = NodeKind::Frozen { html: raw };
         } else {
-            let has_element_children = node.children.iter().any(|c| c.as_element().is_some());
             let all_text = collect_text(node);
-            if !has_element_children
-                && !trim_html_ws(&all_text).is_empty()
-                && !matches!(el.name.as_str(), "div" | "section" | "li" | "ul" | "form")
-            {
+            let has_text = !trim_html_ws(&all_text).is_empty();
+            let inline_only = self.all_inline(node);
+            let is_box_tag = CONTAINER_BOX_TAGS.contains(&el.name.as_str());
+            if !is_box_tag && inline_only && has_text {
+                // 叶文本节点:行内子内容(<br>/<span> 等)吸收为富文本段
+                let mut g = InlineGroup::default();
+                let inner: Vec<&HtmlNode> = node.children.iter().collect();
+                self.build_children_inner(None, &inner, &mut g);
+                let (text, segments) = Self::finalize_group(&g)
+                    .unwrap_or((trim_html_ws(&all_text).to_string(), Vec::new()));
                 kind = NodeKind::Text {
-                    text: trim_html_ws(&all_text).to_string(),
+                    text,
                     mode: TextMode::Point,
+                    segments,
                 };
             } else {
                 kind = NodeKind::Box;
@@ -860,7 +1136,7 @@ impl<'a> NodeImporter<'a> {
         n.geom = Geom { x, y, w, h };
         let id = self.attach(parent, n);
 
-        // 容器:递归子节点
+        // 容器:递归子节点(行内内容分组进富文本段)
         if self
             .doc
             .node(id)
@@ -868,9 +1144,7 @@ impl<'a> NodeImporter<'a> {
             .unwrap_or(false)
         {
             let children: Vec<&HtmlNode> = node.children.iter().collect();
-            for c in children {
-                self.build_into(id, c);
-            }
+            self.build_children(id, &children);
         }
         Some(id)
     }

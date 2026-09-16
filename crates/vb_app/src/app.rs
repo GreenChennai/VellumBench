@@ -5324,6 +5324,7 @@ impl VellumApp {
             NodeKind::Text {
                 text: "双击编辑文本".into(),
                 mode,
+                segments: Vec::new(),
             },
             format!("文本 {}", sid.as_str()),
             sid.clone(),

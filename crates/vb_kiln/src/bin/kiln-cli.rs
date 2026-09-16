@@ -129,6 +129,13 @@ fn run_export(
             _ => PathBuf::from("."),
         }
     };
+    // 单文件入口:直接以该文件导入(此前把父目录当项目根,强制要求
+    // index.html,别名 HTML 一律报「目录中无 index.html」—— G1)
+    let import_path = if source.is_dir() {
+        dir.clone()
+    } else {
+        source.clone()
+    };
 
     // 格式解析:--format 优先,否则扩展名
     let ext = output
@@ -147,7 +154,7 @@ fn run_export(
         return 2;
     };
 
-    let imported = match import_project(&dir) {
+    let imported = match import_project(&import_path) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("{{\"ok\":false,\"error\":\"导入失败:{e}\"}}");

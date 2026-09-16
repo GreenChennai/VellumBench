@@ -617,6 +617,7 @@ fn build_node_from_spec(spec: &InsertNodeSpec, doc: &mut Document) -> Result<Nod
                 NodeKind::Text {
                     text: t.clone(),
                     mode: TextMode::Point,
+                    segments: Vec::new(),
                 },
                 name,
                 sid,

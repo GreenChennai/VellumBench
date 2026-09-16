@@ -54,6 +54,9 @@ pub enum NodeKind {
     Text {
         text: String,
         mode: TextMode,
+        /// 富文本段注记:`text` 字节区间 [start,end) 的样式覆盖(升序不重叠,
+        /// 区间外为无样式文本;`\n` 表示 `<br>`)。编辑 text 时必须清空。
+        segments: Vec<TextSeg>,
     },
     Image {
         src: String,
@@ -67,6 +70,24 @@ pub enum NodeKind {
     Frozen {
         html: String,
     },
+}
+
+/// 行内段样式(相对节点自身样式的覆盖;None = 继承节点)。
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SegStyle {
+    pub color: Option<String>,
+    pub bold: Option<bool>,
+    pub italic: Option<bool>,
+    pub font_size: Option<f64>,
+    pub font_family: Option<String>,
+}
+
+/// 富文本段:`text` 的字节区间 + 样式。
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextSeg {
+    pub start: usize,
+    pub end: usize,
+    pub style: SegStyle,
 }
 
 impl NodeKind {

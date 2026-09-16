@@ -1,5 +1,7 @@
 # L0 期望片段(每行一个,必须出现在导出结果里)
-# 关键回归:div/section 内的行内文本段(#text)必须在 HTML 里保留正文
-Hello <b
-world</b>!
+# 关键回归:div/section 内的行内文本段(#text)必须在 HTML 里保留正文;
+# 语义标签 <b> 落为显式样式段,词间空格跨元素边界保留(v1 行内分组格式)
+Hello<span
+ world</span>!
+font-weight: 700
 中文与 ASCII 混排

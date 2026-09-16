@@ -352,6 +352,7 @@ fn text_set_and_rename() {
         NodeKind::Text {
             text: "旧文案".into(),
             mode: vb_doc::model::TextMode::Point,
+            segments: Vec::new(),
         },
         "主标题",
         sid.clone(),

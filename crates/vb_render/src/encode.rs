@@ -116,6 +116,20 @@ pub struct TextHint {
     pub weight_bold: bool,
     /// CSS font-family 首族(C4 真文本管线)。
     pub font_family: String,
+    /// 富文本段(字节区间样式覆盖;升序不重叠,区间外继承节点样式)。
+    pub segments: Vec<TextSpanHint>,
+}
+
+/// 行内段样式(已解析为渲染就绪值)。
+#[derive(Debug, Clone)]
+pub struct TextSpanHint {
+    pub start: usize,
+    pub end: usize,
+    pub color: Option<[f32; 4]>,
+    pub bold: Option<bool>,
+    pub italic: Option<bool>,
+    pub font_size: Option<f64>,
+    pub font_family: String,
 }
 
 #[derive(Debug, Clone)]
@@ -553,6 +567,26 @@ fn encode_node(
                             w == "bold" || w == "700" || w == "600" || w == "800" || w == "900"
                         })
                         .unwrap_or(matches!(node.tag.as_str(), "h1" | "h2" | "h3"));
+                    let segments = match &node.kind {
+                        NodeKind::Text { segments, .. } => segments
+                            .iter()
+                            .map(|seg| TextSpanHint {
+                                start: seg.start,
+                                end: seg.end,
+                                color: seg
+                                    .style
+                                    .color
+                                    .as_deref()
+                                    .and_then(|c| parse_color_rgba_resolved(doc, c)),
+                                bold: seg.style.bold,
+                                italic: seg.style.italic,
+                                font_size: seg.style.font_size,
+                                font_family: seg.style.font_family.clone().unwrap_or_default(),
+                            })
+                            .collect(),
+                        _ => Vec::new(),
+                    };
+                    let _ = text;
                     Some(TextHint {
                         text: text.clone(),
                         font_size: fs,
@@ -565,6 +599,7 @@ fn encode_node(
                             .style_get("font-family")
                             .unwrap_or_default()
                             .to_string(),
+                        segments,
                     })
                 }
                 _ => None,

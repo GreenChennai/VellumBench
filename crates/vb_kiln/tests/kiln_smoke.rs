@@ -41,6 +41,7 @@ fn sample_doc() -> Document {
         NodeKind::Text {
             text: " Kiln 冒烟测试 ".trim().to_string(),
             mode: TextMode::Point,
+            segments: Vec::new(),
         },
         "主标题",
         sid_title,

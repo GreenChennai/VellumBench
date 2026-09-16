@@ -193,9 +193,10 @@ fn text_mixed_and_attrs_preserved() {
     let (f1, f2) = roundtrip(MIXED_PAGE);
     assert_eq!(find(&f1, "index.html"), find(&f2, "index.html"));
     let html = find(&f1, "index.html");
-    assert!(html.contains("Hello <b"), "行内起点");
+    // v1 行内分组格式:<b> 落为显式样式段,词间空格跨元素边界保留
+    assert!(html.contains("Hello<span"), "行内起点");
     assert!(
-        html.contains("world</b>!"),
+        html.contains(" world</span>!"),
         "行内元素与后续文本间的无空白边界保留"
     );
     assert!(html.contains("href=\"/buy\""));

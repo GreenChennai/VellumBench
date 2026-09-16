@@ -9,7 +9,7 @@ use vb_common::units::fmt_num;
 use vb_css::sort_decls;
 use vb_html::{HtmlDom, HtmlNode, NodeData};
 
-use crate::model::{Document, Node, NodeId, NodeKind, OutputMode};
+use crate::model::{Document, Node, NodeId, NodeKind, OutputMode, SegStyle, TextSeg};
 use crate::Result;
 
 pub struct ExportResult {
@@ -143,7 +143,7 @@ fn render_html(doc: &mut Document, css: &str) -> String {
                 });
             }
             let n = n.clone();
-            body.children.push(render_node(doc, ab, &n));
+            body.children.extend(render_node(doc, ab, &n));
         }
     }
     let trailing = doc.trailing_raw.clone();
@@ -191,10 +191,16 @@ fn slugify(name: &str) -> String {
     out
 }
 
-fn render_node(doc: &mut Document, id: NodeId, node: &Node) -> HtmlNode {
+fn render_node(doc: &mut Document, id: NodeId, node: &Node) -> Vec<HtmlNode> {
     match &node.kind {
-        NodeKind::Frozen { html } => HtmlNode::raw(html.clone()),
-        NodeKind::Text { text, .. } if node.tag == "#text" => HtmlNode::text(text.clone()),
+        NodeKind::Frozen { html } => vec![HtmlNode::raw(html.clone())],
+        NodeKind::Text { text, segments, .. } if node.tag == "#text" => {
+            // 无段无换行 → 裸文本(与旧格式逐字节一致)
+            if segments.is_empty() && !text.contains('\n') {
+                return vec![HtmlNode::text(text.clone())];
+            }
+            text_fragment(text, segments)
+        }
         _ => {
             let mut classes = export_classes(doc, id, node);
             // 容器标记类(导入器据此识别;ADR-0014)
@@ -227,8 +233,8 @@ fn render_node(doc: &mut Document, id: NodeId, node: &Node) -> HtmlNode {
                 attrs.push((k.clone(), v.clone()));
             }
             let mut el = HtmlNode::element(tag, attrs);
-            if let NodeKind::Text { text, .. } = &node.kind {
-                el.children.push(HtmlNode::text(text.clone()));
+            if let NodeKind::Text { text, segments, .. } = &node.kind {
+                el.children.extend(text_fragment(text, segments));
             }
             let child_ids = node.children.clone();
             for &c in &child_ids {
@@ -240,12 +246,74 @@ fn render_node(doc: &mut Document, id: NodeId, node: &Node) -> HtmlNode {
                         });
                     }
                     let cn = cn.clone();
-                    el.children.push(render_node(doc, c, &cn));
+                    el.children.extend(render_node(doc, c, &cn));
                 }
             }
-            el
+            vec![el]
         }
     }
+}
+
+/// 富文本 → HTML 片段:无样式区段 → 文本;样式区段 → `<span style>`;`\n` → `<br>`。
+fn text_fragment(text: &str, segments: &[TextSeg]) -> Vec<HtmlNode> {
+    let mut out: Vec<HtmlNode> = Vec::new();
+    let mut pos = 0usize;
+    for seg in segments {
+        let (s, e) = (seg.start.min(text.len()), seg.end.min(text.len()));
+        if s > pos {
+            push_text_with_breaks(&text[pos..s], &mut out);
+        }
+        if e > s {
+            let mut span =
+                HtmlNode::element("span", vec![("style".into(), seg_style_attr(&seg.style))]);
+            span.children = {
+                let mut inner = Vec::new();
+                push_text_with_breaks(&text[s..e], &mut inner);
+                inner
+            };
+            out.push(span);
+        }
+        pos = pos.max(e);
+    }
+    if pos < text.len() {
+        push_text_with_breaks(&text[pos..], &mut out);
+    }
+    if out.is_empty() {
+        out.push(HtmlNode::text(String::new()));
+    }
+    out
+}
+
+fn push_text_with_breaks(s: &str, out: &mut Vec<HtmlNode>) {
+    for (i, part) in s.split('\n').enumerate() {
+        if i > 0 {
+            out.push(HtmlNode::element("br", vec![]));
+        }
+        if !part.is_empty() {
+            out.push(HtmlNode::text(part.to_string()));
+        }
+    }
+}
+
+/// 段样式 → 内联 style 值(固定属性顺序,保证 L1 幂等)。
+fn seg_style_attr(st: &SegStyle) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(c) = &st.color {
+        parts.push(format!("color: {c}"));
+    }
+    if let Some(fs) = st.font_size {
+        parts.push(format!("font-size: {}px", vb_common::units::fmt_num(fs)));
+    }
+    if st.bold == Some(true) {
+        parts.push("font-weight: 700".into());
+    }
+    if st.italic == Some(true) {
+        parts.push("font-style: italic".into());
+    }
+    if let Some(ff) = &st.font_family {
+        parts.push(format!("font-family: {ff}"));
+    }
+    parts.join("; ")
 }
 
 // ---------- CSS ----------

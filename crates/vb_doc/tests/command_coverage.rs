@@ -65,6 +65,7 @@ fn fixture() -> Fx {
         NodeKind::Text {
             text: "原始文本".into(),
             mode: vb_doc::model::TextMode::Point,
+            segments: Vec::new(),
         },
         "文本",
         box_geom(10.0, 10.0, 200.0, 40.0),
