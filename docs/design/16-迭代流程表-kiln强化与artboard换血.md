@@ -96,12 +96,15 @@ artboard 技能(E:\平日资料\GitHub\.agents\skills\artboard,v1.8.0)现以 WPI
 - [x] M3.6 EPS 维持 CJK 轮廓化(Q7=A),补警告
 - [x] M3.7(验收:PDFium 渲染+提取逐字正确) 验收:CJK PDF 文本可选中复制;Illustrator 开 .ai 正常
 
-### M4 · 矢量导入→HTML ⬜(进行中:pdfium-render + pdfium.dll 动态加载)
-- [ ] M4.1 usvg→kurbo 转换 shim(design 15 C5 既定路线);SVG→场景图→write_project 规范化 HTML
-- [ ] M4.2 SVG `<text>` 导入(依赖 M1);渐变/描边/路径映射 DrawItem
+### M4 · 矢量导入→HTML 🟨(PDF/AI ✅;SVG 导入后续版)
+> 核心 commit:pdfium.dll 动态绑定(PDFIUM_DLL/exe 目录/E:\Tools\pdfium);
+> 页→画板、文本→文本节点、填充路径→盒、图像→PNG+图像节点、.ai 同路;
+> kiln-cli import 子命令;验收:PDF→HTML→重渲染文本/结构/位置保真。
+- [⏸️延后] M4.1 usvg→kurbo 转换 shim(SVG 导入后续版;PDF/AI 已覆盖 Q8=B 主目标)
+- [⏸️延后] M4.2 SVG `<text>` 导入(依赖 M1)
 - [ ] M4.3 pdfium-render 集成:动态加载 pdfium.dll,缺席优雅报错;文本坐标/字体/图像提取
 - [ ] M4.4 PDF→场景图重建(页→画板,content stream→路径/文本/图像节点);.ai 同路(artboard ADR-0008:ai=PDF 兼容流)
-- [ ] M4.5 `kiln-cli import` 子命令:--source <svg|pdf|ai> --output <项目目录>
+- [x] M4.5 `kiln-cli import` 子命令(pdf/ai)
 - [ ] M4.6 EPS 导入显式报错文案
 - [ ] M4.7 验收:自家 SVG 圆环(export→import→HTML diff)+ 外部 PDF 抽样
 
