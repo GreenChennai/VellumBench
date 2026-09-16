@@ -751,10 +751,22 @@ fn encode_node(
             },
             label: match &node.kind {
                 NodeKind::Text { text, .. } => {
-                    let fs = node.style_get("font-size").and_then(px).unwrap_or(16.0);
-                    let weight_raw = node.style_get("font-weight").unwrap_or("");
+                    // 文本节点(尤其 #text 分组节点)样式常为空:字体属性沿祖先链继承
+                    let inherited = |prop: &str| -> Option<String> {
+                        let mut cur = Some(id);
+                        while let Some(cid) = cur {
+                            let Some(n) = doc.nodes.get(cid) else { break };
+                            if let Some(v) = n.style_get(prop) {
+                                return Some(v.to_string());
+                            }
+                            cur = n.parent;
+                        }
+                        None
+                    };
+                    let fs = inherited("font-size").and_then(|v| px(&v)).unwrap_or(16.0);
+                    let weight_raw = inherited("font-weight").unwrap_or_default();
                     let weight = weight_raw.parse::<u16>().unwrap_or(
-                        if matches!(weight_raw, "bold" | "bolder")
+                        if matches!(weight_raw.as_str(), "bold" | "bolder")
                             || matches!(node.tag.as_str(), "h1" | "h2" | "h3")
                         {
                             700
@@ -763,15 +775,16 @@ fn encode_node(
                         },
                     );
                     let bold = matches!(weight, 600..=900);
-                    let line_height = match node.style_get("line-height") {
+                    let line_height = match inherited("line-height") {
                         Some(v) => match v.trim().parse::<f64>() {
                             Ok(n) => n * fs,
-                            Err(_) => px(v).unwrap_or(0.0),
+                            Err(_) => px(&v).unwrap_or(0.0),
                         },
                         None => 0.0,
                     };
-                    let letter_spacing =
-                        node.style_get("letter-spacing").and_then(px).unwrap_or(0.0);
+                    let letter_spacing = inherited("letter-spacing")
+                        .and_then(|v| px(&v))
+                        .unwrap_or(0.0);
                     let segments = match &node.kind {
                         NodeKind::Text { segments, .. } => segments
                             .iter()
@@ -795,16 +808,12 @@ fn encode_node(
                     Some(TextHint {
                         text: text.clone(),
                         font_size: fs,
-                        color: node
-                            .style_get("color")
-                            .and_then(|v| parse_color_rgba_resolved(doc, v))
+                        color: inherited("color")
+                            .and_then(|v| parse_color_rgba_resolved(doc, &v))
                             .unwrap_or([0.1, 0.1, 0.1, 1.0]),
                         weight_bold: bold,
                         weight,
-                        font_family: node
-                            .style_get("font-family")
-                            .unwrap_or_default()
-                            .to_string(),
+                        font_family: inherited("font-family").unwrap_or_default(),
                         line_height,
                         letter_spacing,
                         segments,

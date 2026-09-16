@@ -156,6 +156,8 @@ pub struct Node {
     /// 四维 [x, y, w, h] 是否为作者 CSS 显式声明(导入记录;布局层据此
     /// 区分「显式尺寸」与「默认占位」,未声明者走 auto 语义)。
     pub authored: [bool; 4],
+    /// 作者声明的 position(导入记录;布局层区分显式定位与推断)。
+    pub authored_position: Option<String>,
     pub hidden: bool,
     pub locked: bool,
 }
@@ -186,6 +188,7 @@ impl Node {
             comment_before: Vec::new(),
             geom: Geom::default(),
             authored: [false; 4],
+            authored_position: None,
             hidden: false,
             locked: false,
         }

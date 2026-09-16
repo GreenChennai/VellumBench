@@ -449,8 +449,10 @@ impl<'a> BuildCtx<'a> {
 
     fn positioned(&self, id: NodeId) -> bool {
         let node = self.doc.node(id).expect("node");
-        let d = node.style_get("position").unwrap_or("");
-        !d.is_empty() && d != "static"
+        match node.authored_position.as_deref() {
+            Some(p) => p != "static",
+            None => node.authored[0] || node.authored[1],
+        }
     }
 
     fn decide_parents(&mut self, id: NodeId, containing_block: NodeId, is_root: bool) {
@@ -565,14 +567,11 @@ impl<'a> BuildCtx<'a> {
                 _ => Display::Block,
             }
         };
-        // 规范文档:position 显式;flow 导入:position 被摘进 geom,以
-        // 「声明了 left/top」推断为绝对(浏览器对 static 的 left/top 不生效,
-        // 模板不会给 static 元素写 left/top,此推断可靠)
-        let position = match get("position").as_deref() {
+        // 定位:authored_position(导入记录)优先;否则按 authored left/top 推断
+        let position = match node.authored_position.as_deref() {
             Some("absolute") | Some("fixed") => Position::Absolute,
             Some("static") => Position::Relative,
-            other => {
-                let _ = other;
+            _ => {
                 if node.authored[0] || node.authored[1] {
                     Position::Absolute
                 } else {

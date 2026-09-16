@@ -1392,6 +1392,9 @@ impl<'a> NodeImporter<'a> {
                 }
                 _ => 100.0,
             });
+        let position_authored = get("position")
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
         // 作者显式声明的维度(布局层区分「显式」与「默认占位」)
         let authored = [
             px(&get("left")).is_some(),
@@ -1424,6 +1427,7 @@ impl<'a> NodeImporter<'a> {
         n.comment_before = comment;
         n.geom = Geom { x, y, w, h };
         n.authored = authored;
+        n.authored_position = position_authored.clone();
         let id = self.attach(parent, n);
 
         // 容器:递归子节点(行内内容分组进富文本段);压栈自身上下文供
