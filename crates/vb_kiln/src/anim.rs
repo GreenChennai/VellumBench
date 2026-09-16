@@ -437,7 +437,7 @@ pub fn track_value_at(
     if inst.iterations.is_finite() && done {
         // 动画结束:forwards/both 保持终值,否则静态
         if inst.fill_forwards {
-            phase = if inst.alternate && inst.iterations as usize % 2 == 0 {
+            phase = if inst.alternate && (inst.iterations as usize).is_multiple_of(2) {
                 0.0
             } else {
                 1.0
