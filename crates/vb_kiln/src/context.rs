@@ -3,6 +3,7 @@
 //! 单一构建入口 `build`:尺寸守门(防 OOM)、scale 钳制、动画参数校验、
 //! 透明度语义归一;所有 writer 只读 ctx,不重复做守门。
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use vb_doc::model::{Document, NodeId};
@@ -122,17 +123,40 @@ impl ExportContext {
             attach_images(&mut list, &mut loader);
         }
 
-        // 光栅帧:动画格式且内容可动 → 多帧;否则单帧
-        let animated = matches!(req.format, Format::Gif | Format::Mp4) && list.items.len() > 1;
+        // 动画解析(M2):raw_css @keyframes + 节点 animation 声明
+        let keyframes = crate::anim::parse_keyframes(&doc.raw_css);
+        let mut anims: HashMap<String, crate::anim::NodeAnim> = HashMap::new();
+        if !keyframes.is_empty() {
+            let mut stack = vec![artboard];
+            while let Some(nid) = stack.pop() {
+                if let Some(node) = doc.node(nid) {
+                    if let Some(na) = crate::anim::resolve_node_anim(doc, nid, &keyframes) {
+                        anims.insert(node.sid.as_str().to_string(), na);
+                    }
+                    stack.extend(node.children.iter().copied());
+                }
+            }
+        }
+
+        // 光栅帧:动画格式且存在动画实例 → 逐帧求值;否则单帧
+        let animated = matches!(req.format, Format::Gif | Format::Mp4) && !anims.is_empty();
         let mut frames = Vec::new();
         if animated {
             let n = (fps as f32 * req.duration_s).ceil().max(1.0) as usize;
             for i in 0..n {
-                let t = i as f32 / n as f32;
+                let t = i as f64 / fps as f64;
                 let mut f_list = list.clone();
-                // v1 动画语义:顶层非背景项透明度正弦脉冲(0.65..1.0)
-                let last = f_list.items.len() - 1;
-                f_list.items[last].opacity *= 0.65 + 0.35 * (t * std::f32::consts::TAU).sin().abs();
+                for item in &mut f_list.items {
+                    if let Some(na) = anims.get(&item.sid) {
+                        let st = crate::anim::eval_node(na, t);
+                        if let Some(o) = st.opacity {
+                            item.opacity *= o as f32;
+                        }
+                        if let Some(tr) = &st.transform {
+                            crate::anim::apply_transform(item, tr);
+                        }
+                    }
+                }
                 let rgba = crate::raster::rasterize_rgba(&f_list, scale as f64)?;
                 frames.push(Frame {
                     rgba,

@@ -49,6 +49,8 @@ pub enum DrawKind {
 
 #[derive(Debug, Clone)]
 pub struct DrawItem {
+    /// 源节点稳定 id(动画轨道绑定用;合成背景为空)。
+    pub sid: String,
     /// 画板本地绝对坐标 [x, y, w, h]。
     pub rect: [f64; 4],
     pub ellipse: bool,
@@ -485,6 +487,7 @@ pub fn encode_artboard_opts(
         let bg_fill =
             parse_fill(doc, ab, ab.geom.w, ab.geom.h).unwrap_or(FillDef::Solid(background));
         list.items.push(crate::DrawItem {
+            sid: ab.sid.as_str().to_string(),
             rect: [0.0, 0.0, ab.geom.w, ab.geom.h],
             ellipse: false,
             radii: [0.0; 4],
@@ -554,6 +557,7 @@ fn encode_node(
         let ellipse = radii[0].is_infinite();
         let radii = if ellipse { [0.0; 4] } else { radii };
         list.items.push(DrawItem {
+            sid: node.sid.as_str().to_string(),
             rect: [x, y, w, h],
             ellipse,
             radii,

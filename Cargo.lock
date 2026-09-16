@@ -4784,6 +4784,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "vb_common",
+ "vb_css",
  "vb_doc",
  "vb_export",
  "vb_layout",
