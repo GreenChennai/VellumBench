@@ -65,21 +65,22 @@ artboard 技能(E:\平日资料\GitHub\.agents\skills\artboard,v1.8.0)现以 WPI
 - [x] **M1.0 布局引擎(taffy)【P0】**(commit 4d7a2ac + a9e4ce2:后代链选择器/authored 回退/position 推断/inset/合成画板包围盒/写回乱序修复;show2-xhs 与 data-longform 与浏览器基线结构级对齐):block 流 + flex(row/column/gap/align/justify)+ absolute 定位 + margin/padding + auto/max/min 尺寸,导入期把文档流解析为具体矩形(现无坐标元素全部落原点,artboard 案例 100% 塌缩)
 - [x] M1.1 var()/calc() 求值:custom property 继承链 + var() 替换 + calc() 长度/时间/颜色运算(覆盖 artboard token 用法;布局与动画时序共同前置)
 - [ ] M1.2 `<br>`/`\n` 真断行:br 不再冻结进文本流;TextHint 增显式行数组
-- [ ] M1.3 共享断行 pass(cpu/raster 已多行+段色+字距;SVG/PDF/EPS/PPTX 写出器待接)
+- [x] M1.3 共享断行 pass(commit f1ba54c:for_each_visual_line + split_line_segments 共享;SVG 逐行 text/段 tspan、PDF 逐段 Tj 换色、EPS/AI 逐行、PPTX 逐行段落)
 - [ ] M1.4 行高真实化(现硬编码 1.32)、letter-spacing、text-align(left/center/right/justify 尽力)
-- [ ] M1.5 CJK 禁则(line-break: strict:行首禁 ,。!?:;)、word-break: keep-all、`<wbr>` 尊重
+- [ ] M1.5 CJK 禁则(line-break: strict:行首禁 ,。!?:;)、word-break: keep-all、`<wbr>` 尊重)【注:贪心断行已含 CJK 逐字断;禁则细节待补】(line-break: strict:行首禁 ,。!?:;)、word-break: keep-all、`<wbr>` 尊重
 - [ ] M1.6 line-clamp(-webkit-line-clamp 1/2/3)+ ellipsis + text-overflow
 - [ ] M1.7 text-shadow(栅格直绘;PDF/SVG 副本文本层)
 - [ ] M1.8 tabular-nums/palt 尽力(swash 特性),失败静默降级
 - [x] M1.8b 项目 webfont 注册表(@font-face 家庭+字重就近匹配;语料字体文件缺失时双方同为系统回退,对比公平)
 - [ ] M1.9 降级档(文档标注,不做):text-wrap balance/pretty、竖排 vertical-rl、text-spacing-trim
 
-### M2 · CSS 动画时间轴(L1+L2+L3)⬜
-- [ ] M2.1 `@keyframes` 解析入模型(import 冻结块改为结构化 keyframes 表)
-- [ ] M2.2 animation 简写展开:name/duration/timing/delay/iteration/fill-mode/direction;`calc(var(--t0)+var(--i)*N)` 时序(依赖 M1.1)
-- [ ] M2.3 缓动求解:cubic-bezier 参数化 + linear() 弹簧解析(artboard 五 token + 任意 bezier)
-- [ ] M2.4 DrawItem 增 sid 稳定标识(encode_node 已有 id 在作用域),轨道→项绑定
-- [ ] M2.5 逐帧求值执行器:帧 t=i/fps,替换现正弦脉冲(context.rs:126-143);属性插值 transform(translate/scale 两值/rotate)+opacity
+### M2 · CSS 动画时间轴(L1+L2+L3)🟨
+> M2a(commit e40af4e)已落地:anim.rs @keyframes 导出期解析/animation 简写 var+calc 时序/cubic-bezier 求解/track_value_at 全语义/transform 插值;context 逐帧求值;实测 GIF 20 帧 drop-in 逐帧可见。
+- [x] M2.1 `@keyframes` 解析(导出期 raw_css 解析,零模型改动)
+- [x] M2.2 animation 简写展开(含 var/calc 时序)
+- [x] M2.3 缓动求解:cubic-bezier 牛顿+二分;linear() 近似 linear(记录)
+- [x] M2.4 DrawItem 增 sid,轨道→项绑定
+- [x] M2.5 逐帧求值执行器(transform translate/scale/rotate + opacity)
 - [ ] M2.6 L2:clip-path(inset/circle/polygon 常用形)+ stroke-dashoffset 描线
 - [ ] M2.7 L3:filter blur(高斯,纯 Rust)/brightness/saturate(含每帧开销预算)
 - [ ] M2.8 @property 注册 custom prop:静态终值降级 + 警告
