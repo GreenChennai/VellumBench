@@ -55,22 +55,23 @@ artboard 技能(E:\平日资料\GitHub\.agents\skills\artboard,v1.8.0)现以 WPI
 
 ## 四、流程表
 
-### M0 · 现状基线 🟨
-- [ ] M0.1 `bench/suite/` 结构与 WPI 基线渲染产物盘点(参考 PNG 是否落盘;否则用本地 WPI 检出现渲)
-- [ ] M0.2 artboard 17 案例全量过现版 Kiln(target/release 最新构建),JSON 报告 + 告警归集
-- [ ] M0.3 缺口清单落盘(本文件 §五),重点核查:var() token 失效、`<br>` 冻结、**flow/flex 布局是否塌缩到原点**(vb_layout 空壳,artboard 模板是文档流+flex 布局——若塌缩,增设 M1.5 布局引擎,taffy 按 deps.md 排期入列)
-- [ ] M0.4 基线报告归档 bench/artboard-baseline/(后续各 M 的回归参照)
+### M0 · 现状基线 ✅(commit 626f2a9)
+- [x] M0.1 `bench/suite/` 结构与 WPI 基线渲染产物盘点(参考 PNG 是否落盘;否则用本地 WPI 检出现渲)
+- [x] M0.2 artboard 17 案例全量过现版 Kiln(target/release 最新构建),JSON 报告 + 告警归集
+- [x] M0.3 缺口清单落盘(本文件 §五),重点核查:var() token 失效、`<br>` 冻结、**flow/flex 布局是否塌缩到原点**(vb_layout 空壳,artboard 模板是文档流+flex 布局——若塌缩,增设 M1.5 布局引擎,taffy 按 deps.md 排期入列)
+- [x] M0.4 基线报告归档 bench/artboard-baseline/(后续各 M 的回归参照)
 
-### M1 · 布局与文本引擎 ⬜
-- [ ] **M1.0 布局引擎(taffy)【P0,M0 已确认必需】**:block 流 + flex(row/column/gap/align/justify)+ absolute 定位 + margin/padding + auto/max/min 尺寸,导入期把文档流解析为具体矩形(现无坐标元素全部落原点,artboard 案例 100% 塌缩)
-- [ ] M1.1 var()/calc() 求值:custom property 继承链 + var() 替换 + calc() 长度/时间/颜色运算(覆盖 artboard token 用法;布局与动画时序共同前置)
+### M1 · 布局与文本引擎 🟨
+- [x] **M1.0 布局引擎(taffy)【P0】**(commit 4d7a2ac + a9e4ce2:后代链选择器/authored 回退/position 推断/inset/合成画板包围盒/写回乱序修复;show2-xhs 与 data-longform 与浏览器基线结构级对齐):block 流 + flex(row/column/gap/align/justify)+ absolute 定位 + margin/padding + auto/max/min 尺寸,导入期把文档流解析为具体矩形(现无坐标元素全部落原点,artboard 案例 100% 塌缩)
+- [x] M1.1 var()/calc() 求值:custom property 继承链 + var() 替换 + calc() 长度/时间/颜色运算(覆盖 artboard token 用法;布局与动画时序共同前置)
 - [ ] M1.2 `<br>`/`\n` 真断行:br 不再冻结进文本流;TextHint 增显式行数组
-- [ ] M1.3 共享断行 pass:cpu.rs 贪心断行抽为公共模块,行盒(LineBox)结构喂五写出器(PDF/SVG/EPS/PPTX/AI 全部多行化)
+- [ ] M1.3 共享断行 pass(cpu/raster 已多行+段色+字距;SVG/PDF/EPS/PPTX 写出器待接)
 - [ ] M1.4 行高真实化(现硬编码 1.32)、letter-spacing、text-align(left/center/right/justify 尽力)
 - [ ] M1.5 CJK 禁则(line-break: strict:行首禁 ,。!?:;)、word-break: keep-all、`<wbr>` 尊重
 - [ ] M1.6 line-clamp(-webkit-line-clamp 1/2/3)+ ellipsis + text-overflow
 - [ ] M1.7 text-shadow(栅格直绘;PDF/SVG 副本文本层)
 - [ ] M1.8 tabular-nums/palt 尽力(swash 特性),失败静默降级
+- [x] M1.8b 项目 webfont 注册表(@font-face 家庭+字重就近匹配;语料字体文件缺失时双方同为系统回退,对比公平)
 - [ ] M1.9 降级档(文档标注,不做):text-wrap balance/pretty、竖排 vertical-rl、text-spacing-trim
 
 ### M2 · CSS 动画时间轴(L1+L2+L3)⬜
@@ -126,12 +127,19 @@ artboard 技能(E:\平日资料\GitHub\.agents\skills\artboard,v1.8.0)现以 WPI
 
 | # | 症状 | 归因 | 归属 | 严重度 |
 |---|---|---|---|---|
-| G1 | 单文件输入报「目录中无 index.html」,22 案例全灭 | import 单文件模式把父目录当项目根后仍强制找 index.html,应以指定文件为入口 | M1.0 顺手修 | 高(阻塞测试) |
-| G2 | 全案例内容堆叠左上角、画布大片空白(show2-xhs / data-longform 抽查坐实) | 无布局计算:flow/flex 元素无 left/top 全部落 (0,0),尺寸不累积(vb_layout 空壳) | **M1.0 布局引擎** | **致命** |
-| G3 | design token(var(--bg) 等)失效风险 | vb_css 仅词法保留 var/calc,无求值(M0 未见异常因布局塌缩遮蔽,布局修复后必现) | M1.1 | 致命(次生) |
-| G4 | `<br>` 断行的标题会碎(标题多 br 写法) | br/hr/wbr 冻结为独立 Frozen 块,文本流被劈开 | M1.2 | 高 |
-| G5 | 字体全走雅黑回退(案例 @font-face 引用项目字体) | @font-face 未加载(fontique 仅系统字体) | M1 附加项:font-face 局部加载(项目 fonts/ 目录),失败回退现状 | 中 |
-| G6 | 逐案 warnings 0–2 条(疑似「无 left/top 落原点」告警) | 同 G2 | 随 M1.0 消亡 | 低 |
+| G1 | 单文件输入报「目录中无 index.html」,22 案例全灭 | import 单文件模式强制找 index.html | ✅ 已修(be012c6) | 高(阻塞测试) |
+| G2 | 全案例内容堆叠左上角、画布大片空白 | 无布局计算(vb_layout 空壳) | ✅ 已修(4d7a2ac taffy 引擎) | **致命** |
+| G3 | design token(var(--bg) 等)失效风险 | vb_css 仅词法保留 var/calc | ✅ 已修(4d7a2ac M1.1 求值) | 致命(次生) |
+| G4 | `<br>` 断行的标题会碎 | br 冻结劈开文本流 | ✅ 已修(be012c6 行内分组) | 高 |
+| G5 | 字体全走雅黑回退 | @font-face 未加载 | ✅ 已修(a9e4ce2 前批:注册表+字重就近;语料字体文件本就缺失,双方系统回退) | 中 |
+| G6 | 逐案 warnings(无 left/top 告警) | 同 G2 | ✅ 随 M1.0 消亡 | 低 |
+| G7 | `.hero .tt` 等后代选择器样式全丢 | 样式表仅认 .class/tag.class | ✅ 已修(24c89c1 链选择器) | **致命** |
+| G8 | `font:700 26px/1 'MiSans'` 简写字号全丢 | font 简写未展开 | ✅ 已修(24c89c1) | **致命** |
+| G9 | 元素定位后文字仍整体偏移 | 写回时父 geom 被乱序改写,父子语义混叠 | ✅ 已修(24c89c1 绝对表统一推导) | 高 |
+| G10 | 贴纸等定位行内元素被并进文本段 | is_block_boundary 不看定位 | ✅ 已修(24c89c1) | 高 |
+| G11 | 标题断行错乱(字形/字符映射错位) | shaper 跳过 
+ 致 1:1 假设破产 | ✅ 已修(a9e4ce2 硬行分行整形) | 高 |
+| G12 | span.hl 渐变高亮、@property 数字滚动缺失 | 富文本段仅承载文字样式 | ⏸️ 已知缺口,流程表 M1.9/M2.8 记录 | 中 |
 
 > 第二层缺口(阴影/渐变/圆角细节数值差)待 G2 修复后二轮抽查再登记。
 
