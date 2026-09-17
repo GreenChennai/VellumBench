@@ -68,6 +68,7 @@ def extract_html_text(html_path):
     import re
     html = Path(html_path).read_text(encoding="utf-8", errors="replace")
     # 去 style/script
+    html = re.sub(r'<head[^>]*>.*?</head>', '', html, flags=re.S)
     html = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.S)
     html = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.S)
     html = re.sub(r'<!--.*?-->', '', html, flags=re.S)
@@ -132,8 +133,8 @@ def text_match_ratio(pdf_text: str, html_text: str) -> float:
     html_set = set(html_text.replace(' ', ''))
     if not html_set:
         return 1.0
-    matched = sum(1 for c in pdf_text if c != ' ' and c in html_set)
-    total = len([c for c in pdf_text if c != ' '])
+    matched = sum(1 for c in pdf_text if not c.isspace() and c in html_set)
+    total = len([c for c in pdf_text if not c.isspace()])
     return matched / total if total > 0 else 0.0
 
 
@@ -194,17 +195,19 @@ def main():
         # 4. 网格分区
         hot_zones = grid_analysis(base_png, pdf_png)
 
-        # 5. 文本比对
+        # 5. 文本比对(纯图形案例不计入文本一致率均值)
         pdf_text = extract_pdf_text(pdf_file)
         html_text = extract_html_text(case)
         ratio = text_match_ratio(pdf_text, html_text)
 
         all_scores.append(score)
-        all_text_ratios.append(ratio)
+        if html_text.strip():
+            all_text_ratios.append(ratio)
 
         status = "✓" if score >= 90 else "△" if score >= 80 else "✗"
         hot_str = f" hot={hot_zones}" if hot_zones else ""
-        print(f"{status} {name}: score={score:.2f} text_ratio={ratio:.2f} size={size}{hot_str}")
+        tr = f"text_ratio={ratio:.2f}" if html_text.strip() else "text_ratio=--"
+        print(f"{status} {name}: score={score:.2f} {tr} size={size}{hot_str}")
 
         if score < args.min_score:
             failures.append(f"{name} (score={score:.1f})")

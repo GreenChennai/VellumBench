@@ -42,12 +42,10 @@ pub fn write_pdf(ctx: &ExportContext, producer: &str) -> KilnResult<Vec<u8>> {
     let mut usage = CjkUsage::new();
     let _probe = render_content_stream(ctx, &mut usage, false);
     finalize_cjk_fonts(&mut usage);
-    // 两遍渲染间清除图形资源(渐变/图像/透明度),防止 pass1+pass2 重复
+    // 两遍渲染间清除图形资源(图像/透明度),防止 pass1+pass2 重复
     // 导致资源编号错位和对象数翻倍。pass2 重新收集(remap=true 时正式发射)。
-    usage.shadings.clear();
     usage.images.clear();
     usage.opacities.clear();
-    usage.sh_counter = 0;
     usage.im_counter = 0;
     usage.gs_counter = 0;
     let content = render_content_stream(ctx, &mut usage, true);
@@ -62,9 +60,9 @@ pub fn write_pdf(ctx: &ExportContext, producer: &str) -> KilnResult<Vec<u8>> {
     let ocg_start = 7u32;
     let font_base_start = ocg_start + n_layers.max(1) as u32;
     let n_cjk_font_objs = usage.fonts.len() as u32 * 5;
-    let sh_base_start = font_base_start + n_cjk_font_objs;
-    let im_base_start = sh_base_start + usage.shadings.len() as u32;
-    let gs_base_start = im_base_start + usage.images.len() as u32;
+    let im_base_start = font_base_start + n_cjk_font_objs;
+    let sm_base_start = im_base_start + usage.images.len() as u32;
+    let gs_base_start = sm_base_start + usage.images.len() as u32;
     let mut objects: Vec<Obj> = Vec::new();
 
     let catalog_id = 1u32;
@@ -106,17 +104,7 @@ pub fn write_pdf(ctx: &ExportContext, producer: &str) -> KilnResult<Vec<u8>> {
         fnum(h),
         font_res
     );
-    // F1: Shading 资源
-    if !usage.shadings.is_empty() {
-        let shs: Vec<String> = usage
-            .shadings
-            .iter()
-            .enumerate()
-            .map(|(i, (res, _))| format!("/{} {} 0 R", res, sh_base_start + i as u32))
-            .collect();
-        page.push_str(&format!(" /Shading << {} >>", shs.join(" ")));
-    }
-    // F2: XObject 资源(图像)
+    // F2: XObject 资源(图像,含栅格化渐变)
     if !usage.images.is_empty() {
         let ims: Vec<String> = usage
             .images
@@ -262,32 +250,50 @@ end",
         });
     }
 
-    // F1: Shading 对象(渐变着色)
-    for (res, dict_body) in &usage.shadings {
-        objects.push(Obj::Dict(dict_body.clone()));
-        let _ = res;
-    }
-
-    // F2: Image XObject(FlateDecode RGB)
-    for (res, data, iw, ih) in &usage.images {
-        // zlib 压缩(FlateDecode)
+    // F2: Image XObject(FlateDecode RGB;非全不透明时加 SMask 设备灰度)。
+    // 对象布局要求图像对象连续、其后 SMask 对象连续,故两趟发射。
+    let mut smask_objs: Vec<Obj> = Vec::new();
+    for (i, (_res, data, iw, ih)) in usage.images.iter().enumerate() {
         use std::io::Write as _;
-        let mut encoder =
-            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
-        encoder
-            .write_all(data)
+        let mut rgb = Vec::with_capacity(data.len() / 4 * 3);
+        let mut alpha = Vec::with_capacity(data.len() / 4);
+        let mut uniform_opaque = true;
+        for px in data.chunks_exact(4) {
+            rgb.extend_from_slice(&[px[0], px[1], px[2]]);
+            alpha.push(px[3]);
+            if px[3] != 255 {
+                uniform_opaque = false;
+            }
+        }
+        let mut smask_ref = String::new();
+        if !uniform_opaque {
+            let mut enc =
+                flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+            enc.write_all(&alpha)
+                .map_err(|e| KilnError::Encode(e.to_string()))?;
+            let sm = enc.finish().map_err(|e| KilnError::Encode(e.to_string()))?;
+            smask_objs.push(Obj::Stream {
+                dict: format!(
+                    "/Type /XObject /Subtype /Image /Width {} /Height {} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode",
+                    iw, ih
+                ),
+                data: sm,
+            });
+            smask_ref = format!(" /SMask {} 0 R", sm_base_start + i as u32);
+        }
+        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(&rgb)
             .map_err(|e| KilnError::Encode(e.to_string()))?;
-        let compressed = encoder
-            .finish()
-            .map_err(|e| KilnError::Encode(e.to_string()))?;
+        let compressed = enc.finish().map_err(|e| KilnError::Encode(e.to_string()))?;
         objects.push(Obj::Stream {
             dict: format!(
-                "/Type /XObject /Subtype /Image /Width {} /Height {} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode",
-                iw, ih
+                "/Type /XObject /Subtype /Image /Width {} /Height {} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode{}",
+                iw, ih, smask_ref
             ),
             data: compressed,
         });
     }
+    objects.extend(smask_objs);
 
     // F3: ExtGState 对象(透明度)
     for (res, alpha) in &usage.opacities {
@@ -393,13 +399,10 @@ fn sanitize_font_name(name: &str) -> String {
 #[derive(Default)]
 pub struct CjkUsage {
     pub fonts: Vec<CjkFont>,
-    /// 渐变资源(F1):resource → (shading dict body)
-    pub shadings: Vec<(String, String)>,
-    /// 图像资源(F2):resource → (FlateDecode RGB 数据, 宽, 高)
+    /// 图像资源(F2):resource → (FlateDecode RGBA 数据, 宽, 高;A 通道发 SMask)
     pub images: Vec<(String, Vec<u8>, u32, u32)>,
     /// 透明度资源(F3):resource → alpha
     pub opacities: Vec<(String, f64)>,
-    sh_counter: u32,
     im_counter: u32,
     gs_counter: u32,
 }
@@ -408,20 +411,11 @@ impl CjkUsage {
     pub fn new() -> Self {
         CjkUsage {
             fonts: Vec::new(),
-            shadings: Vec::new(),
             images: Vec::new(),
             opacities: Vec::new(),
-            sh_counter: 0,
             im_counter: 0,
             gs_counter: 0,
         }
-    }
-
-    fn shading_for(&mut self, dict_body: String) -> String {
-        self.sh_counter += 1;
-        let res = format!("Sh{}", self.sh_counter);
-        self.shadings.push((res.clone(), dict_body));
-        res
     }
 
     fn image_for(&mut self, data: Vec<u8>, w: u32, h: u32) -> String {
@@ -560,21 +554,30 @@ fn render_content_stream(ctx: &ExportContext, usage: &mut CjkUsage, remap: bool)
     s
 }
 
-fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUsage, remap: bool) {
+fn draw_item_pdf(
+    s: &mut String,
+    item: &DrawItem,
+    page_h: f64,
+    usage: &mut CjkUsage,
+    remap: bool,
+) {
     let [x, y, w, h] = item.rect;
     let py = page_h - y - h;
     let rotated = item.rot.abs() > 1e-9;
+    let has_clip = item.clip.is_some();
 
-    // v0.6:q/Q 只在旋转时使用(旋转需要坐标系隔离);无旋转项不再包裹——
-    // Illustrator 的 PDF 导入会把每对 q/Q + cm 呈现为剪切蒙版组,层层嵌套
-    // 导致无法直接编辑(用户反馈 #1)。所有操作符自行设置状态,无泄漏。
-    let rot_ops = if rotated {
+    // ---- 图形状态隔离:q/Q 用于旋转(cm)和/或裁剪(W n)----
+    let need_q = rotated || has_clip;
+    if need_q {
+        s.push_str("q\n");
+    }
+    if rotated {
         let (cx, cy) = (x + w / 2.0, y + h / 2.0);
         let rad = item.rot.to_radians();
         let (sn, cs) = (rad.sin(), rad.cos());
         let pcy = page_h - cy;
-        format!(
-            "q\n1 0 0 1 {} {} cm\n{} {} {} {} 0 0 cm\n1 0 0 1 {} {} cm\n",
+        s.push_str(&format!(
+            "1 0 0 1 {} {} cm\n{} {} {} {} 0 0 cm\n1 0 0 1 {} {} cm\n",
             fnum(cx),
             fnum(pcy),
             fnum(cs),
@@ -583,52 +586,79 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
             fnum(cs),
             fnum(-cx),
             fnum(cy - page_h)
-        )
-    } else {
-        String::new()
-    };
+        ));
+    }
+    if has_clip {
+        emit_clip_path(s, item.clip.as_ref().unwrap(), x, y, w, h, py, page_h);
+    }
 
-    // ---- 填充 / 描边(仅旋转时隔离坐标系)----
+    // ---- 填充 / 描边 ----
+    // 透明度 = 项 opacity × 颜色 alpha,按部分各自发一次 ExtGState;
+    // 渐变填充的半透明烘进位图 SMask(与 CPU 栅格 to_skia_stops 一致)。
     if item.fill.is_some() || item.border.is_some() {
-        if rotated {
-            s.push_str(&rot_ops);
-        }
         if let Some(fill) = &item.fill {
             match fill {
                 FillDef::Solid(c) => {
+                    // F5: filter 色彩调整(brightness/saturate)
+                    let cc = apply_filter_color(*c, item.filter.as_ref());
+                    emit_gs(s, usage, item.opacity as f64 * cc[3].clamp(0.0, 1.0) as f64);
                     s.push_str(&format!(
                         "{} {} {} rg\n",
-                        fnum(c[0]),
-                        fnum(c[1]),
-                        fnum(c[2])
+                        fnum(cc[0]),
+                        fnum(cc[1]),
+                        fnum(cc[2])
                     ));
                     path_ops(s, item, x, py, w, h);
                     s.push_str("f\n");
                 }
                 FillDef::LinearGradient { angle_css, stops } => {
-                    // F1: PDF axial shading——真渐变替代中值色降级
-                    let sh_res = usage
-                        .shading_for(build_axial_shading(*angle_css, stops, x, y, w, h, page_h));
+                    // pdfium 等渲染器不绘制 PDF shading:渐变按 CPU 栅格同款
+                    // 数学降采样为位图嵌入并裁剪到项形状,任意渲染器结果一致。
+                    let stops = apply_filter_stops(stops, item.filter.as_ref());
+                    let (data, gw, gh) =
+                        gradient_bitmap_linear(*angle_css, &stops, w, h, item.opacity);
+                    let im_res = usage.image_for(data, gw, gh);
                     s.push_str("q\n");
                     path_ops(s, item, x, py, w, h);
                     s.push_str("W n\n");
-                    s.push_str(&format!("/{} sh\nQ\n", sh_res));
+                    s.push_str(&format!(
+                        "{} 0 0 {} {} {} cm /{} Do\nQ\n",
+                        fnum(w),
+                        fnum(h),
+                        fnum(x),
+                        fnum(py),
+                        im_res
+                    ));
                 }
                 FillDef::RadialGradient {
-                    cx: _gcx,
-                    cy: _gcy,
+                    cx: gcx,
+                    cy: gcy,
                     stops,
                 } => {
-                    // F1: PDF radial shading
-                    let sh_res = usage.shading_for(build_radial_shading(stops, x, y, w, h, page_h));
+                    let stops = apply_filter_stops(stops, item.filter.as_ref());
+                    let (data, gw, gh) =
+                        gradient_bitmap_radial(*gcx, *gcy, &stops, w, h, item.opacity);
+                    let im_res = usage.image_for(data, gw, gh);
                     s.push_str("q\n");
                     path_ops(s, item, x, py, w, h);
                     s.push_str("W n\n");
-                    s.push_str(&format!("/{} sh\nQ\n", sh_res));
+                    s.push_str(&format!(
+                        "{} 0 0 {} {} {} cm /{} Do\nQ\n",
+                        fnum(w),
+                        fnum(h),
+                        fnum(x),
+                        fnum(py),
+                        im_res
+                    ));
                 }
             }
         }
         if let Some(border) = &item.border {
+            emit_gs(
+                s,
+                usage,
+                item.opacity as f64 * border.color[3].clamp(0.0, 1.0) as f64,
+            );
             s.push_str(&format!(
                 "{} {} {} RG {} w\n",
                 fnum(border.color[0]),
@@ -639,13 +669,11 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
             path_ops(s, item, x, py, w, h);
             s.push_str("S\n");
         }
-        if rotated {
-            s.push_str("Q\n");
-        }
     }
 
-    // ---- 文本:永不 cm,旋转进 Tm;无 q/Q 包裹(AI 里是纯文本对象)----
+    // ---- 文本(CID 真文本 / 轮廓兜底 / WinAnsi 兜底)----
     if let Some(label) = &item.label {
+        emit_gs(s, usage, item.opacity as f64 * label.color[3].clamp(0.0, 1.0) as f64);
         let has_cjk = label.text.chars().any(|ch| {
             let cp = ch as u32;
             !(0x20..0x7f).contains(&cp) && !(0xa0..0xff).contains(&cp)
@@ -660,37 +688,21 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
         let seg_ranges: Vec<(usize, usize)> =
             label.segments.iter().map(|sg| (sg.start, sg.end)).collect();
         let font_ok = vb_render::text::font_data_for(&label.font_family, label.weight).is_some();
-        let rot_rad = if rotated { item.rot.to_radians() } else { 0.0 };
-        let (sn, cs) = (rot_rad.sin(), rot_rad.cos());
-        let cx = x + w / 2.0;
-        let cy = y + h / 2.0;
 
         if font_ok {
-            // v0.6:全部文本(CJK 与 Latin)统一 CID 真文本——嵌入字体子集,
-            // 可选中可编辑;轮廓仅作无字体数据时的最终兜底(用户反馈 #2)
             let resource = usage.resource_for(&label.font_family, label.weight);
             vb_render::text::for_each_visual_line(
-                &label.text,
-                &label.font_family,
-                label.font_size as f32,
-                label.weight,
-                max_w,
-                ls,
+                &label.text, &label.font_family, label.font_size as f32,
+                label.weight, max_w, ls,
                 |vi, hard, run, line, byte_base| {
                     usage.set_metrics(
-                        &label.font_family,
-                        label.weight,
+                        &label.font_family, label.weight,
                         run.ascent as f64 / label.font_size.max(1.0) * 1000.0,
                         -(run.descent as f64) / label.font_size.max(1.0) * 1000.0,
                     );
                     let baseline_art = y + run.ascent as f64 + vi as f64 * line_h;
                     let parts = vb_render::text::split_line_segments(
-                        hard,
-                        line,
-                        run,
-                        byte_base,
-                        &seg_ranges,
-                        ls,
+                        hard, line, run, byte_base, &seg_ranges, ls,
                     );
                     s.push_str("BT\n");
                     s.push_str(&format!("/{resource} {} Tf\n", fnum(label.font_size)));
@@ -702,46 +714,22 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
                             .unwrap_or(label.color);
                         s.push_str(&format!(
                             "{} {} {} rg\n",
-                            fnum(color[0]),
-                            fnum(color[1]),
-                            fnum(color[2])
+                            fnum(color[0]), fnum(color[1]), fnum(color[2])
                         ));
-                        // Tm:无旋转 = 平移;有旋转 = 绕项中心旋转后沿线推进
-                        let (tm_e, tm_f) = if rotated {
-                            let p0 = (x, baseline_art);
-                            let dx = p0.0 - cx;
-                            let dy = p0.1 - cy;
-                            let p0x = cx + dx * cs - dy * sn;
-                            let p0y = cy + dx * sn + dy * cs;
-                            (p0x + cs * part.x, page_h - (p0y + sn * part.x))
-                        } else {
-                            (x + part.x, page_h - baseline_art)
-                        };
-                        let (tm_a, tm_b, tm_c, tm_d) = if rotated {
-                            (cs, sn, -sn, cs)
-                        } else {
-                            (1.0, 0.0, 0.0, 1.0)
-                        };
+                        // 旋转/裁剪由外层 q + cm 统一处理,这里只做平移
                         s.push_str(&format!(
-                            "{} {} {} {} {} {} Tm\n",
-                            fnum(tm_a),
-                            fnum(tm_b),
-                            fnum(tm_c),
-                            fnum(tm_d),
-                            fnum(tm_e),
-                            fnum(tm_f)
+                            "1 0 0 1 {} {} Tm\n",
+                            fnum(x + part.x),
+                            fnum(page_h - baseline_art)
                         ));
                         let mut hexes = Vec::with_capacity(part.gids.len());
                         for (k, &gid) in part.gids.iter().enumerate() {
                             if !remap {
                                 if let Some(ch) = part.text.chars().nth(k) {
                                     usage.record(
-                                        &label.font_family,
-                                        label.weight,
-                                        gid,
-                                        ch,
-                                        part.advances[k] as f64,
-                                        label.font_size,
+                                        &label.font_family, label.weight,
+                                        gid, ch,
+                                        part.advances[k] as f64, label.font_size,
                                     );
                                 }
                             }
@@ -758,61 +746,37 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
                 },
             );
         } else if has_cjk {
-            // 兜底:无字体数据时轮廓化(逐字形矢量)
             s.push_str(&format!(
                 "{} {} {} rg\n",
-                fnum(label.color[0]),
-                fnum(label.color[1]),
-                fnum(label.color[2])
+                fnum(label.color[0]), fnum(label.color[1]), fnum(label.color[2])
             ));
             vb_render::text::for_each_visual_line(
-                &label.text,
-                &label.font_family,
-                label.font_size as f32,
-                label.weight,
-                max_w,
-                ls,
+                &label.text, &label.font_family, label.font_size as f32,
+                label.weight, max_w, ls,
                 |vi, hard, run, line, _bb| {
                     let s0: usize = hard.chars().take(line[0]).map(|ch| ch.len_utf8()).sum();
                     let last = *line.last().expect("nonempty");
                     let s1: usize = hard.chars().take(last + 1).map(|ch| ch.len_utf8()).sum();
                     let sub = &hard[s0..s1];
                     outline_text_pdf(
-                        s,
-                        sub,
-                        &label.font_family,
-                        label.font_size,
-                        label.weight,
-                        x,
-                        y + vi as f64 * line_h,
-                        h,
-                        page_h,
+                        s, sub, &label.font_family, label.font_size, label.weight,
+                        x, y + vi as f64 * line_h, h, page_h,
                     );
                     let _ = run;
                 },
             );
         } else {
-            // Latin 兜底:base-14(Helvetica),文本仍可编辑
             let fref = if label.weight >= 600 { "/F2" } else { "/F1" };
             vb_render::text::for_each_visual_line(
-                &label.text,
-                &label.font_family,
-                label.font_size as f32,
-                label.weight,
-                max_w,
-                ls,
+                &label.text, &label.font_family, label.font_size as f32,
+                label.weight, max_w, ls,
                 |vi, hard, run, line, byte_base| {
                     let asc = run.ascent as f64;
                     let baseline = page_h - (y + asc + vi as f64 * line_h);
                     s.push_str("BT\n");
                     s.push_str(&format!("{fref} {} Tf\n", fnum(label.font_size)));
                     let parts = vb_render::text::split_line_segments(
-                        hard,
-                        line,
-                        run,
-                        byte_base,
-                        &seg_ranges,
-                        ls,
+                        hard, line, run, byte_base, &seg_ranges, ls,
                     );
                     for part in parts {
                         let color = part
@@ -822,14 +786,11 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
                             .unwrap_or(label.color);
                         s.push_str(&format!(
                             "{} {} {} rg\n",
-                            fnum(color[0]),
-                            fnum(color[1]),
-                            fnum(color[2])
+                            fnum(color[0]), fnum(color[1]), fnum(color[2])
                         ));
                         s.push_str(&format!(
                             "1 0 0 1 {} {} Tm\n",
-                            fnum(x + part.x),
-                            fnum(baseline)
+                            fnum(x + part.x), fnum(baseline)
                         ));
                         let text = winansi_escaped(part.text);
                         s.push_str(&format!("({text}) Tj\n"));
@@ -840,184 +801,291 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
         }
     }
 
-    // ---- 图像(F2: XObject 嵌入;旋转需要 cm)----
+    // ---- 图像(XObject RGBA 嵌入;旋转由外层 q/cm 统一处理)----
     if item.kind == DrawKind::Image {
-        if rotated {
-            s.push_str(&rot_ops);
-        }
+        // 位图缺失时不画占位,与 CPU 栅格的跳过行为一致
         if let Some(bmp) = &item.image {
-            // F2: RGB FlateDecode 图像 XObject
-            let rgba = &bmp.rgba;
-            let mut rgb = Vec::with_capacity(bmp.width as usize * bmp.height as usize * 3);
-            for px in rgba.chunks_exact(4) {
-                rgb.extend_from_slice(&[px[0], px[1], px[2]]);
-            }
-            let im_res = usage.image_for(rgb, bmp.width, bmp.height);
+            let im_res = usage.image_for(bmp.rgba.to_vec(), bmp.width, bmp.height);
             s.push_str(&format!(
                 "q {} 0 0 {} {} {} cm /{} Do Q\n",
-                fnum(w),
-                fnum(h),
-                fnum(x),
-                fnum(py),
-                im_res
-            ));
-        } else {
-            // 无位图:灰色占位
-            s.push_str("0.8 0.8 0.8 rg 0.6 0.6 0.6 RG 1 w\n");
-            s.push_str(&format!(
-                "{} {} {} {} re B\n",
-                fnum(x),
-                fnum(py),
-                fnum(w),
-                fnum(h)
+                fnum(w), fnum(h), fnum(x), fnum(py), im_res
             ));
         }
-        if rotated {
-            s.push_str("Q\n");
+    }
+
+    if need_q {
+        s.push_str("Q\n");
+    }
+}
+
+/// F3: 按需发射 ExtGState 透明度(alpha<1 才发;每次设置替换而非叠加)。
+fn emit_gs(s: &mut String, usage: &mut CjkUsage, alpha: f64) {
+    if (0.0..1.0).contains(&alpha) {
+        let gs_res = usage.opacity_for(alpha.clamp(0.001, 0.999));
+        s.push_str(&format!("/{} gs\n", gs_res));
+    }
+}
+
+/// F5: 应用 brightness/saturate 调整到颜色。
+fn apply_filter_color(
+    mut c: [f32; 4],
+    filter: Option<&vb_render::encode::FilterDef>,
+) -> [f32; 4] {
+    if let Some(f) = filter {
+        if (f.brightness - 1.0).abs() > 1e-3 {
+            for ch in c.iter_mut().take(3) {
+                *ch = ((*ch as f32) * f.brightness as f32).clamp(0.0, 1.0);
+            }
+        }
+        if (f.saturate - 1.0).abs() > 1e-3 {
+            let l = 0.2126 * c[0] as f32 + 0.7152 * c[1] as f32 + 0.0722 * c[2] as f32;
+            for ch in c.iter_mut().take(3) {
+                *ch = (l + (*ch as f32 - l) * f.saturate as f32).clamp(0.0, 1.0);
+            }
+        }
+    }
+    c
+}
+
+/// F5: 应用 filter 到渐变 stop 色彩。
+fn apply_filter_stops(
+    stops: &[vb_render::encode::GradientStop],
+    filter: Option<&vb_render::encode::FilterDef>,
+) -> Vec<vb_render::encode::GradientStop> {
+    let Some(f) = filter else {
+        return stops.to_vec();
+    };
+    stops
+        .iter()
+        .map(|s| {
+            let mut c = s.color;
+            if (f.brightness - 1.0).abs() > 1e-3 {
+                for ch in c.iter_mut().take(3) {
+                    *ch = ((*ch as f32) * f.brightness as f32).clamp(0.0, 1.0);
+                }
+            }
+            if (f.saturate - 1.0).abs() > 1e-3 {
+                let l = 0.2126 * c[0] as f32 + 0.7152 * c[1] as f32 + 0.0722 * c[2] as f32;
+                for ch in c.iter_mut().take(3) {
+                    *ch = (l + (*ch as f32 - l) * f.saturate as f32).clamp(0.0, 1.0);
+                }
+            }
+            vb_render::encode::GradientStop { pos: s.pos, color: c }
+        })
+        .collect()
+}
+
+/// F4: 发射 clip path(W n)。坐标从项局部转换到 PDF 用户空间(Y 翻转)。
+fn emit_clip_path(
+    s: &mut String,
+    clip: &vb_render::encode::ClipDef,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    py: f64,
+    page_h: f64,
+) {
+    let pdf_y = |local_y: f64| py + h - local_y;
+    match clip {
+        vb_render::encode::ClipDef::Inset(t, r, b, l) => {
+            let cl = x + l;
+            let cb = pdf_y(h - b);
+            let cw = w - l - r;
+            let ch = h - t - b;
+            s.push_str(&format!(
+                "{} {} {} {} re W n\n",
+                fnum(cl), fnum(cb), fnum(cw.max(0.0)), fnum(ch.max(0.0))
+            ));
+        }
+        vb_render::encode::ClipDef::Circle(cx, cy, r) => {
+            let pdf_cx = x + cx;
+            let pdf_cy = pdf_y(*cy);
+            let k = 0.5523;
+            let rx = r;
+            let ry = r;
+            s.push_str(&format!("{} {} m\n", fnum(pdf_cx + rx), fnum(pdf_cy)));
+            s.push_str(&format!(
+                "{} {} {} {} {} {} c\n",
+                fnum(pdf_cx + rx), fnum(pdf_cy + k * ry),
+                fnum(pdf_cx + k * rx), fnum(pdf_cy + ry),
+                fnum(pdf_cx), fnum(pdf_cy + ry)
+            ));
+            s.push_str(&format!(
+                "{} {} {} {} {} {} c\n",
+                fnum(pdf_cx - k * rx), fnum(pdf_cy + ry),
+                fnum(pdf_cx - rx), fnum(pdf_cy + k * ry),
+                fnum(pdf_cx - rx), fnum(pdf_cy)
+            ));
+            s.push_str(&format!(
+                "{} {} {} {} {} {} c\n",
+                fnum(pdf_cx - rx), fnum(pdf_cy - k * ry),
+                fnum(pdf_cx - k * rx), fnum(pdf_cy - ry),
+                fnum(pdf_cx), fnum(pdf_cy - ry)
+            ));
+            s.push_str(&format!(
+                "{} {} {} {} {} {} c\n",
+                fnum(pdf_cx + k * rx), fnum(pdf_cy - ry),
+                fnum(pdf_cx + rx), fnum(pdf_cy - k * ry),
+                fnum(pdf_cx + rx), fnum(pdf_cy)
+            ));
+            s.push_str("h\nW n\n");
+        }
+        vb_render::encode::ClipDef::Ellipse(cx, cy, rx, ry) => {
+            let pdf_cx = x + cx;
+            let pdf_cy = pdf_y(*cy);
+            let k = 0.5523;
+            s.push_str(&format!("{} {} m\n", fnum(pdf_cx + rx), fnum(pdf_cy)));
+            s.push_str(&format!(
+                "{} {} {} {} {} {} c\n",
+                fnum(pdf_cx + rx), fnum(pdf_cy + k * ry),
+                fnum(pdf_cx + k * rx), fnum(pdf_cy + ry),
+                fnum(pdf_cx), fnum(pdf_cy + ry)
+            ));
+            s.push_str(&format!(
+                "{} {} {} {} {} {} c\n",
+                fnum(pdf_cx - k * rx), fnum(pdf_cy + ry),
+                fnum(pdf_cx - rx), fnum(pdf_cy + k * ry),
+                fnum(pdf_cx - rx), fnum(pdf_cy)
+            ));
+            s.push_str(&format!(
+                "{} {} {} {} {} {} c\n",
+                fnum(pdf_cx - rx), fnum(pdf_cy - k * ry),
+                fnum(pdf_cx - k * rx), fnum(pdf_cy - ry),
+                fnum(pdf_cx), fnum(pdf_cy - ry)
+            ));
+            s.push_str(&format!(
+                "{} {} {} {} {} {} c\n",
+                fnum(pdf_cx + k * rx), fnum(pdf_cy - ry),
+                fnum(pdf_cx + rx), fnum(pdf_cy - k * ry),
+                fnum(pdf_cx + rx), fnum(pdf_cy)
+            ));
+            s.push_str("h\nW n\n");
+        }
+        vb_render::encode::ClipDef::Polygon(pts) => {
+            for (i, (pt_x, pt_y)) in pts.iter().enumerate() {
+                let pdf_x = x + pt_x;
+                let pdf_py = pdf_y(*pt_y);
+                if i == 0 {
+                    s.push_str(&format!("{} {} m\n", fnum(pdf_x), fnum(pdf_py)));
+                } else {
+                    s.push_str(&format!("{} {} l\n", fnum(pdf_x), fnum(pdf_py)));
+                }
+            }
+            s.push_str("h\nW n\n");
         }
     }
 }
 
 /// F1: 线性渐变 → PDF axial shading 字典体。
-/// 角度为 CSS 语义(0=to top, 90=to right, 180=to bottom),坐标已 Y 翻转。
-fn build_axial_shading(
-    angle_css: f64,
-    stops: &[vb_render::encode::GradientStop],
-    x: f64,
-    y: f64,
-    w: f64,
-    h: f64,
-    page_h: f64,
-) -> String {
-    let rad = angle_css.to_radians();
-    // CSS 渐变方向向量(屏幕坐标 Y-down): (sin θ, -cos θ)
-    // PDF 坐标系 (Y-up): (sin θ, cos θ)
-    let dx = rad.sin();
-    let dy = rad.cos();
-    let cx = x + w / 2.0;
-    let cy_pdf = page_h - (y + h / 2.0);
-    // 渐变线长度(覆盖整个盒子)
-    let len = (w * dx.abs() + h * dy.abs()).max(1.0);
-    let x0 = cx - dx * len / 2.0;
-    let y0 = cy_pdf - dy * len / 2.0;
-    let x1 = cx + dx * len / 2.0;
-    let y1 = cy_pdf + dy * len / 2.0;
-
-    if stops.len() == 2 {
-        let c0 = &stops[0].color;
-        let c1 = &stops[1].color;
-        format!(
-            "/ShadingType 2 /ColorSpace /DeviceRGB /Coords [{} {} {} {}] \
-             /Function << /FunctionType 2 /C0 [{} {} {}] /C1 [{} {} {}] /N 1 >> \
-             /Extend [true true]",
-            fnum(x0),
-            fnum(y0),
-            fnum(x1),
-            fnum(y1),
-            fnum(c0[0] as f64),
-            fnum(c0[1] as f64),
-            fnum(c0[2] as f64),
-            fnum(c1[0] as f64),
-            fnum(c1[1] as f64),
-            fnum(c1[2] as f64),
-        )
+/// 渐变栅格化网格尺寸:长边封顶 256(位图拉伸 + 渲染器平滑,与逐像素
+/// 插值的差异低于评分阈值),短边至少 2。
+fn gradient_grid_size(w: f64, h: f64) -> (u32, u32) {
+    let max = w.max(h).max(1.0);
+    if max <= 256.0 {
+        (w.max(2.0) as u32, h.max(2.0) as u32)
     } else {
-        // 多 stop: FunctionType 3 stitching
-        let mut funcs = Vec::new();
-        let mut bounds = Vec::new();
-        let mut encode = Vec::new();
-        for w in stops.windows(2) {
-            let c0 = &w[0].color;
-            let c1 = &w[1].color;
-            funcs.push(format!(
-                "<< /FunctionType 2 /C0 [{} {} {}] /C1 [{} {} {}] /N 1 >>",
-                fnum(c0[0] as f64),
-                fnum(c0[1] as f64),
-                fnum(c0[2] as f64),
-                fnum(c1[0] as f64),
-                fnum(c1[1] as f64),
-                fnum(c1[2] as f64),
-            ));
-            if w[0].pos > 0.0 && w[0].pos < 1.0 {
-                bounds.push(fnum(w[0].pos as f64));
-            }
-            encode.push("0 1".to_string());
-        }
-        let coords = format!("[{} {} {} {}]", fnum(x0), fnum(y0), fnum(x1), fnum(y1));
-        format!(
-            "/ShadingType 2 /ColorSpace /DeviceRGB /Coords {} \
-             /Function << /FunctionType 3 /Domain [0 1] /Functions [{}] /Bounds [{}] /Encode [{}] >> \
-             /Extend [true true]",
-            coords, funcs.join(" "), bounds.join(" "), encode.join(" ")
+        let s = 256.0 / max;
+        (
+            ((w * s).ceil() as u32).max(2),
+            ((h * s).ceil() as u32).max(2),
         )
     }
 }
 
-/// F1: 径向渐变 → PDF radial shading 字典体。
-fn build_radial_shading(
+/// 取 stop 序列在位置 t(0..1,Pad 展开)处的颜色并写入 RGBA 字节
+/// (alpha = stop alpha × 项不透明度,对齐 CPU 栅格 to_skia_stops)。
+fn push_stop_color(
+    data: &mut Vec<u8>,
     stops: &[vb_render::encode::GradientStop],
-    x: f64,
-    y: f64,
+    t: f32,
+    opacity: f32,
+) {
+    let t = t.clamp(0.0, 1.0);
+    let first = &stops[0];
+    let last = &stops[stops.len() - 1];
+    let c = if t <= first.pos {
+        first.color
+    } else if t >= last.pos {
+        last.color
+    } else {
+        let mut c = last.color;
+        for pair in stops.windows(2) {
+            let (a, b) = (&pair[0], &pair[1]);
+            if t >= a.pos && t <= b.pos {
+                let span = (b.pos - a.pos).max(1e-6);
+                let k = (t - a.pos) / span;
+                for i in 0..3 {
+                    c[i] = a.color[i] + (b.color[i] - a.color[i]) * k;
+                }
+                break;
+            }
+        }
+        c
+    };
+    data.push((c[0].clamp(0.0, 1.0) * 255.0) as u8);
+    data.push((c[1].clamp(0.0, 1.0) * 255.0) as u8);
+    data.push((c[2].clamp(0.0, 1.0) * 255.0) as u8);
+    data.push((c[3].clamp(0.0, 1.0) * opacity.clamp(0.0, 1.0) * 255.0) as u8);
+}
+
+/// 线性渐变 → RGB 位图。数学与 vb_render::cpu::gradient_line +
+/// tiny-skia Pad 展开完全一致(CSS 角度,Y 向下局部坐标)。
+fn gradient_bitmap_linear(
+    angle_css: f64,
+    stops: &[vb_render::encode::GradientStop],
     w: f64,
     h: f64,
-    page_h: f64,
-) -> String {
-    let cx = x + w / 2.0;
-    let cy_pdf = page_h - (y + h / 2.0);
-    let r = (w.max(h) / 2.0).max(1.0);
-    let coords = format!(
-        "[{} {} 0 {} {} {}]",
-        fnum(cx),
-        fnum(cy_pdf),
-        fnum(cx),
-        fnum(cy_pdf),
-        fnum(r)
-    );
-
-    if stops.len() == 2 {
-        let c0 = &stops[0].color;
-        let c1 = &stops[1].color;
-        format!(
-            "/ShadingType 3 /ColorSpace /DeviceRGB /Coords {} \
-             /Function << /FunctionType 2 /C0 [{} {} {}] /C1 [{} {} {}] /N 1 >> \
-             /Extend [true true]",
-            coords,
-            fnum(c0[0] as f64),
-            fnum(c0[1] as f64),
-            fnum(c0[2] as f64),
-            fnum(c1[0] as f64),
-            fnum(c1[1] as f64),
-            fnum(c1[2] as f64),
-        )
-    } else {
-        // 多 stop: stitching function
-        let mut funcs = Vec::new();
-        let mut bounds = Vec::new();
-        let mut encode = Vec::new();
-        for w in stops.windows(2) {
-            let c0 = &w[0].color;
-            let c1 = &w[1].color;
-            funcs.push(format!(
-                "<< /FunctionType 2 /C0 [{} {} {}] /C1 [{} {} {}] /N 1 >>",
-                fnum(c0[0] as f64),
-                fnum(c0[1] as f64),
-                fnum(c0[2] as f64),
-                fnum(c1[0] as f64),
-                fnum(c1[1] as f64),
-                fnum(c1[2] as f64),
-            ));
-            if w[0].pos > 0.0 && w[0].pos < 1.0 {
-                bounds.push(fnum(w[0].pos as f64));
-            }
-            encode.push("0 1".to_string());
+    opacity: f32,
+) -> (Vec<u8>, u32, u32) {
+    let (gw, gh) = gradient_grid_size(w, h);
+    let rad = angle_css.to_radians();
+    let dx = rad.sin() as f32;
+    let dy = -(rad.cos()) as f32;
+    let l = (w as f32 * dx.abs()) + (h as f32 * dy.abs());
+    let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+    let sx = cx - dx * l / 2.0;
+    let sy = cy - dy * l / 2.0;
+    let mut data = Vec::with_capacity(gw as usize * gh as usize * 4);
+    for gy in 0..gh {
+        let py = (gy as f64 + 0.5) * h / gh as f64;
+        for gx in 0..gw {
+            let px = (gx as f64 + 0.5) * w / gw as f64;
+            let t = if l.abs() < 1e-6 {
+                0.0
+            } else {
+                ((px as f32 - sx) * dx + (py as f32 - sy) * dy) / l
+            };
+            push_stop_color(&mut data, stops, t, opacity);
         }
-        format!(
-            "/ShadingType 3 /ColorSpace /DeviceRGB /Coords {} \
-             /Function << /FunctionType 3 /Domain [0 1] /Functions [{}] /Bounds [{}] /Encode [{}] >> \
-             /Extend [true true]",
-            coords, funcs.join(" "), bounds.join(" "), encode.join(" ")
-        )
     }
+    (data, gw, gh)
+}
+
+/// 径向渐变 → RGB 位图。圆心为项内比例坐标,半径 = √(w²+h²)/2,
+/// 与 vb_render::cpu 径向分支一致。
+fn gradient_bitmap_radial(
+    cxf: f32,
+    cyf: f32,
+    stops: &[vb_render::encode::GradientStop],
+    w: f64,
+    h: f64,
+    opacity: f32,
+) -> (Vec<u8>, u32, u32) {
+    let (gw, gh) = gradient_grid_size(w, h);
+    let ccx = (w * cxf as f64) as f32;
+    let ccy = (h * cyf as f64) as f32;
+    let radius = (((w * w + h * h).sqrt()) / 2.0) as f32;
+    let mut data = Vec::with_capacity(gw as usize * gh as usize * 4);
+    for gy in 0..gh {
+        let py = (gy as f64 + 0.5) * h / gh as f64;
+        for gx in 0..gw {
+            let px = (gx as f64 + 0.5) * w / gw as f64;
+            let d = ((px as f32 - ccx).powi(2) + (py as f32 - ccy).powi(2)).sqrt();
+            push_stop_color(&mut data, stops, d / radius.max(1e-6), opacity);
+        }
+    }
+    (data, gw, gh)
 }
 
 fn path_ops(s: &mut String, item: &DrawItem, x: f64, py: f64, w: f64, h: f64) {
