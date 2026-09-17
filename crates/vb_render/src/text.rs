@@ -266,8 +266,9 @@ pub fn measure_text(
     measure_text_weighted(text, font_family, font_size, 400, max_width, letter_spacing)
 }
 
-/// 共享贪心断行(与 cpu.rs 渲染同策略):CJK 逐字可断、空白/ASCII 标点后断。
-/// 输入必须是单个硬行(不含 `\n`;调用方先用 [`split_hard_lines`] 拆分,
+/// 共享贪心断行(与 cpu.rs 渲染同策略):CJK 逐字可断、空白/ASCII 标点后断、
+/// 禁则処理(行首禁则字不换行,悬挂在上一行行末)。
+/// 输入必须是单个硬行(不含 `\n`;调用方先用 [`layout_text_lines`] 拆分,
 /// 避免整形器跳过控制字符导致的字形/字符错位)。返回每行的字形索引。
 pub fn break_lines(
     text: &str,
@@ -286,6 +287,12 @@ pub fn break_lines(
         let too_wide = finite && cur_w + gw > max_width && !cur.is_empty();
         let cjk = (ch as u32) > 0x2E00;
         if too_wide && (ch.is_whitespace() || cjk || ch.is_ascii_punctuation()) {
+            // 禁则: 行首禁则字不换行,悬挂在上一行行末(允许微溢出)
+            if is_forbidden_line_start(ch) {
+                cur.push(gi);
+                cur_w += gw;
+                continue;
+            }
             lines.push(std::mem::take(&mut cur));
             cur_w = 0.0;
             if ch.is_whitespace() {
@@ -297,6 +304,40 @@ pub fn break_lines(
     }
     lines.push(cur);
     lines
+}
+
+/// 禁则:不允许出现在行首的字符(CJK 闭标点 + 行尾符号)。
+fn is_forbidden_line_start(ch: char) -> bool {
+    matches!(
+        ch,
+        '。' | '、'
+            | '！'
+            | '？'
+            | '：'
+            | '；'
+            | '）'
+            | '】'
+            | '》'
+            | '〉'
+            | '」'
+            | '』'
+            | '〕'
+            | '〗'
+            | '〙'
+            | '〛'
+            | '・'
+            | '～'
+            | ','
+            | '.'
+            | ':'
+            | ';'
+            | '!'
+            | '?'
+            | ')'
+            | ']'
+            | '}'
+            | '%'
+    )
 }
 
 /// 按硬行(`\n`)分段整形并断行:每硬行 = (行字符串, run, 视觉行字形索引集)。
