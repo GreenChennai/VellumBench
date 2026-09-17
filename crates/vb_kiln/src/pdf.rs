@@ -391,11 +391,11 @@ fn finalize_cjk_fonts(usage: &mut CjkUsage) {
         let Some((data, index)) = vb_render::text::font_data_for(&f.name, f.weight) else {
             continue;
         };
-        f.ascent = if f.ascent == 800.0 { 800.0 } else { f.ascent };
+        // 子集化(缩减文件体积);subsetter 的 GID 排序经 ToUnicode 交叉验证一致
         let gids: Vec<u16> = f.glyphs.keys().copied().collect();
         let remapper = subsetter::GlyphRemapper::new_from_glyphs_sorted(&gids);
         match subsetter::subset(&data, index as u32, &remapper) {
-            Ok(sub) if !sub.is_empty() => {
+            Ok(sub) if !sub.is_empty() && sub.len() < data.len() => {
                 f.subset_len1 = sub.len();
                 f.subset = sub;
             }
@@ -404,7 +404,7 @@ fn finalize_cjk_fonts(usage: &mut CjkUsage) {
                 f.subset = (*data).clone();
             }
         }
-        // 重映射后的 cid 表(remapper.get(old) → new;重建 widths/to_unicode 键为新 cid)
+        // 重映射 cid 表
         let old: Vec<(u16, (char, f64))> = f.glyphs.iter().map(|(k, v)| (*k, *v)).collect();
         let mut new_map = std::collections::BTreeMap::new();
         for (gid, info) in old {
