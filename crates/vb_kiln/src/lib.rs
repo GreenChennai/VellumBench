@@ -18,6 +18,7 @@ pub mod formats;
 pub mod frames;
 pub mod img;
 pub mod import_pdf;
+pub mod import_svg;
 pub mod ooxml;
 pub mod pdf;
 pub mod postscript;

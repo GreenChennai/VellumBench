@@ -324,12 +324,16 @@ fn run_import(source: PathBuf, output: PathBuf) -> i32 {
         .and_then(|e| e.to_str())
         .map(|e| e.to_ascii_lowercase())
         .unwrap_or_default();
-    if !matches!(ext.as_str(), "pdf" | "ai") {
-        eprintln!("{{\"ok\":false,\"error\":\"import 仅支持 pdf/ai(SVG 导入将在后续版本提供)\"}}");
-        return 2;
-    }
     let assets = output.join("assets");
-    match vb_kiln::import_pdf::import_pdf_to_doc(&source, Some(&assets)) {
+    let result = match ext.as_str() {
+        "pdf" | "ai" => vb_kiln::import_pdf::import_pdf_to_doc(&source, Some(&assets)),
+        "svg" => vb_kiln::import_svg::import_svg_to_doc(&source, Some(&assets)),
+        other => {
+            eprintln!("{{\"ok\":false,\"error\":\"import 不支持 .{other}(支持 pdf/ai/svg)\"}}");
+            return 2;
+        }
+    };
+    match result {
         Ok((mut doc, mut warnings)) => {
             // 布局求值:导入文档全为绝对定位,此调用保持几何并回填画板尺寸
             let abs: Vec<vb_doc::model::NodeId> = doc.artboards.clone();
