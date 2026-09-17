@@ -75,8 +75,74 @@ enum Cmd {
         #[arg(long)]
         output: PathBuf,
     },
+    /// 位图工具箱:crop/stitch/blur/pad/info(M4.5 系列物料后处理)
+    Img {
+        #[command(subcommand)]
+        op: ImgOp,
+    },
     /// 内置样例自检:验证部署环境与九格式引擎
     Selfcheck,
+}
+
+#[derive(Subcommand)]
+enum ImgOp {
+    /// 裁剪(--box l,t,r,b 像素;或 --trim #bg 自动去边)
+    Crop {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long = "box", group = "crop_mode")]
+        box_spec: Option<String>,
+        #[arg(long, group = "crop_mode")]
+        trim: Option<String>,
+    },
+    /// 拼接(垂直/水平,--inputs 逗号分隔)
+    Stitch {
+        #[arg(long, value_delimiter = ',')]
+        inputs: Vec<PathBuf>,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long, default_value = "vertical")]
+        direction: String,
+        #[arg(long, default_value_t = 0)]
+        gap: u32,
+        #[arg(long, default_value = "#ffffff")]
+        bg: String,
+        #[arg(long, default_value = "start")]
+        align: String,
+    },
+    /// 高斯模糊(整图或区域)
+    Blur {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long, default_value_t = 8.0)]
+        radius: f32,
+        #[arg(long = "box")]
+        box_spec: Option<String>,
+    },
+    /// 画布填充(把图像放到指定尺寸画布上)
+    Pad {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        width: u32,
+        #[arg(long)]
+        height: u32,
+        #[arg(long, default_value = "#ffffff")]
+        bg: String,
+        #[arg(long, default_value = "center")]
+        align: String,
+    },
+    /// 图像信息(宽×高)
+    Info {
+        #[arg(long)]
+        input: PathBuf,
+    },
 }
 
 fn main() {
@@ -110,6 +176,7 @@ fn main() {
             bitrate,
         ),
         Cmd::Import { source, output } => run_import(source, output),
+        Cmd::Img { op } => run_img(op),
         Cmd::Selfcheck => run_selfcheck(),
     };
     std::process::exit(code);
@@ -292,6 +359,147 @@ fn run_import(source: PathBuf, output: PathBuf) -> i32 {
             eprintln!("{{\"ok\":false,\"error\":\"{e}\"}}");
             3
         }
+    }
+}
+
+fn parse_box(s: &str) -> Result<(u32, u32, u32, u32), String> {
+    let nums: Vec<u32> = s
+        .split(',')
+        .map(|v| {
+            v.trim()
+                .parse::<u32>()
+                .map_err(|e| format!("坐标解析失败: {e}"))
+        })
+        .collect::<Result<_, _>>()?;
+    if nums.len() != 4 {
+        return Err(format!("--box 需要 4 个值 l,t,r,b: got {}", nums.len()));
+    }
+    Ok((nums[0], nums[1], nums[2], nums[3]))
+}
+
+fn run_img(op: ImgOp) -> i32 {
+    use vb_kiln::img;
+    match op {
+        ImgOp::Crop {
+            input,
+            output,
+            box_spec,
+            trim,
+        } => {
+            let box_v = box_spec.as_deref().map(parse_box).transpose();
+            let trim_v = trim.as_deref().map(img::parse_hex_color).transpose();
+            match (box_v, trim_v) {
+                (Ok(b), Ok(t)) => match img::crop(&input, &output, b, t) {
+                    Ok(img) => {
+                        println!(
+                            "{{\"ok\":true,\"width\":{},\"height\":{}}}",
+                            img.width(),
+                            img.height()
+                        );
+                        0
+                    }
+                    Err(e) => {
+                        eprintln!("{{\"ok\":false,\"error\":\"{e}\"}}");
+                        1
+                    }
+                },
+                (Err(e), _) | (_, Err(e)) => {
+                    eprintln!("{{\"ok\":false,\"error\":\"{e}\"}}");
+                    2
+                }
+            }
+        }
+        ImgOp::Stitch {
+            inputs,
+            output,
+            direction,
+            gap,
+            bg,
+            align,
+        } => {
+            let color = match img::parse_hex_color(&bg) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("{{\"ok\":false,\"error\":\"{e}\"}}");
+                    return 2;
+                }
+            };
+            let vertical = direction == "vertical";
+            match img::stitch(&inputs, &output, vertical, gap, color, &align) {
+                Ok(img) => {
+                    println!(
+                        "{{\"ok\":true,\"width\":{},\"height\":{}}}",
+                        img.width(),
+                        img.height()
+                    );
+                    0
+                }
+                Err(e) => {
+                    eprintln!("{{\"ok\":false,\"error\":\"{e}\"}}");
+                    1
+                }
+            }
+        }
+        ImgOp::Blur {
+            input,
+            output,
+            radius,
+            box_spec,
+        } => {
+            let box_v = box_spec.as_deref().map(parse_box).transpose();
+            match box_v {
+                Ok(b) => match img::blur(&input, &output, radius, b) {
+                    Ok(()) => {
+                        println!("{{\"ok\":true}}");
+                        0
+                    }
+                    Err(e) => {
+                        eprintln!("{{\"ok\":false,\"error\":\"{e}\"}}");
+                        1
+                    }
+                },
+                Err(e) => {
+                    eprintln!("{{\"ok\":false,\"error\":\"{e}\"}}");
+                    2
+                }
+            }
+        }
+        ImgOp::Pad {
+            input,
+            output,
+            width,
+            height,
+            bg,
+            align,
+        } => {
+            let color = match img::parse_hex_color(&bg) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("{{\"ok\":false,\"error\":\"{e}\"}}");
+                    return 2;
+                }
+            };
+            match img::pad(&input, &output, width, height, color, &align) {
+                Ok(()) => {
+                    println!("{{\"ok\":true,\"width\":{width},\"height\":{height}}}");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("{{\"ok\":false,\"error\":\"{e}\"}}");
+                    1
+                }
+            }
+        }
+        ImgOp::Info { input } => match img::info(&input) {
+            Ok((w, h)) => {
+                println!("{{\"ok\":true,\"width\":{w},\"height\":{h}}}");
+                0
+            }
+            Err(e) => {
+                eprintln!("{{\"ok\":false,\"error\":\"{e}\"}}");
+                1
+            }
+        },
     }
 }
 

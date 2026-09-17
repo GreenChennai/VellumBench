@@ -16,6 +16,7 @@ pub mod context;
 pub mod error;
 pub mod formats;
 pub mod frames;
+pub mod img;
 pub mod import_pdf;
 pub mod ooxml;
 pub mod pdf;

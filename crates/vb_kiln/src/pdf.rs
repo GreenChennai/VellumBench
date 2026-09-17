@@ -443,15 +443,18 @@ fn render_content_stream(ctx: &ExportContext, usage: &mut CjkUsage, remap: bool)
 fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUsage, remap: bool) {
     let [x, y, w, h] = item.rect;
     let py = page_h - y - h;
-    s.push_str("q\n");
-    if item.rot.abs() > 1e-9 {
+    let rotated = item.rot.abs() > 1e-9;
+
+    // v0.6:q/Q 只在旋转时使用(旋转需要坐标系隔离);无旋转项不再包裹——
+    // Illustrator 的 PDF 导入会把每对 q/Q + cm 呈现为剪切蒙版组,层层嵌套
+    // 导致无法直接编辑(用户反馈 #1)。所有操作符自行设置状态,无泄漏。
+    let rot_ops = if rotated {
         let (cx, cy) = (x + w / 2.0, y + h / 2.0);
         let rad = item.rot.to_radians();
         let (sn, cs) = (rad.sin(), rad.cos());
         let pcy = page_h - cy;
-        // 平移到旋转中心(已翻转),旋转,再平移回局部
-        s.push_str(&format!(
-            "1 0 0 1 {} {} cm\n{} {} {} {} 0 0 cm\n1 0 0 1 {} {} cm\n",
+        format!(
+            "q\n1 0 0 1 {} {} cm\n{} {} {} {} 0 0 cm\n1 0 0 1 {} {} cm\n",
             fnum(cx),
             fnum(pcy),
             fnum(cs),
@@ -460,48 +463,61 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
             fnum(cs),
             fnum(-cx),
             fnum(cy - page_h)
-        ));
-    }
-    if let Some(fill) = &item.fill {
-        match fill {
-            FillDef::Solid(c) => {
-                s.push_str(&format!(
-                    "{} {} {} rg\n",
-                    fnum(c[0]),
-                    fnum(c[1]),
-                    fnum(c[2])
-                ));
-                path_ops(s, item, x, py, w, h);
-                s.push_str("f\n");
-            }
-            FillDef::LinearGradient { stops, .. } | FillDef::RadialGradient { stops, .. } => {
-                let mid = stops.get(stops.len() / 2).or_else(|| stops.first());
-                if let Some(st) = mid {
+        )
+    } else {
+        String::new()
+    };
+
+    // ---- 填充 / 描边(仅旋转时隔离坐标系)----
+    if item.fill.is_some() || item.border.is_some() {
+        if rotated {
+            s.push_str(&rot_ops);
+        }
+        if let Some(fill) = &item.fill {
+            match fill {
+                FillDef::Solid(c) => {
                     s.push_str(&format!(
                         "{} {} {} rg\n",
-                        fnum(st.color[0]),
-                        fnum(st.color[1]),
-                        fnum(st.color[2])
+                        fnum(c[0]),
+                        fnum(c[1]),
+                        fnum(c[2])
                     ));
                     path_ops(s, item, x, py, w, h);
                     s.push_str("f\n");
                 }
+                FillDef::LinearGradient { stops, .. } | FillDef::RadialGradient { stops, .. } => {
+                    let mid = stops.get(stops.len() / 2).or_else(|| stops.first());
+                    if let Some(st) = mid {
+                        s.push_str(&format!(
+                            "{} {} {} rg\n",
+                            fnum(st.color[0]),
+                            fnum(st.color[1]),
+                            fnum(st.color[2])
+                        ));
+                        path_ops(s, item, x, py, w, h);
+                        s.push_str("f\n");
+                    }
+                }
             }
         }
+        if let Some(border) = &item.border {
+            s.push_str(&format!(
+                "{} {} {} RG {} w\n",
+                fnum(border.color[0]),
+                fnum(border.color[1]),
+                fnum(border.color[2]),
+                fnum(border.width)
+            ));
+            path_ops(s, item, x, py, w, h);
+            s.push_str("S\n");
+        }
+        if rotated {
+            s.push_str("Q\n");
+        }
     }
-    if let Some(border) = &item.border {
-        s.push_str(&format!(
-            "{} {} {} RG {} w\n",
-            fnum(border.color[0]),
-            fnum(border.color[1]),
-            fnum(border.color[2]),
-            fnum(border.width)
-        ));
-        path_ops(s, item, x, py, w, h);
-        s.push_str("S\n");
-    }
+
+    // ---- 文本:永不 cm,旋转进 Tm;无 q/Q 包裹(AI 里是纯文本对象)----
     if let Some(label) = &item.label {
-        let c = label.color;
         let has_cjk = label.text.chars().any(|ch| {
             let cp = ch as u32;
             !(0x20..0x7f).contains(&cp) && !(0xa0..0xff).contains(&cp)
@@ -516,10 +532,15 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
         let seg_ranges: Vec<(usize, usize)> =
             label.segments.iter().map(|sg| (sg.start, sg.end)).collect();
         let font_ok = vb_render::text::font_data_for(&label.font_family, label.weight).is_some();
-        if has_cjk && font_ok {
-            // M3:CID 字体真文本(Type0 + Identity-H,子集内嵌)
+        let rot_rad = if rotated { item.rot.to_radians() } else { 0.0 };
+        let (sn, cs) = (rot_rad.sin(), rot_rad.cos());
+        let cx = x + w / 2.0;
+        let cy = y + h / 2.0;
+
+        if font_ok {
+            // v0.6:全部文本(CJK 与 Latin)统一 CID 真文本——嵌入字体子集,
+            // 可选中可编辑;轮廓仅作无字体数据时的最终兜底(用户反馈 #2)
             let resource = usage.resource_for(&label.font_family, label.weight);
-            let seg_ranges2 = seg_ranges.clone();
             vb_render::text::for_each_visual_line(
                 &label.text,
                 &label.font_family,
@@ -528,31 +549,23 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
                 max_w,
                 ls,
                 |vi, hard, run, line, byte_base| {
-                    let fs = label.font_size.max(1.0);
                     usage.set_metrics(
                         &label.font_family,
                         label.weight,
-                        run.ascent as f64 / fs * 1000.0,
-                        -(run.descent as f64) / fs * 1000.0,
+                        run.ascent as f64 / label.font_size.max(1.0) * 1000.0,
+                        -(run.descent as f64) / label.font_size.max(1.0) * 1000.0,
                     );
-                    let baseline = page_h - (y + run.ascent as f64 + vi as f64 * line_h);
+                    let baseline_art = y + run.ascent as f64 + vi as f64 * line_h;
                     let parts = vb_render::text::split_line_segments(
                         hard,
                         line,
                         run,
                         byte_base,
-                        &seg_ranges2,
+                        &seg_ranges,
                         ls,
                     );
-                    s.push_str(
-                        "BT
-",
-                    );
-                    s.push_str(&format!(
-                        "/{resource} {} Tf
-",
-                        fnum(label.font_size)
-                    ));
+                    s.push_str("BT\n");
+                    s.push_str(&format!("/{resource} {} Tf\n", fnum(label.font_size)));
                     for part in parts {
                         let color = part
                             .seg
@@ -560,17 +573,35 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
                             .and_then(|sg| sg.color)
                             .unwrap_or(label.color);
                         s.push_str(&format!(
-                            "{} {} {} rg
-",
+                            "{} {} {} rg\n",
                             fnum(color[0]),
                             fnum(color[1]),
                             fnum(color[2])
                         ));
+                        // Tm:无旋转 = 平移;有旋转 = 绕项中心旋转后沿线推进
+                        let (tm_e, tm_f) = if rotated {
+                            let p0 = (x, baseline_art);
+                            let dx = p0.0 - cx;
+                            let dy = p0.1 - cy;
+                            let p0x = cx + dx * cs - dy * sn;
+                            let p0y = cy + dx * sn + dy * cs;
+                            (p0x + cs * part.x, page_h - (p0y + sn * part.x))
+                        } else {
+                            (x + part.x, page_h - baseline_art)
+                        };
+                        let (tm_a, tm_b, tm_c, tm_d) = if rotated {
+                            (cs, sn, -sn, cs)
+                        } else {
+                            (1.0, 0.0, 0.0, 1.0)
+                        };
                         s.push_str(&format!(
-                            "1 0 0 1 {} {} Tm
-",
-                            fnum(x + part.x),
-                            fnum(baseline)
+                            "{} {} {} {} {} {} Tm\n",
+                            fnum(tm_a),
+                            fnum(tm_b),
+                            fnum(tm_c),
+                            fnum(tm_d),
+                            fnum(tm_e),
+                            fnum(tm_f)
                         ));
                         let mut hexes = Vec::with_capacity(part.gids.len());
                         for (k, &gid) in part.gids.iter().enumerate() {
@@ -593,26 +624,18 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
                             };
                             hexes.push(format!("{cid:04X}"));
                         }
-                        s.push_str(&format!(
-                            "<{}> Tj
-",
-                            hexes.join("")
-                        ));
+                        s.push_str(&format!("<{}> Tj\n", hexes.join("")));
                     }
-                    s.push_str(
-                        "ET
-",
-                    );
+                    s.push_str("ET\n");
                 },
             );
         } else if has_cjk {
-            // CJK 等非 WinAnsi 文本:swash 整形 → 字形轮廓矢量填充
-            // (PDF 内仍为矢量、可选中;文本层降级在 report 告警)
+            // 兜底:无字体数据时轮廓化(逐字形矢量)
             s.push_str(&format!(
                 "{} {} {} rg\n",
-                fnum(c[0]),
-                fnum(c[1]),
-                fnum(c[2])
+                fnum(label.color[0]),
+                fnum(label.color[1]),
+                fnum(label.color[2])
             ));
             vb_render::text::for_each_visual_line(
                 &label.text,
@@ -641,6 +664,7 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
                 },
             );
         } else {
+            // Latin 兜底:base-14(Helvetica),文本仍可编辑
             let fref = if label.weight >= 600 { "/F2" } else { "/F1" };
             vb_render::text::for_each_visual_line(
                 &label.text,
@@ -687,7 +711,12 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
             );
         }
     }
+
+    // ---- 图像(旋转需要 cm)----
     if item.kind == DrawKind::Image {
+        if rotated {
+            s.push_str(&rot_ops);
+        }
         s.push_str("0.8 0.8 0.8 rg 0.6 0.6 0.6 RG 1 w\n");
         s.push_str(&format!(
             "{} {} {} {} re B\n",
@@ -696,8 +725,10 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
             fnum(w),
             fnum(h)
         ));
+        if rotated {
+            s.push_str("Q\n");
+        }
     }
-    s.push_str("Q\n");
 }
 
 fn path_ops(s: &mut String, item: &DrawItem, x: f64, py: f64, w: f64, h: f64) {
