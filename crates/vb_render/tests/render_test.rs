@@ -190,6 +190,52 @@ fn node_opacity_applies_to_gradient() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 回归:rgba() 色标渐变必须存活(CSS 规范化把 rgba 内逗号重写为带空格,
+/// 色标按空白切分曾在 "rgba(24," 处断开 → 半透明渐变(veil)整块静默丢失)。
+#[test]
+fn rgba_stop_gradient_survives_normalize_and_encode() {
+    let dir = std::env::temp_dir().join(format!("vb-veil-reg-{}", std::process::id()));
+    let doc = one_node_doc(
+        &dir,
+        0.0,
+        0.0,
+        400.0,
+        300.0,
+        "background: linear-gradient(180deg, rgba(24,17,9,.55) 0%, rgba(24,17,9,.18) 40%, rgba(24,17,9,.72) 100%);",
+    );
+    let ab = doc.artboards[0];
+    let list = vb_render::encode::encode_artboard_opts(&doc, ab, true).expect("编码");
+    let grad = list
+        .items
+        .iter()
+        .find_map(|it| match &it.fill {
+            Some(vb_render::encode::FillDef::LinearGradient { angle_css, stops }) => {
+                Some((*angle_css, stops.clone()))
+            }
+            _ => None,
+        })
+        .expect("rgba 色标渐变应在编码后存活");
+    assert!((grad.0 - 180.0).abs() < 1e-6);
+    assert_eq!(grad.1.len(), 3, "3 个色标全保留,实际 {:?}", grad.1);
+    assert!((grad.1[0].color[3] - 0.55).abs() < 0.01, "stop0 alpha={:?}", grad.1[0]);
+    assert!((grad.1[1].pos - 0.4).abs() < 1e-6, "stop1 pos 应为 0.4");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 回归:radial-gradient 命名色首个色标不再被形状启发式吞掉。
+#[test]
+fn radial_named_color_first_stop_survives() {
+    let doc_doc = vb_doc::Document::new_empty("", "zh-CN");
+    let (cx, cy, stops) = vb_render::encode::parse_radial_gradient(
+        &doc_doc,
+        "radial-gradient(red, blue 70%)",
+    )
+    .expect("命名色径向渐变应解析成功");
+    assert_eq!(stops.len(), 2);
+    assert!((cx - 0.5).abs() < 1e-6 && (cy - 0.5).abs() < 1e-6);
+    assert!((stops[1].pos - 0.7).abs() < 1e-6);
+}
+
 /// W2:--transparent 导出必须真的透明(此前底色矩形无条件铺满)。
 #[test]
 fn transparent_export_is_actually_transparent() {

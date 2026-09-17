@@ -62,7 +62,14 @@ pub fn write_pdf(ctx: &ExportContext, producer: &str) -> KilnResult<Vec<u8>> {
     let n_cjk_font_objs = usage.fonts.len() as u32 * 5;
     let im_base_start = font_base_start + n_cjk_font_objs;
     let sm_base_start = im_base_start + usage.images.len() as u32;
-    let gs_base_start = sm_base_start + usage.images.len() as u32;
+    // 仅非全不透明图像才发 SMask 对象;基址必须按实际数量计,否则透明度
+    // 对象编号错位(曾按图像总数预留 → gs 基址偏移 → ExtGState 引用错对象)
+    let n_smasks = usage
+        .images
+        .iter()
+        .filter(|(_, d, _, _)| d.chunks_exact(4).any(|px| px[3] != 255))
+        .count() as u32;
+    let gs_base_start = sm_base_start + n_smasks;
     let mut objects: Vec<Obj> = Vec::new();
 
     let catalog_id = 1u32;
@@ -253,7 +260,8 @@ end",
     // F2: Image XObject(FlateDecode RGB;非全不透明时加 SMask 设备灰度)。
     // 对象布局要求图像对象连续、其后 SMask 对象连续,故两趟发射。
     let mut smask_objs: Vec<Obj> = Vec::new();
-    for (i, (_res, data, iw, ih)) in usage.images.iter().enumerate() {
+    let mut smask_seq: usize = 0;
+    for (_res, data, iw, ih) in usage.images.iter() {
         use std::io::Write as _;
         let mut rgb = Vec::with_capacity(data.len() / 4 * 3);
         let mut alpha = Vec::with_capacity(data.len() / 4);
@@ -279,7 +287,8 @@ end",
                 ),
                 data: sm,
             });
-            smask_ref = format!(" /SMask {} 0 R", sm_base_start + i as u32);
+            smask_ref = format!(" /SMask {} 0 R", sm_base_start + smask_seq as u32);
+            smask_seq += 1;
         }
         let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
         enc.write_all(&rgb)
@@ -1015,7 +1024,8 @@ fn push_stop_color(
             if t >= a.pos && t <= b.pos {
                 let span = (b.pos - a.pos).max(1e-6);
                 let k = (t - a.pos) / span;
-                for i in 0..3 {
+                // RGBA 四通道全插值(alpha 漏插曾让半透明渐变整体变不透明)
+                for i in 0..4 {
                     c[i] = a.color[i] + (b.color[i] - a.color[i]) * k;
                 }
                 break;

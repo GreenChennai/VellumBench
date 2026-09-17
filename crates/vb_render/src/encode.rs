@@ -400,19 +400,21 @@ pub fn parse_linear_gradient(
     let mut stops = Vec::new();
     let n = stops_raw.len().max(1);
     for (i, s) in stops_raw.iter().enumerate() {
-        // "color pos" 或纯 "color"
-        let mut segs = s.split_whitespace();
-        let color_tok = segs.next().unwrap_or("");
+        // "color pos" 或纯 "color"。色标内函数(rgba(1, 2, 3, .5))经 CSS
+        // 规范化后逗号带空格,必须用括号感知的顶层空格切分(此前
+        // split_whitespace 在 "rgba(24," 处断开 → 整条渐变静默丢失)。
+        let toks: Vec<String> = vb_css_split_top_level(s.trim(), ' ')
+            .into_iter()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect();
+        let color_tok = toks.first().map(|t| t.as_str()).unwrap_or("");
         let Some(color) = parse_color_rgba_resolved(doc, color_tok) else {
             continue;
         };
-        let pos = segs
-            .next()
-            .and_then(|p| {
-                p.strip_suffix('%')
-                    .and_then(|v| v.parse::<f32>().ok())
-                    .map(|v| v / 100.0)
-            })
+        let pos = toks
+            .get(1)
+            .and_then(|p| parse_stop_pos(p))
             .unwrap_or(if n <= 1 {
                 0.0
             } else {
@@ -424,6 +426,15 @@ pub fn parse_linear_gradient(
         return None;
     }
     Some((angle, stops))
+}
+
+/// 色标位置:`40%` → 0.4;规范化的裸 `0`(原 `0%`)→ 0.0;其余裸数字按
+/// 0..1 区间接受(超界 clamp 在使用端)。
+fn parse_stop_pos(p: &str) -> Option<f32> {
+    if let Some(v) = p.strip_suffix('%') {
+        return v.trim().parse::<f32>().ok().map(|v| v / 100.0);
+    }
+    p.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0))
 }
 
 /// `to <方向关键字>` → CSS 角度(0 = 向上,顺时针为正)。
@@ -453,12 +464,23 @@ pub fn parse_radial_gradient(doc: &Document, value: &str) -> Option<(f32, f32, V
     let mut cx = 0.5f32;
     let mut cy = 0.5f32;
     let mut stops_raw: Vec<String> = Vec::new();
+    let shape_keywords = [
+        "circle",
+        "ellipse",
+        "closest-side",
+        "farthest-side",
+        "closest-corner",
+        "farthest-corner",
+    ];
     for (i, p) in parts.iter().enumerate() {
         let t = p.trim().to_string();
-        if i == 0 && !t.starts_with('#') && !t.contains("rgb") && t != "transparent" {
-            // "circle at X% Y%" / "circle" / "ellipse ..."
-            if let Some(at) = t.find("at") {
-                let pos = t[at + 2..].trim();
+        let looks_like_shape = i == 0
+            && (shape_keywords.iter().any(|k| t.starts_with(k))
+                || shape_keywords.iter().any(|k| t.contains(&format!(" {k}"))));
+        if looks_like_shape {
+            // "circle at X% Y%" / "ellipse ..." / "circle farthest-side"
+            if let Some(at) = t.find(" at") {
+                let pos = t[at + 3..].trim();
                 let mut it = pos.split_whitespace();
                 if let Some(x) = it
                     .next()
@@ -482,18 +504,19 @@ pub fn parse_radial_gradient(doc: &Document, value: &str) -> Option<(f32, f32, V
     let mut stops = Vec::new();
     let n = stops_raw.len().max(1);
     for (i, s) in stops_raw.iter().enumerate() {
-        let mut segs = s.split_whitespace();
-        let color_tok = segs.next().unwrap_or("");
+        // 与线性同款:括号感知切分(规范化后的 rgba 内含 ", ")
+        let toks: Vec<String> = vb_css_split_top_level(s.trim(), ' ')
+            .into_iter()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect();
+        let color_tok = toks.first().map(|t| t.as_str()).unwrap_or("");
         let Some(color) = parse_color_rgba_resolved(doc, color_tok) else {
             continue;
         };
-        let pos = segs
-            .next()
-            .and_then(|p| {
-                p.strip_suffix('%')
-                    .and_then(|v| v.parse::<f32>().ok())
-                    .map(|v| v / 100.0)
-            })
+        let pos = toks
+            .get(1)
+            .and_then(|p| parse_stop_pos(p))
             .unwrap_or(if n <= 1 {
                 0.0
             } else {
