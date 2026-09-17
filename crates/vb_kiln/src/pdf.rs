@@ -11,7 +11,7 @@ use std::time::Instant;
 use vb_render::encode::{DrawItem, DrawKind, FillDef};
 
 use crate::context::ExportContext;
-use crate::error::KilnResult;
+use crate::error::{KilnError, KilnResult};
 use crate::report::KilnReport;
 use crate::writer::{common_warnings, Format, FormatWriter};
 
@@ -39,9 +39,17 @@ pub fn write_pdf(ctx: &ExportContext, producer: &str) -> KilnResult<Vec<u8>> {
     let h = ctx.logical_h;
 
     // 内容流 + CJK 字体使用收集(M3:CID 真文本)
-    let mut usage = CjkUsage::default();
+    let mut usage = CjkUsage::new();
     let _probe = render_content_stream(ctx, &mut usage, false);
     finalize_cjk_fonts(&mut usage);
+    // 两遍渲染间清除图形资源(渐变/图像/透明度),防止 pass1+pass2 重复
+    // 导致资源编号错位和对象数翻倍。pass2 重新收集(remap=true 时正式发射)。
+    usage.shadings.clear();
+    usage.images.clear();
+    usage.opacities.clear();
+    usage.sh_counter = 0;
+    usage.im_counter = 0;
+    usage.gs_counter = 0;
     let content = render_content_stream(ctx, &mut usage, true);
     let content_z = content.into_bytes();
 
@@ -52,7 +60,11 @@ pub fn write_pdf(ctx: &ExportContext, producer: &str) -> KilnResult<Vec<u8>> {
     // 8.. OCG(n_layers 个);其后每 CJK 字体 5 个对象
     // (Type0 / CIDFontType2 / FontDescriptor / FontFile2 / ToUnicode)
     let ocg_start = 7u32;
-    let font_base_start = ocg_start + n_layers as u32;
+    let font_base_start = ocg_start + n_layers.max(1) as u32;
+    let n_cjk_font_objs = usage.fonts.len() as u32 * 5;
+    let sh_base_start = font_base_start + n_cjk_font_objs;
+    let im_base_start = sh_base_start + usage.shadings.len() as u32;
+    let gs_base_start = im_base_start + usage.images.len() as u32;
     let mut objects: Vec<Obj> = Vec::new();
 
     let catalog_id = 1u32;
@@ -82,7 +94,7 @@ pub fn write_pdf(ctx: &ExportContext, producer: &str) -> KilnResult<Vec<u8>> {
         "/Type /Pages /Kids [{page_id} 0 R] /Count 1"
     )));
 
-    // 3 Page(资源字典含 WinAnsi + CJK CID 字体)
+    // 3 Page(资源字典含 WinAnsi + CJK CID 字体 + Shading + XObject + ExtGState)
     let mut font_res = format!("/F1 {font_id} 0 R /F2 {font_bold_id} 0 R");
     for (i, f) in usage.fonts.iter().enumerate() {
         let base = font_base_start + (i as u32) * 5;
@@ -94,6 +106,36 @@ pub fn write_pdf(ctx: &ExportContext, producer: &str) -> KilnResult<Vec<u8>> {
         fnum(h),
         font_res
     );
+    // F1: Shading 资源
+    if !usage.shadings.is_empty() {
+        let shs: Vec<String> = usage
+            .shadings
+            .iter()
+            .enumerate()
+            .map(|(i, (res, _))| format!("/{} {} 0 R", res, sh_base_start + i as u32))
+            .collect();
+        page.push_str(&format!(" /Shading << {} >>", shs.join(" ")));
+    }
+    // F2: XObject 资源(图像)
+    if !usage.images.is_empty() {
+        let ims: Vec<String> = usage
+            .images
+            .iter()
+            .enumerate()
+            .map(|(i, (res, _, _, _))| format!("/{} {} 0 R", res, im_base_start + i as u32))
+            .collect();
+        page.push_str(&format!(" /XObject << {} >>", ims.join(" ")));
+    }
+    // F3: ExtGState 资源
+    if !usage.opacities.is_empty() {
+        let gss: Vec<String> = usage
+            .opacities
+            .iter()
+            .enumerate()
+            .map(|(i, (res, _))| format!("/{} {} 0 R", res, gs_base_start + i as u32))
+            .collect();
+        page.push_str(&format!(" /ExtGState << {} >>", gss.join(" ")));
+    }
     if n_layers > 0 {
         let props: Vec<String> = (0..n_layers)
             .map(|i| format!("/MC{i} {} 0 R", ocg_start + i as u32))
@@ -220,6 +262,42 @@ end",
         });
     }
 
+    // F1: Shading 对象(渐变着色)
+    for (res, dict_body) in &usage.shadings {
+        objects.push(Obj::Dict(dict_body.clone()));
+        let _ = res;
+    }
+
+    // F2: Image XObject(FlateDecode RGB)
+    for (res, data, iw, ih) in &usage.images {
+        // zlib 压缩(FlateDecode)
+        use std::io::Write as _;
+        let mut encoder =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder
+            .write_all(data)
+            .map_err(|e| KilnError::Encode(e.to_string()))?;
+        let compressed = encoder
+            .finish()
+            .map_err(|e| KilnError::Encode(e.to_string()))?;
+        objects.push(Obj::Stream {
+            dict: format!(
+                "/Type /XObject /Subtype /Image /Width {} /Height {} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode",
+                iw, ih
+            ),
+            data: compressed,
+        });
+    }
+
+    // F3: ExtGState 对象(透明度)
+    for (res, alpha) in &usage.opacities {
+        objects.push(Obj::Dict(format!(
+            "/Type /ExtGState /ca {} /CA {}",
+            fnum(*alpha),
+            fnum(*alpha)
+        )));
+    }
+
     // 组装
     let mut out: Vec<u8> = Vec::with_capacity(64 * 1024);
     out.extend_from_slice(b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n");
@@ -315,9 +393,51 @@ fn sanitize_font_name(name: &str) -> String {
 #[derive(Default)]
 pub struct CjkUsage {
     pub fonts: Vec<CjkFont>,
+    /// 渐变资源(F1):resource → (shading dict body)
+    pub shadings: Vec<(String, String)>,
+    /// 图像资源(F2):resource → (FlateDecode RGB 数据, 宽, 高)
+    pub images: Vec<(String, Vec<u8>, u32, u32)>,
+    /// 透明度资源(F3):resource → alpha
+    pub opacities: Vec<(String, f64)>,
+    sh_counter: u32,
+    im_counter: u32,
+    gs_counter: u32,
 }
 
 impl CjkUsage {
+    pub fn new() -> Self {
+        CjkUsage {
+            fonts: Vec::new(),
+            shadings: Vec::new(),
+            images: Vec::new(),
+            opacities: Vec::new(),
+            sh_counter: 0,
+            im_counter: 0,
+            gs_counter: 0,
+        }
+    }
+
+    fn shading_for(&mut self, dict_body: String) -> String {
+        self.sh_counter += 1;
+        let res = format!("Sh{}", self.sh_counter);
+        self.shadings.push((res.clone(), dict_body));
+        res
+    }
+
+    fn image_for(&mut self, data: Vec<u8>, w: u32, h: u32) -> String {
+        self.im_counter += 1;
+        let res = format!("Im{}", self.im_counter);
+        self.images.push((res.clone(), data, w, h));
+        res
+    }
+
+    fn opacity_for(&mut self, alpha: f64) -> String {
+        self.gs_counter += 1;
+        let res = format!("GS{}", self.gs_counter);
+        self.opacities.push((res.clone(), alpha));
+        res
+    }
+
     fn resource_for(&mut self, family: &str, weight: u16) -> String {
         let name = family.trim().trim_matches('"').to_string();
         if let Some(f) = self
@@ -485,18 +605,26 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
                     path_ops(s, item, x, py, w, h);
                     s.push_str("f\n");
                 }
-                FillDef::LinearGradient { stops, .. } | FillDef::RadialGradient { stops, .. } => {
-                    let mid = stops.get(stops.len() / 2).or_else(|| stops.first());
-                    if let Some(st) = mid {
-                        s.push_str(&format!(
-                            "{} {} {} rg\n",
-                            fnum(st.color[0]),
-                            fnum(st.color[1]),
-                            fnum(st.color[2])
-                        ));
-                        path_ops(s, item, x, py, w, h);
-                        s.push_str("f\n");
-                    }
+                FillDef::LinearGradient { angle_css, stops } => {
+                    // F1: PDF axial shading——真渐变替代中值色降级
+                    let sh_res = usage
+                        .shading_for(build_axial_shading(*angle_css, stops, x, y, w, h, page_h));
+                    s.push_str("q\n");
+                    path_ops(s, item, x, py, w, h);
+                    s.push_str("W n\n");
+                    s.push_str(&format!("/{} sh\nQ\n", sh_res));
+                }
+                FillDef::RadialGradient {
+                    cx: _gcx,
+                    cy: _gcy,
+                    stops,
+                } => {
+                    // F1: PDF radial shading
+                    let sh_res = usage.shading_for(build_radial_shading(stops, x, y, w, h, page_h));
+                    s.push_str("q\n");
+                    path_ops(s, item, x, py, w, h);
+                    s.push_str("W n\n");
+                    s.push_str(&format!("/{} sh\nQ\n", sh_res));
                 }
             }
         }
@@ -712,22 +840,183 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
         }
     }
 
-    // ---- 图像(旋转需要 cm)----
+    // ---- 图像(F2: XObject 嵌入;旋转需要 cm)----
     if item.kind == DrawKind::Image {
         if rotated {
             s.push_str(&rot_ops);
         }
-        s.push_str("0.8 0.8 0.8 rg 0.6 0.6 0.6 RG 1 w\n");
-        s.push_str(&format!(
-            "{} {} {} {} re B\n",
-            fnum(x),
-            fnum(py),
-            fnum(w),
-            fnum(h)
-        ));
+        if let Some(bmp) = &item.image {
+            // F2: RGB FlateDecode 图像 XObject
+            let rgba = &bmp.rgba;
+            let mut rgb = Vec::with_capacity(bmp.width as usize * bmp.height as usize * 3);
+            for px in rgba.chunks_exact(4) {
+                rgb.extend_from_slice(&[px[0], px[1], px[2]]);
+            }
+            let im_res = usage.image_for(rgb, bmp.width, bmp.height);
+            s.push_str(&format!(
+                "q {} 0 0 {} {} {} cm /{} Do Q\n",
+                fnum(w),
+                fnum(h),
+                fnum(x),
+                fnum(py),
+                im_res
+            ));
+        } else {
+            // 无位图:灰色占位
+            s.push_str("0.8 0.8 0.8 rg 0.6 0.6 0.6 RG 1 w\n");
+            s.push_str(&format!(
+                "{} {} {} {} re B\n",
+                fnum(x),
+                fnum(py),
+                fnum(w),
+                fnum(h)
+            ));
+        }
         if rotated {
             s.push_str("Q\n");
         }
+    }
+}
+
+/// F1: 线性渐变 → PDF axial shading 字典体。
+/// 角度为 CSS 语义(0=to top, 90=to right, 180=to bottom),坐标已 Y 翻转。
+fn build_axial_shading(
+    angle_css: f64,
+    stops: &[vb_render::encode::GradientStop],
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    page_h: f64,
+) -> String {
+    let rad = angle_css.to_radians();
+    // CSS 渐变方向向量(屏幕坐标 Y-down): (sin θ, -cos θ)
+    // PDF 坐标系 (Y-up): (sin θ, cos θ)
+    let dx = rad.sin();
+    let dy = rad.cos();
+    let cx = x + w / 2.0;
+    let cy_pdf = page_h - (y + h / 2.0);
+    // 渐变线长度(覆盖整个盒子)
+    let len = (w * dx.abs() + h * dy.abs()).max(1.0);
+    let x0 = cx - dx * len / 2.0;
+    let y0 = cy_pdf - dy * len / 2.0;
+    let x1 = cx + dx * len / 2.0;
+    let y1 = cy_pdf + dy * len / 2.0;
+
+    if stops.len() == 2 {
+        let c0 = &stops[0].color;
+        let c1 = &stops[1].color;
+        format!(
+            "/ShadingType 2 /ColorSpace /DeviceRGB /Coords [{} {} {} {}] \
+             /Function << /FunctionType 2 /C0 [{} {} {}] /C1 [{} {} {}] /N 1 >> \
+             /Extend [true true]",
+            fnum(x0),
+            fnum(y0),
+            fnum(x1),
+            fnum(y1),
+            fnum(c0[0] as f64),
+            fnum(c0[1] as f64),
+            fnum(c0[2] as f64),
+            fnum(c1[0] as f64),
+            fnum(c1[1] as f64),
+            fnum(c1[2] as f64),
+        )
+    } else {
+        // 多 stop: FunctionType 3 stitching
+        let mut funcs = Vec::new();
+        let mut bounds = Vec::new();
+        let mut encode = Vec::new();
+        for w in stops.windows(2) {
+            let c0 = &w[0].color;
+            let c1 = &w[1].color;
+            funcs.push(format!(
+                "<< /FunctionType 2 /C0 [{} {} {}] /C1 [{} {} {}] /N 1 >>",
+                fnum(c0[0] as f64),
+                fnum(c0[1] as f64),
+                fnum(c0[2] as f64),
+                fnum(c1[0] as f64),
+                fnum(c1[1] as f64),
+                fnum(c1[2] as f64),
+            ));
+            if w[0].pos > 0.0 && w[0].pos < 1.0 {
+                bounds.push(fnum(w[0].pos as f64));
+            }
+            encode.push("0 1".to_string());
+        }
+        let coords = format!("[{} {} {} {}]", fnum(x0), fnum(y0), fnum(x1), fnum(y1));
+        format!(
+            "/ShadingType 2 /ColorSpace /DeviceRGB /Coords {} \
+             /Function << /FunctionType 3 /Domain [0 1] /Functions [{}] /Bounds [{}] /Encode [{}] >> \
+             /Extend [true true]",
+            coords, funcs.join(" "), bounds.join(" "), encode.join(" ")
+        )
+    }
+}
+
+/// F1: 径向渐变 → PDF radial shading 字典体。
+fn build_radial_shading(
+    stops: &[vb_render::encode::GradientStop],
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    page_h: f64,
+) -> String {
+    let cx = x + w / 2.0;
+    let cy_pdf = page_h - (y + h / 2.0);
+    let r = (w.max(h) / 2.0).max(1.0);
+    let coords = format!(
+        "[{} {} 0 {} {} {}]",
+        fnum(cx),
+        fnum(cy_pdf),
+        fnum(cx),
+        fnum(cy_pdf),
+        fnum(r)
+    );
+
+    if stops.len() == 2 {
+        let c0 = &stops[0].color;
+        let c1 = &stops[1].color;
+        format!(
+            "/ShadingType 3 /ColorSpace /DeviceRGB /Coords {} \
+             /Function << /FunctionType 2 /C0 [{} {} {}] /C1 [{} {} {}] /N 1 >> \
+             /Extend [true true]",
+            coords,
+            fnum(c0[0] as f64),
+            fnum(c0[1] as f64),
+            fnum(c0[2] as f64),
+            fnum(c1[0] as f64),
+            fnum(c1[1] as f64),
+            fnum(c1[2] as f64),
+        )
+    } else {
+        // 多 stop: stitching function
+        let mut funcs = Vec::new();
+        let mut bounds = Vec::new();
+        let mut encode = Vec::new();
+        for w in stops.windows(2) {
+            let c0 = &w[0].color;
+            let c1 = &w[1].color;
+            funcs.push(format!(
+                "<< /FunctionType 2 /C0 [{} {} {}] /C1 [{} {} {}] /N 1 >>",
+                fnum(c0[0] as f64),
+                fnum(c0[1] as f64),
+                fnum(c0[2] as f64),
+                fnum(c1[0] as f64),
+                fnum(c1[1] as f64),
+                fnum(c1[2] as f64),
+            ));
+            if w[0].pos > 0.0 && w[0].pos < 1.0 {
+                bounds.push(fnum(w[0].pos as f64));
+            }
+            encode.push("0 1".to_string());
+        }
+        format!(
+            "/ShadingType 3 /ColorSpace /DeviceRGB /Coords {} \
+             /Function << /FunctionType 3 /Domain [0 1] /Functions [{}] /Bounds [{}] /Encode [{}] >> \
+             /Extend [true true]",
+            coords, funcs.join(" "), bounds.join(" "), encode.join(" ")
+        )
     }
 }
 

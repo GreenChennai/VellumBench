@@ -4902,6 +4902,7 @@ name = "vb_kiln"
 version = "0.3.0"
 dependencies = [
  "clap",
+ "flate2",
  "image",
  "pdfium-render",
  "subsetter",
