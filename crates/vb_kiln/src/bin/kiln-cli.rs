@@ -243,10 +243,32 @@ fn run_export(
         return 3;
     };
 
-    // 项目 webfont(@font-face)注册:家庭+字重 → 字体文件
+    // 项目 webfont(@font-face)注册:家庭+字重 → 字体文件。
+    // woff2(压缩容器,ttf 解析器不识别)自动尝试同名 .ttf/.otf——
+    // GEO 存量项目 @font-face 全为 woff2,不回退则中文整篇走系统兜底
     vb_render::text::clear_font_registry();
     for f in &imported.font_faces {
-        vb_render::text::register_font_file(&f.family, f.weight, dir.join(&f.src));
+        let path = dir.join(&f.src);
+        let is_woff2 = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("woff2") || e.eq_ignore_ascii_case("woff"))
+            .unwrap_or(false);
+        if is_woff2 {
+            let mut registered = false;
+            for ext in ["ttf", "otf"] {
+                let cand = path.with_extension(ext);
+                if cand.is_file() {
+                    vb_render::text::register_font_file(&f.family, f.weight, cand);
+                    registered = true;
+                    break;
+                }
+            }
+            if registered {
+                continue;
+            }
+        }
+        vb_render::text::register_font_file(&f.family, f.weight, path);
     }
 
     // 文档流布局求值(M1.0):flow/flex/absolute → 具体矩形写回 geom;

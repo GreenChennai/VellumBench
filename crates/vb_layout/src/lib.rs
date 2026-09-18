@@ -103,6 +103,17 @@ pub fn apply_to_doc(
     // 把 A4 高度回填成 2004,存量项目静默失真)。
     if synthetic {
         let ab_sid = doc.node(artboard).map(|n| n.sid.as_str().to_string());
+        // 画板显式几何(body width/max-width/height 摘自 CSS)是硬约束:
+        // 回填尺寸不得超过(浏览器 overflow-x:hidden 语义)
+        let (ab_cap_w, ab_cap_h) = doc
+            .node(artboard)
+            .map(|n| {
+                (
+                    n.authored[2].then_some(n.geom.w),
+                    n.authored[3].then_some(n.geom.h),
+                )
+            })
+            .unwrap_or((None, None));
         let (mut max_w, mut max_h) = (0.0f64, 0.0f64);
         let mut clipped = false;
         for (sid, r) in &outcome.rects {
@@ -115,10 +126,12 @@ pub fn apply_to_doc(
             let mut cur = doc.node(id).and_then(|n| n.parent);
             while let Some(pid) = cur {
                 let Some(pn) = doc.node(pid) else { break };
-                let clips = pn
-                    .style
-                    .iter()
-                    .any(|d| d.prop == "overflow" && d.value.trim() == "hidden");
+                let clips = pn.style.iter().any(|d| {
+                    (d.prop == "overflow"
+                        || d.prop == "overflow-x"
+                        || d.prop == "overflow-y")
+                        && d.value.trim() == "hidden"
+                });
                 if clips {
                     if let Some(pr) = outcome.rects.get(pn.sid.as_str()) {
                         let (x1, y1) = (rect[0].max(pr[0]), rect[1].max(pr[1]));
@@ -144,6 +157,12 @@ pub fn apply_to_doc(
             }
             max_w = max_w.max(rect[0] + rect[2]);
             max_h = max_h.max(rect[1] + rect[3]);
+        }
+        if let Some(cap) = ab_cap_w {
+            max_w = max_w.min(cap);
+        }
+        if let Some(cap) = ab_cap_h {
+            max_h = max_h.min(cap);
         }
         if max_w > 0.0 && max_h > 0.0 {
             if let Some(n) = doc.node_mut(artboard) {

@@ -210,6 +210,25 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
         }
     }
 
+    // body 子树内嵌的 <style>(存量项目常见:分段样式散在 body 各处)
+    // 与 head 样式同权生效;不收集则数万字符 CSS 静默丢失(部署 GEO 实测)
+    fn collect_body_styles(node: &HtmlNode, out: &mut Vec<String>) {
+        if let NodeData::Element(el) = &node.data {
+            if el.name.eq_ignore_ascii_case("style") {
+                out.push(collect_text(node));
+                return;
+            }
+        }
+        for c in &node.children {
+            collect_body_styles(c, out);
+        }
+    }
+    if let Some(body_el) = dom.body() {
+        for child in &body_el.children {
+            collect_body_styles(child, &mut css_texts);
+        }
+    }
+
     // ---- 样式表 → 类规则 ----
     let mut sheet = Stylesheet::default();
     let mut font_faces: Vec<FontFace> = Vec::new();
@@ -251,6 +270,9 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
         match &child.data {
             NodeData::Comment(c) => importer.pending_comments.push(c.clone()),
             NodeData::Element(el) => {
+                if el.name.eq_ignore_ascii_case("style") {
+                    continue; // 已并入样式表,不建节点(UA 默认 display:none)
+                }
                 if is_artboard(el) {
                     let id = importer.build_artboard(child);
                     artboard_nodes.push(id);
@@ -267,6 +289,11 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
     if artboard_nodes.is_empty() {
         // 无画板标记:整个 body 内容收进一个合成画板
         synthetic_flag = true;
+        // body 显式约束(html,body{width/max-width/height}px)→ 画板初始几何。
+        // 浏览器语义:画布宽 = body 宽(max-width 生效),横向溢出被
+        // overflow-x:hidden 裁掉;body 不成为节点,约束必须摘到画板上,
+        // 否则回填把 1080 宽的版面撑成 1440(部署报告 Issue 2)
+        let (bw, bh) = body_explicit_size(&css_texts);
         let name = if doc_title.is_empty() {
             "画板 1".to_string()
         } else {
@@ -286,6 +313,17 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
             }
         }
         importer.doc.node_mut(ab).unwrap().geom.h = maxb;
+        if bw.is_some() || bh.is_some() {
+            let n = importer.doc.node_mut(ab).unwrap();
+            if let Some(w) = bw {
+                n.geom.w = w;
+                n.authored[2] = true;
+            }
+            if let Some(h) = bh {
+                n.geom.h = n.geom.h.max(h);
+                n.authored[3] = true;
+            }
+        }
         importer
             .warnings
             .push("未找到 vb-artboard 画板标记:已合成单一画板".to_string());
@@ -408,6 +446,44 @@ fn parse_font_faces(text: &str, sheet: &mut Stylesheet) -> Vec<FontFace> {
     let parsed = parse_stylesheet(text);
     sheet.extend(parsed);
     out
+}
+
+/// 扫描样式文本,取 body(含 `html, body` 复合选择器)的显式
+/// width/max-width/height(px)。取最后一次声明(CSS 级联)。
+fn body_explicit_size(css_texts: &[String]) -> (Option<f64>, Option<f64>) {
+    let mut w = None;
+    let mut h = None;
+    for css in css_texts {
+        let mut rest = css.as_str();
+        while let Some(brace) = rest.find('{') {
+            let selector = rest[..brace].to_lowercase();
+            let Some(close) = rest[brace..].find('}') else { break };
+            let decls = &rest[brace + 1..brace + close];
+            let applies = selector
+                .split(',')
+                .map(str::trim)
+                .any(|sel| sel == "body" || sel == "html");
+            if applies {
+                for d in decls.split(';') {
+                    let d = d.trim();
+                    let pick = |prop: &str| -> Option<f64> {
+                        d.strip_prefix(prop)
+                            .and_then(|v| v.trim().strip_prefix(':'))
+                            .and_then(|v| v.trim().strip_suffix("px"))
+                            .and_then(|v| v.trim().parse::<f64>().ok())
+                    };
+                    if let Some(v) = pick("max-width").or_else(|| pick("width")) {
+                        w = Some(v);
+                    }
+                    if let Some(v) = pick("height") {
+                        h = Some(v);
+                    }
+                }
+            }
+            rest = &rest[brace + close + 1..];
+        }
+    }
+    (w, h)
 }
 
 type NodeIdT = crate::model::NodeId;

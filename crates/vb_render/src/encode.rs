@@ -875,13 +875,11 @@ fn has_own_visual(node: &Node) -> bool {
         || node.style_get("background-image").is_some()
         || node.style_get("border").is_some()
         || node.style_get("border-width").is_some()
-        // background 简写(`background: radial-gradient(...)`)此前不参与
-        // "自身视觉"判定,纯渐变节点被当成空容器整棵跳过
+        // background 简写任意形式都算自身视觉(渐变/纯色/var 引用)。
+        // 此前只认渐变前缀,`background:var(--panel)` / `background:#fff`
+        // 的容器被判"无自绘"整棵跳过 → 面板背景全丢(部署 GEO 实测)
         || node
             .style_get("background")
-            .map(|v| {
-                let t = v.trim();
-                t.starts_with("linear-gradient") || t.starts_with("radial-gradient")
-            })
+            .map(|v| !v.trim().is_empty() && v.trim() != "none")
             .unwrap_or(false)
 }
