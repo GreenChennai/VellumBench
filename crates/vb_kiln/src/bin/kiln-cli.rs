@@ -252,7 +252,13 @@ fn run_export(
     // 文档流布局求值(M1.0):flow/flex/absolute → 具体矩形写回 geom;
     // 矢量模式文档(全显式定位)求值结果与作者输入一致,无副作用
     let synthetic = imported.synthetic_artboard;
+    let mut degraded_artboard = false;
     for w in vb_layout::apply_to_doc(&mut imported.doc, ab, Some(&dir), synthetic) {
+        // 画板尺寸回填 / 裁剪 / grid 降级 = 合成画板与作者声明可能不一致,
+        // 输出结构化标记供脚本判定(此前静默 ok:true,存量项目失真无告警)
+        if w.contains("尺寸回填") || w.contains("裁剪") || w.contains("grid") {
+            degraded_artboard = true;
+        }
         eprintln!("{{\"warn\":\"{w}\"}}");
     }
 
@@ -288,7 +294,7 @@ fn run_export(
     let _ = width; // WPI 兼容:Kiln 以画板几何为准
 
     let json = format!(
-        "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':{},'degraded':{},'bytes':{},'encode_ms':{},'engine':'kiln'}}",
+        "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':{},'degraded':{},'degraded_artboard':{},'bytes':{},'encode_ms':{},'engine':'kiln'}}",
         fmt_str.to_uppercase(),
         output.display(),
         w,
@@ -298,6 +304,7 @@ fn run_export(
         report.warnings.len(),
         report.frame_count,
         report.degraded,
+        degraded_artboard,
         bytes.len(),
         t0.elapsed().as_millis()
     )

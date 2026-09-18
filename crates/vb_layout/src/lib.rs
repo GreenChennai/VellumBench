@@ -97,16 +97,53 @@ pub fn apply_to_doc(
     }
     let mut ws = outcome.warnings;
     ws.push(format!("vb_layout:已求值 {applied} 个节点几何"));
-    // 合成画板(无 vb-artboard 标记):画布尺寸 = 内容包围盒(浏览器 full_page 语义)
+    // 合成画板(无 vb-artboard 标记):画布尺寸 = 内容包围盒(浏览器 full_page
+    // 语义)。包围盒计算**尊重 overflow:hidden 裁剪**——`.poster` 这类显式
+    // 尺寸 + 裁剪容器声明画布真值,其子内容溢出不撑大画布(此前 250px 溢出
+    // 把 A4 高度回填成 2004,存量项目静默失真)。
     if synthetic {
-        let (mut max_w, mut max_h) = (0.0f64, 0.0f64);
         let ab_sid = doc.node(artboard).map(|n| n.sid.as_str().to_string());
+        let (mut max_w, mut max_h) = (0.0f64, 0.0f64);
+        let mut clipped = false;
         for (sid, r) in &outcome.rects {
             if Some(sid.as_str()) == ab_sid.as_deref() {
                 continue;
             }
-            max_w = max_w.max(r[0] + r[2]);
-            max_h = max_h.max(r[1] + r[3]);
+            let Some(id) = doc.find_by_sid(sid) else { continue };
+            // 沿祖先链找 overflow:hidden 容器,把矩形裁进其计算矩形
+            let mut rect = *r;
+            let mut cur = doc.node(id).and_then(|n| n.parent);
+            while let Some(pid) = cur {
+                let Some(pn) = doc.node(pid) else { break };
+                let clips = pn
+                    .style
+                    .iter()
+                    .any(|d| d.prop == "overflow" && d.value.trim() == "hidden");
+                if clips {
+                    if let Some(pr) = outcome.rects.get(pn.sid.as_str()) {
+                        let (x1, y1) = (rect[0].max(pr[0]), rect[1].max(pr[1]));
+                        let (x2, y2) = (
+                            (rect[0] + rect[2]).min(pr[0] + pr[2]),
+                            (rect[1] + rect[3]).min(pr[1] + pr[3]),
+                        );
+                        rect = [x1, y1, (x2 - x1).max(0.0), (y2 - y1).max(0.0)];
+                        if rect[2] == 0.0 || rect[3] == 0.0 {
+                            break;
+                        }
+                    }
+                }
+                cur = pn.parent;
+            }
+            if rect[2] == 0.0 || rect[3] == 0.0 {
+                continue;
+            }
+            let before = (r[0] + r[2]).max(r[1] + r[3]);
+            let after = (rect[0] + rect[2]).max(rect[1] + rect[3]);
+            if after + 0.5 < before {
+                clipped = true;
+            }
+            max_w = max_w.max(rect[0] + rect[2]);
+            max_h = max_h.max(rect[1] + rect[3]);
         }
         if max_w > 0.0 && max_h > 0.0 {
             if let Some(n) = doc.node_mut(artboard) {
@@ -114,6 +151,9 @@ pub fn apply_to_doc(
                 n.geom.h = max_h;
             }
             ws.push(format!("vb_layout:合成画板尺寸回填 {max_w:.0}x{max_h:.0}"));
+            if clipped {
+                ws.push("vb_layout:内容溢出已按 overflow:hidden 裁剪参与回填".into());
+            }
         }
     }
     ws
@@ -564,9 +604,56 @@ impl<'a> BuildCtx<'a> {
         } else {
             match get("display").as_deref() {
                 Some("flex") | Some("inline-flex") => Display::Flex,
+                Some("grid") | Some("inline-grid") => Display::Grid,
                 _ => Display::Block,
             }
         };
+        // CSS Grid 模板解析(taffy parse feature;失败降级 Block + 告警)
+        let mut grid_warning: Option<String> = None;
+        let (grid_template_columns, grid_template_rows) = if display == Display::Grid {
+            use taffy::style::{GridTemplateComponent, GridTemplateTracks};
+            type Tracks = Vec<GridTemplateComponent<String>>;
+            let parse_tracks = |v: &str| -> Result<Tracks, String> {
+                let v = v.trim();
+                if v.is_empty() {
+                    return Ok(Vec::new());
+                }
+                let parsed: GridTemplateTracks<String, GridTemplateComponent<String>> =
+                    v.parse().map_err(|e| format!("{e}"))?;
+                Ok(parsed.tracks)
+            };
+            let cols_owned = get("grid-template-columns").map(|v| v.trim().to_string());
+            let cols = cols_owned.as_deref().filter(|v| !v.is_empty());
+            let rows_owned = get("grid-template-rows").map(|v| v.trim().to_string());
+            let rows = rows_owned.as_deref().filter(|v| !v.is_empty());
+            let mut gc = Vec::new();
+            let mut gr = Vec::new();
+            if let Some(v) = cols {
+                match parse_tracks(v) {
+                    Ok(t) => gc = t,
+                    Err(e) => {
+                        grid_warning = Some(format!("grid-template-columns '{v}' 未识别({e})"))
+                    }
+                }
+            }
+            if let Some(v) = rows {
+                match parse_tracks(v) {
+                    Ok(t) => gr = t,
+                    Err(e) => {
+                        grid_warning = Some(format!("grid-template-rows '{v}' 未识别({e})"))
+                    }
+                }
+            }
+            if grid_warning.is_some() {
+                // 模板不可解析:整容器降级块布局,不静默塌单列
+                (Vec::new(), Vec::new())
+            } else {
+                (gc, gr)
+            }
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        let display = if grid_warning.is_some() { Display::Block } else { display };
         // 定位:authored_position(导入记录)优先;否则按 authored left/top 推断
         let position = match node.authored_position.as_deref() {
             Some("absolute") | Some("fixed") => Position::Absolute,
@@ -754,6 +841,10 @@ impl<'a> BuildCtx<'a> {
             None => (0.0, 1.0, taffy::Dimension::auto()),
         };
 
+        if let Some(w) = &grid_warning {
+            self.warnings
+                .push(format!("vb_layout:{w};该 grid 容器按块布局降级"));
+        }
         Style {
             display,
             position,
@@ -772,6 +863,8 @@ impl<'a> BuildCtx<'a> {
             flex_grow,
             flex_shrink,
             flex_basis,
+            grid_template_columns,
+            grid_template_rows,
             ..Default::default()
         }
     }
