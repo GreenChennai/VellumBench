@@ -1,0 +1,102 @@
+{
+  "env": {
+    "git": "93ecf8d",
+    "kiln": "E:\\平日资料\\GitHub\\VellumBench\\target\\release\\kiln-cli.exe",
+    "engine": "browser",
+    "browser": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+    "generated_at": "2026-09-19 04:56:06"
+  },
+  "verdict": {
+    "informative": true,
+    "gates": {
+      "G1": {
+        "pass": true,
+        "n": 1,
+        "avg": 99.85,
+        "min": 99.85,
+        "sizes_ok": true,
+        "ref_avg": null
+      },
+      "G2": {
+        "pass": false,
+        "n": 0,
+        "avg": 0,
+        "min": 0,
+        "errors": []
+      },
+      "G3": {
+        "pass": false,
+        "n": 0,
+        "avg": 0,
+        "min": 0,
+        "errors": []
+      },
+      "G4": {
+        "pass": false,
+        "n": 1,
+        "failed": [
+          "a4-front"
+        ]
+      },
+      "G5": {
+        "pass": false,
+        "n": 1,
+        "failed": [
+          "a4-front"
+        ]
+      }
+    },
+    "pass": true
+  },
+  "results": [
+    {
+      "name": "a4-front",
+      "anim": false,
+      "g1": {
+        "score": 99.85,
+        "mad": 0.383,
+        "sizes_match": true
+      },
+      "sharp_ratio": 1.002,
+      "baseline_stddev": 48.27,
+      "pdf_pages": 1,
+      "g2": {
+        "score": null,
+        "error": "PDF 渲染尺寸 (2480, 3523) != PNG (2480, 3508)"
+      },
+      "g4": {
+        "match": false,
+        "html_chars": 198,
+        "pdf_chars": 185,
+        "html_head": "安信德GEO·A4海报正面安信德GEO品牌优化系统全国医疗器械产业园税务规划与顾问服务覆盖17+AI流量入口覆盖8+大模",
+        "pdf_head": "安信德GEO品牌优化系统全国医疗器械产业园税务规划与顾问服务覆盖17+AI流量入口覆盖8+大模型DeepSeekKimi"
+      },
+      "g5": {
+        "all_embedded": false,
+        "fonts": {
+          "/DAAAAA+AlibabaPuHuiTi_3_55_Regular": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "?": {
+            "embedded": false,
+            "kind": "descriptor"
+          },
+          "/BAAAAA+AlibabaPuHuiTi_3_85_Bold": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/CAAAAA+AlibabaPuHuiTi_3_105_Heavy": {
+            "embedded": true,
+            "kind": "descriptor"
+          }
+        }
+      },
+      "raster_ratio": 0.0087,
+      "g3": {
+        "score": null,
+        "error": "PDF 渲染尺寸 (2480, 3523) != PNG (2480, 3508)"
+      }
+    }
+  ]
+}

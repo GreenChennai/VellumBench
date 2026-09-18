@@ -8,3 +8,6 @@ description = "Vellum Bench CSS 白名单:L1 属性表、声明解析与值规�
 
 [dependencies]
 vb_common = { workspace = true }
+
+[dev-dependencies]
+vb_doc = { workspace = true }

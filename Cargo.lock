@@ -4968,7 +4968,7 @@ dependencies = [
 
 [[package]]
 name = "vb_agent"
-version = "0.3.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -4987,7 +4987,7 @@ dependencies = [
 
 [[package]]
 name = "vb_app"
-version = "0.3.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "eframe",
@@ -5011,8 +5011,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "vb_browser"
+version = "0.7.0"
+dependencies = [
+ "image",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "vb_common"
-version = "0.3.0"
+version = "0.7.0"
 dependencies = [
  "kurbo 0.13.1",
  "serde",
@@ -5020,14 +5029,15 @@ dependencies = [
 
 [[package]]
 name = "vb_css"
-version = "0.3.0"
+version = "0.7.0"
 dependencies = [
  "vb_common",
+ "vb_doc",
 ]
 
 [[package]]
 name = "vb_doc"
-version = "0.3.0"
+version = "0.7.0"
 dependencies = [
  "kurbo 0.13.1",
  "slotmap",
@@ -5039,7 +5049,7 @@ dependencies = [
 
 [[package]]
 name = "vb_export"
-version = "0.3.0"
+version = "0.7.0"
 dependencies = [
  "base64 0.23.1",
  "image",
@@ -5054,7 +5064,7 @@ dependencies = [
 
 [[package]]
 name = "vb_html"
-version = "0.3.0"
+version = "0.7.0"
 dependencies = [
  "html5ever",
  "markup5ever_rcdom",
@@ -5062,19 +5072,21 @@ dependencies = [
 
 [[package]]
 name = "vb_kiln"
-version = "0.3.0"
+version = "0.7.0"
 dependencies = [
  "clap",
  "flate2",
  "fontdb 0.23.0",
  "image",
  "pdfium-render",
+ "serde_json",
  "subsetter",
  "tempfile",
  "thiserror 2.0.20",
  "tiny-skia 0.11.4",
  "tiny-skia-path 0.11.4",
  "usvg 0.45.1",
+ "vb_browser",
  "vb_common",
  "vb_css",
  "vb_doc",
@@ -5085,7 +5097,7 @@ dependencies = [
 
 [[package]]
 name = "vb_layout"
-version = "0.3.0"
+version = "0.7.0"
 dependencies = [
  "image",
  "taffy",
@@ -5097,11 +5109,11 @@ dependencies = [
 
 [[package]]
 name = "vb_platform"
-version = "0.3.0"
+version = "0.7.0"
 
 [[package]]
 name = "vb_render"
-version = "0.3.0"
+version = "0.7.0"
 dependencies = [
  "fontique",
  "image",
@@ -5116,7 +5128,7 @@ dependencies = [
 
 [[package]]
 name = "vb_tools"
-version = "0.3.0"
+version = "0.7.0"
 dependencies = [
  "flo_curves",
  "vb_common",
@@ -5125,7 +5137,7 @@ dependencies = [
 
 [[package]]
 name = "vb_ui"
-version = "0.3.0"
+version = "0.7.0"
 dependencies = [
  "egui",
  "iconflow",

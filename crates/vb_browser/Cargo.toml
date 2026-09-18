@@ -1,0 +1,12 @@
+[package]
+name = "vb_browser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "浏览器车道(车道 B):Rust 原生 CDP 客户端,驱动系统 Edge/Chrome 完成 PNG/PDF/AI 高保真导出(ADR-0020)"
+
+[dependencies]
+serde_json = { workspace = true }
+image = { workspace = true }
+thiserror = { workspace = true }

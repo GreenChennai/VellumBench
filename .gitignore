@@ -13,3 +13,9 @@ Thumbs.db
 
 dist/*.exe
 bench/artboard-baseline/tmp/
+
+# acceptance:只入库基线与机器报告;被测产物可再生不入库
+bench/acceptance/browser/
+bench/acceptance/native/
+bench/acceptance/kiln/
+bench/__pycache__/

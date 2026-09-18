@@ -1,0 +1,487 @@
+{
+  "env": {
+    "git": "93ecf8d",
+    "kiln": "E:\\平日资料\\GitHub\\VellumBench\\target\\release\\kiln-cli.exe",
+    "engine": null,
+    "browser": "��������������Ự�д򿪡�",
+    "generated_at": "2026-09-19 03:08:29"
+  },
+  "verdict": {
+    "informative": true,
+    "gates": {
+      "G1": {
+        "pass": false,
+        "n": 6,
+        "avg": 82.13,
+        "min": 66.24,
+        "sizes_ok": false,
+        "ref_avg": null
+      }
+    },
+    "pass": true,
+    "case_errors": [
+      "anim-c01-hook-searchbox",
+      "anim-c02-pain-old",
+      "anim-c03-pain-ai",
+      "anim-c04-concept",
+      "anim-c05-brand",
+      "anim-c06-diag-platforms",
+      "anim-c07-diag-coverage",
+      "anim-c08-content-keywords",
+      "anim-c09-content-answer",
+      "anim-c10-feed-channels",
+      "anim-c11-feed-result",
+      "anim-c12-report",
+      "anim-c13-vs",
+      "anim-c14-vs-statement",
+      "anim-c15-trend",
+      "anim-c16-trend-decision",
+      "anim-c17-plans-feed",
+      "anim-c18-plans-system",
+      "anim-c19-outro"
+    ]
+  },
+  "results": [
+    {
+      "name": "rollup-80x200",
+      "anim": false,
+      "g1": {
+        "score": 88.92,
+        "mad": 28.249,
+        "sizes_match": true
+      },
+      "sharp_ratio": 0.94,
+      "baseline_stddev": 46.41
+    },
+    {
+      "name": "longform-orange",
+      "anim": false,
+      "g1": {
+        "score": null,
+        "sizes_match": false,
+        "error": "尺寸门失败 baseline=(1080, 9365) kiln=(1080, 7828)"
+      },
+      "g1_ref": {
+        "score": null,
+        "error": "尺寸门失败 baseline=(1740, 19418) kiln=(1080, 7828)"
+      },
+      "baseline_stddev": 47.18
+    },
+    {
+      "name": "a4-front",
+      "anim": false,
+      "g1": {
+        "score": 85.76,
+        "mad": 36.321,
+        "sizes_match": true
+      },
+      "sharp_ratio": 1.009,
+      "baseline_stddev": 48.27,
+      "pdf_pages": 1,
+      "g2": {
+        "score": 93.57,
+        "mad": 16.407
+      },
+      "g4": {
+        "match": false,
+        "html_chars": 198,
+        "pdf_chars": 185,
+        "html_head": "安信德GEO·A4海报正面安信德GEO品牌优化系统全国医疗器械产业园税务规划与顾问服务覆盖17+AI流量入口覆盖8+大模",
+        "pdf_head": "安信德GEO品牌优化系统全国医疗器械产业园税务规划与顾问服务覆盖17+AI流量入口覆盖8+大模型DeepSeekKimi"
+      },
+      "g5": {
+        "all_embedded": false,
+        "fonts": {
+          "/NotoSerifSCserif-900-CF1": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/PuHuiTisans-serif-700-CF2": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/PuHuiTisans-serif-900-CF3": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/PuHuiTisans-serif-400-CF4": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/Helvetica": {
+            "embedded": false,
+            "kind": "no-descriptor"
+          },
+          "/Helvetica-Bold": {
+            "embedded": false,
+            "kind": "no-descriptor"
+          }
+        }
+      },
+      "raster_ratio": 0.0051,
+      "g3": {
+        "score": 93.57,
+        "mad": 16.407
+      }
+    },
+    {
+      "name": "a4-back",
+      "anim": false,
+      "g1": {
+        "score": 87.25,
+        "mad": 32.509,
+        "sizes_match": true
+      },
+      "sharp_ratio": 0.904,
+      "baseline_stddev": 43.78,
+      "pdf_pages": 1,
+      "g2": {
+        "score": 98.65,
+        "mad": 3.449
+      },
+      "g4": {
+        "match": false,
+        "html_chars": 616,
+        "pdf_chars": 576,
+        "html_head": "安信德GEO·A4海报背面01GEO系统介绍覆盖17+AI流量入口、8+大模型:豆包、DeepSeek、文心一言、通义千",
+        "pdf_head": "01GEO系统介绍覆盖17+AI流量入口、8+大模型:豆包、DeepSeek、文心一言、通义千问、腾讯元宝、Kimi、纳"
+      },
+      "g5": {
+        "all_embedded": false,
+        "fonts": {
+          "/PuHuiTisans-serif-400-CF1": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/PuHuiTisans-serif-700-CF2": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/PuHuiTisans-serif-900-CF3": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/Helvetica": {
+            "embedded": false,
+            "kind": "no-descriptor"
+          },
+          "/Helvetica-Bold": {
+            "embedded": false,
+            "kind": "no-descriptor"
+          }
+        }
+      },
+      "raster_ratio": 0.0009,
+      "g3": {
+        "score": 98.65,
+        "mad": 3.449
+      }
+    },
+    {
+      "name": "festival-zhongqiu",
+      "anim": false,
+      "g1": {
+        "score": 66.24,
+        "mad": 86.096,
+        "sizes_match": true
+      },
+      "sharp_ratio": 0.351,
+      "baseline_stddev": 56.82,
+      "pdf_pages": 1,
+      "g2": {
+        "score": 97.98,
+        "mad": 5.144
+      },
+      "g4": {
+        "match": false,
+        "html_chars": 307,
+        "pdf_chars": 285,
+        "html_head": "中秋放假通知V1Pro·满月长卷(暖橙插画)中秋农历八月十五2026·中秋放假通知月满人间·团圆安康放假时间9.25—9",
+        "pdf_head": "中秋农历八月十五2026·中秋放假通知月满人间·团圆安康放假时间9.25—9.27周五至周日，共3天复工时间9.28周一"
+      },
+      "g5": {
+        "all_embedded": false,
+        "fonts": {
+          "/SHSerif-900-CF1": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/SHSans-500-CF2": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/SHSerif-500-CF3": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/SHSerif-700-CF4": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/SHSans-600-CF5": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/-400-CF6": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/SHSans-400-CF7": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/Helvetica": {
+            "embedded": false,
+            "kind": "no-descriptor"
+          },
+          "/Helvetica-Bold": {
+            "embedded": false,
+            "kind": "no-descriptor"
+          }
+        }
+      },
+      "raster_ratio": 0.0003,
+      "g3": {
+        "score": 97.98,
+        "mad": 5.144
+      }
+    },
+    {
+      "name": "festival-guoqing",
+      "anim": false,
+      "g1": {
+        "score": 88.47,
+        "mad": 29.411,
+        "sizes_match": true
+      },
+      "sharp_ratio": 0.662,
+      "baseline_stddev": 47.46,
+      "pdf_pages": 1,
+      "g2": {
+        "score": 95.48,
+        "mad": 11.534
+      },
+      "g4": {
+        "match": false,
+        "html_chars": 322,
+        "pdf_chars": 300,
+        "html_head": "国庆放假通知N1·盛世华诞(天安门夜景实拍)2026·国庆放假通知盛世华诞中华人民共和国成立77周年1949—2026放",
+        "pdf_head": "2026·国庆放假通知盛世华诞中华人民共和国成立77周年1949—2026放假时间10.1—10.7周四至周三，共7天复"
+      },
+      "g5": {
+        "all_embedded": false,
+        "fonts": {
+          "/SHSans-500-CF1": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/SHSerif-900-CF2": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/SHSerif-500-CF3": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/SHSans-400-CF4": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/SHSerif-700-CF5": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/Helvetica": {
+            "embedded": false,
+            "kind": "no-descriptor"
+          },
+          "/Helvetica-Bold": {
+            "embedded": false,
+            "kind": "no-descriptor"
+          }
+        }
+      },
+      "raster_ratio": 0.0062,
+      "g3": {
+        "score": 95.48,
+        "mad": 11.534
+      }
+    },
+    {
+      "name": "qr-poster",
+      "anim": false,
+      "g1": {
+        "score": 76.14,
+        "mad": 60.837,
+        "sizes_match": true
+      },
+      "sharp_ratio": 0.819,
+      "baseline_stddev": 64.64,
+      "pdf_pages": 1,
+      "g2": {
+        "score": 89.08,
+        "mad": 27.843
+      },
+      "g4": {
+        "match": false,
+        "html_chars": 649,
+        "pdf_chars": 615,
+        "html_head": "安信德GEO·限时抽奖A4海报LUCKYDRAW//2026LIMITEDLUCKYDRAW·限时抽奖活动15天GEO系",
+        "pdf_head": "LIMITEDLUCKYDRAW·限时抽奖活动15天GEO系统使用权免费抽PRIZEDRAW抽中即开通·权益满配直达AI"
+      },
+      "g5": {
+        "all_embedded": false,
+        "fonts": {
+          "/var--sans-700-CF1": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/var--mono-600-CF10": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/var--mono-700-CF2": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/var--display-900-CF3": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/var--sans-400-CF4": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/var--mono-800-CF5": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/var--sans-600-CF6": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/var--display-800-CF7": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/var--sans-500-CF8": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/var--sans-800-CF9": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/Helvetica": {
+            "embedded": false,
+            "kind": "no-descriptor"
+          },
+          "/Helvetica-Bold": {
+            "embedded": false,
+            "kind": "no-descriptor"
+          }
+        }
+      },
+      "raster_ratio": 0.0006,
+      "g3": {
+        "score": 89.08,
+        "mad": 27.843
+      }
+    },
+    {
+      "name": "anim-c01-hook-searchbox",
+      "anim": true,
+      "error": "Kiln PNG 失败: error: unexpected argument '--height' found\n\nUsage: kiln-cli.exe export --source <SOURCE> --output <OUTPUT> --format <FORMAT> --width <WIDTH> --scale <SCALE>\n\nFor more information, try '--help'.\n"
+    },
+    {
+      "name": "anim-c02-pain-old",
+      "anim": true,
+      "error": "Kiln PNG 失败: error: unexpected argument '--height' found\n\nUsage: kiln-cli.exe export --source <SOURCE> --output <OUTPUT> --format <FORMAT> --width <WIDTH> --scale <SCALE>\n\nFor more information, try '--help'.\n"
+    },
+    {
+      "name": "anim-c03-pain-ai",
+      "anim": true,
+      "error": "Kiln PNG 失败: error: unexpected argument '--height' found\n\nUsage: kiln-cli.exe export --source <SOURCE> --output <OUTPUT> --format <FORMAT> --width <WIDTH> --scale <SCALE>\n\nFor more information, try '--help'.\n"
+    },
+    {
+      "name": "anim-c04-concept",
+      "anim": true,
+      "error": "Kiln PNG 失败: error: unexpected argument '--height' found\n\nUsage: kiln-cli.exe export --source <SOURCE> --output <OUTPUT> --format <FORMAT> --width <WIDTH> --scale <SCALE>\n\nFor more information, try '--help'.\n"
+    },
+    {
+      "name": "anim-c05-brand",
+      "anim": true,
+      "error": "Kiln PNG 失败: error: unexpected argument '--height' found\n\nUsage: kiln-cli.exe export --source <SOURCE> --output <OUTPUT> --format <FORMAT> --width <WIDTH> --scale <SCALE>\n\nFor more information, try '--help'.\n"
+    },
+    {
+      "name": "anim-c06-diag-platforms",
+      "anim": true,
+      "error": "Kiln PNG 失败: error: unexpected argument '--height' found\n\nUsage: kiln-cli.exe export --source <SOURCE> --output <OUTPUT> --format <FORMAT> --width <WIDTH> --scale <SCALE>\n\nFor more information, try '--help'.\n"
+    },
+    {
+      "name": "anim-c07-diag-coverage",
+      "anim": true,
+      "error": "Kiln PNG 失败: error: unexpected argument '--height' found\n\nUsage: kiln-cli.exe export --source <SOURCE> --output <OUTPUT> --format <FORMAT> --width <WIDTH> --scale <SCALE>\n\nFor more information, try '--help'.\n"
+    },
+    {
+      "name": "anim-c08-content-keywords",
+      "anim": true,
+      "error": "Kiln PNG 失败: error: unexpected argument '--height' found\n\nUsage: kiln-cli.exe export --source <SOURCE> --output <OUTPUT> --format <FORMAT> --width <WIDTH> --scale <SCALE>\n\nFor more information, try '--help'.\n"
+    },
+    {
+      "name": "anim-c09-content-answer",
+      "anim": true,
+      "error": "Kiln PNG 失败: error: unexpected argument '--height' found\n\nUsage: kiln-cli.exe export --source <SOURCE> --output <OUTPUT> --format <FORMAT> --width <WIDTH> --scale <SCALE>\n\nFor more information, try '--help'.\n"
+    },
+    {
+      "name": "anim-c10-feed-channels",
+      "anim": true,
+      "error": "Kiln PNG 失败: error: unexpected argument '--height' found\n\nUsage: kiln-cli.exe export --source <SOURCE> --output <OUTPUT> --format <FORMAT> --width <WIDTH> --scale <SCALE>\n\nFor more information, try '--help'.\n"
+    },
+    {
+      "name": "anim-c11-feed-result",
+      "anim": true,
+      "error": "Kiln PNG 失败: error: unexpected argument '--height' found\n\nUsage: kiln-cli.exe export --source <SOURCE> --output <OUTPUT> --format <FORMAT> --width <WIDTH> --scale <SCALE>\n\nFor more information, try '--help'.\n"
+    },
+    {
+      "name": "anim-c12-report",
+      "anim": true,
+      "error": "Kiln PNG 失败: error: unexpected argument '--height' found\n\nUsage: kiln-cli.exe export --source <SOURCE> --output <OUTPUT> --format <FORMAT> --width <WIDTH> --scale <SCALE>\n\nFor more information, try '--help'.\n"
+    },
+    {
+      "name": "anim-c13-vs",
+      "anim": true,
+      "error": "Kiln PNG 失败: error: unexpected argument '--height' found\n\nUsage: kiln-cli.exe export --source <SOURCE> --output <OUTPUT> --format <FORMAT> --width <WIDTH> --scale <SCALE>\n\nFor more information, try '--help'.\n"
+    },
+    {
+      "name": "anim-c14-vs-statement",
+      "anim": true,
+      "error": "Kiln PNG 失败: error: unexpected argument '--height' found\n\nUsage: kiln-cli.exe export --source <SOURCE> --output <OUTPUT> --format <FORMAT> --width <WIDTH> --scale <SCALE>\n\nFor more information, try '--help'.\n"
+    },
+    {
+      "name": "anim-c15-trend",
+      "anim": true,
+      "error": "Kiln PNG 失败: error: unexpected argument '--height' found\n\nUsage: kiln-cli.exe export --source <SOURCE> --output <OUTPUT> --format <FORMAT> --width <WIDTH> --scale <SCALE>\n\nFor more information, try '--help'.\n"
+    },
+    {
+      "name": "anim-c16-trend-decision",
+      "anim": true,
+      "error": "Kiln PNG 失败: error: unexpected argument '--height' found\n\nUsage: kiln-cli.exe export --source <SOURCE> --output <OUTPUT> --format <FORMAT> --width <WIDTH> --scale <SCALE>\n\nFor more information, try '--help'.\n"
+    },
+    {
+      "name": "anim-c17-plans-feed",
+      "anim": true,
+      "error": "Kiln PNG 失败: error: unexpected argument '--height' found\n\nUsage: kiln-cli.exe export --source <SOURCE> --output <OUTPUT> --format <FORMAT> --width <WIDTH> --scale <SCALE>\n\nFor more information, try '--help'.\n"
+    },
+    {
+      "name": "anim-c18-plans-system",
+      "anim": true,
+      "error": "Kiln PNG 失败: error: unexpected argument '--height' found\n\nUsage: kiln-cli.exe export --source <SOURCE> --output <OUTPUT> --format <FORMAT> --width <WIDTH> --scale <SCALE>\n\nFor more information, try '--help'.\n"
+    },
+    {
+      "name": "anim-c19-outro",
+      "anim": true,
+      "error": "Kiln PNG 失败: error: unexpected argument '--height' found\n\nUsage: kiln-cli.exe export --source <SOURCE> --output <OUTPUT> --format <FORMAT> --width <WIDTH> --scale <SCALE>\n\nFor more information, try '--help'.\n"
+    }
+  ]
+}

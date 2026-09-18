@@ -18,6 +18,7 @@ use vb_kiln::{ExportRequest, Format};
 #[derive(Parser)]
 #[command(
     name = "Kiln-noGUI-cli",
+    version,
     about = "Kiln 无 GUI 命令行导出器:HTML 项目 → PNG/JPG/GIF/MP4/SVG/PDF/EPS/Ai/PPTX"
 )]
 struct Cli {
@@ -47,9 +48,15 @@ enum Cmd {
         /// 保留透明背景(PNG/GIF/SVG/PDF)
         #[arg(long, default_value_t = false)]
         transparent: bool,
-        /// 最大等待秒(WPI 兼容;Kiln 原生导出无外部等待,参数保留)
+        /// 最大等待秒(浏览器车道 settle 预算;自研车道无外部等待)
         #[arg(long, default_value_t = 15.0)]
         max_wait: f32,
+        /// 高度锁定(CSS px;0=整页。浏览器车道有效)
+        #[arg(long, default_value_t = 0)]
+        height: u32,
+        /// 导出引擎:auto=浏览器可用即用(默认)|browser=强制浏览器|native=强制自研
+        #[arg(long, default_value = "auto")]
+        engine: String,
         /// JPG 质量 1..=100
         #[arg(long, default_value_t = 92)]
         jpeg_quality: u8,
@@ -156,6 +163,8 @@ fn main() {
             scale,
             transparent,
             max_wait,
+            height,
+            engine,
             jpeg_quality,
             fps,
             duration,
@@ -169,6 +178,8 @@ fn main() {
             scale,
             transparent,
             max_wait,
+            height,
+            engine,
             jpeg_quality,
             fps,
             duration,
@@ -190,7 +201,9 @@ fn run_export(
     width: u32,
     scale: u32,
     transparent: bool,
-    _max_wait: f32,
+    max_wait: f32,
+    height: u32,
+    engine: String,
     jpeg_quality: u8,
     fps: u32,
     duration: f32,
@@ -198,6 +211,7 @@ fn run_export(
     bitrate: u32,
 ) -> i32 {
     let t0 = Instant::now();
+    let _ = max_wait; // 浏览器车道自带 settle 预算;自研车道无外部等待
     let dir = if source.is_dir() {
         source.clone()
     } else {
@@ -230,6 +244,58 @@ fn run_export(
         );
         return 2;
     };
+
+    // ---------------- 车道 B(浏览器车道,ADR-0020):PNG/PDF/AI 高保真导出 ----------------
+    // auto=浏览器可用即用(保真优先);browser=强制;native=跳过本段
+    let engine_mode = engine.trim().to_ascii_lowercase();
+    if engine_mode == "browser" && !matches!(fmt_str.to_uppercase().as_str(), "PNG" | "PDF" | "AI") {
+        eprintln!("{{\"ok\":false,\"error\":\"浏览器车道仅支持 PNG/PDF/AI,格式 {fmt_str} 请用 auto/native\"}}");
+        return 2;
+    }
+    if engine_mode != "native" && matches!(fmt_str.to_uppercase().as_str(), "PNG" | "PDF" | "AI") {
+        let req = vb_browser::LaneRequest {
+            format: vb_browser::LaneFormat::parse(&fmt_str).expect("格式已白名单"),
+            width,
+            height,
+            scale: scale.clamp(1, 8),
+            transparent,
+        };
+        match vb_browser::export_source(&source, &req) {
+            Ok(outcome) => {
+                if let Some(parent) = output.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if let Err(e) = std::fs::write(&output, &outcome.bytes) {
+                    eprintln!("{{\"ok\":false,\"error\":\"写文件失败:{e}\"}}");
+                    return 4;
+                }
+                let json = format!(
+                    "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':1,'degraded':false,'degraded_artboard':false,'bytes':{},'encode_ms':{},'engine':'browser','browser':'{}'}}",
+                    fmt_str.to_uppercase(),
+                    output.display(),
+                    outcome.width,
+                    outcome.height,
+                    req.scale,
+                    transparent,
+                    outcome.warnings.len(),
+                    outcome.bytes.len(),
+                    t0.elapsed().as_millis(),
+                    outcome.engine_hint.replace('"', "'"),
+                )
+                .replace('\'', "\"");
+                println!("{json}");
+                return 0;
+            }
+            Err(e) => {
+                if engine_mode == "browser" {
+                    eprintln!("{{\"ok\":false,\"error\":\"浏览器车道失败:{e}\"}}");
+                    return 4;
+                }
+                eprintln!("{{\"warn\":\"浏览器车道不可用,降级自研引擎:{e}\"}}");
+            }
+        }
+    }
+    // ---------------- 车道 K(自研引擎):原有路径 ----------------
 
     let mut imported = match import_project(&import_path) {
         Ok(r) => r,
@@ -571,10 +637,34 @@ fn run_selfcheck() -> i32 {
         };
         vb_kiln::export_artboard(&doc, ab, &req, None).is_ok()
     });
+    // 浏览器车道探活(ADR-0020):发现 → 起进程 → 空页截图
+    let browser_lane = match vb_browser::discover_browser(None) {
+        Some(exe) => match vb_browser::browser::BrowserProcess::launch(&exe) {
+            Ok(proc) => {
+                let hint = proc.version();
+                match vb_browser::page::PageSession::attach(&proc) {
+                    Ok(mut page) => {
+                        let shot = page
+                            .set_device_metrics(64, 64, 1)
+                            .and_then(|_| {
+                                page.screenshot("png", None, None, false, false)
+                            })
+                            .is_ok();
+                        page.close();
+                        serde_json::Value::String(format!("ok({shot}) {hint}"))
+                    }
+                    Err(e) => serde_json::Value::String(format!("attach 失败: {e}")),
+                }
+            }
+            Err(e) => serde_json::Value::String(format!("启动失败: {e}")),
+        },
+        None => serde_json::Value::String("missing(安装 Edge/Chrome 或设 VB_BROWSER_PATH)".into()),
+    };
     let json = format!(
-        "{{'ok':{},'engine':'kiln','formats':9,'ms':{}}}",
+        "{{'ok':{},'engine':'kiln','formats':9,'ms':{},'browser_lane':{}}}",
         passed,
-        t0.elapsed().as_millis()
+        t0.elapsed().as_millis(),
+        browser_lane
     )
     .replace('\'', "\"");
     println!("{json}");

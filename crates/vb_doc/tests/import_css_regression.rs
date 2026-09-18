@@ -216,10 +216,15 @@ fn body_style_link_not_dumped_into_css() {
         .find(|(p, _)| p.ends_with("index.html"))
         .map(|(_, c)| c.as_str())
         .unwrap_or("");
+    // 93ecf8d 起 body 内嵌样式改为收集进 main.css(head link 引用,
+    // 视觉等价且解析端单一来源);此处断言内容被完整收集而非丢失
+    // (收集时值会被规范化,故用空白无关的语义包含)。
+    let compact = css.replace(' ', "");
     assert!(
-        html_out.contains(".x { color: red; }"),
-        "body 样式内容必须完整保留(转投 head):{html_out}"
+        compact.contains(".x{color:red"),
+        "body 样式内容必须完整保留(收集进 main.css):{css}"
     );
+    let _ = html_out;
 }
 
 // ---------------------------------------------------------------------------

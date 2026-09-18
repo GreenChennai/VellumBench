@@ -54,6 +54,8 @@ pub enum KilnWarning {
     JpgOpaqueForced,
     /// 位图资产缺失,已画占位框。
     ImageMissing { src: String },
+    /// 拉丁文本无字体数据可嵌入,以未嵌入 Helvetica 输出(车道 K 兜底)。
+    UnembeddedLatinText,
     /// MP4 无 ffmpeg,降级为 GIF 流输出(内容相同,.mp4 扩展名)。
     Mp4DowngradedToGif,
     /// 冻结块(Frozen)以占位框输出。
@@ -74,6 +76,9 @@ impl KilnWarning {
             }
             KilnWarning::FrozenPlaceholder { name } => {
                 format!("冻结块「{}」以占位框输出", name)
+            }
+            KilnWarning::UnembeddedLatinText => {
+                "拉丁文本缺字体数据:PDF 以未嵌入 Helvetica 兜底;                 浏览器车道(--engine auto/browser)可获全字体嵌入".into()
             }
             KilnWarning::TextTransliterated { count } => {
                 format!("PDF/EPS 内 {count} 处非拉丁字符以兼容字形降级(SVG/PPTX 保持原文)")

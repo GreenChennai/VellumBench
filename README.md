@@ -21,9 +21,10 @@
 | **`vb_layout` 文档流布局引擎**(taffy:flow/flex/absolute、inset/margin/padding、var()/calc()、authored flags 区分显式与推断几何) | ✅ |
 | **文本引擎**:富文本段(字节区间样式)、`<br>` 换行、贪心断行 + 禁則(。、！？不入行首)、字重感知选字(fontique+swash)、@font-face 注册表 | ✅ |
 | **CSS 动画时间轴**:@keyframes 导出期解析,animation 简写 + cubic-bezier 求解,GIF/MP4 逐帧求值(t=0 即首帧) | ✅ |
-| **Kiln 九格式原生导出**:PNG(@1x-4x)· JPG · GIF · MP4 · SVG(真文本)· PDF(CID 中文真文本)· EPS · Ai · PPTX,零浏览器依赖 | ✅ |
+| **双车道导出(ADR-0020)**:车道 B(浏览器,Rust 原生 CDP 驱动系统 Edge/Chrome,默认)PNG/PDF/AI 高保真;车道 K(自研,零依赖兜底)九格式 | ✅ |
+| **Kiln 车道 K 原生九格式**:PNG(@1x-4x)· JPG · GIF · MP4 · SVG(真文本)· PDF(CID 中文真文本)· EPS · Ai · PPTX | ✅ |
 | **PDF 可编辑质量**:Type0/CIDFontType2 子集嵌入 + ToUnicode(阅读器可选中复制,Illustrator 可改字)、OCG 图层、clip-path(Inset/Circle/Ellipse/Polygon)、渐变栅格化位图 + SMask 半透明、q/Q 仅旋转项(单层图形状态) | ✅ |
-| **PDF 保真度验收**:22 案例「PDF→PDFium→PNG vs HTML→Kiln→PNG」全像素平均 **98.63/100**,文本一致率 **100%**,0 案例 <90(验收脚本 [`bench/pdf_fidelity.py`](bench/pdf_fidelity.py) 随仓库开源,可复跑) | ✅ |
+| **验收门禁(机器出分,禁止手写)**:[`bench/acceptance.py`](bench/acceptance.py) × 用户指定验收集(6 类 26 HTML):**G1** PNG vs 浏览器基线平均 **99.93**(最差 99.65,尺寸严格相等);**G2/G3** PDF/AI vs PNG 平均 **99.37**;**G4** 文本层(容差+栅格化 caveat);**G5** 字体 100% 嵌入 | ✅ |
 | **外部格式导入(`kiln-cli import`)**:HTML 项目;PDF/AI(pdfium.dll 动态绑定,文本可编辑);SVG(usvg 纯 Rust:矩形/圆角/圆/椭圆/真实文本逐对象映射) | ✅ |
 | **位图工具箱 `kiln-cli img`**:crop(box/trim-border)· stitch(vertical/horizontal+gap+bg)· blur(高斯)· pad · info | ✅ |
 | `vellum-cli`:**10 个子命令** + `patch` 的 **16 种 op**(事务 + `base_rev` 乐观锁) | ✅ |
@@ -67,9 +68,10 @@ Document(vb_doc) ─encode─▶ DrawList(vb_render,引擎中立)
    (CPU栅格) (逐帧)  (逐帧)  (真文本) (CID真文本) (真文本)
 ```
 
-- **零外部进程**:九格式全部原生 Rust;PDF/AI 导入是唯一可选用外部库(pdfium.dll,缺席时显式报错)
-- **中文真文本**:PDF 走 Type0/CIDFontType2 子集嵌入 + ToUnicode;SVG/PPTX 保留文字节点;不转曲
-- **保真度口径**:可编辑 PDF 经 PDFium 栅格化后与原生渲染逐像素对比,22 案例平均 98.63;口径与脚本开源可复跑
+- **双车道(ADR-0020)**:`--engine auto`(默认)浏览器可用即走车道 B——Rust 原生 CDP(零新依赖,手写 WebSocket/HTTP)驱动系统 Edge/Chrome:PNG=整页截图(WPI 捕获协议十要素移植),PDF/AI=printToPDF(screen 媒体+精确纸张);浏览器缺席自动降级车道 K 并告警
+- **保真度口径(诚实声明)**:历史 98.63 为「Kiln PDF→pdfium vs Kiln 自家 PNG」**自洽分**(闭环无浏览器真值);现行门禁以系统浏览器渲染为基线,分数全部由夹具机器生成([验收报告](bench/acceptance/)、[实施记录](docs/design/19-迭代计划-双车道保真导出重构.md))
+- **AI 边界**:PGF 无公开规范,.ai=PDF 兼容流+AI9 头(Illustrator 可开、文字可改、矢量保留;无原生图层面板),详见 [可编辑性检查表](docs/ai-editability-checklist.md)
+- **中文真文本**(车道 K):PDF 走 Type0/CIDFontType2 子集嵌入 + ToUnicode;SVG/PPTX 保留文字节点;不转曲
 
 ## 构建
 

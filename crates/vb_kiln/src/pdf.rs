@@ -14,6 +14,7 @@ use crate::context::ExportContext;
 use crate::error::{KilnError, KilnResult};
 use crate::report::KilnReport;
 use crate::writer::{common_warnings, Format, FormatWriter};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub struct PdfWriter;
 
@@ -29,12 +30,20 @@ impl FormatWriter for PdfWriter {
         out.extend_from_slice(&bytes);
         let mut r = crate::writer::report_with(warnings, t, bytes.len());
         r.frame_count = 1;
+        let latin = LATIN_FALLBACK_COUNT.load(Ordering::Relaxed);
+        if latin > 0 {
+            r.warnings.push(crate::error::KilnWarning::UnembeddedLatinText);
+        }
         Ok(r)
     }
 }
 
 /// PDF 写入核心(Ai 格式复用,仅 Producer 元数据不同)。
+/// WinAnsi 兜底计数(导出内累计,write 时转警告)。
+static LATIN_FALLBACK_COUNT: AtomicUsize = AtomicUsize::new(0);
+
 pub fn write_pdf(ctx: &ExportContext, producer: &str) -> KilnResult<Vec<u8>> {
+    LATIN_FALLBACK_COUNT.store(0, Ordering::Relaxed);
     let w = ctx.logical_w;
     let h = ctx.logical_h;
 
@@ -775,6 +784,9 @@ fn draw_item_pdf(
                 },
             );
         } else {
+            // S2(19 篇 §2.4):无任何字体数据可嵌入时的拉丁兜底——
+            // 未嵌入 Helvetica 有换机替换风险,计数并在报告中显式声明
+            LATIN_FALLBACK_COUNT.fetch_add(1, Ordering::Relaxed);
             let fref = if label.weight >= 600 { "/F2" } else { "/F1" };
             vb_render::text::for_each_visual_line(
                 &label.text, &label.font_family, label.font_size as f32,

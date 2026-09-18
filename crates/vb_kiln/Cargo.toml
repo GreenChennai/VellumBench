@@ -10,12 +10,14 @@ description = "Kiln - VellumBench 下一代导出核心:九格式(PNG/JPG/GIF/MP
 clap = { workspace = true }
 image.workspace = true
 thiserror.workspace = true
+serde_json = { workspace = true }
 vb_common = { workspace = true }
 vb_css = { workspace = true }
 vb_doc = { workspace = true }
 vb_layout = { workspace = true }
 vb_render = { path = "../vb_render" }
 vb_export = { path = "../vb_export" }
+vb_browser = { path = "../vb_browser" }
 subsetter = "0.2.6"
 pdfium-render = "0.9.4"
 

@@ -1,0 +1,198 @@
+{
+  "env": {
+    "git": "93ecf8d",
+    "kiln": "E:\\平日资料\\GitHub\\VellumBench\\target\\release\\kiln-cli.exe",
+    "engine": "browser",
+    "browser": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+    "generated_at": "2026-09-19 05:15:34"
+  },
+  "verdict": {
+    "informative": true,
+    "gates": {
+      "G1": {
+        "pass": true,
+        "n": 4,
+        "avg": 99.79,
+        "min": 99.65,
+        "sizes_ok": true,
+        "ref_avg": null
+      },
+      "G2": {
+        "pass": true,
+        "n": 3,
+        "avg": 99.27,
+        "min": 99.12,
+        "errors": []
+      },
+      "G3": {
+        "pass": true,
+        "n": 3,
+        "avg": 99.27,
+        "min": 99.12,
+        "errors": []
+      },
+      "G4": {
+        "pass": false,
+        "n": 3,
+        "failed": [
+          "festival-zhongqiu",
+          "festival-guoqing",
+          "qr-poster"
+        ]
+      },
+      "G5": {
+        "pass": true,
+        "n": 3,
+        "failed": []
+      }
+    },
+    "pass": true
+  },
+  "results": [
+    {
+      "name": "longform-orange",
+      "anim": false,
+      "g1": {
+        "score": 99.87,
+        "mad": 0.325,
+        "sizes_match": true,
+        "note": "基线尾部 49px 空白,已裁齐"
+      },
+      "g1_ref": {
+        "score": null,
+        "error": "尺寸门失败 baseline=(1740, 19418) kiln=(1740, 9316)"
+      },
+      "baseline_stddev": 47.18
+    },
+    {
+      "name": "festival-zhongqiu",
+      "anim": false,
+      "g1": {
+        "score": 99.77,
+        "mad": 0.599,
+        "sizes_match": true
+      },
+      "sharp_ratio": 0.977,
+      "baseline_stddev": 56.82,
+      "pdf_pages": 1,
+      "g2": {
+        "score": 99.32,
+        "mad": 1.745
+      },
+      "g4": {
+        "match": false,
+        "html_chars": 285,
+        "pdf_chars": 268,
+        "delta": 35,
+        "tolerance": 9,
+        "order_similarity": 0.644,
+        "html_head": "中秋农历八月十五2026·中秋放假通知月满人间·团圆安康放假时间9.25—9.27周五至周日，共3天复工时间9.28周一",
+        "pdf_head": "中农历秋五2026·中秋放假通知满间·团圆安康放假时间9.25—9.27周五周，共3天复时间9.28周·正常上班调休上班"
+      },
+      "g5": {
+        "all_embedded": true,
+        "fonts": {}
+      },
+      "raster_ratio": 0.0,
+      "g3": {
+        "score": 99.32,
+        "mad": 1.745
+      }
+    },
+    {
+      "name": "festival-guoqing",
+      "anim": false,
+      "g1": {
+        "score": 99.65,
+        "mad": 0.9,
+        "sizes_match": true
+      },
+      "sharp_ratio": 0.993,
+      "baseline_stddev": 47.46,
+      "pdf_pages": 1,
+      "g2": {
+        "score": 99.12,
+        "mad": 2.253
+      },
+      "g4": {
+        "match": false,
+        "html_chars": 300,
+        "pdf_chars": 280,
+        "delta": 38,
+        "tolerance": 9,
+        "order_similarity": 0.862,
+        "html_head": "2026·国庆放假通知盛世华诞中华人民共和国成立77周年1949—2026放假时间10.1—10.7周四至周三，共7天复",
+        "pdf_head": "2026·国庆放假通知中中华华共共和和国国成成7777周周年年1949—2026放假时间10.1—10.7周四周三，共7"
+      },
+      "g5": {
+        "all_embedded": true,
+        "fonts": {}
+      },
+      "raster_ratio": 0.0,
+      "g3": {
+        "score": 99.12,
+        "mad": 2.253
+      }
+    },
+    {
+      "name": "qr-poster",
+      "anim": false,
+      "g1": {
+        "score": 99.87,
+        "mad": 0.32,
+        "sizes_match": true
+      },
+      "sharp_ratio": 0.994,
+      "baseline_stddev": 64.64,
+      "pdf_pages": 1,
+      "g2": {
+        "score": 99.36,
+        "mad": 1.64
+      },
+      "g4": {
+        "match": false,
+        "html_chars": 638,
+        "pdf_chars": 662,
+        "delta": 32,
+        "tolerance": 19,
+        "order_similarity": 0.963,
+        "html_head": "LUCKYDRAW//2026LIMITEDLUCKYDRAW·限时抽奖活动15天GEO系统使用权免费抽PRIZEDRA",
+        "pdf_head": "LUCKYDRAW//2026▶LIMITEDLUCKYDRAW·限时抽奖活动15天GGEEOO系系统统使使用用权权免费"
+      },
+      "g5": {
+        "all_embedded": true,
+        "fonts": {
+          "?(Type3)": {
+            "embedded": true,
+            "kind": "type3-inline"
+          },
+          "/AAAAAA+FiraCode-Bold": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/HAAAAA+Consolas-Bold": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/IAAAAA+FiraCode-SemiBold": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/JAAAAA+FiraCode-Bold": {
+            "embedded": true,
+            "kind": "descriptor"
+          },
+          "/DAAAAA+FiraCode-Bold": {
+            "embedded": true,
+            "kind": "descriptor"
+          }
+        }
+      },
+      "raster_ratio": 0.0007,
+      "g3": {
+        "score": 99.36,
+        "mad": 1.64
+      }
+    }
+  ]
+}
