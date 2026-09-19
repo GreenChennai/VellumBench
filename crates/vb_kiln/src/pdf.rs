@@ -42,7 +42,17 @@ impl FormatWriter for PdfWriter {
 /// WinAnsi 兜底计数(导出内累计,write 时转警告)。
 static LATIN_FALLBACK_COUNT: AtomicUsize = AtomicUsize::new(0);
 
+pub const AI_HEAD: &str = "%%AI8_CreatorVersion: 28.0.0\n%%Creator: Kiln/VellumBench\n";
+
 pub fn write_pdf(ctx: &ExportContext, producer: &str) -> KilnResult<Vec<u8>> {
+    write_pdf_head(ctx, producer, "")
+}
+
+/// 同 [`write_pdf`],但把 `head` 注释行写在 PDF 头部**之内**。
+/// AI 头必须在这里写:此前是「生成完 PDF 再往首行后插注释」,插入的 57 字节
+/// 让全表 xref 偏移整体错位——严格解析器读到错位的目录对象,pikepdf 修复
+/// 后会把「第二个 Catalog」当根(A4 双面合并只出 1 个画板即此因)。
+pub fn write_pdf_head(ctx: &ExportContext, producer: &str, head: &str) -> KilnResult<Vec<u8>> {
     LATIN_FALLBACK_COUNT.store(0, Ordering::Relaxed);
     let w = ctx.logical_w;
     let h = ctx.logical_h;
@@ -131,15 +141,6 @@ pub fn write_pdf(ctx: &ExportContext, producer: &str) -> KilnResult<Vec<u8>> {
         page.push_str(&format!(" /XObject << {} >>", ims.join(" ")));
     }
     // F3: ExtGState 资源
-    if !usage.opacities.is_empty() {
-        let gss: Vec<String> = usage
-            .opacities
-            .iter()
-            .enumerate()
-            .map(|(i, (res, _))| format!("/{} {} 0 R", res, gs_base_start + i as u32))
-            .collect();
-        page.push_str(&format!(" /ExtGState << {} >>", gss.join(" ")));
-    }
     if n_layers > 0 {
         let props: Vec<String> = (0..n_layers)
             .map(|i| format!("/MC{i} {} 0 R", ocg_start + i as u32))
@@ -315,6 +316,7 @@ end",
 
     // F3: ExtGState 对象(透明度)
     for (res, alpha) in &usage.opacities {
+        let _ = res;
         objects.push(Obj::Dict(format!(
             "/Type /ExtGState /ca {} /CA {}",
             fnum(*alpha),
@@ -322,9 +324,13 @@ end",
         )));
     }
 
+    // F4: 无 Shading/Pattern 对象 —— 渐变一律栅格位图(pdfium 不渲染
+    // sh/PatternType 2;Illustrator 对非常规 shading 组合报「未知的阴影类型」)
+
     // 组装
     let mut out: Vec<u8> = Vec::with_capacity(64 * 1024);
     out.extend_from_slice(b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n");
+    out.extend_from_slice(head.as_bytes());
     let mut offsets: Vec<u64> = Vec::with_capacity(objects.len());
     for (idx, obj) in objects.iter().enumerate() {
         offsets.push(out.len() as u64);
@@ -443,10 +449,28 @@ impl CjkUsage {
         res
     }
 
-    fn opacity_for(&mut self, alpha: f64) -> String {
+
+
+    fn opaque_gs(&mut self) -> String {
+        if let Some((res, _)) = self.opacities.iter().find(|(_, a)| (*a - 1.0).abs() < 1e-9) {
+            return res.clone();
+        }
         self.gs_counter += 1;
         let res = format!("GS{}", self.gs_counter);
-        self.opacities.push((res.clone(), alpha));
+        self.opacities.push((res.clone(), 1.0));
+        res
+    }
+
+    /// 透明度资源按值去重:emit_gs 现在每项都显式设置 ca(防前项残留),
+    /// 不去重会让 ExtGState 对象数按绘制项线性膨胀。
+    fn opacity_for(&mut self, alpha: f64) -> String {
+        let a = (alpha.clamp(0.001, 0.999) * 1000.0).round() / 1000.0;
+        if let Some((res, _)) = self.opacities.iter().find(|(_, x)| (*x - a).abs() < 1e-9) {
+            return res.clone();
+        }
+        self.gs_counter += 1;
+        let res = format!("GS{}", self.gs_counter);
+        self.opacities.push((res.clone(), a));
         res
     }
 
@@ -523,10 +547,25 @@ fn finalize_cjk_fonts(usage: &mut CjkUsage) {
         let Some((data, index)) = vb_render::text::font_data_for(&f.name, f.weight) else {
             continue;
         };
-        // 子集化(缩减文件体积);subsetter 的 GID 排序经 ToUnicode 交叉验证一致
+        // 子集化(缩减文件体积);subsetter 的 GID 排序经 ToUnicode 交叉验证一致。
+        // 变量字体(NotoSerifSC-VF 等)必须**实例化到目标 wght**:PDF 不支持
+        // 变量字体,嵌入原始 VF 会让 Illustrator/pdfium 取默认实例(≈400)——
+        // `font-weight:900` 的大标题在 AI 里变细体(实测 A4 标题)。
         let gids: Vec<u16> = f.glyphs.keys().copied().collect();
         let remapper = subsetter::GlyphRemapper::new_from_glyphs_sorted(&gids);
-        match subsetter::subset(&data, index as u32, &remapper) {
+        let coords = [(subsetter::Tag::new(b"wght"), f.weight as f32)];
+        let instanced = subsetter::subset_with_variations(
+            &data,
+            index as u32,
+            &coords,
+            &remapper,
+        )
+        .ok();
+        let sub_result = match instanced {
+            Some(s) if !s.is_empty() => Ok(s),
+            _ => subsetter::subset(&data, index as u32, &remapper),
+        };
+        match sub_result {
             Ok(sub) if !sub.is_empty() && sub.len() < data.len() => {
                 f.subset_len1 = sub.len();
                 f.subset = sub;
@@ -564,10 +603,17 @@ fn render_content_stream(ctx: &ExportContext, usage: &mut CjkUsage, remap: bool)
             fnum(ctx.logical_h)
         ));
     }
+    let n_layers = ctx.list.items.iter().map(|i| i.layer).max().unwrap_or(0) as usize + 1;
     for item in ctx.list.items.iter() {
-        // OCG 逐项标记暂缓(qpdf/PDFium 对未注册 MC 资源的解析分歧会破坏
-        // 文本提取;图层功能待 OCG 语义修证后重开,见流程表 M3.4)
+        // ADR-0021:项级 OCG 标记(/Properties 已注册 /MC{i};Illustrator
+        // 图层面板按此分组,G4/pdfium 门禁盯文本提取回归)
+        if std::env::var("KILN_NO_BDC").is_err() {
+            s.push_str(&format!("/OC /MC{} BDC
+", (item.layer as usize).min(n_layers - 1)));
+        }
         draw_item_pdf(&mut s, item, h, usage, remap);
+        s.push_str("EMC
+");
     }
     s
 }
@@ -630,23 +676,29 @@ fn draw_item_pdf(
                     s.push_str("f\n");
                 }
                 FillDef::LinearGradient { angle_css, stops } => {
-                    // pdfium 等渲染器不绘制 PDF shading:渐变按 CPU 栅格同款
-                    // 数学降采样为位图嵌入并裁剪到项形状,任意渲染器结果一致。
                     let stops = apply_filter_stops(stops, item.filter.as_ref());
-                    let (data, gw, gh) =
-                        gradient_bitmap_linear(*angle_css, &stops, w, h, item.opacity);
-                    let im_res = usage.image_for(data, gw, gh);
-                    s.push_str("q\n");
-                    path_ops(s, item, x, py, w, h);
-                    s.push_str("W n\n");
-                    s.push_str(&format!(
-                        "{} 0 0 {} {} {} cm /{} Do\nQ\n",
-                        fnum(w),
-                        fnum(h),
-                        fnum(x),
-                        fnum(py),
-                        im_res
-                    ));
+                    // 渐变一律栅格位图:pdfium/Chrome 的 PDF 打印也不会产生
+                    // Shading 对象,自研写 shading 会踩两个坑——pdfium 不渲染
+                    // sh/PatternType2(对拍直接变成空白),Illustrator 对非常规
+                    // shading 组合报「未知的阴影类型」。位图路线两边都稳。
+                    // 圆角/椭圆遮罩烘入 alpha 通道,因此不发 W n(零剪切蒙版)。
+                    {
+                        let (mut data, gw, gh) =
+                            gradient_bitmap_linear(*angle_css, &stops, w, h, item.opacity);
+                        bake_shape_mask(&mut data, gw, gh, w, h, shape_radius(item), item.ellipse);
+                        let im_res = usage.image_for(data, gw, gh);
+                        // 前项 Solid 的低 ca 会泄漏到本 Do(渐变 alpha 已烘进位图):
+                        // 位图渐变必须以不透明 ca 绘制
+                        let gs_reset = usage.opaque_gs();
+                        s.push_str(&format!(
+                            "q /{gs_reset} gs {} 0 0 {} {} {} cm /{} Do Q\n",
+                            fnum(w),
+                            fnum(h),
+                            fnum(x),
+                            fnum(py),
+                            im_res
+                        ));
+                    }
                 }
                 FillDef::RadialGradient {
                     cx: gcx,
@@ -654,20 +706,21 @@ fn draw_item_pdf(
                     stops,
                 } => {
                     let stops = apply_filter_stops(stops, item.filter.as_ref());
-                    let (data, gw, gh) =
-                        gradient_bitmap_radial(*gcx, *gcy, &stops, w, h, item.opacity);
-                    let im_res = usage.image_for(data, gw, gh);
-                    s.push_str("q\n");
-                    path_ops(s, item, x, py, w, h);
-                    s.push_str("W n\n");
-                    s.push_str(&format!(
-                        "{} 0 0 {} {} {} cm /{} Do\nQ\n",
-                        fnum(w),
-                        fnum(h),
-                        fnum(x),
-                        fnum(py),
-                        im_res
-                    ));
+                    {
+                        let (mut data, gw, gh) =
+                            gradient_bitmap_radial(*gcx, *gcy, &stops, w, h, item.opacity);
+                        bake_shape_mask(&mut data, gw, gh, w, h, shape_radius(item), item.ellipse);
+                        let im_res = usage.image_for(data, gw, gh);
+                        let gs_reset = usage.opaque_gs();
+                        s.push_str(&format!(
+                            "q /{gs_reset} gs {} 0 0 {} {} {} cm /{} Do Q\n",
+                            fnum(w),
+                            fnum(h),
+                            fnum(x),
+                            fnum(py),
+                            im_res
+                        ));
+                    }
                 }
             }
         }
@@ -724,6 +777,11 @@ fn draw_item_pdf(
                     );
                     s.push_str("BT\n");
                     s.push_str(&format!("/{resource} {} Tf\n", fnum(label.font_size)));
+                    // 字距用 PDF 原生 Tc 表达:段落内部的字距此前只在段起点
+                    // 一次性偏移,段内字形按自然 advance 排布 → 行内逐字漂移
+                    // (A4 大标题字距 .02em,行末累计偏 ~19px)。Tc 与 CPU 栅格
+                    // 的 `g.x + 行内字形序 × ls` 逐字形等价。
+                    s.push_str(&format!("{} Tc\n", fnum(ls as f64)));
                     for part in parts {
                         let color = part
                             .seg
@@ -778,7 +836,7 @@ fn draw_item_pdf(
                     let sub = &hard[s0..s1];
                     outline_text_pdf(
                         s, sub, &label.font_family, label.font_size, label.weight,
-                        x, y + vi as f64 * line_h, h, page_h,
+                        x, y + vi as f64 * line_h, h, page_h, ls as f64, line[0],
                     );
                     let _ = run;
                 },
@@ -796,6 +854,7 @@ fn draw_item_pdf(
                     let baseline = page_h - (y + asc + vi as f64 * line_h);
                     s.push_str("BT\n");
                     s.push_str(&format!("{fref} {} Tf\n", fnum(label.font_size)));
+                    s.push_str(&format!("{} Tc\n", fnum(ls as f64)));
                     let parts = vb_render::text::split_line_segments(
                         hard, line, run, byte_base, &seg_ranges, ls,
                     );
@@ -827,6 +886,7 @@ fn draw_item_pdf(
         // 位图缺失时不画占位,与 CPU 栅格的跳过行为一致
         if let Some(bmp) = &item.image {
             let im_res = usage.image_for(bmp.rgba.to_vec(), bmp.width, bmp.height);
+            emit_gs(s, usage, item.opacity as f64);
             s.push_str(&format!(
                 "q {} 0 0 {} {} {} cm /{} Do Q\n",
                 fnum(w), fnum(h), fnum(x), fnum(py), im_res
@@ -839,12 +899,19 @@ fn draw_item_pdf(
     }
 }
 
-/// F3: 按需发射 ExtGState 透明度(alpha<1 才发;每次设置替换而非叠加)。
+/// F3: 发射 ExtGState 透明度(按值去重;每项都显式设置)。
+///
+/// 关键:此前只在 alpha<1 时设置,**不还原 ca=1**。PDF 的 ca 是图形状态,
+/// 上一个半透明项之后所有不透明项都会被连带画淡——A4 标题整块褪色即此因
+/// (PDF 里的 ca 泄漏;CPU 栅格逐项独立,不会暴露)。
 fn emit_gs(s: &mut String, usage: &mut CjkUsage, alpha: f64) {
-    if (0.0..1.0).contains(&alpha) {
-        let gs_res = usage.opacity_for(alpha.clamp(0.001, 0.999));
-        s.push_str(&format!("/{} gs\n", gs_res));
-    }
+    let a = alpha.clamp(0.0, 1.0);
+    let gs_res = if a >= 0.999 {
+        usage.opaque_gs()
+    } else {
+        usage.opacity_for(a)
+    };
+    s.push_str(&format!("/{} gs\n", gs_res));
 }
 
 /// F5: 应用 brightness/saturate 调整到颜色。
@@ -999,6 +1066,76 @@ fn emit_clip_path(
 }
 
 /// F1: 线性渐变 → PDF axial shading 字典体。
+/// 形状半径(圆角):>0.75px 才当作圆角,亚像素圆角(1px 细线)按矩形处理,
+/// 避免为无视觉意义的小圆角多留一份遮罩。
+fn shape_radius(item: &DrawItem) -> f64 {
+    if item.ellipse {
+        return 0.0;
+    }
+    let r = item.radii.iter().cloned().fold(0.0f64, f64::max);
+    if r > 0.75 {
+        r
+    } else {
+        0.0
+    }
+}
+
+/// 把圆角/椭圆的覆盖度烘进渐变位图的 alpha 通道,替代 PDF 剪切路径。
+///
+/// Illustrator 把内容流里每个 `W n` 解释成「剪切蒙版」:逐元素自带蒙版正是
+/// 用户最反感的体验。位图渐变本就栅格化,形状边缘直接烘进 alpha 即可,
+/// 视觉等价(像素中心采样 + 1px 覆盖度软边)而零 `W n`。
+fn bake_shape_mask(
+    data: &mut [u8],
+    gw: u32,
+    gh: u32,
+    w: f64,
+    h: f64,
+    radius: f64,
+    ellipse: bool,
+) {
+    if !ellipse && radius <= 0.75 {
+        return;
+    }
+    if w <= 0.0 || h <= 0.0 || gw == 0 || gh == 0 {
+        return;
+    }
+    let (cx, cy) = (w / 2.0, h / 2.0);
+    // 圆角矩形的内缩半宽/半高
+    let ix = (cx - radius).max(0.0);
+    let iy = (cy - radius).max(0.0);
+    let target = (gw * gh) as usize;
+    for gy in 0..gh {
+        let py = (gy as f64 + 0.5) * h / gh as f64;
+        for gx in 0..gw {
+            let idx = (gy * gw + gx) as usize;
+            if idx >= target {
+                break;
+            }
+            let px = (gx as f64 + 0.5) * w / gw as f64;
+            // 有符号距离(px,内部为负)
+            let dist = if ellipse {
+                let nx = (px - cx) / cx.max(1e-6);
+                let ny = (py - cy) / cy.max(1e-6);
+                (nx * nx + ny * ny).sqrt() * cx.min(cy) - cx.min(cy)
+            } else {
+                let dx = ((px - cx).abs() - ix).max(0.0);
+                let dy = ((py - cy).abs() - iy).max(0.0);
+                (dx * dx + dy * dy).sqrt() - radius
+            };
+            // 1px 软边近似抗锯齿
+            let cov = (0.5 - dist).clamp(0.0, 1.0);
+            if cov >= 1.0 {
+                continue;
+            }
+            let a = idx * 4 + 3;
+            if a < data.len() {
+                data[a] = (data[a] as f64 * cov).round() as u8;
+            }
+        }
+    }
+}
+
 /// 渐变栅格化网格尺寸:长边封顶 256(位图拉伸 + 渲染器平滑,与逐像素
 /// 插值的差异低于评分阈值),短边至少 2。
 fn gradient_grid_size(w: f64, h: f64) -> (u32, u32) {
@@ -1172,6 +1309,8 @@ fn outline_text_pdf(
     y: f64,
     box_h: f64,
     page_h: f64,
+    letter_spacing: f64,
+    idx_base: usize,
 ) {
     let Some(run) =
         vb_render::text::shape_text_weighted(text, font_family, font_size as f32, weight)
@@ -1181,16 +1320,18 @@ fn outline_text_pdf(
     // 基线:盒顶 + 半行距 + ascent(浏览器 normal line-height 1.14 语义)
     let half_lead = 0.0 * font_size;
     let baseline_pdf = page_h - (y + half_lead + run.ascent as f64);
-    for g in &run.glyphs {
-        if let Some(path) =
-            vb_render::text::glyph_outline(&run.font_data, run.font_index, font_size as f32, g.id)
-        {
+    for (i, g) in run.glyphs.iter().enumerate() {
+        if let Some(path) = vb_render::text::glyph_outline_weighted(
+            &run.font_data,
+            run.font_index,
+            font_size as f32,
+            g.id,
+            weight,
+        ) {
+            // 字距与 CPU 栅格同式:字形自然 x + 行内字形序 × ls
+            let gx = x + g.x as f64 + (idx_base + i) as f64 * letter_spacing;
             s.push_str("q\n");
-            s.push_str(&format!(
-                "1 0 0 1 {} {} cm\n",
-                fnum(x + g.x as f64),
-                fnum(baseline_pdf)
-            ));
+            s.push_str(&format!("1 0 0 1 {} {} cm\n", fnum(gx), fnum(baseline_pdf)));
             s.push_str(&kurbo_path_ops_pdf(&path));
             s.push_str("f\nQ\n");
         }
@@ -1291,4 +1432,564 @@ pub fn fnum<V: FnumVal>(v: V) -> String {
     } else {
         format!("{r}")
     }
+}
+
+/// F1: 线性渐变 → PDF axial shading 字典体。
+/// 角度为 CSS 语义(0=to top, 90=to right, 180=to bottom),坐标已 Y 翻转。
+///
+/// 保留但默认不走:实测 pdfium(Acrobat/Chrome 同源内核)不渲染 `sh` 与
+/// `PatternType 2`,对拍会变成空白;Illustrator 对非常规 shading 组合报
+/// 「未知的阴影类型」。当前渐变一律走栅格位图(见 `gradient_bitmap_*`),
+/// 本函数留作后续「矢量渐变可选项」的落点(design/20 §7 carry-forward)。
+#[allow(dead_code)]
+fn build_axial_shading(
+    angle_css: f64,
+    stops: &[vb_render::encode::GradientStop],
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    page_h: f64,
+) -> String {
+    let rad = angle_css.to_radians();
+    // CSS 渐变方向向量(屏幕坐标 Y-down): (sin θ, -cos θ)
+    // PDF 坐标系 (Y-up): (sin θ, cos θ)
+    let dx = rad.sin();
+    let dy = rad.cos();
+    let cx = x + w / 2.0;
+    let cy_pdf = page_h - (y + h / 2.0);
+    // 渐变线长度(覆盖整个盒子)
+    let len = (w * dx.abs() + h * dy.abs()).max(1.0);
+    let x0 = cx - dx * len / 2.0;
+    let y0 = cy_pdf - dy * len / 2.0;
+    let x1 = cx + dx * len / 2.0;
+    let y1 = cy_pdf + dy * len / 2.0;
+
+    if stops.len() == 2 {
+        let c0 = &stops[0].color;
+        let c1 = &stops[1].color;
+        format!(
+            "/ShadingType 2 /ColorSpace /DeviceRGB /Coords [{} {} {} {}] \
+             /Function << /FunctionType 2 /C0 [{} {} {}] /C1 [{} {} {}] /N 1 >> \
+             /Extend [true true]",
+            fnum(x0),
+            fnum(y0),
+            fnum(x1),
+            fnum(y1),
+            fnum(c0[0] as f64),
+            fnum(c0[1] as f64),
+            fnum(c0[2] as f64),
+            fnum(c1[0] as f64),
+            fnum(c1[1] as f64),
+            fnum(c1[2] as f64),
+        )
+    } else {
+        // 多 stop: FunctionType 3 stitching
+        let mut funcs = Vec::new();
+        let mut bounds = Vec::new();
+        let mut encode = Vec::new();
+        for w in stops.windows(2) {
+            let c0 = &w[0].color;
+            let c1 = &w[1].color;
+            funcs.push(format!(
+                "<< /FunctionType 2 /C0 [{} {} {}] /C1 [{} {} {}] /N 1 >>",
+                fnum(c0[0] as f64),
+                fnum(c0[1] as f64),
+                fnum(c0[2] as f64),
+                fnum(c1[0] as f64),
+                fnum(c1[1] as f64),
+                fnum(c1[2] as f64),
+            ));
+            if w[0].pos > 0.0 && w[0].pos < 1.0 {
+                bounds.push(fnum(w[0].pos as f64));
+            }
+            encode.push("0 1".to_string());
+        }
+        let coords = format!("[{} {} {} {}]", fnum(x0), fnum(y0), fnum(x1), fnum(y1));
+        format!(
+            "/ShadingType 2 /ColorSpace /DeviceRGB /Coords {} \
+             /Function << /FunctionType 3 /Domain [0 1] /Functions [{}] /Bounds [{}] /Encode [{}] >> \
+             /Extend [true true]",
+            coords, funcs.join(" "), bounds.join(" "), encode.join(" ")
+        )
+    }
+}
+
+/// F1: 径向渐变 → PDF radial shading 字典体(同 [`build_axial_shading`]:保留待用)。
+#[allow(dead_code)]
+fn build_radial_shading(
+    stops: &[vb_render::encode::GradientStop],
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    page_h: f64,
+) -> String {
+    let cx = x + w / 2.0;
+    let cy_pdf = page_h - (y + h / 2.0);
+    let r = (w.max(h) / 2.0).max(1.0);
+    let coords = format!(
+        "[{} {} 0 {} {} {}]",
+        fnum(cx),
+        fnum(cy_pdf),
+        fnum(cx),
+        fnum(cy_pdf),
+        fnum(r)
+    );
+
+    if stops.len() == 2 {
+        let c0 = &stops[0].color;
+        let c1 = &stops[1].color;
+        format!(
+            "/ShadingType 3 /ColorSpace /DeviceRGB /Coords {} \
+             /Function << /FunctionType 2 /C0 [{} {} {}] /C1 [{} {} {}] /N 1 >> \
+             /Extend [true true]",
+            coords,
+            fnum(c0[0] as f64),
+            fnum(c0[1] as f64),
+            fnum(c0[2] as f64),
+            fnum(c1[0] as f64),
+            fnum(c1[1] as f64),
+            fnum(c1[2] as f64),
+        )
+    } else {
+        // 多 stop: stitching function
+        let mut funcs = Vec::new();
+        let mut bounds = Vec::new();
+        let mut encode = Vec::new();
+        for w in stops.windows(2) {
+            let c0 = &w[0].color;
+            let c1 = &w[1].color;
+            funcs.push(format!(
+                "<< /FunctionType 2 /C0 [{} {} {}] /C1 [{} {} {}] /N 1 >>",
+                fnum(c0[0] as f64),
+                fnum(c0[1] as f64),
+                fnum(c0[2] as f64),
+                fnum(c1[0] as f64),
+                fnum(c1[1] as f64),
+                fnum(c1[2] as f64),
+            ));
+            if w[0].pos > 0.0 && w[0].pos < 1.0 {
+                bounds.push(fnum(w[0].pos as f64));
+            }
+            encode.push("0 1".to_string());
+        }
+        format!(
+            "/ShadingType 3 /ColorSpace /DeviceRGB /Coords {} \
+             /Function << /FunctionType 3 /Domain [0 1] /Functions [{}] /Bounds [{}] /Encode [{}] >> \
+             /Extend [true true]",
+            coords, funcs.join(" "), bounds.join(" "), encode.join(" ")
+        )
+    }
+}
+
+/// 按输入 PDF 的 xref 表精确切出每个对象体。
+///
+/// 早期版本按 `endstream`/`endobj` 关键字流式扫描切分:Flate 二进制流里
+/// 出现同名字节即误切,合并产物 pdfium 直接报 Data format error(多画板
+/// 只剩 1 页)。xref 是权威偏移,按它切片不会出错。
+fn split_pdf_objects(pdf: &[u8]) -> KilnResult<std::collections::BTreeMap<u32, Vec<u8>>> {
+    use std::collections::BTreeMap;
+    let err = |m: &str| KilnError::Encode(format!("页合并解析失败: {m}"));
+    let sx = pdf
+        .windows(9)
+        .rposition(|w| w == &b"startxref"[..])
+        .ok_or_else(|| err("无 startxref"))?;
+    let tail = String::from_utf8_lossy(&pdf[sx + 9..]).to_string();
+    let xref_at: usize = tail
+        .split_whitespace()
+        .next()
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| err("startxref 非法"))?;
+    if xref_at >= pdf.len() || !pdf[xref_at..].starts_with(b"xref") {
+        return Err(err("非经典 xref 表"));
+    }
+    let mut p = xref_at;
+    let nl = |from: usize| -> Option<usize> { pdf[from..].iter().position(|&c| c == b'\n').map(|v| from + v) };
+    p = nl(p).ok_or_else(|| err("xref 头未结束"))? + 1;
+    let mut entries: Vec<(u32, usize)> = Vec::new();
+    loop {
+        if pdf[p..].starts_with(b"trailer") {
+            break;
+        }
+        let he = nl(p).ok_or_else(|| err("xref 子段头未结束"))?;
+        let header = String::from_utf8_lossy(&pdf[p..he]).to_string();
+        let mut it = header.split_whitespace();
+        let start: u32 = it.next().and_then(|s| s.parse().ok()).ok_or_else(|| err("子段头非法"))?;
+        let count: u32 = it.next().and_then(|s| s.parse().ok()).ok_or_else(|| err("子段头非法"))?;
+        p = he + 1;
+        for i in 0..count {
+            if p + 20 > pdf.len() {
+                break;
+            }
+            let ent = &pdf[p..p + 20];
+            if ent[17] == b'n' {
+                let off: usize = String::from_utf8_lossy(&ent[..10]).trim().parse().unwrap_or(0);
+                entries.push((start + i, off));
+            }
+            p += 20;
+        }
+    }
+    entries.sort_by_key(|(_, off)| *off);
+    let mut out: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
+    for i in 0..entries.len() {
+        let (id, off) = entries[i];
+        let end = if i + 1 < entries.len() { entries[i + 1].1 } else { xref_at };
+        if off >= end || end > pdf.len() {
+            continue;
+        }
+        let chunk = &pdf[off..end];
+        let Some(ob) = chunk.windows(3).position(|w| w == &b"obj"[..]) else { continue };
+        let mut b0 = ob + 3;
+        while b0 < chunk.len() && matches!(chunk[b0], b'\n' | b'\r' | b' ') {
+            b0 += 1;
+        }
+        let mut b1 = chunk.len();
+        if let Some(rel) = chunk.windows(6).rposition(|w| w == &b"endobj"[..]) {
+            b1 = rel;
+        }
+        while b1 > b0 && matches!(chunk[b1 - 1], b'\n' | b'\r' | b' ') {
+            b1 -= 1;
+        }
+        out.insert(id, chunk[b0..b1].to_vec());
+    }
+    if out.is_empty() {
+        return Err(err("对象为空"));
+    }
+    Ok(out)
+}
+
+/// 页合并器(design/20 N4):把 N 个单页 PDF(本写入器产物,结构已知)
+/// 合并为多页 PDF。各页字体/图像对象独立保留(文件略大,正确性优先;
+/// 跨页资源去重列 carry-forward)。用于 AI 多画板(Illustrator:页=画板)。
+pub fn merge_pdf_pages(pages: &[Vec<u8>]) -> KilnResult<Vec<u8>> {
+    merge_pdf_pages_head(pages, "")
+}
+
+/// 同 [`merge_pdf_pages`],并把 `head` 注释写入头部之内(见 [`write_pdf_head`])。
+pub fn merge_pdf_pages_head(pages: &[Vec<u8>], head: &str) -> KilnResult<Vec<u8>> {
+    use std::collections::BTreeMap;
+    if pages.len() <= 1 {
+        return Ok(pages.first().cloned().unwrap_or_default());
+    }
+    // 每页:解析对象 {id: bytes},记录页面对象 id 与 MediaBox
+    let mut all_objs: Vec<BTreeMap<u32, Vec<u8>>> = Vec::new();
+    let mut page_obj_ids: Vec<u32> = Vec::new();
+    let mut offsets: Vec<u32> = Vec::new(); // 每输入的对象 id 偏移
+    // 每页的 OCG(层)对象:local id + /Name 原始 token(多画板合并后按名去重，
+    // 让整册只有「背景/内容」两层，而不是每页各出一套)
+    let mut page_ocg_ids: Vec<Vec<u32>> = Vec::new();
+    let mut page_ocg_names: Vec<Vec<String>> = Vec::new();
+    for (pi, pdf) in pages.iter().enumerate() {
+        let objs = split_pdf_objects(pdf)?;
+        if std::env::var("KILN_DEBUG_MERGE").is_ok() {
+            eprintln!("[merge] 输入{pi}: {} 个对象, ids={:?}", objs.len(),
+                objs.keys().take(6).collect::<Vec<_>>());
+        }
+        if objs.is_empty() {
+            return Err(KilnError::Encode("页合并:输入 PDF 对象解析为空".into()));
+        }
+        // 页面对象 = /Type /Page 且非 /Pages
+        let pid = objs
+            .iter()
+            .find(|(_, body)| {
+                let b = String::from_utf8_lossy(body);
+                b.contains("/Type /Page") && !b.contains("/Type /Pages")
+            })
+            .map(|(id, _)| *id)
+            .ok_or_else(|| KilnError::Encode("页合并:未找到页面对象".into()))?;
+        page_obj_ids.push(pid);
+        // 本页 OCG 清单:Catalog 的 /OCGs [a 0 R b 0 R ...]
+        let mut ocg_local: Vec<u32> = Vec::new();
+        if let Some((_, cat)) = objs
+            .iter()
+            .find(|(_, b)| String::from_utf8_lossy(b).contains("/Type /Catalog"))
+        {
+            let cat = String::from_utf8_lossy(cat).to_string();
+            if let Some(s) = cat.find("/OCGs [") {
+                let rest = &cat[s + "/OCGs [".len()..];
+                if let Some(e) = rest.find(']') {
+                    ocg_local = parse_ref_list(&rest[..e]);
+                }
+            }
+        }
+        let mut ocg_names: Vec<String> = Vec::new();
+        for id in &ocg_local {
+            let name = objs
+                .get(id)
+                .map(|b| String::from_utf8_lossy(b).to_string())
+                .and_then(|b| extract_name_token(&b))
+                .unwrap_or_default();
+            ocg_names.push(name);
+        }
+        page_ocg_ids.push(ocg_local);
+        page_ocg_names.push(ocg_names);
+        offsets.push(if pi == 0 { 0 } else { 0 }); // 先占位,稍后累计
+        all_objs.push(objs);
+    }
+    // 偏移:前 i 个输入的最大对象号累计
+    let mut acc = 0u32;
+    for (i, objs) in all_objs.iter().enumerate() {
+        offsets[i] = acc;
+        let max_id = objs.keys().next_back().copied().unwrap_or(0);
+        acc += max_id;
+    }
+    // 重编号 + 引用改写:只改 dict 段(到 stream 关键字为止)——
+    // Flate 流是二进制,整 body 扫描会把随机字节误当引用破坏流
+    // OCG 去重:按 /Name 首次出现者为准(整册合并为一套「背景/内容」)
+    let ocg_global = |pi: usize, k: usize| -> (u32, String) {
+        let global = page_ocg_ids[pi][k] + offsets[pi];
+        let name = page_ocg_names
+            .get(pi)
+            .and_then(|v| v.get(k))
+            .cloned()
+            .unwrap_or_default();
+        (global, name)
+    };
+    let mut name_to_global: BTreeMap<String, u32> = BTreeMap::new();
+    for pi in 0..page_ocg_ids.len() {
+        for k in 0..page_ocg_ids[pi].len() {
+            let (global, name) = ocg_global(pi, k);
+            name_to_global.entry(name).or_insert(global);
+        }
+    }
+    let mut canonical_ocgs: Vec<u32> = Vec::new();
+    for pi in 0..page_ocg_ids.len() {
+        for k in 0..page_ocg_ids[pi].len() {
+            let (global, name) = ocg_global(pi, k);
+            let canon = name_to_global.get(&name).copied().unwrap_or(global);
+            if !canonical_ocgs.contains(&canon) {
+                canonical_ocgs.push(canon);
+            }
+        }
+    }
+
+    let mut out_objs: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
+    for (pi, objs) in all_objs.iter().enumerate() {
+        let off = offsets[pi];
+        for (id, body) in objs {
+            let new_id = id + off;
+            let mut rewritten = rewrite_obj_body(body, off);
+            // 页面 /Properties 的 OCG 引用改指整册唯一的那一套
+            let is_page = {
+                let head = head_of(&rewritten);
+                head.contains("/Type /Page") && !head.contains("/Type /Pages")
+            };
+            if is_page {
+                let map: Vec<(u32, u32)> = page_ocg_ids[pi]
+                    .iter()
+                    .enumerate()
+                    .map(|(k, id)| {
+                        let global = id + off;
+                        let name = page_ocg_names
+                            .get(pi)
+                            .and_then(|v| v.get(k))
+                            .cloned()
+                            .unwrap_or_default();
+                        (global, name_to_global.get(&name).copied().unwrap_or(global))
+                    })
+                    .filter(|(a, b)| a != b)
+                    .collect();
+                if !map.is_empty() {
+                    remap_properties_ocg(&mut rewritten, &map);
+                }
+            }
+            out_objs.insert(new_id, rewritten);
+        }
+    }
+    // 新 Catalog(1)与 Pages(2);原输入的 Catalog/Pages 对象弃用
+    let total = out_objs.keys().next_back().copied().unwrap_or(2);
+    let kids: Vec<String> = page_obj_ids
+        .iter()
+        .enumerate()
+        .map(|(pi, id)| format!("{} 0 R", id + offsets[pi]))
+        .collect();
+    if std::env::var("KILN_DEBUG_MERGE").is_ok() {
+        eprintln!(
+            "[merge] page_obj_ids={page_obj_ids:?} offsets={offsets:?} kids={kids:?} out_objs={} 个",
+            out_objs.len()
+        );
+    }
+    let pages_obj = format!(
+        "/Type /Pages /Kids [{}] /Count {}",
+        kids.join(" "),
+        pages.len()
+    );
+    // Catalog 保留 OCProperties:整册共用一套 OCG(背景/内容),多画板也
+    // 只有两个图层,而不是「每页各一套双图层」
+    let mut catalog_obj = String::from("/Type /Catalog /Pages 2 0 R");
+    if !canonical_ocgs.is_empty() {
+        let refs: Vec<String> = canonical_ocgs.iter().map(|i| format!("{i} 0 R")).collect();
+        let list = refs.join(" ");
+        catalog_obj.push_str(&format!(
+            " /OCProperties << /OCGs [{list}] /D << /ON [{list}] /Order [{list}] >> >>"
+        ));
+    }
+    // 页面对象的 /Parent 全部改指 2(原指各自 Pages,已随偏移错位——统一改写)
+    // 合并写入器按「对象体原样」写盘,不像 Obj::Dict 那样自动包 `<< >>`——
+    // 漏掉时 /Root 不是字典,qpdf/pdfium 直接拒绝(pikepdf: unable to find
+    // /Root dictionary;pdfium: Data format error)
+    out_objs.insert(1, format!("<< {catalog_obj} >>").into_bytes());
+    out_objs.insert(2, format!("<< {pages_obj} >>").into_bytes());
+
+    // 组装输出
+    let mut out: Vec<u8> = Vec::with_capacity(64 * 1024);
+    out.extend_from_slice(b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n");
+    out.extend_from_slice(head.as_bytes());
+    let mut xref_offsets: BTreeMap<u32, u64> = BTreeMap::new();
+    for (id, body) in &out_objs {
+        xref_offsets.insert(*id, out.len() as u64);
+        out.extend_from_slice(format!("{id} 0 obj\n").as_bytes());
+        out.extend_from_slice(body);
+        out.extend_from_slice(b"\nendobj\n");
+    }
+    let max_id = out_objs.keys().next_back().copied().unwrap_or(2);
+    let startxref = out.len() as u64;
+    out.extend_from_slice(format!("xref\n0 {}\n", max_id + 1).as_bytes());
+    out.extend_from_slice(b"0000000000 65535 f \n");
+    for id in 1..=max_id {
+        match xref_offsets.get(&id) {
+            Some(off) => out.extend_from_slice(format!("{off:010} 00000 n \n").as_bytes()),
+            None => out.extend_from_slice(b"0000000000 65535 f \n"),
+        }
+    }
+    // trailer 必须是字典:少了 `<< >>` 时 qpdf/pdfium 报「expected trailer
+    // dictionary / Data format error」——多画板文件直接打不开
+    out.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{startxref}\n%%EOF\n",
+            max_id + 1
+        )
+        .as_bytes(),
+    );
+    Ok(out)
+}
+
+fn find_sub(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return None;
+    }
+    hay.windows(needle.len()).position(|w| w == needle)
+}
+
+/// 对象体的 dict 段(到 stream 关键字为止)。
+fn head_of(body: &[u8]) -> String {
+    let end = find_sub(body, b"stream").unwrap_or(body.len());
+    String::from_utf8_lossy(&body[..end]).to_string()
+}
+
+/// 解析 `/OCGs [a 0 R b 0 R]` 花括号内的引用列表。
+fn parse_ref_list(inner: &str) -> Vec<u32> {
+    let mut out = Vec::new();
+    let bytes = inner.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            let start = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            if inner[i..].starts_with(" 0 R") {
+                if let Ok(n) = inner[start..i].parse::<u32>() {
+                    out.push(n);
+                }
+                i += 4;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// 取 OCG 对象的 `/Name` 原始 token(含括号/尖括号),用于按名去重。
+fn extract_name_token(body: &str) -> Option<String> {
+    let i = body.find("/Name ")? + "/Name ".len();
+    let rest = &body[i..];
+    let first = rest.chars().next()?;
+    match first {
+        '(' => rest.find(')').map(|e| rest[..=e].to_string()),
+        '<' => rest.find('>').map(|e| rest[..=e].to_string()),
+        _ => {
+            let end = rest
+                .find(|c: char| c == '/' || c == '>' || c.is_whitespace())
+                .unwrap_or(rest.len());
+            Some(rest[..end].to_string())
+        }
+    }
+}
+
+/// 页面 /Properties 字典里的 OCG 引用改指整册唯一对象。
+fn remap_properties_ocg(body: &mut Vec<u8>, map: &[(u32, u32)]) {
+    let head_end = find_sub(body, b"stream").unwrap_or(body.len());
+    let head = String::from_utf8_lossy(&body[..head_end]).to_string();
+    let Some(ps) = head.find("/Properties") else {
+        return;
+    };
+    let Some(open_rel) = head[ps..].find("<<") else {
+        return;
+    };
+    let open = ps + open_rel;
+    let Some(close_rel) = head[open..].find(">>") else {
+        return;
+    };
+    let close = open + close_rel + 2;
+    let mut section = head[open..close].to_string();
+    for (from, to) in map {
+        section = section.replace(&format!("{from} 0 R"), &format!("{to} 0 R"));
+    }
+    let new_head = format!("{}{}{}", &head[..open], section, &head[close..]);
+    let mut out = new_head.into_bytes();
+    if head_end < body.len() {
+        out.extend_from_slice(&body[head_end..]);
+    }
+    *body = out;
+}
+
+/// 对象体引用改写:dict 段(至 stream 止)加偏移;流数据原样保留。
+/// 页面对象的 /Parent 一律改指新 Pages(对象 2)。
+fn rewrite_obj_body(body: &[u8], off: u32) -> Vec<u8> {
+    let stream_at = find_sub(body, b"stream");
+    let head_end = match stream_at {
+        Some(i) => i,
+        None => body.len(),
+    };
+    let head = String::from_utf8_lossy(&body[..head_end]).to_string();
+    let is_page = head.contains("/Type /Page") && !head.contains("/Type /Pages");
+    let mut head_rw = String::with_capacity(head.len());
+    let bytes = head.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            let start = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            let num = &head[start..i];
+            if head[i..].starts_with(" 0 R") {
+                let n: u32 = num.parse().unwrap_or(0);
+                head_rw.push_str(&format!("{} 0 R", n + off));
+                i += 4;
+            } else {
+                head_rw.push_str(num);
+            }
+        } else {
+            head_rw.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    if is_page {
+        // /Parent <旧> 0 R → /Parent 2 0 R(改写后的值可能已偏移,二次替换)
+        if let Some(p0) = head_rw.find("/Parent ") {
+            if let Some(rel) = head_rw[p0..].find("0 R") {
+                let seg_end = p0 + rel + 3;
+                head_rw.replace_range(p0..seg_end, "/Parent 2 0 R");
+            }
+        }
+    }
+    let mut out = head_rw.into_bytes();
+    if let Some(i) = stream_at {
+        out.extend_from_slice(&body[i..]);
+    }
+    out
 }

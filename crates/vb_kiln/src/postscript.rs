@@ -51,20 +51,14 @@ pub fn write_eps(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
 
 /// Ai:PDF 兼容流 + Illustrator 私有头。
 pub fn write_ai(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
-    let mut bytes = write_pdf(
+    // 只写 PDF 规范允许的 AI 识别注释。不要伪造 AI9_PrivateDataBegin：
+    // Illustrator 会把后续 PDF 对象误当成私有阴影/图像结构而报“未知类型”。
+    // 头在写入器内部落笔(xref 偏移随之计算),不可事后插入。
+    crate::pdf::write_pdf_head(
         ctx,
         "Adobe Illustrator(R) 24.0 (Kiln compatible PDF stream)",
-    )?;
-    // Illustrator 兼容注释(插在 PDF 头二进制注释行前,不影响解析)
-    let head: &[u8] = b"%AI9_PrivateDataBegin\n%%AI8_CreatorVersion: 24.0.0\n%AI5_FileFormat 9.0\n";
-    if bytes.starts_with(b"%PDF-1.7\n") {
-        let mut with_head = Vec::with_capacity(bytes.len() + head.len());
-        with_head.extend_from_slice(&bytes[..9]);
-        with_head.extend_from_slice(head);
-        with_head.extend_from_slice(&bytes[9..]);
-        bytes = with_head;
-    }
-    Ok(bytes)
+        crate::pdf::AI_HEAD,
+    )
 }
 
 /// 文本 -> PS 字形轮廓(PS 用户空间 Y 向上;字形路径 Y 向下取负写出)。
@@ -90,9 +84,13 @@ fn outline_text_ps(
     let half_lead = 0.0 * font_size;
     let baseline_ps = page_h - (y + half_lead + run.ascent as f64);
     for g in &run.glyphs {
-        if let Some(path) =
-            vb_render::text::glyph_outline(&run.font_data, run.font_index, font_size as f32, g.id)
-        {
+        if let Some(path) = vb_render::text::glyph_outline_weighted(
+            &run.font_data,
+            run.font_index,
+            font_size as f32,
+            g.id,
+            weight,
+        ) {
             s.push_str("gsave\n");
             s.push_str(&format!(
                 "{} {} translate\n",

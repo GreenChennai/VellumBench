@@ -110,6 +110,10 @@ impl ExportContext {
         let mut list = encode_artboard_opts(doc, artboard, req.transparent)
             .map_err(|e| KilnError::Encode(e.to_string()))?;
         if let Some(dir) = project_dir {
+            // 先挂载再查缺:missing 检查若在 attach 之前,每个图片项都会
+            // 恒报 ImageMissing(此前无真实图片路径的用例掩盖了这一点)
+            let mut loader = |src: &str| load_bitmap(dir, src);
+            attach_images(&mut list, &mut loader);
             let missing: Vec<String> = list
                 .items
                 .iter()
@@ -119,8 +123,6 @@ impl ExportContext {
             for src in missing {
                 build_warnings.push(KilnWarning::ImageMissing { src });
             }
-            let mut loader = |src: &str| load_bitmap(dir, src);
-            attach_images(&mut list, &mut loader);
         }
 
         // 动画解析(M2):raw_css @keyframes + 节点 animation 声明
@@ -218,12 +220,52 @@ impl ExportContext {
 }
 
 /// 项目目录下解析位图 → RGBA8(缺失返回 None,writer 画占位兜底)。
+///
+/// 采集侧拿到的是 URL 路径:带 `%E8%B5%84...` 百分号转义与 `?query`/`#hash`
+/// 后缀。此前直接 join 落到文件系统,中文名资产一律「缺失」丢图(实测
+/// A4 海报 img/资源 1.png)。
 pub fn load_bitmap(dir: &Path, src: &str) -> Option<vb_render::encode::BitmapData> {
-    let img = image::open(dir.join(src)).ok()?;
-    let rgba = img.to_rgba8();
-    Some(vb_render::encode::BitmapData {
-        width: rgba.width(),
-        height: rgba.height(),
-        rgba: std::sync::Arc::new(rgba.into_raw()),
-    })
+    let cleaned = src.split(['?', '#']).next().unwrap_or(src);
+    let decoded = percent_decode(cleaned);
+    let mut candidates = vec![dir.join(&decoded)];
+    if decoded != cleaned {
+        candidates.push(dir.join(cleaned));
+    }
+    for path in candidates {
+        let Ok(img) = image::open(&path) else { continue };
+        let rgba = img.to_rgba8();
+        return Some(vb_render::encode::BitmapData {
+            width: rgba.width(),
+            height: rgba.height(),
+            rgba: std::sync::Arc::new(rgba.into_raw()),
+        });
+    }
+    None
+}
+
+/// URL 百分号转义 → 原始字节 → UTF-8 路径(仅处理合法序列,其余原样保留)。
+pub fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0usize;
+    let hex = |b: u8| -> Option<u8> {
+        match b {
+            b'0'..=b'9' => Some(b - b'0'),
+            b'a'..=b'f' => Some(b - b'a' + 10),
+            b'A'..=b'F' => Some(b - b'A' + 10),
+            _ => None,
+        }
+    };
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(h), Some(l)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
+                out.push((h << 4) | l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).to_string()
 }

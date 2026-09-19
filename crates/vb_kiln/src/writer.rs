@@ -1,6 +1,6 @@
 //! FormatWriter trait 与九格式分发。
 
-use vb_render::encode::{DrawItem, DrawKind, DrawList, FillDef};
+use vb_render::encode::{DrawItem, DrawList, FillDef};
 
 use crate::context::ExportContext;
 use crate::error::KilnWarning;
@@ -129,38 +129,12 @@ pub fn common_warnings(ctx: &ExportContext, fmt: Format) -> Vec<KilnWarning> {
     w
 }
 
-/// DrawList → 图层名清单(OCG/PPTX 分组;v1:背景 + 内容两级)。
+/// DrawList → 图层名清单(ADR-0021:双图层「背景/内容」;更多层按序扩展)。
 pub fn collect_layers(list: &DrawList) -> Vec<String> {
-    let mut layers = vec!["背景".to_string()];
-    let mut text_n = 0usize;
-    let mut img_n = 0usize;
-    let mut vec_n = 0usize;
-    for item in &list.items {
-        match item.kind {
-            DrawKind::Text => {
-                text_n += 1;
-                let name = item
-                    .label
-                    .as_ref()
-                    .map(|t| crate::report::brief_text(&t.text))
-                    .unwrap_or_else(|| "文本".into());
-                layers.push(format!("文本 {text_n}:{name}"));
-            }
-            DrawKind::Image => {
-                img_n += 1;
-                layers.push(format!("图片 {img_n}"));
-            }
-            DrawKind::VectorPath => {
-                vec_n += 1;
-                layers.push(format!("矢量 {vec_n}"));
-            }
-            _ => {}
-        }
-    }
-    if layers.len() == 1 {
-        layers.push("内容".to_string());
-    }
-    layers
+    let _ = list;
+    // AI 交付固定两层：背景承载画板/底图，内容承载所有可编辑元素。
+    // 额外的内部 layer 标记仍可用于绘制顺序，但不泄漏为 Illustrator 图层。
+    vec!["背景".to_string(), "内容".to_string()]
 }
 
 /// 填充首色 → 十六进制(PPTX 用)。

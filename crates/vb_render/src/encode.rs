@@ -231,6 +231,7 @@ pub struct DrawItem {
     pub fill: Option<FillDef>,
     pub border: Option<BorderDef>,
     pub opacity: f32,
+    pub layer: u32,
     pub kind: DrawKind,
     /// 文本内容(近似渲染用,ADR-0017)。
     pub label: Option<TextHint>,
@@ -686,6 +687,7 @@ pub fn encode_artboard_opts(
         let bg_fill =
             parse_fill(doc, ab, ab.geom.w, ab.geom.h).unwrap_or(FillDef::Solid(background));
         list.items.push(crate::DrawItem {
+            layer: 0,
             sid: ab.sid.as_str().to_string(),
             rect: [0.0, 0.0, ab.geom.w, ab.geom.h],
             ellipse: false,
@@ -704,8 +706,19 @@ pub fn encode_artboard_opts(
         });
     }
     let children = ab.children.clone();
+    // 图层上下文:画板直接子节点中的 Layer 节点按序 0..,其子孙继承该层号;
+    // 非 Layer 直接子节点归 0 层(dompaint 的双图层结构由此驱动)
+    let mut layer_seq = 0u32;
     for c in children {
-        encode_node(doc, c, 0.0, 0.0, 1.0, &mut list);
+        let layer = match doc.nodes.get(c).map(|n| &n.kind) {
+            Some(NodeKind::Layer) => {
+                let l = layer_seq;
+                layer_seq += 1;
+                l
+            }
+            _ => 0,
+        };
+        encode_node(doc, c, 0.0, 0.0, 1.0, layer, &mut list);
     }
     Ok(list)
 }
@@ -724,7 +737,7 @@ pub fn encode_subtree(doc: &Document, root: NodeId) -> Result<DrawList, VbError>
         background: [0.0, 0.0, 0.0, 0.0],
         items: Vec::new(),
     };
-    encode_node(doc, root, 0.0, 0.0, 1.0, &mut list);
+    encode_node(doc, root, 0.0, 0.0, 1.0, 0, &mut list);
     Ok(list)
 }
 
@@ -734,6 +747,7 @@ fn encode_node(
     off_x: f64,
     off_y: f64,
     opacity: f32,
+    layer: u32,
     list: &mut DrawList,
 ) {
     let Some(node) = doc.nodes.get(id) else {
@@ -752,12 +766,18 @@ fn encode_node(
     let w = node.geom.w;
     let h = node.geom.h;
 
+    // 图层标记与绘制序解耦(ADR-0021):节点自带 vb-layer 优先于结构层号
+    let layer = node
+        .style_get("vb-layer")
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .unwrap_or(layer);
     let is_container = node.kind.is_container();
     if !is_container || has_own_visual(node) {
         let radii = parse_radii(node, w, h);
         let ellipse = radii[0].is_infinite();
         let radii = if ellipse { [0.0; 4] } else { radii };
         list.items.push(DrawItem {
+            layer,
             sid: node.sid.as_str().to_string(),
             rect: [x, y, w, h],
             ellipse,
@@ -865,7 +885,7 @@ fn encode_node(
     }
     let children = node.children.clone();
     for c in children {
-        encode_node(doc, c, x, y, op, list);
+        encode_node(doc, c, x, y, op, layer, list);
     }
 }
 

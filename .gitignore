@@ -21,6 +21,12 @@ bench/acceptance/native/
 bench/acceptance/kiln/
 bench/acceptance/report-*
 !bench/acceptance/report-archived.md
+# 验收运行生成的截图/AI/PDF/文本报告均为本地产物，不进入仓库
+bench/acceptance/*.json
+bench/acceptance/*.md
+bench/acceptance/tmp/
+bench/tmp-*/
+bench/*-baseline$name.*
 bench/pdf-fidelity*/
 bench/artboard-*/
 bench/wpi-baseline/

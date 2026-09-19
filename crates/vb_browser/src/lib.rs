@@ -12,6 +12,7 @@ pub mod b64;
 pub mod browser;
 pub mod capture;
 pub mod cdp;
+pub mod domsnap;
 pub mod httpc;
 pub mod page;
 pub mod print;

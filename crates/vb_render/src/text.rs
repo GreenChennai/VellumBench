@@ -83,6 +83,8 @@ pub struct ShapedRun {
     pub glyphs: Vec<ShapedGlyph>,
     pub ascent: f32,
     pub descent: f32,
+    /// 整形所用字重(变量字体 wght 轴;字形轮廓必须用同一实例)。
+    pub weight: u16,
 }
 
 /// 字体源缓存:fontique 枚举有成本,进程内复用。
@@ -187,11 +189,14 @@ pub fn shape_text_weighted(
     let mut shape_ctx = shape::ShapeContext::new();
     // 统一走 Latin 引擎(cmap 映射 + 字距):CJK 无复杂整形需求,
     // Han 引擎在部分字体上产出空字形(实测);复杂脚本留后续
+    // 变量字体必须显式设 wght 轴:否则 NotoSerifSC-VF 之类永远取默认实例
+    // (≈400),`font-weight:900` 的大标题会渲染成细体(非变量字体为 no-op)
     let mut shaper = shape_ctx
         .builder(font)
         .size(font_size)
         .script(Script::Latin)
         .direction(Direction::LeftToRight)
+        .variations([("wght", weight as f32)])
         .build();
     let metrics = shaper.metrics();
     let mut glyphs: Vec<ShapedGlyph> = Vec::new();
@@ -217,6 +222,7 @@ pub fn shape_text_weighted(
         glyphs,
         ascent: metrics.ascent,
         descent: metrics.descent,
+        weight,
     })
 }
 
@@ -227,10 +233,26 @@ pub fn glyph_outline(
     size: f32,
     glyph_id: u16,
 ) -> Option<BezPath> {
+    glyph_outline_weighted(font_data, font_index, size, glyph_id, 400)
+}
+
+/// 字重感知的字形轮廓:变量字体按 wght 轴实例化,与整形同一实例
+/// (否则整形用 900 的 advance、轮廓却取默认 400,字形与排布错配)。
+pub fn glyph_outline_weighted(
+    font_data: &[u8],
+    font_index: usize,
+    size: f32,
+    glyph_id: u16,
+    weight: u16,
+) -> Option<BezPath> {
     let font = FontRef::from_index(font_data, font_index)?;
     let gid = GlyphId::from(glyph_id);
     let mut ctx = swash::scale::ScaleContext::new();
-    let mut scaler = ctx.builder(font).size(size).build();
+    let mut scaler = ctx
+        .builder(font)
+        .size(size)
+        .variations([("wght", weight as f32)])
+        .build();
     let outline = scaler.scale_outline(gid)?;
     let mut out = BezPath::new();
     use zeno::PathData;
@@ -365,6 +387,7 @@ pub fn layout_text_lines(
                         glyphs: Vec::new(),
                         ascent: font_size * 0.8,
                         descent: font_size * 0.2,
+                        weight,
                     },
                     vec![Vec::new()],
                 ),

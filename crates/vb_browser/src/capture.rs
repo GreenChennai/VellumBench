@@ -306,3 +306,32 @@ pub fn content_size_value(page: &mut PageSession) -> Result<(u32, u32), String> 
     let h = arr.get(1).and_then(Value::as_f64).unwrap_or(1.0) as u32;
     Ok((w.max(1), h.max(1)))
 }
+
+/// DOM 快照采集结果(ADR-0021:位图降级源 + 采集清单)。
+pub struct DomCapture {
+    pub list: serde_json::Value,
+    pub page_png: Vec<u8>,
+    pub url_prefix: String,
+    pub warnings: Vec<String>,
+}
+
+/// 加载源页面(DSF=1)→ settle → DOM 快照 + 整页截图(PNG)。
+pub fn capture_dom(page: &mut PageSession, url: &str) -> Result<DomCapture, String> {
+    let mut warnings = Vec::new();
+    let (sw, sh) = page.content_size()?;
+    let _ = sw;
+    let infinite = settle(page)?;
+    if infinite > 0 {
+        warnings.push(format!("存在 {infinite} 个无限循环动画,采集为当前帧"));
+    }
+    let list = crate::domsnap::snapshot(page)?;
+    let page_png = page.screenshot(
+        "png",
+        None,
+        Some((0.0, 0.0, sw as f64, sh as f64)),
+        true,
+        false,
+    )?;
+    let _ = sh;
+    Ok(DomCapture { list, page_png, url_prefix: String::new(), warnings })
+}

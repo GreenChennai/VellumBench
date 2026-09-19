@@ -30,9 +30,9 @@ struct Cli {
 enum Cmd {
     /// 导出(WPI 参数兼容)
     Export {
-        /// 源 HTML 文件或项目目录
-        #[arg(long)]
-        source: PathBuf,
+        /// 源 HTML 文件或项目目录(可重复:多源 = 多画板,仅 dom 矢量路线)
+        #[arg(long = "source", required = true)]
+        sources: Vec<PathBuf>,
         /// 输出文件路径
         #[arg(long)]
         output: PathBuf,
@@ -57,6 +57,10 @@ enum Cmd {
         /// 导出引擎:auto=浏览器可用即用(默认)|browser=强制浏览器|native=强制自研
         #[arg(long, default_value = "auto")]
         engine: String,
+        /// 矢量路线:dom=浏览器布局+Kiln 矢量写入(AI 默认;可编辑结构)|
+        /// chrome=printToPDF 直出(PDF 默认;打印/阅读)
+        #[arg(long, default_value = "auto")]
+        vector: String,
         /// JPG 质量 1..=100
         #[arg(long, default_value_t = 92)]
         jpeg_quality: u8,
@@ -156,7 +160,7 @@ fn main() {
     let cli = Cli::parse();
     let code = match cli.cmd {
         Cmd::Export {
-            source,
+            sources,
             output,
             format,
             width,
@@ -165,13 +169,14 @@ fn main() {
             max_wait,
             height,
             engine,
+            vector,
             jpeg_quality,
             fps,
             duration,
             r#loop,
             bitrate,
         } => run_export(
-            source,
+            sources,
             output,
             format,
             width,
@@ -180,6 +185,7 @@ fn main() {
             max_wait,
             height,
             engine,
+            vector,
             jpeg_quality,
             fps,
             duration,
@@ -195,7 +201,7 @@ fn main() {
 
 #[allow(clippy::too_many_arguments)]
 fn run_export(
-    source: PathBuf,
+    sources: Vec<PathBuf>,
     output: PathBuf,
     format: Option<String>,
     width: u32,
@@ -204,6 +210,7 @@ fn run_export(
     max_wait: f32,
     height: u32,
     engine: String,
+    vector: String,
     jpeg_quality: u8,
     fps: u32,
     duration: f32,
@@ -212,6 +219,7 @@ fn run_export(
 ) -> i32 {
     let t0 = Instant::now();
     let _ = max_wait; // 浏览器车道自带 settle 预算;自研车道无外部等待
+    let source = sources[0].clone(); // 单源兼容:各路线内部用第一源
     let dir = if source.is_dir() {
         source.clone()
     } else {
@@ -248,6 +256,59 @@ fn run_export(
     // ---------------- 车道 B(浏览器车道,ADR-0020):PNG/PDF/AI 高保真导出 ----------------
     // auto=浏览器可用即用(保真优先);browser=强制;native=跳过本段
     let engine_mode = engine.trim().to_ascii_lowercase();
+    let vector_mode = vector.trim().to_ascii_lowercase();
+    // ---- ADR-0021:AI 的 DOM 快照路线(默认)----
+    // 结构保证:整行文本一个 CID Tj(零逐字断字)、双 OCG 图层、零 Type3、
+    // 渐变位图化(pdfium/AI 兼容)、blend 文字矢量救活。
+    let want_dom = matches!(fmt_str.to_uppercase().as_str(), "AI" | "PDF" | "PNG" | "SVG" | "EPS")
+        && matches!(vector_mode.as_str(), "auto" | "dom")
+        && engine_mode != "native";
+    if want_dom {
+        let dom_result = if sources.len() > 1 {
+            vb_kiln::domexport::export_dom_pages(&sources, transparent, width)
+        } else {
+            vb_kiln::domexport::export_dom(&source, fmt, transparent, width)
+        };
+        match dom_result {
+            Ok(out) => {
+                for w in &out.warnings {
+                    eprintln!("{{\"domwarn\":\"{w}\"}}");
+                }
+                if let Some(parent) = output.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if let Err(e) = std::fs::write(&output, &out.bytes) {
+                    eprintln!("{{\"ok\":false,\"error\":\"写文件失败:{e}\"}}");
+                    return 4;
+                }
+                let json = format!(
+                    "{{'ok':true,'format':'{}','path':'{}','width':{:.0},'height':{:.0},'scale':1,'transparent':{},'warnings':{},'frames':1,'degraded':false,'degraded_artboard':false,'bytes':{},'encode_ms':{},'engine':'browser-dom','browser':'{}','vector':'dom','text_lines':{},'clip_demand':{},'raster_items':{}}}",
+                    fmt_str.to_uppercase(),
+                    output.display(),
+                    out.width,
+                    out.height,
+                    transparent,
+                    out.warnings.len(),
+                    out.bytes.len(),
+                    0,
+                    out.browser.replace('"', "'"),
+                    out.meta.line_count,
+                    out.meta.clip_demand,
+                    out.meta.raster_count,
+                )
+                .replace('\'', "\"");
+                println!("{json}");
+                return 0;
+            }
+            Err(e) => {
+                if vector_mode == "dom" {
+                    eprintln!("{{\"ok\":false,\"error\":\"DOM 快照路线失败:{e}\"}}");
+                    return 4;
+                }
+                eprintln!("{{\"warn\":\"DOM 快照路线失败,降级 printToPDF:{e}\"}}");
+            }
+        }
+    }
     if engine_mode == "browser" && !matches!(fmt_str.to_uppercase().as_str(), "PNG" | "PDF" | "AI") {
         eprintln!("{{\"ok\":false,\"error\":\"浏览器车道仅支持 PNG/PDF/AI,格式 {fmt_str} 请用 auto/native\"}}");
         return 2;

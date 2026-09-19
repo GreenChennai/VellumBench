@@ -195,15 +195,16 @@ fn eps_has_bounding_box() {
     assert!(text.contains("showpage"));
 }
 
-/// Ai 是 PDF 兼容流 + Illustrator 头。
+/// Ai 是 PDF 兼容流 + 不触发私有结构解析的 Illustrator 注释头。
 #[test]
 fn ai_is_pdf_compatible_with_head() {
     let doc = sample_doc();
     let ab = doc.artboards[0];
     let (bytes, _) = vb_kiln::export_artboard(&doc, ab, &req(Format::Ai), None).unwrap();
-    assert!(bytes.starts_with(b"%PDF-1.7\n%AI9_PrivateDataBegin"));
+    assert!(bytes.starts_with(b"%PDF-1.7\n%%AI8_CreatorVersion"));
     let text = String::from_utf8_lossy(&bytes);
     assert!(text.contains("%%AI8_CreatorVersion"));
+    assert!(!text.contains("AI9_PrivateDataBegin"));
 }
 
 /// 异常路径:超大画布报错不 panic。

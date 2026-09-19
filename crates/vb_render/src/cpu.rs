@@ -255,11 +255,12 @@ fn draw_item(
                                 .find(|sg| b >= sg.start && b < sg.end)
                                 .and_then(|sg| sg.color)
                                 .unwrap_or(t.color);
-                            if let Some(gpath) = crate::text::glyph_outline(
+                            if let Some(gpath) = crate::text::glyph_outline_weighted(
                                 &run.font_data,
                                 run.font_index,
                                 t.font_size as f32,
                                 g.id,
+                                t.weight,
                             ) {
                                 let gx = x + (g.x as f64 + gi as f64 * ls as f64) - line_x0;
                                 if let Some(sk) = kurbo_to_skia_path(
@@ -454,8 +455,20 @@ fn draw_bitmap_rgba(
 ) {
     let dw = ((w * scale as f64).round() as u32).max(1);
     let dh = ((h * scale as f64).round() as u32).max(1);
-    let src = image::RgbaImage::from_raw(bmp.width, bmp.height, (*bmp.rgba).clone())
+    let mut src = image::RgbaImage::from_raw(bmp.width, bmp.height, (*bmp.rgba).clone())
         .unwrap_or_else(|| image::RgbaImage::new(dw, dh));
+    // tiny-skia 的 Pixmap 是**预乘 alpha**;此前把直 alpha 的 RGBA 直接拷进去,
+    // 抠像 PNG 的透明区(RGB 仍是 255)被当作白色实心参与叠加 —— 人物抠像
+    // 外框出现整块白底。先预乘再缩放(缩放也在预乘域做,避免透明边缘渗色)。
+    for p in src.pixels_mut() {
+        let a = p.0[3] as u32;
+        if a == 255 {
+            continue;
+        }
+        for c in p.0.iter_mut().take(3) {
+            *c = ((*c as u32 * a + 127) / 255) as u8;
+        }
+    }
     let resized = image::imageops::resize(&src, dw, dh, image::imageops::FilterType::Triangle);
     let Some(mut pm) = Pixmap::new(dw, dh) else {
         return;
