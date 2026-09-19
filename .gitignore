@@ -11,6 +11,12 @@ Cargo.lock.orig
 Thumbs.db
 .DS_Store
 
+# Kiln 导出副产物:任何情况下不入库(新版已改写系统临时目录,
+# 此条防御旧版二进制/手工操作把它们写进工作树)
+.kiln-raster/
+.kiln-paintlist.json
+.kiln-*.json
+
 dist/*.exe
 bench/artboard-baseline/tmp/
 
