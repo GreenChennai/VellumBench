@@ -20,8 +20,9 @@
 | HTML 导入 → 场景图 → 导出(多画板纵向堆叠) | ✅ |
 | **`vb_layout` 文档流布局引擎**(taffy:flow/flex/absolute、inset/margin/padding、var()/calc()、authored flags 区分显式与推断几何) | ✅ |
 | **文本引擎**:富文本段(字节区间样式)、`<br>` 换行、贪心断行 + 禁則(。、！？不入行首)、字重感知选字(fontique+swash)、@font-face 注册表 | ✅ |
-| **CSS 动画时间轴**:@keyframes 导出期解析,animation 简写 + cubic-bezier 求解,GIF/MP4 逐帧求值(t=0 即首帧) | ✅ |
-| **双车道导出(ADR-0020)**:车道 B(浏览器,Rust 原生 CDP 驱动系统 Edge/Chrome,默认)PNG/PDF/AI 高保真;车道 K(自研,零依赖兜底)九格式 | ✅ |
+| **CSS 动画时间轴**:@keyframes 导出期解析,animation 简写(var()/calc() 时序)+ cubic-bezier 求解;**GIF/MP4 主路 = animlane 车道 B 逐帧**(WPI 理论:真浏览器实时采样+墙钟重采样,人工评分 35→99.4);车道 K 静态求值为无浏览器兜底 | ✅ |
+| **双车道导出(ADR-0020 + ADR-0022 路线分化)**:车道 B(浏览器,Rust 原生 CDP 驱动系统 Edge/Chrome,默认)——PNG=原生截屏、AI/SVG/EPS/PDF=DOM 矢量写入、GIF/MP4=animlane 逐帧;车道 K(自研,零依赖兜底)九格式 | ✅ |
+| **AI 可编辑三轮(docs/design/21)**:G6 浏览器真值门禁(诚实尺:dom 89.5-96.7 / chrome 锚 98.6-99.8)、分段样式逐段整形(重点字号不丢)、矢量渐变 Pattern、圆角公式修复、svg 资产矢量导入、副产物出源目录 | ✅ |
 | **Kiln 车道 K 原生九格式**:PNG(@1x-4x)· JPG · GIF · MP4 · SVG(真文本)· PDF(CID 中文真文本)· EPS · Ai · PPTX | ✅ |
 | **PDF 可编辑质量**:Type0/CIDFontType2 子集嵌入 + ToUnicode(阅读器可选中复制,Illustrator 可改字)、OCG 图层、clip-path(Inset/Circle/Ellipse/Polygon)、渐变栅格化位图 + SMask 半透明、q/Q 仅旋转项(单层图形状态) | ✅ |
 | **验收门禁(机器出分,禁止手写)**:[`bench/acceptance.py`](bench/acceptance.py) × 用户指定验收集(6 类 26 HTML):**G1** PNG vs 浏览器基线平均 **99.93**(最差 99.65,尺寸严格相等);**G2/G3** PDF/AI vs PNG 平均 **99.37**;**G4** 文本层(容差+栅格化 caveat);**G5** 字体 100% 嵌入 | ✅ |
