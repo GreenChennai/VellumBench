@@ -457,7 +457,9 @@ fn body_explicit_size(css_texts: &[String]) -> (Option<f64>, Option<f64>) {
         let mut rest = css.as_str();
         while let Some(brace) = rest.find('{') {
             let selector = rest[..brace].to_lowercase();
-            let Some(close) = rest[brace..].find('}') else { break };
+            let Some(close) = rest[brace..].find('}') else {
+                break;
+            };
             let decls = &rest[brace + 1..brace + close];
             let applies = selector
                 .split(',')

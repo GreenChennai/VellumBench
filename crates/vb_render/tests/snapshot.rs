@@ -9,6 +9,7 @@ fn fixed_scene() -> DrawList {
         // 背景
         DrawItem {
             sid: String::new(),
+            layer: 0,
             rect: [0.0, 0.0, 200.0, 100.0],
             ellipse: false,
             radii: [0.0; 4],
@@ -27,6 +28,7 @@ fn fixed_scene() -> DrawList {
         // 蓝色圆角矩形
         DrawItem {
             sid: String::new(),
+            layer: 1,
             rect: [20.0, 20.0, 80.0, 60.0],
             ellipse: false,
             radii: [8.0; 4],
@@ -47,6 +49,7 @@ fn fixed_scene() -> DrawList {
         },
     ];
     items.push(DrawItem {
+            layer: 1,
         sid: String::new(),
         rect: [120.0, 20.0, 60.0, 60.0],
         ellipse: true,

@@ -232,7 +232,9 @@ pub fn load_bitmap(dir: &Path, src: &str) -> Option<vb_render::encode::BitmapDat
         candidates.push(dir.join(cleaned));
     }
     for path in candidates {
-        let Ok(img) = image::open(&path) else { continue };
+        let Ok(img) = image::open(&path) else {
+            continue;
+        };
         let rgba = img.to_rgba8();
         return Some(vb_render::encode::BitmapData {
             width: rgba.width(),

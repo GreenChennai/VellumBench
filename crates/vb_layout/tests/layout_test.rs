@@ -11,8 +11,14 @@ fn layout(html: &str) -> (vb_doc::model::Document, Vec<String>) {
 }
 
 fn layout_mut(html: &str) -> (vb_doc::model::Document, Vec<String>) {
-    let dir = std::env::temp_dir().join(format!("vb-layout-m-{}-{}", std::process::id(),
-        std::time::SystemTime::now().elapsed().unwrap_or_default().as_nanos() as u64));
+    let dir = std::env::temp_dir().join(format!(
+        "vb-layout-m-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .elapsed()
+            .unwrap_or_default()
+            .as_nanos() as u64
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     let r = import_html(html, &dir).expect("导入");
     let mut doc = r.doc;
@@ -41,14 +47,16 @@ fn grid_two_columns_does_not_collapse() {
     let cards: Vec<(f64, f64, f64, f64)> = doc
         .nodes
         .iter()
-        .filter(|(_, n)| {
-            n.classes.iter().any(|c| c == "card")
-        })
+        .filter(|(_, n)| n.classes.iter().any(|c| c == "card"))
         .map(|(_, n)| (n.geom.x, n.geom.y, n.geom.w, n.geom.h))
         .collect();
     assert_eq!(cards.len(), 4, "4 张卡");
     let mut cards = cards;
-    cards.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap().then(a.0.partial_cmp(&b.0).unwrap()));
+    cards.sort_by(|a, b| {
+        a.1.partial_cmp(&b.1)
+            .unwrap()
+            .then(a.0.partial_cmp(&b.0).unwrap())
+    });
     // 行 1:卡1 卡2 同 y、x 不同
     assert!(
         (cards[0].1 - cards[1].1).abs() < 1.0,
@@ -79,19 +87,27 @@ fn grid_fraction_columns_keep_ratio() {
     let mut cells: Vec<(f64, f64)> = doc
         .nodes
         .iter()
-        .filter(|(_, n)| n.parent.is_some() && {
-            let p = n.parent.unwrap();
-            doc.node(p).map(|pn| {
-                pn.style.iter().any(|d| d.prop == "display" && d.value.trim() == "grid")
-            }).unwrap_or(false)
+        .filter(|(_, n)| {
+            n.parent.is_some() && {
+                let p = n.parent.unwrap();
+                doc.node(p)
+                    .map(|pn| {
+                        pn.style
+                            .iter()
+                            .any(|d| d.prop == "display" && d.value.trim() == "grid")
+                    })
+                    .unwrap_or(false)
+            }
         })
         .map(|(_, n)| (n.geom.x, n.geom.w))
         .collect();
     cells.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
     assert_eq!(cells.len(), 3, "三个网格项: {cells:?}");
     // 等宽三分:宽度差 < 2px,x 单调递增
-    assert!((cells[0].1 - cells[1].1).abs() < 2.0 && (cells[1].1 - cells[2].1).abs() < 2.0,
-        "三列应等宽: {cells:?}");
+    assert!(
+        (cells[0].1 - cells[1].1).abs() < 2.0 && (cells[1].1 - cells[2].1).abs() < 2.0,
+        "三列应等宽: {cells:?}"
+    );
     assert!(cells[0].0 < cells[1].0 && cells[1].0 < cells[2].0);
 }
 
@@ -125,7 +141,8 @@ fn unparsable_grid_template_warns_and_degrades() {
 </style></head><body><div class="poster"><div class="g"><div>a</div><div>b</div></div></div></body></html>"#;
     let (_doc, ws) = layout(&html);
     assert!(
-        ws.iter().any(|w| w.contains("grid-template-columns") && w.contains("未识别")),
+        ws.iter()
+            .any(|w| w.contains("grid-template-columns") && w.contains("未识别")),
         "应有模板未识别告警: {ws:?}"
     );
 }

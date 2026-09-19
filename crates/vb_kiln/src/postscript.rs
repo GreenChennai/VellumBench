@@ -324,13 +324,13 @@ fn ps_path(s: &mut String, item: &DrawItem, x: f64, py: f64, w: f64, h: f64) {
             "{} {} moveto {} {} lineto {} {} {} {} {} {} curveto {} {} lineto {} {} {} {} {} {} curveto {} {} lineto {} {} {} {} {} {} curveto {} {} lineto {} {} {} {} {} {} curveto closepath\n",
             fnum(x + r), fnum(py),
             fnum(x + w - r), fnum(py),
-            fnum(x + w - k * r), fnum(py), fnum(x + w), fnum(py + k * r), fnum(x + w), fnum(py + r),
+            fnum(x + w - r + k * r), fnum(py), fnum(x + w), fnum(py + r - k * r), fnum(x + w), fnum(py + r),
             fnum(x + w), fnum(py + h - r),
-            fnum(x + w), fnum(py + h - k * r), fnum(x + w - k * r), fnum(py + h), fnum(x + w - r), fnum(py + h),
+            fnum(x + w), fnum(py + h - r + k * r), fnum(x + w - r + k * r), fnum(py + h), fnum(x + w - r), fnum(py + h),
             fnum(x + r), fnum(py + h),
-            fnum(x + k * r), fnum(py + h), fnum(x), fnum(py + h - k * r), fnum(x), fnum(py + h - r),
+            fnum(x + r - k * r), fnum(py + h), fnum(x), fnum(py + h - r + k * r), fnum(x), fnum(py + h - r),
             fnum(x), fnum(py + r),
-            fnum(x), fnum(py + k * r), fnum(x + k * r), fnum(py), fnum(x + r), fnum(py)
+            fnum(x), fnum(py + r - k * r), fnum(x + r - k * r), fnum(py), fnum(x + r), fnum(py)
         ));
     } else {
         s.push_str(&format!(

@@ -19,7 +19,12 @@ pub struct Cdp {
 
 impl Cdp {
     pub fn new(ws: WsConn) -> Self {
-        Cdp { ws, next_id: 0, responses: HashMap::new(), events: VecDeque::new() }
+        Cdp {
+            ws,
+            next_id: 0,
+            responses: HashMap::new(),
+            events: VecDeque::new(),
+        }
     }
 
     /// 发送命令并阻塞等待其响应(途中事件排队,不丢)。
@@ -77,16 +82,17 @@ impl Cdp {
                         .map_err(|e| format!("CDP 消息解析失败: {e}: {}", truncate(text)))?;
                     if let Some(id) = v.get("id").and_then(Value::as_u64) {
                         if let Some(err) = v.get("error") {
-                            self.responses
-                                .insert(id, Err(err.to_string()));
+                            self.responses.insert(id, Err(err.to_string()));
                         } else {
                             self.responses
                                 .insert(id, Ok(v.get("result").cloned().unwrap_or(Value::Null)));
                         }
                         return Ok(()); // 有进展即返回,让调用方重新检查
                     } else if let Some(m) = v.get("method").and_then(Value::as_str) {
-                        self.events
-                            .push_back((m.to_string(), v.get("params").cloned().unwrap_or(Value::Null)));
+                        self.events.push_back((
+                            m.to_string(),
+                            v.get("params").cloned().unwrap_or(Value::Null),
+                        ));
                         return Ok(());
                     }
                 }

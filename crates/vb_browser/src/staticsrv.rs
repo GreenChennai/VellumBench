@@ -151,7 +151,8 @@ fn handle(mut stream: TcpStream, root: Arc<PathBuf>) {
         return;
     };
     let Ok(body) = std::fs::read(&file) else {
-        let _ = stream.write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n");
+        let _ =
+            stream.write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n");
         return;
     };
     let header = format!(
@@ -211,14 +212,17 @@ impl StaticServer {
 
     /// 目录挂载的入口 URL(解析 index;无 index 报错,与 WPI 语义一致)。
     pub fn url_for_dir(&self) -> Result<String, String> {
-        let index = resolve_index(&self.root).ok_or_else(|| {
-            format!("目录中未找到任何 HTML 文件: {}", self.root.display())
-        })?;
+        let index = resolve_index(&self.root)
+            .ok_or_else(|| format!("目录中未找到任何 HTML 文件: {}", self.root.display()))?;
         let name = index
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("index.html");
-        Ok(format!("http://127.0.0.1:{}/{}", self.port(), percent_encode_path(name)))
+        Ok(format!(
+            "http://127.0.0.1:{}/{}",
+            self.port(),
+            percent_encode_path(name)
+        ))
     }
 
     /// 单文件挂载(挂父目录,URL 指向该文件;相对资源按父目录解析)。
@@ -227,7 +231,11 @@ impl StaticServer {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("index.html");
-        format!("http://127.0.0.1:{}/{}", self.port(), percent_encode_path(name))
+        format!(
+            "http://127.0.0.1:{}/{}",
+            self.port(),
+            percent_encode_path(name)
+        )
     }
 }
 
@@ -243,8 +251,14 @@ mod tests {
 
     #[test]
     fn decode_and_encode() {
-        assert_eq!(percent_decode("%E6%A9%99%E9%9D%92%E8%89%B2.html"), "橙青色.html");
-        assert_eq!(percent_encode_path("橙青色.html"), "%E6%A9%99%E9%9D%92%E8%89%B2.html");
+        assert_eq!(
+            percent_decode("%E6%A9%99%E9%9D%92%E8%89%B2.html"),
+            "橙青色.html"
+        );
+        assert_eq!(
+            percent_encode_path("橙青色.html"),
+            "%E6%A9%99%E9%9D%92%E8%89%B2.html"
+        );
         assert_eq!(percent_encode_path("index.html"), "index.html");
     }
 
@@ -267,14 +281,24 @@ mod tests {
         .unwrap();
         assert_eq!(status, 200);
         assert!(body.starts_with(b"<html>"));
-        let (status, body) =
-            crate::httpc::request("127.0.0.1", srv.port(), "GET", "/fonts/a.ttf", std::time::Duration::from_secs(5))
-                .unwrap();
+        let (status, body) = crate::httpc::request(
+            "127.0.0.1",
+            srv.port(),
+            "GET",
+            "/fonts/a.ttf",
+            std::time::Duration::from_secs(5),
+        )
+        .unwrap();
         assert_eq!(status, 200);
         assert_eq!(body, b"fontbytes");
-        let (status, _) =
-            crate::httpc::request("127.0.0.1", srv.port(), "GET", "/../etc", std::time::Duration::from_secs(5))
-                .unwrap();
+        let (status, _) = crate::httpc::request(
+            "127.0.0.1",
+            srv.port(),
+            "GET",
+            "/../etc",
+            std::time::Duration::from_secs(5),
+        )
+        .unwrap();
         assert_eq!(status, 404);
         let _ = std::fs::remove_dir_all(&base);
     }

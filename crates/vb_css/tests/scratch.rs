@@ -7,5 +7,8 @@ fn scratch_root_vars() {
 }"#;
     let sheet = vb_doc::import::parse_stylesheet(css);
     println!("root_vars = {:?}", sheet.root_vars);
-    assert!(sheet.root_vars.iter().any(|(k, v)| k == "panel" && v == "#161922"));
+    assert!(sheet
+        .root_vars
+        .iter()
+        .any(|(k, v)| k == "panel" && v == "#161922"));
 }

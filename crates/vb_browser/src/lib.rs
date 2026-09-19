@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::json;
 
-pub use browser::{discover_browser, browser_version};
+pub use browser::{browser_version, discover_browser};
 pub use capture::{capture_png, CaptureOptions, CaptureOutcome};
 pub use print::{ai_from_pdf, print_pdf, PrintOutcome};
 

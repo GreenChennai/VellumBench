@@ -32,7 +32,8 @@ impl FormatWriter for PdfWriter {
         r.frame_count = 1;
         let latin = LATIN_FALLBACK_COUNT.load(Ordering::Relaxed);
         if latin > 0 {
-            r.warnings.push(crate::error::KilnWarning::UnembeddedLatinText);
+            r.warnings
+                .push(crate::error::KilnWarning::UnembeddedLatinText);
         }
         Ok(r)
     }
@@ -61,12 +62,14 @@ pub fn write_pdf_head(ctx: &ExportContext, producer: &str, head: &str) -> KilnRe
     let mut usage = CjkUsage::new();
     let _probe = render_content_stream(ctx, &mut usage, false);
     finalize_cjk_fonts(&mut usage);
-    // 两遍渲染间清除图形资源(图像/透明度),防止 pass1+pass2 重复
-    // 导致资源编号错位和对象数翻倍。pass2 重新收集(remap=true 时正式发射)。
+    // 两遍渲染间清除图形资源(图像/透明度/渐变 Pattern),防止 pass1+pass2
+    // 重复导致资源编号错位和对象数翻倍。pass2 重新收集(remap=true 时正式发射)。
     usage.images.clear();
     usage.opacities.clear();
+    usage.patterns.clear();
     usage.im_counter = 0;
     usage.gs_counter = 0;
+    usage.pat_counter = 0;
     let content = render_content_stream(ctx, &mut usage, true);
     let content_z = content.into_bytes();
 
@@ -89,6 +92,7 @@ pub fn write_pdf_head(ctx: &ExportContext, producer: &str, head: &str) -> KilnRe
         .filter(|(_, d, _, _)| d.chunks_exact(4).any(|px| px[3] != 255))
         .count() as u32;
     let gs_base_start = sm_base_start + n_smasks;
+    let pat_base_start = gs_base_start + usage.opacities.len() as u32;
     let mut objects: Vec<Obj> = Vec::new();
 
     let catalog_id = 1u32;
@@ -139,6 +143,16 @@ pub fn write_pdf_head(ctx: &ExportContext, producer: &str, head: &str) -> KilnRe
             .map(|(i, (res, _, _, _))| format!("/{} {} 0 R", res, im_base_start + i as u32))
             .collect();
         page.push_str(&format!(" /XObject << {} >>", ims.join(" ")));
+    }
+    // F4': 矢量渐变 Pattern 资源(21 篇 G1)
+    if !usage.patterns.is_empty() {
+        let pats: Vec<String> = usage
+            .patterns
+            .iter()
+            .enumerate()
+            .map(|(i, p)| format!("/{} {} 0 R", p.resource, pat_base_start + i as u32))
+            .collect();
+        page.push_str(&format!(" /Pattern << {} >>", pats.join(" ")));
     }
     // F3: ExtGState 资源
     if n_layers > 0 {
@@ -324,6 +338,11 @@ end",
         )));
     }
 
+    // F4': 矢量渐变 Pattern 对象(G1;Function 内嵌字典,chrome 同构)
+    for p in &usage.patterns {
+        objects.push(Obj::Dict(pattern_dict(p)));
+    }
+
     // F4: 无 Shading/Pattern 对象 —— 渐变一律栅格位图(pdfium 不渲染
     // sh/PatternType 2;Illustrator 对非常规 shading 组合报「未知的阴影类型」)
 
@@ -377,6 +396,54 @@ enum Obj {
     Stream { dict: String, data: Vec<u8> },
 }
 
+/// 渐变色标 → PDF Function 字典(chrome 同构):
+/// 2 档 = FunctionType 2;≥3 档 = FunctionType 3 stitching(内档位为 Bounds)。
+fn gradient_function_dict(stops: &[(f32, [f32; 3])]) -> String {
+    let rgb = |c: [f32; 3]| {
+        format!(
+            "{} {} {}",
+            fnum(c[0] as f64),
+            fnum(c[1] as f64),
+            fnum(c[2] as f64)
+        )
+    };
+    let type2 = |a: [f32; 3], b: [f32; 3]| {
+        format!(
+            "<< /FunctionType 2 /Domain [0 1] /N 1 /C0 [{}] /C1 [{}] >>",
+            rgb(a),
+            rgb(b)
+        )
+    };
+    if stops.len() <= 2 {
+        let c0 = stops.first().map(|s| s.1).unwrap_or([0.0; 3]);
+        let c1 = stops.last().map(|s| s.1).unwrap_or(c0);
+        return type2(c0, c1);
+    }
+    let bounds: Vec<String> = stops[1..stops.len() - 1]
+        .iter()
+        .map(|(p, _)| fnum(*p as f64))
+        .collect();
+    let funcs: Vec<String> = stops.windows(2).map(|w| type2(w[0].1, w[1].1)).collect();
+    let encode: Vec<&str> = funcs.iter().map(|_| "0 1").collect();
+    format!(
+        "<< /FunctionType 3 /Domain [0 1] /Bounds [{}] /Encode [{}] /Functions [{}] >>",
+        bounds.join(" "),
+        encode.join(" "),
+        funcs.join(" ")
+    )
+}
+
+/// Pattern 字典(PatternType 2 + Shading;coords 为用户空间,Matrix 省略 = 单位阵)。
+fn pattern_dict(p: &GradPattern) -> String {
+    let coords: Vec<String> = p.coords.iter().map(|v| fnum(*v)).collect();
+    format!(
+        "/Type /Pattern /PatternType 2 /Shading << /ShadingType {} /ColorSpace /DeviceRGB /Coords [{}] /Extend [true true] /Function {} >>",
+        p.shading_type,
+        coords.join(" "),
+        gradient_function_dict(&p.stops)
+    )
+}
+
 /// 单个 CJK 字体的使用记录(内容流渲染期收集)。
 pub struct CjkFont {
     pub name: String,
@@ -419,6 +486,19 @@ fn sanitize_font_name(name: &str) -> String {
     }
 }
 
+/// 矢量渐变 Pattern(21 篇 G1:结构复刻 chrome printToPDF 产物——
+/// PatternType 2 + ShadingType 2/3 + FunctionType 2/3,pdfium/Illustrator
+/// 双端渲染已由 chrome 产物背书)。
+pub struct GradPattern {
+    pub resource: String,
+    /// 2 = axial(线性),3 = radial(径向)。
+    pub shading_type: u32,
+    /// 用户空间坐标(axial 4 个;radial 6 个)。
+    pub coords: Vec<f64>,
+    /// (pos, rgb)——alpha 一致性由调用侧保证,经 ExtGState ca 承担。
+    pub stops: Vec<(f32, [f32; 3])>,
+}
+
 /// 全部 CJK 字体使用。
 #[derive(Default)]
 pub struct CjkUsage {
@@ -427,8 +507,11 @@ pub struct CjkUsage {
     pub images: Vec<(String, Vec<u8>, u32, u32)>,
     /// 透明度资源(F3):resource → alpha
     pub opacities: Vec<(String, f64)>,
+    /// 矢量渐变 Pattern(G1)。
+    pub patterns: Vec<GradPattern>,
     im_counter: u32,
     gs_counter: u32,
+    pat_counter: u32,
 }
 
 impl CjkUsage {
@@ -437,8 +520,10 @@ impl CjkUsage {
             fonts: Vec::new(),
             images: Vec::new(),
             opacities: Vec::new(),
+            patterns: Vec::new(),
             im_counter: 0,
             gs_counter: 0,
+            pat_counter: 0,
         }
     }
 
@@ -449,7 +534,23 @@ impl CjkUsage {
         res
     }
 
-
+    /// 矢量渐变 Pattern 登记(G1;resource 命名空间独立于图像)。
+    fn gradient_pattern_for(
+        &mut self,
+        shading_type: u32,
+        coords: Vec<f64>,
+        stops: Vec<(f32, [f32; 3])>,
+    ) -> String {
+        self.pat_counter += 1;
+        let res = format!("GP{}", self.pat_counter);
+        self.patterns.push(GradPattern {
+            resource: res.clone(),
+            shading_type,
+            coords,
+            stops,
+        });
+        res
+    }
 
     fn opaque_gs(&mut self) -> String {
         if let Some((res, _)) = self.opacities.iter().find(|(_, a)| (*a - 1.0).abs() < 1e-9) {
@@ -554,13 +655,8 @@ fn finalize_cjk_fonts(usage: &mut CjkUsage) {
         let gids: Vec<u16> = f.glyphs.keys().copied().collect();
         let remapper = subsetter::GlyphRemapper::new_from_glyphs_sorted(&gids);
         let coords = [(subsetter::Tag::new(b"wght"), f.weight as f32)];
-        let instanced = subsetter::subset_with_variations(
-            &data,
-            index as u32,
-            &coords,
-            &remapper,
-        )
-        .ok();
+        let instanced =
+            subsetter::subset_with_variations(&data, index as u32, &coords, &remapper).ok();
         let sub_result = match instanced {
             Some(s) if !s.is_empty() => Ok(s),
             _ => subsetter::subset(&data, index as u32, &remapper),
@@ -608,23 +704,22 @@ fn render_content_stream(ctx: &ExportContext, usage: &mut CjkUsage, remap: bool)
         // ADR-0021:项级 OCG 标记(/Properties 已注册 /MC{i};Illustrator
         // 图层面板按此分组,G4/pdfium 门禁盯文本提取回归)
         if std::env::var("KILN_NO_BDC").is_err() {
-            s.push_str(&format!("/OC /MC{} BDC
-", (item.layer as usize).min(n_layers - 1)));
+            s.push_str(&format!(
+                "/OC /MC{} BDC
+",
+                (item.layer as usize).min(n_layers - 1)
+            ));
         }
         draw_item_pdf(&mut s, item, h, usage, remap);
-        s.push_str("EMC
-");
+        s.push_str(
+            "EMC
+",
+        );
     }
     s
 }
 
-fn draw_item_pdf(
-    s: &mut String,
-    item: &DrawItem,
-    page_h: f64,
-    usage: &mut CjkUsage,
-    remap: bool,
-) {
+fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUsage, remap: bool) {
     let [x, y, w, h] = item.rect;
     let py = page_h - y - h;
     let rotated = item.rot.abs() > 1e-9;
@@ -677,27 +772,70 @@ fn draw_item_pdf(
                 }
                 FillDef::LinearGradient { angle_css, stops } => {
                     let stops = apply_filter_stops(stops, item.filter.as_ref());
-                    // 渐变一律栅格位图:pdfium/Chrome 的 PDF 打印也不会产生
-                    // Shading 对象,自研写 shading 会踩两个坑——pdfium 不渲染
-                    // sh/PatternType2(对拍直接变成空白),Illustrator 对非常规
-                    // shading 组合报「未知的阴影类型」。位图路线两边都稳。
-                    // 圆角/椭圆遮罩烘入 alpha 通道,因此不发 W n(零剪切蒙版)。
-                    {
-                        let (mut data, gw, gh) =
-                            gradient_bitmap_linear(*angle_css, &stops, w, h, item.opacity);
-                        bake_shape_mask(&mut data, gw, gh, w, h, shape_radius(item), item.ellipse);
-                        let im_res = usage.image_for(data, gw, gh);
-                        // 前项 Solid 的低 ca 会泄漏到本 Do(渐变 alpha 已烘进位图):
-                        // 位图渐变必须以不透明 ca 绘制
-                        let gs_reset = usage.opaque_gs();
-                        s.push_str(&format!(
-                            "q /{gs_reset} gs {} 0 0 {} {} {} cm /{} Do Q\n",
-                            fnum(w),
-                            fnum(h),
-                            fnum(x),
-                            fnum(py),
-                            im_res
-                        ));
+                    // G1(21 篇):色标 alpha 一致 → 真矢量 Pattern(chrome 结构,
+                    // pdfium/AI 双端背书,可编辑、无位图/无栅格化色带);
+                    // 混合 alpha → 位图 + SMask 兜底(逐像素 alpha 只有位图能表达)
+                    let alpha0 = stops[0].color[3] * item.opacity;
+                    let uniform = stops
+                        .iter()
+                        .all(|s| (s.color[3] * item.opacity - alpha0).abs() < 1e-3);
+                    if uniform {
+                        let rad = (*angle_css).to_radians();
+                        let dx = rad.sin() as f32;
+                        let dy = -(rad.cos()) as f32;
+                        let l = (w as f32 * dx.abs()) + (h as f32 * dy.abs());
+                        let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+                        let (sx, sy) = (cx - dx * l / 2.0, cy - dy * l / 2.0);
+                        let (ex, ey) = (cx + dx * l / 2.0, cy + dy * l / 2.0);
+                        let coords = vec![
+                            x + sx as f64,
+                            page_h - (y + sy as f64),
+                            x + ex as f64,
+                            page_h - (y + ey as f64),
+                        ];
+                        let rgb: Vec<(f32, [f32; 3])> = stops
+                            .iter()
+                            .map(|s| (s.pos, [s.color[0], s.color[1], s.color[2]]))
+                            .collect();
+                        let res = usage.gradient_pattern_for(2, coords, rgb);
+                        emit_gs(s, usage, alpha0 as f64);
+                        // q/Q 隔离 /Pattern cs 对图形状态色彩的污染;
+                        // 形状由 path_ops 原生表达(圆角/椭圆),零 W n
+                        s.push_str("q /Pattern cs\n");
+                        s.push_str(&format!("/{} scn\n", res));
+                        path_ops(s, item, x, py, w, h);
+                        s.push_str("f\nQ\n");
+                    } else {
+                        // 渐变一律栅格位图:pdfium/Chrome 的 PDF 打印也不会产生
+                        // Shading 对象,自研写 shading 会踩两个坑——pdfium 不渲染
+                        // sh/PatternType2(对拍直接变成空白),Illustrator 对非常规
+                        // shading 组合报「未知的阴影类型」。位图路线两边都稳。
+                        // 圆角/椭圆遮罩烘入 alpha 通道,因此不发 W n(零剪切蒙版)。
+                        {
+                            let (mut data, gw, gh) =
+                                gradient_bitmap_linear(*angle_css, &stops, w, h, item.opacity);
+                            bake_shape_mask(
+                                &mut data,
+                                gw,
+                                gh,
+                                w,
+                                h,
+                                shape_radius(item),
+                                item.ellipse,
+                            );
+                            let im_res = usage.image_for(data, gw, gh);
+                            // 前项 Solid 的低 ca 会泄漏到本 Do(渐变 alpha 已烘进位图):
+                            // 位图渐变必须以不透明 ca 绘制
+                            let gs_reset = usage.opaque_gs();
+                            s.push_str(&format!(
+                                "q /{gs_reset} gs {} 0 0 {} {} {} cm /{} Do Q\n",
+                                fnum(w),
+                                fnum(h),
+                                fnum(x),
+                                fnum(py),
+                                im_res
+                            ));
+                        }
                     }
                 }
                 FillDef::RadialGradient {
@@ -706,20 +844,52 @@ fn draw_item_pdf(
                     stops,
                 } => {
                     let stops = apply_filter_stops(stops, item.filter.as_ref());
-                    {
-                        let (mut data, gw, gh) =
-                            gradient_bitmap_radial(*gcx, *gcy, &stops, w, h, item.opacity);
-                        bake_shape_mask(&mut data, gw, gh, w, h, shape_radius(item), item.ellipse);
-                        let im_res = usage.image_for(data, gw, gh);
-                        let gs_reset = usage.opaque_gs();
-                        s.push_str(&format!(
-                            "q /{gs_reset} gs {} 0 0 {} {} {} cm /{} Do Q\n",
-                            fnum(w),
-                            fnum(h),
-                            fnum(x),
-                            fnum(py),
-                            im_res
-                        ));
+                    let alpha0 = stops[0].color[3] * item.opacity;
+                    let uniform = stops
+                        .iter()
+                        .all(|s| (s.color[3] * item.opacity - alpha0).abs() < 1e-3);
+                    if uniform {
+                        // 径向:圆心项内比例坐标,半径 = √(w²+h²)/2(与 CPU 栅格一致)
+                        let ccx = w * (*gcx as f64);
+                        let ccy = h * (*gcy as f64);
+                        let r = (w * w + h * h).sqrt() / 2.0;
+                        let cpx = x + ccx;
+                        let cpy = page_h - (y + ccy);
+                        let coords = vec![cpx, cpy, 0.0, cpx, cpy, r];
+                        let rgb: Vec<(f32, [f32; 3])> = stops
+                            .iter()
+                            .map(|s| (s.pos, [s.color[0], s.color[1], s.color[2]]))
+                            .collect();
+                        let res = usage.gradient_pattern_for(3, coords, rgb);
+                        emit_gs(s, usage, alpha0 as f64);
+                        s.push_str("q /Pattern cs\n");
+                        s.push_str(&format!("/{} scn\n", res));
+                        path_ops(s, item, x, py, w, h);
+                        s.push_str("f\nQ\n");
+                    } else {
+                        {
+                            let (mut data, gw, gh) =
+                                gradient_bitmap_radial(*gcx, *gcy, &stops, w, h, item.opacity);
+                            bake_shape_mask(
+                                &mut data,
+                                gw,
+                                gh,
+                                w,
+                                h,
+                                shape_radius(item),
+                                item.ellipse,
+                            );
+                            let im_res = usage.image_for(data, gw, gh);
+                            let gs_reset = usage.opaque_gs();
+                            s.push_str(&format!(
+                                "q /{gs_reset} gs {} 0 0 {} {} {} cm /{} Do Q\n",
+                                fnum(w),
+                                fnum(h),
+                                fnum(x),
+                                fnum(py),
+                                im_res
+                            ));
+                        }
                     }
                 }
             }
@@ -744,7 +914,11 @@ fn draw_item_pdf(
 
     // ---- 文本(CID 真文本 / 轮廓兜底 / WinAnsi 兜底)----
     if let Some(label) = &item.label {
-        emit_gs(s, usage, item.opacity as f64 * label.color[3].clamp(0.0, 1.0) as f64);
+        emit_gs(
+            s,
+            usage,
+            item.opacity as f64 * label.color[3].clamp(0.0, 1.0) as f64,
+        );
         let has_cjk = label.text.chars().any(|ch| {
             let cp = ch as u32;
             !(0x20..0x7f).contains(&cp) && !(0xa0..0xff).contains(&cp)
@@ -761,82 +935,197 @@ fn draw_item_pdf(
         let font_ok = vb_render::text::font_data_for(&label.font_family, label.weight).is_some();
 
         if font_ok {
-            let resource = usage.resource_for(&label.font_family, label.weight);
-            vb_render::text::for_each_visual_line(
-                &label.text, &label.font_family, label.font_size as f32,
-                label.weight, max_w, ls,
-                |vi, hard, run, line, byte_base| {
-                    usage.set_metrics(
-                        &label.font_family, label.weight,
-                        run.ascent as f64 / label.font_size.max(1.0) * 1000.0,
-                        -(run.descent as f64) / label.font_size.max(1.0) * 1000.0,
-                    );
-                    let baseline_art = y + run.ascent as f64 + vi as f64 * line_h;
-                    let parts = vb_render::text::split_line_segments(
-                        hard, line, run, byte_base, &seg_ranges, ls,
-                    );
-                    s.push_str("BT\n");
-                    s.push_str(&format!("/{resource} {} Tf\n", fnum(label.font_size)));
-                    // 字距用 PDF 原生 Tc 表达:段落内部的字距此前只在段起点
-                    // 一次性偏移,段内字形按自然 advance 排布 → 行内逐字漂移
-                    // (A4 大标题字距 .02em,行末累计偏 ~19px)。Tc 与 CPU 栅格
-                    // 的 `g.x + 行内字形序 × ls` 逐字形等价。
-                    s.push_str(&format!("{} Tc\n", fnum(ls as f64)));
-                    for part in parts {
-                        let color = part
-                            .seg
-                            .and_then(|i| label.segments.get(i))
-                            .and_then(|sg| sg.color)
-                            .unwrap_or(label.color);
-                        s.push_str(&format!(
-                            "{} {} {} rg\n",
-                            fnum(color[0]), fnum(color[1]), fnum(color[2])
-                        ));
-                        // 旋转/裁剪由外层 q + cm 统一处理,这里只做平移
-                        s.push_str(&format!(
-                            "1 0 0 1 {} {} Tm\n",
-                            fnum(x + part.x),
-                            fnum(page_h - baseline_art)
-                        ));
-                        let mut hexes = Vec::with_capacity(part.gids.len());
-                        for (k, &gid) in part.gids.iter().enumerate() {
-                            if !remap {
-                                if let Some(ch) = part.text.chars().nth(k) {
-                                    usage.record(
-                                        &label.font_family, label.weight,
-                                        gid, ch,
-                                        part.advances[k] as f64, label.font_size,
-                                    );
+            // T2(21 篇):分段携带字号/字重/字体时逐段整形——旧口径在基础
+            // 字体整行整形后才切片,段只换色,重点字被统一成正文。
+            let styled = label.segments.iter().any(|sg| {
+                sg.font_size.is_some() || sg.bold.is_some() || !sg.font_family.is_empty()
+            });
+            if styled {
+                let spans: Vec<vb_render::text::StyleSpan> = label
+                    .segments
+                    .iter()
+                    .map(|sg| vb_render::text::StyleSpan {
+                        start: sg.start,
+                        end: sg.end,
+                        color: sg.color,
+                        bold: sg.bold,
+                        font_size: sg.font_size,
+                        font_family: sg.font_family.clone(),
+                    })
+                    .collect();
+                vb_render::text::for_each_styled_line(
+                    &label.text,
+                    &label.font_family,
+                    label.font_size as f32,
+                    label.weight,
+                    max_w,
+                    ls,
+                    &spans,
+                    |vi, parts| {
+                        // 行基线 = 行盒顶 + 行内最大 ascent(浏览器行盒语义)
+                        let asc = parts.iter().map(|p| p.ascent).fold(0.0f32, f32::max);
+                        let baseline_art = y + asc as f64 + vi as f64 * line_h;
+                        for part in parts {
+                            let res = usage.resource_for(&part.font_family, part.weight);
+                            usage.set_metrics(
+                                &part.font_family,
+                                part.weight,
+                                part.ascent as f64 / (part.font_size.max(1.0) as f64) * 1000.0,
+                                -(part.descent as f64) / (part.font_size.max(1.0) as f64) * 1000.0,
+                            );
+                            let color = part
+                                .seg
+                                .and_then(|i| label.segments.get(i))
+                                .and_then(|sg| sg.color)
+                                .unwrap_or(label.color);
+                            s.push_str("BT\n");
+                            s.push_str(&format!("/{} {} Tf\n", res, fnum(part.font_size as f64)));
+                            s.push_str(&format!("{} Tc\n", fnum(ls as f64)));
+                            s.push_str(&format!(
+                                "{} {} {} rg\n",
+                                fnum(color[0]),
+                                fnum(color[1]),
+                                fnum(color[2])
+                            ));
+                            s.push_str(&format!(
+                                "1 0 0 1 {} {} Tm\n",
+                                fnum(x + part.x),
+                                fnum(page_h - baseline_art)
+                            ));
+                            let mut hexes = Vec::with_capacity(part.gids.len());
+                            for (k, &gid) in part.gids.iter().enumerate() {
+                                if !remap {
+                                    if let Some(ch) = part.text.chars().nth(k) {
+                                        usage.record(
+                                            &part.font_family,
+                                            part.weight,
+                                            gid,
+                                            ch,
+                                            part.advances[k] as f64,
+                                            part.font_size as f64,
+                                        );
+                                    }
                                 }
+                                let cid = if remap {
+                                    usage.remap_cid(&part.font_family, part.weight, gid)
+                                } else {
+                                    gid
+                                };
+                                hexes.push(format!("{cid:04X}"));
                             }
-                            let cid = if remap {
-                                usage.remap_cid(&label.font_family, label.weight, gid)
-                            } else {
-                                gid
-                            };
-                            hexes.push(format!("{cid:04X}"));
+                            s.push_str(&format!("<{}> Tj\n", hexes.join("")));
+                            s.push_str("ET\n");
                         }
-                        s.push_str(&format!("<{}> Tj\n", hexes.join("")));
-                    }
-                    s.push_str("ET\n");
-                },
-            );
+                    },
+                );
+            } else {
+                let resource = usage.resource_for(&label.font_family, label.weight);
+                vb_render::text::for_each_visual_line(
+                    &label.text,
+                    &label.font_family,
+                    label.font_size as f32,
+                    label.weight,
+                    max_w,
+                    ls,
+                    |vi, hard, run, line, byte_base| {
+                        usage.set_metrics(
+                            &label.font_family,
+                            label.weight,
+                            run.ascent as f64 / label.font_size.max(1.0) * 1000.0,
+                            -(run.descent as f64) / label.font_size.max(1.0) * 1000.0,
+                        );
+                        let baseline_art = y + run.ascent as f64 + vi as f64 * line_h;
+                        let parts = vb_render::text::split_line_segments(
+                            hard,
+                            line,
+                            run,
+                            byte_base,
+                            &seg_ranges,
+                            ls,
+                        );
+                        s.push_str("BT\n");
+                        s.push_str(&format!("/{resource} {} Tf\n", fnum(label.font_size)));
+                        // 字距用 PDF 原生 Tc 表达:段落内部的字距此前只在段起点
+                        // 一次性偏移,段内字形按自然 advance 排布 → 行内逐字漂移
+                        // (A4 大标题字距 .02em,行末累计偏 ~19px)。Tc 与 CPU 栅格
+                        // 的 `g.x + 行内字形序 × ls` 逐字形等价。
+                        s.push_str(&format!("{} Tc\n", fnum(ls as f64)));
+                        for part in parts {
+                            let color = part
+                                .seg
+                                .and_then(|i| label.segments.get(i))
+                                .and_then(|sg| sg.color)
+                                .unwrap_or(label.color);
+                            s.push_str(&format!(
+                                "{} {} {} rg\n",
+                                fnum(color[0]),
+                                fnum(color[1]),
+                                fnum(color[2])
+                            ));
+                            // 旋转/裁剪由外层 q + cm 统一处理,这里只做平移
+                            s.push_str(&format!(
+                                "1 0 0 1 {} {} Tm\n",
+                                fnum(x + part.x),
+                                fnum(page_h - baseline_art)
+                            ));
+                            let mut hexes = Vec::with_capacity(part.gids.len());
+                            for (k, &gid) in part.gids.iter().enumerate() {
+                                if !remap {
+                                    if let Some(ch) = part.text.chars().nth(k) {
+                                        usage.record(
+                                            &label.font_family,
+                                            label.weight,
+                                            gid,
+                                            ch,
+                                            part.advances[k] as f64,
+                                            label.font_size,
+                                        );
+                                    }
+                                }
+                                let cid = if remap {
+                                    usage.remap_cid(&label.font_family, label.weight, gid)
+                                } else {
+                                    gid
+                                };
+                                hexes.push(format!("{cid:04X}"));
+                            }
+                            s.push_str(&format!("<{}> Tj\n", hexes.join("")));
+                        }
+                        s.push_str("ET\n");
+                    },
+                );
+            }
         } else if has_cjk {
             s.push_str(&format!(
                 "{} {} {} rg\n",
-                fnum(label.color[0]), fnum(label.color[1]), fnum(label.color[2])
+                fnum(label.color[0]),
+                fnum(label.color[1]),
+                fnum(label.color[2])
             ));
             vb_render::text::for_each_visual_line(
-                &label.text, &label.font_family, label.font_size as f32,
-                label.weight, max_w, ls,
+                &label.text,
+                &label.font_family,
+                label.font_size as f32,
+                label.weight,
+                max_w,
+                ls,
                 |vi, hard, run, line, _bb| {
                     let s0: usize = hard.chars().take(line[0]).map(|ch| ch.len_utf8()).sum();
                     let last = *line.last().expect("nonempty");
                     let s1: usize = hard.chars().take(last + 1).map(|ch| ch.len_utf8()).sum();
                     let sub = &hard[s0..s1];
                     outline_text_pdf(
-                        s, sub, &label.font_family, label.font_size, label.weight,
-                        x, y + vi as f64 * line_h, h, page_h, ls as f64, line[0],
+                        s,
+                        sub,
+                        &label.font_family,
+                        label.font_size,
+                        label.weight,
+                        x,
+                        y + vi as f64 * line_h,
+                        h,
+                        page_h,
+                        ls as f64,
+                        line[0],
                     );
                     let _ = run;
                 },
@@ -847,8 +1136,12 @@ fn draw_item_pdf(
             LATIN_FALLBACK_COUNT.fetch_add(1, Ordering::Relaxed);
             let fref = if label.weight >= 600 { "/F2" } else { "/F1" };
             vb_render::text::for_each_visual_line(
-                &label.text, &label.font_family, label.font_size as f32,
-                label.weight, max_w, ls,
+                &label.text,
+                &label.font_family,
+                label.font_size as f32,
+                label.weight,
+                max_w,
+                ls,
                 |vi, hard, run, line, byte_base| {
                     let asc = run.ascent as f64;
                     let baseline = page_h - (y + asc + vi as f64 * line_h);
@@ -856,7 +1149,12 @@ fn draw_item_pdf(
                     s.push_str(&format!("{fref} {} Tf\n", fnum(label.font_size)));
                     s.push_str(&format!("{} Tc\n", fnum(ls as f64)));
                     let parts = vb_render::text::split_line_segments(
-                        hard, line, run, byte_base, &seg_ranges, ls,
+                        hard,
+                        line,
+                        run,
+                        byte_base,
+                        &seg_ranges,
+                        ls,
                     );
                     for part in parts {
                         let color = part
@@ -866,11 +1164,14 @@ fn draw_item_pdf(
                             .unwrap_or(label.color);
                         s.push_str(&format!(
                             "{} {} {} rg\n",
-                            fnum(color[0]), fnum(color[1]), fnum(color[2])
+                            fnum(color[0]),
+                            fnum(color[1]),
+                            fnum(color[2])
                         ));
                         s.push_str(&format!(
                             "1 0 0 1 {} {} Tm\n",
-                            fnum(x + part.x), fnum(baseline)
+                            fnum(x + part.x),
+                            fnum(baseline)
                         ));
                         let text = winansi_escaped(part.text);
                         s.push_str(&format!("({text}) Tj\n"));
@@ -889,7 +1190,11 @@ fn draw_item_pdf(
             emit_gs(s, usage, item.opacity as f64);
             s.push_str(&format!(
                 "q {} 0 0 {} {} {} cm /{} Do Q\n",
-                fnum(w), fnum(h), fnum(x), fnum(py), im_res
+                fnum(w),
+                fnum(h),
+                fnum(x),
+                fnum(py),
+                im_res
             ));
         }
     }
@@ -915,10 +1220,7 @@ fn emit_gs(s: &mut String, usage: &mut CjkUsage, alpha: f64) {
 }
 
 /// F5: 应用 brightness/saturate 调整到颜色。
-fn apply_filter_color(
-    mut c: [f32; 4],
-    filter: Option<&vb_render::encode::FilterDef>,
-) -> [f32; 4] {
+fn apply_filter_color(mut c: [f32; 4], filter: Option<&vb_render::encode::FilterDef>) -> [f32; 4] {
     if let Some(f) = filter {
         if (f.brightness - 1.0).abs() > 1e-3 {
             for ch in c.iter_mut().take(3) {
@@ -958,7 +1260,10 @@ fn apply_filter_stops(
                     *ch = (l + (*ch as f32 - l) * f.saturate as f32).clamp(0.0, 1.0);
                 }
             }
-            vb_render::encode::GradientStop { pos: s.pos, color: c }
+            vb_render::encode::GradientStop {
+                pos: s.pos,
+                color: c,
+            }
         })
         .collect()
 }
@@ -983,7 +1288,10 @@ fn emit_clip_path(
             let ch = h - t - b;
             s.push_str(&format!(
                 "{} {} {} {} re W n\n",
-                fnum(cl), fnum(cb), fnum(cw.max(0.0)), fnum(ch.max(0.0))
+                fnum(cl),
+                fnum(cb),
+                fnum(cw.max(0.0)),
+                fnum(ch.max(0.0))
             ));
         }
         vb_render::encode::ClipDef::Circle(cx, cy, r) => {
@@ -995,27 +1303,39 @@ fn emit_clip_path(
             s.push_str(&format!("{} {} m\n", fnum(pdf_cx + rx), fnum(pdf_cy)));
             s.push_str(&format!(
                 "{} {} {} {} {} {} c\n",
-                fnum(pdf_cx + rx), fnum(pdf_cy + k * ry),
-                fnum(pdf_cx + k * rx), fnum(pdf_cy + ry),
-                fnum(pdf_cx), fnum(pdf_cy + ry)
+                fnum(pdf_cx + rx),
+                fnum(pdf_cy + k * ry),
+                fnum(pdf_cx + k * rx),
+                fnum(pdf_cy + ry),
+                fnum(pdf_cx),
+                fnum(pdf_cy + ry)
             ));
             s.push_str(&format!(
                 "{} {} {} {} {} {} c\n",
-                fnum(pdf_cx - k * rx), fnum(pdf_cy + ry),
-                fnum(pdf_cx - rx), fnum(pdf_cy + k * ry),
-                fnum(pdf_cx - rx), fnum(pdf_cy)
+                fnum(pdf_cx - k * rx),
+                fnum(pdf_cy + ry),
+                fnum(pdf_cx - rx),
+                fnum(pdf_cy + k * ry),
+                fnum(pdf_cx - rx),
+                fnum(pdf_cy)
             ));
             s.push_str(&format!(
                 "{} {} {} {} {} {} c\n",
-                fnum(pdf_cx - rx), fnum(pdf_cy - k * ry),
-                fnum(pdf_cx - k * rx), fnum(pdf_cy - ry),
-                fnum(pdf_cx), fnum(pdf_cy - ry)
+                fnum(pdf_cx - rx),
+                fnum(pdf_cy - k * ry),
+                fnum(pdf_cx - k * rx),
+                fnum(pdf_cy - ry),
+                fnum(pdf_cx),
+                fnum(pdf_cy - ry)
             ));
             s.push_str(&format!(
                 "{} {} {} {} {} {} c\n",
-                fnum(pdf_cx + k * rx), fnum(pdf_cy - ry),
-                fnum(pdf_cx + rx), fnum(pdf_cy - k * ry),
-                fnum(pdf_cx + rx), fnum(pdf_cy)
+                fnum(pdf_cx + k * rx),
+                fnum(pdf_cy - ry),
+                fnum(pdf_cx + rx),
+                fnum(pdf_cy - k * ry),
+                fnum(pdf_cx + rx),
+                fnum(pdf_cy)
             ));
             s.push_str("h\nW n\n");
         }
@@ -1026,27 +1346,39 @@ fn emit_clip_path(
             s.push_str(&format!("{} {} m\n", fnum(pdf_cx + rx), fnum(pdf_cy)));
             s.push_str(&format!(
                 "{} {} {} {} {} {} c\n",
-                fnum(pdf_cx + rx), fnum(pdf_cy + k * ry),
-                fnum(pdf_cx + k * rx), fnum(pdf_cy + ry),
-                fnum(pdf_cx), fnum(pdf_cy + ry)
+                fnum(pdf_cx + rx),
+                fnum(pdf_cy + k * ry),
+                fnum(pdf_cx + k * rx),
+                fnum(pdf_cy + ry),
+                fnum(pdf_cx),
+                fnum(pdf_cy + ry)
             ));
             s.push_str(&format!(
                 "{} {} {} {} {} {} c\n",
-                fnum(pdf_cx - k * rx), fnum(pdf_cy + ry),
-                fnum(pdf_cx - rx), fnum(pdf_cy + k * ry),
-                fnum(pdf_cx - rx), fnum(pdf_cy)
+                fnum(pdf_cx - k * rx),
+                fnum(pdf_cy + ry),
+                fnum(pdf_cx - rx),
+                fnum(pdf_cy + k * ry),
+                fnum(pdf_cx - rx),
+                fnum(pdf_cy)
             ));
             s.push_str(&format!(
                 "{} {} {} {} {} {} c\n",
-                fnum(pdf_cx - rx), fnum(pdf_cy - k * ry),
-                fnum(pdf_cx - k * rx), fnum(pdf_cy - ry),
-                fnum(pdf_cx), fnum(pdf_cy - ry)
+                fnum(pdf_cx - rx),
+                fnum(pdf_cy - k * ry),
+                fnum(pdf_cx - k * rx),
+                fnum(pdf_cy - ry),
+                fnum(pdf_cx),
+                fnum(pdf_cy - ry)
             ));
             s.push_str(&format!(
                 "{} {} {} {} {} {} c\n",
-                fnum(pdf_cx + k * rx), fnum(pdf_cy - ry),
-                fnum(pdf_cx + rx), fnum(pdf_cy - k * ry),
-                fnum(pdf_cx + rx), fnum(pdf_cy)
+                fnum(pdf_cx + k * rx),
+                fnum(pdf_cy - ry),
+                fnum(pdf_cx + rx),
+                fnum(pdf_cy - k * ry),
+                fnum(pdf_cx + rx),
+                fnum(pdf_cy)
             ));
             s.push_str("h\nW n\n");
         }
@@ -1085,15 +1417,7 @@ fn shape_radius(item: &DrawItem) -> f64 {
 /// Illustrator 把内容流里每个 `W n` 解释成「剪切蒙版」:逐元素自带蒙版正是
 /// 用户最反感的体验。位图渐变本就栅格化,形状边缘直接烘进 alpha 即可,
 /// 视觉等价(像素中心采样 + 1px 覆盖度软边)而零 `W n`。
-fn bake_shape_mask(
-    data: &mut [u8],
-    gw: u32,
-    gh: u32,
-    w: f64,
-    h: f64,
-    radius: f64,
-    ellipse: bool,
-) {
+fn bake_shape_mask(data: &mut [u8], gw: u32, gh: u32, w: f64, h: f64, radius: f64, ellipse: bool) {
     if !ellipse && radius <= 0.75 {
         return;
     }
@@ -1253,18 +1577,32 @@ fn path_ops(s: &mut String, item: &DrawItem, x: f64, py: f64, w: f64, h: f64) {
     } else if item.radii.iter().any(|r| *r > 0.0) {
         let r = item.radii[0].clamp(0.0, w.min(h) / 2.0);
         let k = 0.5523;
-        // 圆角矩形:m + 4×(l|c) + h;每个 c 恰 6 坐标(两控制点 + 终点)
+        // 圆角矩形:m + 4×(l|c) + h;每 c 恰 6 坐标(两控制点 + 终点)。
+        // 控制点公式 = 角圆心 + k*r 切向(S1 修复:曾写 x+w-k*r,
+        // 等效 k 随 r 增大被压扁,r=w/2 的正圆变成棱圆)
+        // 右上:角心 (x+w-r, py+r) → 起 (x+w-r,py) 终 (x+w,py+r)
+        let c_tr1 = (x + w - r + k * r, py);
+        let c_tr2 = (x + w, py + r - k * r);
+        // 右下:角心 (x+w-r, py+h-r) → 起 (x+w,py+h-r) 终 (x+w-r,py+h)
+        let c_br1 = (x + w, py + h - r + k * r);
+        let c_br2 = (x + w - r + k * r, py + h);
+        // 左下:角心 (x+r, py+h-r) → 起 (x+r,py+h) 终 (x,py+h-r)
+        let c_bl1 = (x + r - k * r, py + h);
+        let c_bl2 = (x, py + h - r + k * r);
+        // 左上:角心 (x+r, py+r) → 起 (x,py+r) 终 (x+r,py)
+        let c_tl1 = (x, py + r - k * r);
+        let c_tl2 = (x + r - k * r, py);
         s.push_str(&format!(
             "{} {} m {} {} l {} {} {} {} {} {} c {} {} l {} {} {} {} {} {} c {} {} l {} {} {} {} {} {} c {} {} l {} {} {} {} {} {} c h\n",
-            fnum(x + r), fnum(py),                                                         // m 起点
-            fnum(x + w - r), fnum(py),                                                     // l 顶边
-            fnum(x + w - k * r), fnum(py), fnum(x + w), fnum(py + k * r), fnum(x + w), fnum(py + r), // c 右上
-            fnum(x + w), fnum(py + h - r),                                                 // l 右边
-            fnum(x + w), fnum(py + h - k * r), fnum(x + w - k * r), fnum(py + h), fnum(x + w - r), fnum(py + h), // c 右下
-            fnum(x + r), fnum(py + h),                                                     // l 底边
-            fnum(x + k * r), fnum(py + h), fnum(x), fnum(py + h - k * r), fnum(x), fnum(py + h - r), // c 左下
-            fnum(x), fnum(py + r),                                                         // l 左边
-            fnum(x), fnum(py + k * r), fnum(x + k * r), fnum(py), fnum(x + r), fnum(py)    // c 左上
+            fnum(x + r), fnum(py),                                     // m 起点
+            fnum(x + w - r), fnum(py),                                 // l 顶边
+            fnum(c_tr1.0), fnum(c_tr1.1), fnum(c_tr2.0), fnum(c_tr2.1), fnum(x + w), fnum(py + r),   // c 右上
+            fnum(x + w), fnum(py + h - r),                             // l 右边
+            fnum(c_br1.0), fnum(c_br1.1), fnum(c_br2.0), fnum(c_br2.1), fnum(x + w - r), fnum(py + h), // c 右下
+            fnum(x + r), fnum(py + h),                                 // l 底边
+            fnum(c_bl1.0), fnum(c_bl1.1), fnum(c_bl2.0), fnum(c_bl2.1), fnum(x), fnum(py + h - r), // c 左下
+            fnum(x), fnum(py + r),                                     // l 左边
+            fnum(c_tl1.0), fnum(c_tl1.1), fnum(c_tl2.0), fnum(c_tl2.1), fnum(x + r), fnum(py)      // c 左上
         ));
     } else {
         s.push_str(&format!(
@@ -1605,7 +1943,12 @@ fn split_pdf_objects(pdf: &[u8]) -> KilnResult<std::collections::BTreeMap<u32, V
         return Err(err("非经典 xref 表"));
     }
     let mut p = xref_at;
-    let nl = |from: usize| -> Option<usize> { pdf[from..].iter().position(|&c| c == b'\n').map(|v| from + v) };
+    let nl = |from: usize| -> Option<usize> {
+        pdf[from..]
+            .iter()
+            .position(|&c| c == b'\n')
+            .map(|v| from + v)
+    };
     p = nl(p).ok_or_else(|| err("xref 头未结束"))? + 1;
     let mut entries: Vec<(u32, usize)> = Vec::new();
     loop {
@@ -1615,8 +1958,14 @@ fn split_pdf_objects(pdf: &[u8]) -> KilnResult<std::collections::BTreeMap<u32, V
         let he = nl(p).ok_or_else(|| err("xref 子段头未结束"))?;
         let header = String::from_utf8_lossy(&pdf[p..he]).to_string();
         let mut it = header.split_whitespace();
-        let start: u32 = it.next().and_then(|s| s.parse().ok()).ok_or_else(|| err("子段头非法"))?;
-        let count: u32 = it.next().and_then(|s| s.parse().ok()).ok_or_else(|| err("子段头非法"))?;
+        let start: u32 = it
+            .next()
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| err("子段头非法"))?;
+        let count: u32 = it
+            .next()
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| err("子段头非法"))?;
         p = he + 1;
         for i in 0..count {
             if p + 20 > pdf.len() {
@@ -1624,7 +1973,10 @@ fn split_pdf_objects(pdf: &[u8]) -> KilnResult<std::collections::BTreeMap<u32, V
             }
             let ent = &pdf[p..p + 20];
             if ent[17] == b'n' {
-                let off: usize = String::from_utf8_lossy(&ent[..10]).trim().parse().unwrap_or(0);
+                let off: usize = String::from_utf8_lossy(&ent[..10])
+                    .trim()
+                    .parse()
+                    .unwrap_or(0);
                 entries.push((start + i, off));
             }
             p += 20;
@@ -1634,12 +1986,18 @@ fn split_pdf_objects(pdf: &[u8]) -> KilnResult<std::collections::BTreeMap<u32, V
     let mut out: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
     for i in 0..entries.len() {
         let (id, off) = entries[i];
-        let end = if i + 1 < entries.len() { entries[i + 1].1 } else { xref_at };
+        let end = if i + 1 < entries.len() {
+            entries[i + 1].1
+        } else {
+            xref_at
+        };
         if off >= end || end > pdf.len() {
             continue;
         }
         let chunk = &pdf[off..end];
-        let Some(ob) = chunk.windows(3).position(|w| w == &b"obj"[..]) else { continue };
+        let Some(ob) = chunk.windows(3).position(|w| w == &b"obj"[..]) else {
+            continue;
+        };
         let mut b0 = ob + 3;
         while b0 < chunk.len() && matches!(chunk[b0], b'\n' | b'\r' | b' ') {
             b0 += 1;
@@ -1676,15 +2034,18 @@ pub fn merge_pdf_pages_head(pages: &[Vec<u8>], head: &str) -> KilnResult<Vec<u8>
     let mut all_objs: Vec<BTreeMap<u32, Vec<u8>>> = Vec::new();
     let mut page_obj_ids: Vec<u32> = Vec::new();
     let mut offsets: Vec<u32> = Vec::new(); // 每输入的对象 id 偏移
-    // 每页的 OCG(层)对象:local id + /Name 原始 token(多画板合并后按名去重，
-    // 让整册只有「背景/内容」两层，而不是每页各出一套)
+                                            // 每页的 OCG(层)对象:local id + /Name 原始 token(多画板合并后按名去重，
+                                            // 让整册只有「背景/内容」两层，而不是每页各出一套)
     let mut page_ocg_ids: Vec<Vec<u32>> = Vec::new();
     let mut page_ocg_names: Vec<Vec<String>> = Vec::new();
     for (pi, pdf) in pages.iter().enumerate() {
         let objs = split_pdf_objects(pdf)?;
         if std::env::var("KILN_DEBUG_MERGE").is_ok() {
-            eprintln!("[merge] 输入{pi}: {} 个对象, ids={:?}", objs.len(),
-                objs.keys().take(6).collect::<Vec<_>>());
+            eprintln!(
+                "[merge] 输入{pi}: {} 个对象, ids={:?}",
+                objs.len(),
+                objs.keys().take(6).collect::<Vec<_>>()
+            );
         }
         if objs.is_empty() {
             return Err(KilnError::Encode("页合并:输入 PDF 对象解析为空".into()));

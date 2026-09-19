@@ -620,13 +620,22 @@ fn parse_radii(node: &Node, w: f64, h: f64) -> [f64; 4] {
 }
 
 fn parse_border(doc: &Document, node: &Node) -> Option<BorderDef> {
+    // 括号感知切分:空白 split 会把 "rgba(255, 207, 77, 1)" 切碎,
+    // 颜色静默回退黑(21 篇 S1 实测)
+    let border_tokens = |b: String| -> Vec<String> {
+        vb_css::split_top_level(&b, ' ')
+            .into_iter()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect()
+    };
     let width = node.style_get("border-width").and_then(px).or_else(|| {
         node.style_get("border")
-            .and_then(|b| {
-                b.split_whitespace()
-                    .find(|t| t.ends_with("px") || t.parse::<f64>().is_ok())
-            })
-            .and_then(px)
+            .map(|b| border_tokens(b.to_string()))
+            .unwrap_or_default()
+            .iter()
+            .find(|t| t.ends_with("px") || t.parse::<f64>().is_ok())
+            .and_then(|t| px(t))
     })?;
     // width 为 0 时不画
     if width <= 0.0 {
@@ -643,7 +652,8 @@ fn parse_border(doc: &Document, node: &Node) -> Option<BorderDef> {
         .and_then(|v| parse_color_rgba_resolved(doc, v))
         .or_else(|| {
             node.style_get("border").and_then(|b| {
-                b.split_whitespace()
+                border_tokens(b.to_string())
+                    .iter()
                     .find_map(|t| parse_color_rgba_resolved(doc, t))
             })
         })

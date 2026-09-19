@@ -24,11 +24,15 @@ fn main() {
     step(&t0, format!("启动成功, DevTools 端口 {}", proc.port));
     let mut page = vb_browser::page::PageSession::attach(&proc).expect("attach 失败");
     step(&t0, format!("浏览器版本 {}", proc.version()));
-    page.set_device_metrics(1240, 1240, 1).expect("metrics 失败");
+    page.set_device_metrics(1240, 1240, 1)
+        .expect("metrics 失败");
     step(&t0, "视口已设".into());
 
     page.emulate_static().expect("emulate 失败");
-    let rm = page.evaluate("(() => matchMedia('(prefers-reduced-motion: reduce)').matches)()", false);
+    let rm = page.evaluate(
+        "(() => matchMedia('(prefers-reduced-motion: reduce)').matches)()",
+        false,
+    );
     step(&t0, format!("reduced-motion 生效: {:?}", rm));
     match page.navigate(&url) {
         Ok(()) => step(&t0, "load 事件到达".into()),
@@ -53,7 +57,13 @@ fn main() {
     }
     // 整页截图(beyond + clip 全内容)
     let (w, h) = page.content_size().unwrap_or((1240, 1754));
-    match page.screenshot("png", None, Some((0.0, 0.0, w as f64, h as f64)), true, false) {
+    match page.screenshot(
+        "png",
+        None,
+        Some((0.0, 0.0, w as f64, h as f64)),
+        true,
+        false,
+    ) {
         Ok(bytes) => step(&t0, format!("整页截图 {} 字节", bytes.len())),
         Err(e) => step(&t0, format!("整页截图失败: {e}")),
     }

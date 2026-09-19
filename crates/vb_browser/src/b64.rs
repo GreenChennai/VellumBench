@@ -1,7 +1,6 @@
 //! 车道 B 传输层小工具:base64 编解码(截图数据 / WebSocket 握手键)。
 
-const B64_ALPHABET: &[u8; 64] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const B64_ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 pub fn encode(data: &[u8]) -> String {
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);

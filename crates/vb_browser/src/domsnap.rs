@@ -36,9 +36,10 @@ function radii4(cs, w, h) {
   const out = [tl, parseFloat(cs.borderTopRightRadius) || 0,
                parseFloat(cs.borderBottomRightRadius) || 0,
                parseFloat(cs.borderBottomLeftRadius) || 0];
-  // % 半径换算(圆角圆形按钮)
+  // % 半径(CSS 语义:水平分量按宽;此处单值折叠取宽,再由写入器按
+  // min(w,h)/2 收敛)。曾按奇偶角交替乘 h/w,非正方形 % 圆角出棱形(S1)
   return out.map((v, i) => v > 0 && String(cs.borderTopLeftRadius).includes('%')
-      ? v * (i % 2 === 0 ? h : w) / 100 : v).map(v => +v.toFixed(2));
+      ? v * w / 100 : v).map(v => +v.toFixed(2));
 }
 function clipAncestor(el) {
   let p = el.parentElement;
@@ -144,9 +145,26 @@ function nodeRuns(node) {
   for (const ln of lines) emit(ln.text.replace(/\s+/g, ' ').trim(), ln.chars);
   return out;
 }
+// 行内样式指纹(相邻同款折叠为一段)
+function styleKey(s) {
+  return s.family + '|' + s.size + '|' + s.weight + '|' + JSON.stringify(s.color);
+}
+function segOf(t, r) {
+  return { t, family: r.family, size: r.size, weight: r.weight, color: r.color, key: styleKey(r) };
+}
+function pushSeg(m, t, r) {
+  if (!t) return;
+  if (!m.segs) m.segs = [];
+  const k = styleKey(r);
+  const last = m.segs[m.segs.length - 1];
+  if (last && last.key === k) { last.t += t; return; }
+  m.segs.push(segOf(t, r));
+}
 // 整棵子树文本 → 逐行 run,再把同一视觉行的多个 run 合成一条字符串
 // (根因:collectText 原只取「直接子文本节点」,`覆盖<b>17+</b>AI 流量入口`
 //  被拆成两条独立 run → 写入器按硬换行排成两行,整行字符串被打断)
+// 三轮(T1):合并同时保留分段样式 segs——重点字号的 b/span 不得被
+// 首段样式吞掉(Rust 侧按 segs 建 TextSeg,逐段整形)。
 function collectText(nodes) {
   const pieces = [];
   for (const n of nodes) {
@@ -163,8 +181,9 @@ function collectText(nodes) {
       // 垂直重叠过半 → 同一视觉行(跨 inline 元素);否则是新行
       if (ov > Math.min(m.rect[3], r.rect[3]) * 0.5) {
         const gap = r.rect[0] - (m.rect[0] + m.rect[2]);
-        if (gap > r.size * 0.15) m.text += ' ';   // 原本的空白已被 trim,按间距补回
+        if (gap > r.size * 0.15) { m.text += ' '; pushSeg(m, ' ', r); }
         m.text += r.text;
+        pushSeg(m, r.text, r);
         const L = Math.min(m.rect[0], r.rect[0]), T = Math.min(m.rect[1], r.rect[1]);
         const R = Math.max(m.rect[0] + m.rect[2], r.rect[0] + r.rect[2]);
         const B = Math.max(m.rect[1] + m.rect[3], r.rect[1] + r.rect[3]);
@@ -172,7 +191,9 @@ function collectText(nodes) {
         continue;
       }
     }
-    merged.push(Object.assign({}, r));
+    const nm = Object.assign({}, r);
+    nm.segs = [segOf(r.text, r)];
+    merged.push(nm);
   }
   textLineCount += merged.length;
   return merged;
@@ -238,8 +259,11 @@ function walk(el, layerOfParent) {
     // 真实外观(反而比「缺失占位」保真;真矢量化列 carry-forward)
     const svgSrc = /\.svg(\?|#|$)/i.test(rawSrc) || /^data:image\/svg/i.test(rawSrc);
     if (rad.some(v => v > 0.5) || effect || svgSrc) {
-      items.push(Object.assign({}, common, { kind: 'raster',
-        reason: effect ? 'effect-image' : (svgSrc ? 'svg-image' : 'rounded-image') }));
+      // svg 资产带 src:Rust 侧优先 usvg 矢量导入(S2),失败才截图裁剪
+      const it = Object.assign({}, common, { kind: 'raster',
+        reason: effect ? 'effect-image' : (svgSrc ? 'svg-image' : 'rounded-image') });
+      if (svgSrc) it.src = rawSrc;
+      items.push(it);
       rasterRects.push(rectDoc); clipDemand++;
     } else {
       items.push(Object.assign({}, common, { kind: 'image',

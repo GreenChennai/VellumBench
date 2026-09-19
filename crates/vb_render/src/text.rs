@@ -531,3 +531,136 @@ pub fn measure_text_weighted(
     }
     (max_line_w, count)
 }
+
+// ---------- 富文本逐段整形(T2,21 篇)----------
+
+/// 行内段样式快照(写入器从 TextSpanHint 映射;字节区间同 split_line_segments)。
+#[derive(Debug, Clone)]
+pub struct StyleSpan {
+    pub start: usize,
+    pub end: usize,
+    pub color: Option<[f32; 4]>,
+    pub bold: Option<bool>,
+    pub font_size: Option<f64>,
+    /// 空 = 继承节点字体。
+    pub font_family: String,
+}
+
+/// 逐段整形后的行内部件:每段用自己的字体/字号/字重,x 为段前累计推进。
+pub struct StyledPart {
+    pub text: String,
+    /// 段索引;None = 段外(节点样式)。
+    pub seg: Option<usize>,
+    /// 相对行首的 x(含字距)。
+    pub x: f64,
+    pub gids: Vec<u16>,
+    pub advances: Vec<f32>,
+    pub font_family: String,
+    pub font_size: f32,
+    pub weight: u16,
+    pub ascent: f32,
+    pub descent: f32,
+}
+
+/// 富文本行布局:逐段用自己的字体整形(与「基础字体整行整形后切片」的
+/// 旧口径不同——旧口径里 SegStyle 的字号/字重/字体全部失效,重点字被
+/// 统一成正文,21 篇 T2)。行划分仍用基础整形的断行结果;dom 路线行由
+/// '\n' 硬换承载且画板够宽,不会触发软换。
+pub fn for_each_styled_line(
+    text: &str,
+    base_family: &str,
+    base_size: f32,
+    base_weight: u16,
+    max_width: f32,
+    ls: f32,
+    spans: &[StyleSpan],
+    mut f: impl FnMut(usize, &[StyledPart]),
+) {
+    let mut vi = 0usize;
+    let mut byte_base = 0usize;
+    for hard in text.split('\n') {
+        let base_run = shape_text_weighted(hard, base_family, base_size, base_weight);
+        let visual: Vec<Vec<usize>> = match &base_run {
+            Some(run) => break_lines(hard, run, max_width, ls),
+            None => vec![(0..hard.chars().count()).collect()],
+        };
+        for line in &visual {
+            if line.is_empty() {
+                vi += 1;
+                continue;
+            }
+            // 该视觉行的字节范围(相对 hard)
+            let s0c = line[0];
+            let e0c = line[line.len() - 1];
+            let lb: usize = hard.chars().take(s0c).map(|c| c.len_utf8()).sum();
+            let le: usize = hard.chars().take(e0c + 1).map(|c| c.len_utf8()).sum();
+            let mut parts: Vec<StyledPart> = Vec::new();
+            let mut x = 0f64;
+            let mut b = lb;
+            while b < le {
+                let abs = byte_base + b;
+                let span_i = spans.iter().position(|s| abs >= s.start && abs < s.end);
+                // 切片终点:段边界 ∩ 行尾
+                let mut e = le;
+                match span_i {
+                    Some(si) => {
+                        let se = spans[si].end.saturating_sub(byte_base);
+                        e = e.min(se.max(b + 1));
+                    }
+                    None => {
+                        if let Some(next) = spans
+                            .iter()
+                            .map(|s| s.start.saturating_sub(byte_base))
+                            .filter(|&v| v > b)
+                            .min()
+                        {
+                            e = e.min(next);
+                        }
+                    }
+                }
+                if e <= b {
+                    break;
+                }
+                let slice = &hard[b..e];
+                let (fam, size, weight) = match span_i {
+                    Some(si) => (
+                        if spans[si].font_family.is_empty() {
+                            base_family
+                        } else {
+                            spans[si].font_family.as_str()
+                        },
+                        spans[si].font_size.map(|v| v as f32).unwrap_or(base_size),
+                        match spans[si].bold {
+                            Some(true) => 700u16,
+                            Some(false) => 400,
+                            None => base_weight,
+                        },
+                    ),
+                    None => (base_family, base_size, base_weight),
+                };
+                if let Some(sr) = shape_text_weighted(slice, fam, size, weight) {
+                    let adv: f32 = sr.glyphs.iter().map(|g| g.advance).sum();
+                    parts.push(StyledPart {
+                        text: slice.to_string(),
+                        seg: span_i,
+                        x,
+                        gids: sr.glyphs.iter().map(|g| g.id).collect(),
+                        advances: sr.glyphs.iter().map(|g| g.advance).collect(),
+                        font_family: fam.to_string(),
+                        font_size: size,
+                        weight,
+                        ascent: sr.ascent,
+                        descent: sr.descent,
+                    });
+                    x += (adv + ls * sr.glyphs.len() as f32) as f64;
+                }
+                b = e;
+            }
+            if !parts.is_empty() {
+                f(vi, &parts);
+            }
+            vi += 1;
+        }
+        byte_base += hard.len() + 1;
+    }
+}

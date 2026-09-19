@@ -200,7 +200,10 @@ pub fn parse_keyframes(raw_css: &[String]) -> HashMap<String, Keyframes> {
 /// 解析一条 animation 简写(单个动画;逗号分隔的多动画由调用方先拆)。
 /// 时序值里的 var()/calc() 用 `vars` 解析。
 pub fn parse_animation_shorthand(raw: &str, vars: &[(String, String)]) -> Option<AnimInstance> {
-    let resolved = resolve_vars(raw, vars, 0.0);
+    // 复合值里的 var()/calc() 必须先展开求值:此前 resolve_vars 只认
+    // 「整个值恰为 var(--x)」,`rise-in var(--in) calc(var(--t0)+...)` 这类
+    // 写法全部拿不到时长 → 节点被当静态(5 张动画卡单帧即此因)。
+    let resolved = eval_calcs(&substitute_vars(raw, vars));
     let tokens: Vec<String> = split_top_level(&resolved, ' ')
         .into_iter()
         .map(|t| t.trim().to_string())
@@ -302,6 +305,233 @@ pub fn parse_animation_shorthand(raw: &str, vars: &[(String, String)]) -> Option
     })
 }
 
+/// 全量 var() 替换:复合值内嵌的 var(如 `var(--in) var(--ease-in)
+/// calc(var(--t0) + …)`)逐个展开,最多 8 轮防链式循环;
+/// 查不到且无 fallback 的 var 原样保留(后续解析自然失败,与旧口径一致)。
+fn substitute_vars(raw: &str, vars: &[(String, String)]) -> String {
+    let mut cur = raw.trim().to_string();
+    for _ in 0..8 {
+        let Some(start) = cur.find("var(--") else {
+            break;
+        };
+        let Some(open_rel) = cur[start..].find('(') else {
+            break;
+        };
+        let open = start + open_rel;
+        let Some(close) = match_paren(&cur, open) else {
+            break;
+        };
+        let inner = cur[open + 1..close].to_string();
+        let (name, fallback) = match inner.split_once(',') {
+            Some((n, f)) => (n.trim().trim_start_matches("--"), Some(f.trim())),
+            None => (inner.trim().trim_start_matches("--"), None),
+        };
+        let rep = vars
+            .iter()
+            .find(|(k, _)| k.as_str() == name)
+            .map(|(_, v)| v.clone())
+            .or_else(|| fallback.map(|f| f.to_string()));
+        let Some(rep) = rep else { break };
+        cur = format!("{}{}{}", &cur[..start], rep, &cur[close + 1..]);
+    }
+    cur
+}
+
+/// `s[..]` 中 open 指向 '(' 的匹配右括号下标。
+fn match_paren(s: &str, open: usize) -> Option<usize> {
+    let b = s.as_bytes();
+    if b.get(open) != Some(&b'(') {
+        return None;
+    }
+    let mut depth = 0i32;
+    for (i, &c) in b.iter().enumerate().skip(open) {
+        match c {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// 值中所有 calc(...) 求值为时间/数值文本(先算最内层,逐层外推;
+/// 含 % 等无法求值的表达式原样保留)。
+fn eval_calcs(raw: &str) -> String {
+    let mut cur = raw.to_string();
+    loop {
+        let mut replaced = false;
+        let mut search = 0usize;
+        while let Some(rel) = cur[search..].find("calc(") {
+            let start = search + rel;
+            let open = start + 4;
+            let Some(close) = match_paren(&cur, open) else {
+                break;
+            };
+            let inner = cur[open + 1..close].to_string();
+            if inner.contains("calc(") {
+                search = open + 1; // 先算嵌套内层
+                continue;
+            }
+            match eval_time_expr(&inner) {
+                Some(v) => {
+                    cur = format!("{}{}{}", &cur[..start], v, &cur[close + 1..]);
+                    replaced = true;
+                    search = 0;
+                }
+                None => search = close + 1,
+            }
+        }
+        if !replaced {
+            break;
+        }
+    }
+    cur
+}
+
+/// calc 内的标量。
+#[derive(Clone, Copy, PartialEq)]
+enum CalcVal {
+    Num(f64),
+    /// 秒
+    Time(f64),
+}
+
+/// 求值简单时间算术:`0.1s + 0.60*1s` → `Some("0.7s")`。
+/// 支持 + - * /(含一元负号)与 s/ms;时间只能与时间相加减、与数相乘除;
+/// 其它单位(%)或非法结构返回 None。
+fn eval_time_expr(expr: &str) -> Option<String> {
+    #[derive(Clone)]
+    enum Tok {
+        Val(CalcVal),
+        Op(char),
+    }
+    let b = expr.as_bytes();
+    let mut toks: Vec<Tok> = Vec::new();
+    let mut i = 0usize;
+    while i < b.len() {
+        let c = b[i] as char;
+        if c.is_whitespace() {
+            i += 1;
+            continue;
+        }
+        if matches!(c, '+' | '-' | '*' | '/') {
+            toks.push(Tok::Op(c));
+            i += 1;
+            continue;
+        }
+        if c.is_ascii_digit() || c == '.' || c == '-' {
+            // 一元负号:仅在开头或运算符之后
+            let neg = c == '-';
+            let unary_ok = toks.is_empty() || matches!(toks.last(), Some(Tok::Op(_)));
+            if neg && !unary_ok {
+                return None;
+            }
+            let s0 = if neg { i + 1 } else { i };
+            let mut j = s0;
+            while j < b.len() && ((b[j] as char).is_ascii_digit() || b[j] == b'.') {
+                j += 1;
+            }
+            let num: f64 = expr[s0..j].parse().ok()?;
+            let u0 = j;
+            while j < b.len() && (b[j] as char).is_ascii_alphabetic() {
+                j += 1;
+            }
+            let unit = &expr[u0..j];
+            let v = match unit {
+                "" => CalcVal::Num(if neg { -num } else { num }),
+                "s" => CalcVal::Time(if neg { -num } else { num }),
+                "ms" => CalcVal::Time(if neg { -num / 1000.0 } else { num / 1000.0 }),
+                _ => return None,
+            };
+            toks.push(Tok::Val(v));
+            i = j;
+            continue;
+        }
+        return None;
+    }
+    if toks.is_empty() {
+        return None;
+    }
+    // 先 * / 后 + -
+    let mut pass1: Vec<Tok> = Vec::new();
+    let mut it = toks.into_iter();
+    let mut acc = match it.next()? {
+        Tok::Val(v) => v,
+        Tok::Op(_) => return None,
+    };
+    while let Some(t) = it.next() {
+        match t {
+            Tok::Val(_) => return None,
+            Tok::Op(op @ ('*' | '/')) => {
+                let rhs = match it.next()? {
+                    Tok::Val(v) => v,
+                    Tok::Op(_) => return None,
+                };
+                acc = match (acc, op, rhs) {
+                    (CalcVal::Num(a), '*', CalcVal::Num(b)) => CalcVal::Num(a * b),
+                    (CalcVal::Num(a), '*', CalcVal::Time(b)) => CalcVal::Time(a * b),
+                    (CalcVal::Time(a), '*', CalcVal::Num(b)) => CalcVal::Time(a * b),
+                    (CalcVal::Time(a), '/', CalcVal::Num(b)) => CalcVal::Time(a / b),
+                    (CalcVal::Num(a), '/', CalcVal::Num(b)) => CalcVal::Num(a / b),
+                    _ => return None,
+                };
+            }
+            Tok::Op(op) => {
+                pass1.push(Tok::Val(acc));
+                pass1.push(Tok::Op(op));
+                acc = match it.next()? {
+                    Tok::Val(v) => v,
+                    Tok::Op(_) => return None,
+                };
+            }
+        }
+    }
+    pass1.push(Tok::Val(acc));
+    let mut result = match pass1[0] {
+        Tok::Val(v) => v,
+        Tok::Op(_) => return None,
+    };
+    let mut idx = 1;
+    while idx < pass1.len() {
+        let op = match pass1[idx] {
+            Tok::Op(o) => o,
+            Tok::Val(_) => return None,
+        };
+        let rhs = match pass1.get(idx + 1) {
+            Some(Tok::Val(v)) => *v,
+            _ => return None,
+        };
+        result = match (result, op, rhs) {
+            (CalcVal::Time(a), '+', CalcVal::Time(b)) => CalcVal::Time(a + b),
+            (CalcVal::Time(a), '-', CalcVal::Time(b)) => CalcVal::Time(a - b),
+            (CalcVal::Num(a), '+', CalcVal::Num(b)) => CalcVal::Num(a + b),
+            (CalcVal::Num(a), '-', CalcVal::Num(b)) => CalcVal::Num(a - b),
+            _ => return None,
+        };
+        idx += 2;
+    }
+    Some(match result {
+        CalcVal::Time(t) => format!("{}s", fmt_num(t)),
+        CalcVal::Num(n) => fmt_num(n),
+    })
+}
+
+/// 去尾零的数字文本(0.7000 → "0.7";整数带 .0 → "1")。
+fn fmt_num(v: f64) -> String {
+    let s = format!("{v:.4}");
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    if s.is_empty() || s == "-" {
+        "0".to_string()
+    } else {
+        s.to_string()
+    }
+}
+
 /// 时间字面量 → 秒。
 fn parse_time(t: &str) -> Option<f64> {
     if let Some(v) = t.strip_suffix("ms") {
@@ -311,33 +541,6 @@ fn parse_time(t: &str) -> Option<f64> {
         return v.parse::<f64>().ok();
     }
     None
-}
-
-/// var() 链解析(节点上下文)。
-fn resolve_vars(raw: &str, vars: &[(String, String)], font_size: f64) -> String {
-    let mut cur = raw.trim().to_string();
-    for _ in 0..8 {
-        let Some(inner) = cur
-            .trim()
-            .strip_prefix("var(--")
-            .and_then(|s| s.strip_suffix(')'))
-        else {
-            break;
-        };
-        let (name, fallback) = match inner.split_once(',') {
-            Some((n, f)) => (n.trim(), Some(f.trim())),
-            None => (inner.trim(), None),
-        };
-        if let Some((_, v)) = vars.iter().find(|(k, _)| k == name) {
-            cur = v.clone();
-        } else if let Some(f) = fallback {
-            cur = f.to_string();
-        } else {
-            break;
-        }
-    }
-    let _ = font_size;
-    cur
 }
 
 // ---------- 节点动画收集 ----------
@@ -757,5 +960,74 @@ pub fn eval_node(node_anim: &NodeAnim, t: f64) -> FrameState {
         transform,
         clip_path,
         filter,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn vars(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    /// 动画卡家族的真实写法:名称 + var 时长 + var 缓动 + calc(var 延迟)。
+    /// 回归:此前复合值里的 var/calc 不展开 → duration=0 → 整卡被当静态单帧。
+    #[test]
+    fn shorthand_resolves_vars_and_calc_in_timing() {
+        let v = vars(&[
+            ("in", ".4s"),
+            ("ease-in", "cubic-bezier(0,0,0,1)"),
+            ("t0", "0.1s"),
+            ("d", "0.60"),
+        ]);
+        let a = parse_animation_shorthand(
+            "rise-in var(--in) var(--ease-in) calc(var(--t0) + var(--d,0)*1s) both",
+            &v,
+        )
+        .expect("var/calc 时序必须可解析");
+        assert!((a.duration - 0.4).abs() < 1e-9, "duration={}", a.duration);
+        assert!((a.delay - 0.7).abs() < 1e-9, "delay={}", a.delay);
+        assert!(matches!(a.timing, Timing::CubicBezier(..)));
+        assert!(a.fill_forwards && a.fill_backwards);
+    }
+
+    /// 字面量时长 + calc 延迟 + 迭代次数(混合写法,不得回归)。
+    #[test]
+    fn shorthand_literal_with_calc_delay_and_iterations() {
+        let a = parse_animation_shorthand("blink 1s ease-in-out calc(0.1s + 0.2s) 3 both", &[])
+            .expect("字面量 + calc 延迟必须可解析");
+        assert!((a.duration - 1.0).abs() < 1e-9);
+        assert!((a.delay - 0.3).abs() < 1e-9);
+        assert!((a.iterations - 3.0).abs() < 1e-9);
+    }
+
+    /// var 时长(节点内联 token,如 hudgrow var(--hd))。
+    #[test]
+    fn shorthand_var_duration_from_inline_token() {
+        let v = vars(&[("hd", "8.74s")]);
+        let a = parse_animation_shorthand("hudgrow var(--hd) linear both", &v)
+            .expect("var 时长必须可解析");
+        assert!((a.duration - 8.74).abs() < 1e-9);
+        assert!((a.delay - 0.0).abs() < 1e-9);
+    }
+
+    /// 查不到且无 fallback 的 var:保持旧行为(解析失败)。
+    #[test]
+    fn shorthand_unknown_var_without_fallback_fails() {
+        assert!(parse_animation_shorthand("x var(--nope) linear both", &[]).is_none());
+    }
+
+    /// ms 单位与除法。
+    #[test]
+    fn calc_ms_and_division() {
+        let v = vars(&[("w", "800ms")]);
+        let a = parse_animation_shorthand("t var(--w) linear calc(1s/2) both", &v)
+            .expect("ms/除法必须可解析");
+        assert!((a.duration - 0.8).abs() < 1e-9);
+        assert!((a.delay - 0.5).abs() < 1e-9);
     }
 }

@@ -44,7 +44,13 @@ pub fn print_pdf(
         let h_mm = px_to_mm(out_h as f64) * 1.002 + 1.0;
         inject_page_margin(page)?;
         let pdf = page.print_to_pdf(w_mm / 25.4, h_mm / 25.4, false)?;
-        return Ok(PrintOutcome { pdf, width_css: out_w, height_css: out_h, pages: 1, warnings });
+        return Ok(PrintOutcome {
+            pdf,
+            width_css: out_w,
+            height_css: out_h,
+            pages: 1,
+            warnings,
+        });
     }
     if out_h > MAX_PAGE_H_PX {
         // 超长:CSS @page 定宽定高分页(Edge/Chrome PDFium 对超大单页兼容差)
@@ -53,14 +59,26 @@ pub fn print_pdf(
         inject_page_size(page, w_mm, page_h_mm)?;
         let pdf = page.print_to_pdf(w_mm / 25.4, page_h_mm / 25.4, true)?;
         let pages = (out_h + MAX_PAGE_H_PX - 1) / MAX_PAGE_H_PX;
-        return Ok(PrintOutcome { pdf, width_css: out_w, height_css: out_h, pages, warnings });
+        return Ok(PrintOutcome {
+            pdf,
+            width_css: out_w,
+            height_css: out_h,
+            pages,
+            warnings,
+        });
     }
     // 常规单页:纸张 = 内容尺寸(+0.2% +1mm 防尾白页,WPI 同款)
     let w_mm = px_to_mm(out_w as f64);
     let h_mm = px_to_mm(out_h as f64) * 1.002 + 1.0;
     inject_page_margin(page)?;
     let pdf = page.print_to_pdf(w_mm / 25.4, h_mm / 25.4, false)?;
-    Ok(PrintOutcome { pdf, width_css: out_w, height_css: out_h, pages: 1, warnings })
+    Ok(PrintOutcome {
+        pdf,
+        width_css: out_w,
+        height_css: out_h,
+        pages: 1,
+        warnings,
+    })
 }
 
 fn inject_style(page: &mut PageSession, css: &str) -> Result<(), String> {
@@ -79,12 +97,16 @@ fn inject_page_margin(page: &mut PageSession) -> Result<(), String> {
 }
 
 fn inject_page_size(page: &mut PageSession, w_mm: f64, h_mm: f64) -> Result<(), String> {
-    inject_style(page, &format!("@page {{ size: {w_mm:.2}mm {h_mm:.2}mm; margin: 0; }}"))
+    inject_style(
+        page,
+        &format!("@page {{ size: {w_mm:.2}mm {h_mm:.2}mm; margin: 0; }}"),
+    )
 }
 
 /// PDF 兼容流 → Illustrator AI 头注入(复用 vb_kiln/postscript 的头格式)。
 pub fn ai_from_pdf(mut pdf: Vec<u8>) -> Vec<u8> {
-    const HEAD: &[u8] = b"%AI9_PrivateDataBegin\n%%AI8_CreatorVersion: 24.0.0\n%AI5_FileFormat 9.0\n";
+    const HEAD: &[u8] =
+        b"%AI9_PrivateDataBegin\n%%AI8_CreatorVersion: 24.0.0\n%AI5_FileFormat 9.0\n";
     if pdf.starts_with(b"%PDF-") {
         if let Some(pos) = pdf.iter().position(|&b| b == b'\n') {
             let mut with_head = Vec::with_capacity(pdf.len() + HEAD.len());

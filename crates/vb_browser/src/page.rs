@@ -147,13 +147,12 @@ impl PageSession {
             net_event_count: 0,
             crashed: false,
         };
-        page.cdp.call("Page.enable", json!({}), Duration::from_secs(5))?;
-        page.cdp.call("Network.enable", json!({}), Duration::from_secs(5))?;
-        page.cdp.call(
-            "Runtime.enable",
-            json!({}),
-            Duration::from_secs(5),
-        )?;
+        page.cdp
+            .call("Page.enable", json!({}), Duration::from_secs(5))?;
+        page.cdp
+            .call("Network.enable", json!({}), Duration::from_secs(5))?;
+        page.cdp
+            .call("Runtime.enable", json!({}), Duration::from_secs(5))?;
         Ok(page)
     }
 
@@ -182,8 +181,11 @@ impl PageSession {
 
     /// 页面脚本执行前注入(rAF 节流)。
     pub fn add_init_script(&mut self, source: &str) -> Result<(), String> {
-        self.cdp
-            .call("Page.addScriptToEvaluateOnNewDocument", json!({ "source": source }), Duration::from_secs(5))?;
+        self.cdp.call(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({ "source": source }),
+            Duration::from_secs(5),
+        )?;
         Ok(())
     }
 
@@ -227,8 +229,11 @@ impl PageSession {
 
     /// 导航并等待 load(要素 1 前半;30s 上限)。
     pub fn navigate(&mut self, url: &str) -> Result<(), String> {
-        self.cdp
-            .call("Page.navigate", json!({ "url": url }), Duration::from_secs(35))?;
+        self.cdp.call(
+            "Page.navigate",
+            json!({ "url": url }),
+            Duration::from_secs(35),
+        )?;
         let deadline = Instant::now() + Duration::from_secs(30);
         while !self.load_fired {
             let remaining = deadline.saturating_duration_since(Instant::now());
@@ -284,7 +289,11 @@ impl PageSession {
             ));
         }
         // cdp.call 返回 CDP result 层:内层 result.value 才是 returnByValue 的值
-        Ok(res.get("result").and_then(|r| r.get("value")).cloned().unwrap_or(Value::Null))
+        Ok(res
+            .get("result")
+            .and_then(|r| r.get("value"))
+            .cloned()
+            .unwrap_or(Value::Null))
     }
 
     // ------------------------------------------------------------ 页面查询

@@ -257,17 +257,27 @@ fn run_export(
     // auto=浏览器可用即用(保真优先);browser=强制;native=跳过本段
     let engine_mode = engine.trim().to_ascii_lowercase();
     let vector_mode = vector.trim().to_ascii_lowercase();
-    // ---- ADR-0021:AI 的 DOM 快照路线(默认)----
+    // ---- ADR-0021/ADR-0022:期望路线表(auto 的放行范围按格式显式定义)----
+    // AI/SVG/EPS(可编辑矢量)→ dom;PDF(打印阅读 + 可编辑)→ dom;
+    // PNG/JPG(光栅)→ 浏览器原生截屏,不入本闸门(ADR-0022:曾因 PNG 走
+    // dom 使 G1 均分 99.93→93.94,消融证明 chrome 逐例复现历史分)。
     // 结构保证:整行文本一个 CID Tj(零逐字断字)、双 OCG 图层、零 Type3、
     // 渐变位图化(pdfium/AI 兼容)、blend 文字矢量救活。
-    let want_dom = matches!(fmt_str.to_uppercase().as_str(), "AI" | "PDF" | "PNG" | "SVG" | "EPS")
-        && matches!(vector_mode.as_str(), "auto" | "dom")
+    if matches!(vector_mode.as_str(), "dom")
+        && matches!(fmt_str.to_uppercase().as_str(), "PNG" | "JPG")
+    {
+        eprintln!("{{\"warn\":\"{fmt_str} 为光栅格式,期望路线为浏览器原生截屏(ADR-0022),--vector dom 不适用\"}}");
+    }
+    let want_dom = matches!(
+        fmt_str.to_uppercase().as_str(),
+        "AI" | "PDF" | "SVG" | "EPS"
+    ) && matches!(vector_mode.as_str(), "auto" | "dom")
         && engine_mode != "native";
     if want_dom {
         let dom_result = if sources.len() > 1 {
-            vb_kiln::domexport::export_dom_pages(&sources, transparent, width)
+            vb_kiln::domexport::export_dom_pages(&sources, transparent, width, scale, height)
         } else {
-            vb_kiln::domexport::export_dom(&source, fmt, transparent, width)
+            vb_kiln::domexport::export_dom(&source, fmt, transparent, width, scale, height)
         };
         match dom_result {
             Ok(out) => {
@@ -281,12 +291,20 @@ fn run_export(
                     eprintln!("{{\"ok\":false,\"error\":\"写文件失败:{e}\"}}");
                     return 4;
                 }
+                // 宽高口径与车道 B 一致:光栅 = 画板逻辑尺寸 × scale;矢量 = 逻辑尺寸
+                let raster_out = matches!(fmt_str.to_uppercase().as_str(), "PNG" | "JPG");
+                let (ow, oh) = if raster_out {
+                    (out.width * scale as f64, out.height * scale as f64)
+                } else {
+                    (out.width, out.height)
+                };
                 let json = format!(
-                    "{{'ok':true,'format':'{}','path':'{}','width':{:.0},'height':{:.0},'scale':1,'transparent':{},'warnings':{},'frames':1,'degraded':false,'degraded_artboard':false,'bytes':{},'encode_ms':{},'engine':'browser-dom','browser':'{}','vector':'dom','text_lines':{},'clip_demand':{},'raster_items':{}}}",
+                    "{{'ok':true,'format':'{}','path':'{}','width':{:.0},'height':{:.0},'scale':{},'transparent':{},'warnings':{},'frames':1,'degraded':false,'degraded_artboard':false,'bytes':{},'encode_ms':{},'engine':'browser-dom','browser':'{}','vector':'dom','text_lines':{},'clip_demand':{},'raster_items':{}}}",
                     fmt_str.to_uppercase(),
                     output.display(),
-                    out.width,
-                    out.height,
+                    ow,
+                    oh,
+                    scale.clamp(1, 8),
                     transparent,
                     out.warnings.len(),
                     out.bytes.len(),
@@ -309,7 +327,58 @@ fn run_export(
             }
         }
     }
-    if engine_mode == "browser" && !matches!(fmt_str.to_uppercase().as_str(), "PNG" | "PDF" | "AI") {
+    // ---- 车道 B 动画逐帧(WPI 理论):GIF/MP4 主路 ----
+    // Lane K 静态求值只覆盖 4 类动画轨道(35 分根因),此处让动画在真
+    // 浏览器里实时播放并按 1/fps 截屏;无浏览器/native 时降级 Lane K。
+    if matches!(
+        fmt,
+        vb_kiln::writer::Format::Gif | vb_kiln::writer::Format::Mp4
+    ) && engine_mode != "native"
+    {
+        let anim = vb_kiln::animlane::export_anim(
+            &source, fmt, width, height, fps, duration, scale, bitrate, r#loop,
+        );
+        match anim {
+            Ok(out) => {
+                for w in &out.warnings {
+                    eprintln!("{{\"domwarn\":\"{w}\"}}");
+                }
+                if let Some(parent) = output.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if let Err(e) = std::fs::write(&output, &out.bytes) {
+                    eprintln!("{{\"ok\":false,\"error\":\"写文件失败:{e}\"}}");
+                    return 4;
+                }
+                let json = format!(
+                    "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':{},'degraded':false,'degraded_artboard':false,'bytes':{},'encode_ms':{},'engine':'browser-anim','browser':'{}'}}",
+                    fmt_str.to_uppercase(),
+                    output.display(),
+                    width,
+                    height,
+                    scale.clamp(1, 8),
+                    transparent,
+                    out.warnings.len(),
+                    out.frames,
+                    out.bytes.len(),
+                    t0.elapsed().as_millis(),
+                    out.browser.replace('"', "'"),
+                )
+                .replace('\'', "\"");
+                println!("{json}");
+                return 0;
+            }
+            Err(e) => {
+                if engine_mode == "browser" {
+                    eprintln!("{{\"ok\":false,\"error\":\"动画浏览器路线失败:{e}\"}}");
+                    return 4;
+                }
+                eprintln!("{{\"warn\":\"动画浏览器路线不可用,降级自研逐帧:{e}\"}}");
+            }
+        }
+    }
+    if engine_mode == "browser" && !matches!(fmt_str.to_uppercase().as_str(), "PNG" | "PDF" | "AI")
+    {
         eprintln!("{{\"ok\":false,\"error\":\"浏览器车道仅支持 PNG/PDF/AI,格式 {fmt_str} 请用 auto/native\"}}");
         return 2;
     }
@@ -707,9 +776,7 @@ fn run_selfcheck() -> i32 {
                     Ok(mut page) => {
                         let shot = page
                             .set_device_metrics(64, 64, 1)
-                            .and_then(|_| {
-                                page.screenshot("png", None, None, false, false)
-                            })
+                            .and_then(|_| page.screenshot("png", None, None, false, false))
                             .is_ok();
                         page.close();
                         serde_json::Value::String(format!("ok({shot}) {hint}"))

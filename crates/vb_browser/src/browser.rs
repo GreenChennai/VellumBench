@@ -148,20 +148,29 @@ impl BrowserProcess {
             ));
         };
         // ws://127.0.0.1:PORT/devtools/browser/UUID
-        let rest = endpoint
-            .trim_start_matches("ws://")
-            .trim_end_matches('/');
+        let rest = endpoint.trim_start_matches("ws://").trim_end_matches('/');
         let (hostport, _path) = rest.split_once('/').unwrap_or((rest, ""));
         let resolved = hostport
             .rsplit_once(':')
             .and_then(|(_, p)| p.parse::<u16>().ok())
             .ok_or_else(|| format!("DevTools 端口解析失败: {endpoint}"))?;
-        Ok(BrowserProcess { exe: exe.to_path_buf(), port: resolved, child, user_data_dir })
+        Ok(BrowserProcess {
+            exe: exe.to_path_buf(),
+            port: resolved,
+            child,
+            user_data_dir,
+        })
     }
 
     /// 浏览器版本(DevTools /json/version 的 Browser 字段,如 "Edg/131.0.2903.86")。
     pub fn version(&self) -> String {
-        match httpc::request("127.0.0.1", self.port, "GET", "/json/version", Duration::from_secs(5)) {
+        match httpc::request(
+            "127.0.0.1",
+            self.port,
+            "GET",
+            "/json/version",
+            Duration::from_secs(5),
+        ) {
             Ok((200, body)) => serde_json::from_slice::<Value>(&body)
                 .ok()
                 .and_then(|v| {
@@ -179,7 +188,13 @@ impl BrowserProcess {
         let target = format!("/json/new?{}", about);
         // Chrome 111+ 要求 PUT;旧内核只认 GET
         for method in ["PUT", "GET"] {
-            match httpc::request("127.0.0.1", self.port, method, &target, Duration::from_secs(5)) {
+            match httpc::request(
+                "127.0.0.1",
+                self.port,
+                method,
+                &target,
+                Duration::from_secs(5),
+            ) {
                 Ok((200, body)) => {
                     let v: Value = serde_json::from_slice(&body)
                         .map_err(|e| format!("标签页信息解析失败: {e}"))?;

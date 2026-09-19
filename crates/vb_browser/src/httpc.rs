@@ -13,8 +13,8 @@ pub fn request(
     path: &str,
     timeout: Duration,
 ) -> Result<(u16, Vec<u8>), String> {
-    let mut stream = TcpStream::connect((host, port))
-        .map_err(|e| format!("连接 {host}:{port} 失败: {e}"))?;
+    let mut stream =
+        TcpStream::connect((host, port)).map_err(|e| format!("连接 {host}:{port} 失败: {e}"))?;
     stream.set_read_timeout(Some(timeout)).ok();
     stream.set_write_timeout(Some(timeout)).ok();
     let req = format!(
@@ -65,8 +65,7 @@ pub fn request(
             Ok(0) => {
                 // 连接关闭:头部齐则按已收数据收尾,否则报错
                 if let Some(header_end) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
-                    let head =
-                        String::from_utf8_lossy(&raw[..header_end]).to_ascii_lowercase();
+                    let head = String::from_utf8_lossy(&raw[..header_end]).to_ascii_lowercase();
                     let status: u16 = head
                         .lines()
                         .next()

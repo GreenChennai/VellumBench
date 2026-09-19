@@ -37,7 +37,11 @@ pub enum FrameOutcome {
 
 impl FrameCodec {
     pub fn new() -> Self {
-        FrameCodec { buf: Vec::with_capacity(64 * 1024), fragments: Vec::new(), frag_opcode: 0 }
+        FrameCodec {
+            buf: Vec::with_capacity(64 * 1024),
+            fragments: Vec::new(),
+            frag_opcode: 0,
+        }
     }
 
     pub fn feed(&mut self, bytes: &[u8]) {
@@ -191,7 +195,9 @@ impl WsConn {
     pub fn connect(host: &str, port: u16, path: &str, timeout: Duration) -> Result<Self, String> {
         let stream = TcpStream::connect((host, port))
             .map_err(|e| format!("WS 连接 {host}:{port} 失败: {e}"))?;
-        stream.set_read_timeout(Some(Duration::from_millis(100))).ok();
+        stream
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .ok();
         stream.set_write_timeout(Some(timeout)).ok();
         stream.set_nodelay(true).ok();
 
@@ -226,12 +232,7 @@ impl WsConn {
             if Instant::now() > deadline {
                 return Err("WS 握手超时".into());
             }
-            if let Some(header_end) = conn
-                .codec
-                .raw()
-                .windows(4)
-                .position(|w| w == b"\r\n\r\n")
-            {
+            if let Some(header_end) = conn.codec.raw().windows(4).position(|w| w == b"\r\n\r\n") {
                 let head = String::from_utf8_lossy(&conn.codec.raw()[..header_end]).to_string();
                 conn.codec.consume(header_end + 4);
                 if !head.starts_with("HTTP/1.1 101") {

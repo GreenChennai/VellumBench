@@ -120,16 +120,16 @@ pub fn apply_to_doc(
             if Some(sid.as_str()) == ab_sid.as_deref() {
                 continue;
             }
-            let Some(id) = doc.find_by_sid(sid) else { continue };
+            let Some(id) = doc.find_by_sid(sid) else {
+                continue;
+            };
             // 沿祖先链找 overflow:hidden 容器,把矩形裁进其计算矩形
             let mut rect = *r;
             let mut cur = doc.node(id).and_then(|n| n.parent);
             while let Some(pid) = cur {
                 let Some(pn) = doc.node(pid) else { break };
                 let clips = pn.style.iter().any(|d| {
-                    (d.prop == "overflow"
-                        || d.prop == "overflow-x"
-                        || d.prop == "overflow-y")
+                    (d.prop == "overflow" || d.prop == "overflow-x" || d.prop == "overflow-y")
                         && d.value.trim() == "hidden"
                 });
                 if clips {
@@ -658,9 +658,7 @@ impl<'a> BuildCtx<'a> {
             if let Some(v) = rows {
                 match parse_tracks(v) {
                     Ok(t) => gr = t,
-                    Err(e) => {
-                        grid_warning = Some(format!("grid-template-rows '{v}' 未识别({e})"))
-                    }
+                    Err(e) => grid_warning = Some(format!("grid-template-rows '{v}' 未识别({e})")),
                 }
             }
             if grid_warning.is_some() {
@@ -672,7 +670,11 @@ impl<'a> BuildCtx<'a> {
         } else {
             (Vec::new(), Vec::new())
         };
-        let display = if grid_warning.is_some() { Display::Block } else { display };
+        let display = if grid_warning.is_some() {
+            Display::Block
+        } else {
+            display
+        };
         // 定位:authored_position(导入记录)优先;否则按 authored left/top 推断
         let position = match node.authored_position.as_deref() {
             Some("absolute") | Some("fixed") => Position::Absolute,

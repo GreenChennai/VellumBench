@@ -201,9 +201,12 @@ fn ai_is_pdf_compatible_with_head() {
     let doc = sample_doc();
     let ab = doc.artboards[0];
     let (bytes, _) = vb_kiln::export_artboard(&doc, ab, &req(Format::Ai), None).unwrap();
-    assert!(bytes.starts_with(b"%PDF-1.7\n%%AI8_CreatorVersion"));
+    // AI 头在 %PDF 魔数与二进制注释行之后、xref 之前落笔(头部偏移已含头,
+    // 事后插入会让 xref 整体错位——见 pdf::write_pdf_head 注释)。
+    assert!(bytes.starts_with(b"%PDF-1.7\n"));
     let text = String::from_utf8_lossy(&bytes);
-    assert!(text.contains("%%AI8_CreatorVersion"));
+    let head_at = text.find("%%AI8_CreatorVersion").expect("AI 头缺失");
+    assert!(head_at < 64, "AI 头必须落在文件头部(实际偏移 {head_at})");
     assert!(!text.contains("AI9_PrivateDataBegin"));
 }
 

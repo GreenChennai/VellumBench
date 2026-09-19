@@ -70,7 +70,12 @@ fn detect_rect(segs: &[tiny_skia_path::PathSegment]) -> Option<(f64, f64, f64, f
             return None;
         }
     }
-    Some((px_len(minx), px_len(miny), px_len(maxx - minx), px_len(maxy - miny)))
+    Some((
+        px_len(minx),
+        px_len(miny),
+        px_len(maxx - minx),
+        px_len(maxy - miny),
+    ))
 }
 
 /// 圆角半径近似:四分之一圆弧的弦长 ≈ r。
@@ -158,7 +163,10 @@ impl<'a> SvgWalker<'a> {
 
     fn node_xy(&self, tx: tiny_skia::Transform, x: f64, y: f64) -> (f64, f64) {
         // usvg 变换 v1 只取平移/简单缩放(倾斜/旋转忽略 + 警告)
-        (x * tx.sx as f64 + tx.tx as f64, y * tx.sy as f64 + tx.ty as f64)
+        (
+            x * tx.sx as f64 + tx.tx as f64,
+            y * tx.sy as f64 + tx.ty as f64,
+        )
     }
 
     fn check_tx(&mut self, tx: tiny_skia::Transform) {
@@ -399,4 +407,3 @@ pub fn import_svg_to_doc(
     }
     Ok((document, warnings))
 }
-

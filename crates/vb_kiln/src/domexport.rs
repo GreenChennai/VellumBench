@@ -24,6 +24,8 @@ pub fn export_dom(
     format: Format,
     transparent: bool,
     width: u32,
+    scale: u32,
+    height: u32,
 ) -> Result<DomExportResult, String> {
     let (mount_dir, html_path) = resolve_source(source)?;
     let srv = vb_browser::staticsrv::StaticServer::start(&mount_dir)?;
@@ -43,10 +45,17 @@ pub fn export_dom(
     let proc = vb_browser::browser::BrowserProcess::launch(&exe)?;
     let browser_ver = proc.version();
     let mut page = vb_browser::page::PageSession::attach(&proc)?;
-    // 采集坐标系 = CSS px:DSF 固定 1(位图裁剪 rect 与截图像素一一对应)。
-    // 视口宽 = 目标导出宽(--width;默认 1080 起探测,海报类固定宽 body 不受影响)
+    // 视口宽 = 目标导出宽(--width;默认 1080 起探测,海报类固定宽 body 不受影响);
+    // 视口高 = --height 锁定值(动画卡 100vh 型必须锁,否则 100vh 撑成视口宽)。
+    // 采集 DSF:位图降级裁剪的分辨率上限;超长页(易拉宝 11812px)按 1 兜底,
+    // 否则整页截图会超过浏览器单帧上限。矢量与图片项不受影响(后者原生分辨率)。
     let vw = if width > 0 { width } else { 1080 };
-    page.set_device_metrics(vw, vw, 1)?;
+    let vh = if height > 0 { height } else { vw };
+    let mut dsf = scale.clamp(1, 8);
+    if (vh as u64 * dsf as u64) > 15_000 || (vw as u64 * dsf as u64) > 15_000 {
+        dsf = 1;
+    }
+    page.set_device_metrics(vw, vh, dsf)?;
     page.navigate(&url)?;
     page.wait_network_idle(std::time::Duration::from_secs(3));
     page.sleep(200);
@@ -64,22 +73,38 @@ pub fn export_dom(
     }
 
     if std::env::var("KILN_DUMP_PAINTLIST").is_ok() {
+        // 调试转储落系统临时目录(K4:不写源工程目录)
+        let dump = std::env::temp_dir().join(format!(
+            "kiln-paintlist-{}.json",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|t| t.as_nanos())
+                .unwrap_or(0)
+        ));
+        eprintln!("{{\"domwarn\":\"paintlist dump: {}\"}}", dump.display());
         let _ = std::fs::write(
-            mount_dir.join(".kiln-paintlist.json"),
+            dump,
             serde_json::to_string_pretty(&cap.list).unwrap_or_default(),
         );
     }
-    let dom = paintlist_to_document(&cap.list, &mount_dir, Some(&cap.page_png), &prefix)?;
+    let dom = paintlist_to_document(
+        &cap.list,
+        &mount_dir,
+        Some(&cap.page_png),
+        &prefix,
+        dsf as f64,
+        height as f64,
+    )?;
     if std::env::var("KILN_DUMP_DRAWLIST").is_ok() {
-        if let Ok(list) = vb_render::encode::encode_artboard_opts(
-            &dom.doc, dom.artboard, false,
-        ) {
+        if let Ok(list) = vb_render::encode::encode_artboard_opts(&dom.doc, dom.artboard, false) {
             for (i, it) in list.items.iter().enumerate() {
                 let fill = match &it.fill {
-                    Some(vb_render::encode::FillDef::Solid(c)) =>
-                        format!("solid({:.2},{:.2},{:.2},{:.2})", c[0], c[1], c[2], c[3]),
-                    Some(vb_render::encode::FillDef::LinearGradient { angle_css, stops }) =>
-                        format!("linear({angle_css}) stops={}", stops.len()),
+                    Some(vb_render::encode::FillDef::Solid(c)) => {
+                        format!("solid({:.2},{:.2},{:.2},{:.2})", c[0], c[1], c[2], c[3])
+                    }
+                    Some(vb_render::encode::FillDef::LinearGradient { angle_css, stops }) => {
+                        format!("linear({angle_css}) stops={}", stops.len())
+                    }
                     Some(vb_render::encode::FillDef::RadialGradient { .. }) => "radial".into(),
                     None => "none".into(),
                 };
@@ -88,17 +113,29 @@ pub fn export_dom(
         }
     }
     let (w, h) = (
-        dom.doc.nodes.get(dom.artboard).map(|n| n.geom.w).unwrap_or(0.0),
-        dom.doc.nodes.get(dom.artboard).map(|n| n.geom.h).unwrap_or(0.0),
+        dom.doc
+            .nodes
+            .get(dom.artboard)
+            .map(|n| n.geom.w)
+            .unwrap_or(0.0),
+        dom.doc
+            .nodes
+            .get(dom.artboard)
+            .map(|n| n.geom.h)
+            .unwrap_or(0.0),
     );
     let req = ExportRequest {
         format,
-        scale: 1, // 几何已是 CSS px;矢量输出无需倍率
+        // 几何是 CSS px:光栅按 --scale 放大(与车道 B 的像素口径一致),
+        // 矢量写入器只用 logical_w/h,不受影响
+        scale: scale.clamp(1, 8),
         transparent,
         ..Default::default()
     };
-    let (bytes, report) = crate::export_artboard(&dom.doc, dom.artboard, &req, Some(&mount_dir))
-        .map_err(|e| format!("DOM 快照导出失败: {e}"))?;
+    let export_res = crate::export_artboard(&dom.doc, dom.artboard, &req, Some(&mount_dir))
+        .map_err(|e| format!("DOM 快照导出失败: {e}"));
+    cleanup_intermediate(&dom.raster_dir);
+    let (bytes, report) = export_res?;
     warnings.extend(report.warnings.iter().map(|w| w.message()));
     warnings.extend(dom.meta.warnings.iter().cloned());
     Ok(DomExportResult {
@@ -111,7 +148,17 @@ pub fn export_dom(
     })
 }
 
-fn resolve_source(source: &Path) -> Result<(PathBuf, PathBuf), String> {
+/// 副产物清理(K4):导出结束即删临时目录;`KILN_KEEP_INTERMEDIATE` 显式保留。
+fn cleanup_intermediate(dir: &Option<std::path::PathBuf>) {
+    if std::env::var("KILN_KEEP_INTERMEDIATE").is_ok() {
+        return;
+    }
+    if let Some(d) = dir {
+        let _ = std::fs::remove_dir_all(d);
+    }
+}
+
+pub fn resolve_source(source: &Path) -> Result<(PathBuf, PathBuf), String> {
     if source.is_dir() {
         for idx in ["index.html", "index.htm"] {
             let p = source.join(idx);
@@ -177,18 +224,24 @@ fn weight_suffix(weight: u16) -> &'static str {
 /// (同 stem → family 名 × weight 后缀,如 MiSans-Bold.ttf)。
 fn collect_font_faces(html: &Path, base: &Path) -> Vec<(String, u16, PathBuf)> {
     let mut out = Vec::new();
-    let Ok(text) = std::fs::read_to_string(html) else { return out };
+    let Ok(text) = std::fs::read_to_string(html) else {
+        return out;
+    };
     let mut i = 0usize;
     while let Some(pos) = text[i..].find("@font-face") {
         let start = i + pos;
-        let end = text[start..].find('}').map(|e| start + e).unwrap_or(text.len());
+        let end = text[start..]
+            .find('}')
+            .map(|e| start + e)
+            .unwrap_or(text.len());
         let block = &text[start..end.min(text.len())];
         let family = extract_quoted_after(block, "font-family")
             .or_else(|| extract_unquoted_after(block, "font-family"));
         let weight = extract_unquoted_after(block, "font-weight")
             .and_then(|w| w.trim().parse::<u16>().ok())
             .unwrap_or(400);
-        let src = extract_quoted_after(block, "src").or_else(|| extract_unquoted_after(block, "src"));
+        let src =
+            extract_quoted_after(block, "src").or_else(|| extract_unquoted_after(block, "src"));
         if let (Some(family), Some(src)) = (family, src) {
             let rel = src.split('?').next().unwrap_or(&src);
             let rel = rel.trim_start_matches("./");
@@ -221,8 +274,18 @@ fn global_font_lookup(family: &str, weight: u16) -> Option<PathBuf> {
     let fam = family.trim().trim_matches('"').trim_matches('\'');
     let suffixes = [weight_suffix(weight), "Regular", "Bold"];
     for dir in font_fallback_dirs() {
-        for sub in ["", "misans", "source-han-sans", "source-han-serif", "alibaba-puhuiti"] {
-            let root = if sub.is_empty() { dir.clone() } else { dir.join(sub) };
+        for sub in [
+            "",
+            "misans",
+            "source-han-sans",
+            "source-han-serif",
+            "alibaba-puhuiti",
+        ] {
+            let root = if sub.is_empty() {
+                dir.clone()
+            } else {
+                dir.join(sub)
+            };
             if !root.is_dir() {
                 continue;
             }
@@ -261,15 +324,20 @@ fn extract_quoted_after(block: &str, prop: &str) -> Option<String> {
 
 fn extract_unquoted_after(block: &str, prop: &str) -> Option<String> {
     let idx = block.find(prop)?;
-    let rest = block[idx + prop.len()..].trim_start_matches(|c: char| c == ':' || c.is_whitespace());
+    let rest =
+        block[idx + prop.len()..].trim_start_matches(|c: char| c == ':' || c.is_whitespace());
     let end = rest
         .find(|c: char| c == ';' || c == '}' || c.is_whitespace())
         .unwrap_or(rest.len());
     let v = rest[..end].trim();
-    if v.is_empty() { None } else { Some(v.to_string()) }
+    if v.is_empty() {
+        None
+    } else {
+        Some(v.to_string())
+    }
 }
 
-fn url_encode(s: &str) -> String {
+pub fn url_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
         match b {
@@ -283,18 +351,19 @@ fn url_encode(s: &str) -> String {
 }
 
 /// 多源导出(N4 多画板):每源一页(浏览器采集 → 单页 PDF)→ 合并 →
-/// AI 时加 AI9 头。Illustrator 中 PDF 页 = 画板。
+/// AI 头在头部之内落笔。Illustrator 中 PDF 页 = 画板。
 pub fn export_dom_pages(
     sources: &[PathBuf],
     transparent: bool,
     width: u32,
+    scale: u32,
+    height: u32,
 ) -> Result<DomExportResult, String> {
     if sources.is_empty() {
         return Err("多源导出至少需要一个 --source".into());
     }
     if sources.len() == 1 {
-        let mut r = export_dom(&sources[0], Format::Ai, transparent, width)?;
-        return Ok(r);
+        return export_dom(&sources[0], Format::Ai, transparent, width, scale, height);
     }
     let mut page_pdfs: Vec<Vec<u8>> = Vec::new();
     let mut meta = DomPaintMeta::default();
@@ -304,7 +373,7 @@ pub fn export_dom_pages(
     let mut h0 = 0f64;
     for src in sources {
         // 逐源走单页导出(浏览器会话各自起落;效率列 carry-forward)
-        let r = export_dom_pdf_bytes(src, transparent, width)?;
+        let r = export_dom_pdf_bytes(src, transparent, width, height)?;
         meta.line_count += r.0;
         meta.clip_demand += r.1;
         meta.raster_count += r.2;
@@ -331,6 +400,7 @@ fn export_dom_pdf_bytes(
     src: &Path,
     transparent: bool,
     width: u32,
+    height: u32,
 ) -> Result<(u32, u32, u32, Vec<String>, String, f64, f64, Vec<u8>), String> {
     let (mount_dir, html_path) = resolve_source(src)?;
     let srv = vb_browser::staticsrv::StaticServer::start(&mount_dir)?;
@@ -350,7 +420,8 @@ fn export_dom_pdf_bytes(
     let browser_ver = proc.version();
     let mut page = vb_browser::page::PageSession::attach(&proc)?;
     let vw = if width > 0 { width } else { 1080 };
-    page.set_device_metrics(vw, vw, 1)?;
+    let vh = if height > 0 { height } else { vw };
+    page.set_device_metrics(vw, vh, 1)?;
     page.navigate(&url)?;
     page.wait_network_idle(std::time::Duration::from_secs(3));
     page.sleep(200);
@@ -362,18 +433,48 @@ fn export_dom_pdf_bytes(
     for (family, weight, path) in collect_font_faces(&html_path, &mount_dir) {
         vb_render::text::register_font_file(&family, weight, path);
     }
-    let dom = paintlist_to_document(&cap.list, &mount_dir, Some(&cap.page_png), &prefix)?;
+    let dom = paintlist_to_document(
+        &cap.list,
+        &mount_dir,
+        Some(&cap.page_png),
+        &prefix,
+        1.0,
+        height as f64,
+    )?;
     let (w, h) = (
-        dom.doc.nodes.get(dom.artboard).map(|n| n.geom.w).unwrap_or(0.0),
-        dom.doc.nodes.get(dom.artboard).map(|n| n.geom.h).unwrap_or(0.0),
+        dom.doc
+            .nodes
+            .get(dom.artboard)
+            .map(|n| n.geom.w)
+            .unwrap_or(0.0),
+        dom.doc
+            .nodes
+            .get(dom.artboard)
+            .map(|n| n.geom.h)
+            .unwrap_or(0.0),
     );
-    let req = ExportRequest { format: Format::Pdf, scale: 1, transparent, ..Default::default() };
-    let (bytes, report) = crate::export_artboard(&dom.doc, dom.artboard, &req, Some(&mount_dir))
-        .map_err(|e| format!("DOM 快照导出失败: {e}"))?;
+    let req = ExportRequest {
+        format: Format::Pdf,
+        scale: 1,
+        transparent,
+        ..Default::default()
+    };
+    let export_res = crate::export_artboard(&dom.doc, dom.artboard, &req, Some(&mount_dir))
+        .map_err(|e| format!("DOM 快照导出失败: {e}"));
+    cleanup_intermediate(&dom.raster_dir);
+    let (bytes, report) = export_res?;
     warnings.extend(report.warnings.iter().map(|w| w.message()));
     warnings.extend(dom.meta.warnings.iter().cloned());
-    Ok((dom.meta.line_count, dom.meta.clip_demand, dom.meta.raster_count,
-        warnings, browser_ver, w, h, bytes))
+    Ok((
+        dom.meta.line_count,
+        dom.meta.clip_demand,
+        dom.meta.raster_count,
+        warnings,
+        browser_ver,
+        w,
+        h,
+        bytes,
+    ))
 }
 
 // AI 识别注释现由写入器在头部之内落笔(`pdf::AI_HEAD`):事后插入会让

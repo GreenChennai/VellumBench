@@ -45,7 +45,9 @@ pub fn trigger_scroll_reveals(page: &mut PageSession) {
     );
     let Ok(vh) = page.inner_height() else { return };
     let step = (vh as f64 * 0.85).max(150.0) as u32;
-    let Ok(total) = page.content_size() else { return };
+    let Ok(total) = page.content_size() else {
+        return;
+    };
     let total = total.1;
     let mut steps = 0u32;
     let mut y = 0u32;
@@ -102,7 +104,13 @@ pub fn wait_visual_stability(page: &mut PageSession) -> Result<bool, String> {
 fn fast_hash(page: &mut PageSession) -> Option<[u8; 32]> {
     let (w, h) = page.content_size().ok()?;
     let data = page
-        .screenshot("jpeg", Some(50), Some((0.0, 0.0, w as f64, h as f64)), true, false)
+        .screenshot(
+            "jpeg",
+            Some(50),
+            Some((0.0, 0.0, w as f64, h as f64)),
+            true,
+            false,
+        )
         .ok()?;
     let img = image::load_from_memory(&data).ok()?.to_rgb8();
     let small = image::imageops::resize(&img, 128, 128, image::imageops::FilterType::Nearest);
@@ -134,7 +142,10 @@ pub fn settle(page: &mut PageSession) -> Result<u32, String> {
 
 // -------------------------------------------------------------- capture
 /// 整页 PNG 导出(要素 2-4、9;WPI PNG 全页分支的等价实现)。
-pub fn capture_png(page: &mut PageSession, opts: &CaptureOptions) -> Result<CaptureOutcome, String> {
+pub fn capture_png(
+    page: &mut PageSession,
+    opts: &CaptureOptions,
+) -> Result<CaptureOutcome, String> {
     // 要素 10:脚本执行前注入 rAF 节流 + reduced-motion
     page.add_init_script(RAF_THROTTLE_JS)?;
     page.emulate_static()?;
@@ -191,7 +202,13 @@ pub fn capture_png(page: &mut PageSession, opts: &CaptureOptions) -> Result<Capt
     let out_h = img.height();
     let bytes = encode_png(&img, rgba && opts.transparent)?;
     let _ = viewport_h;
-    Ok(CaptureOutcome { png: bytes, width: out_w, height: out_h, warnings, infinite_animations: infinite })
+    Ok(CaptureOutcome {
+        png: bytes,
+        width: out_w,
+        height: out_h,
+        warnings,
+        infinite_animations: infinite,
+    })
 }
 
 /// 分块滚动截图 + 纵向拼接(WPI `capture_highres` 协议)。
@@ -288,12 +305,24 @@ fn encode_png(img: &image::RgbaImage, keep_alpha: bool) -> Result<Vec<u8>, Strin
         image::codecs::png::FilterType::Adaptive,
     );
     if keep_alpha {
-        image::ImageEncoder::write_image(encoder, img.as_raw(), img.width(), img.height(), image::ExtendedColorType::Rgba8)
-            .map_err(|e| format!("PNG 编码失败: {e}"))?;
+        image::ImageEncoder::write_image(
+            encoder,
+            img.as_raw(),
+            img.width(),
+            img.height(),
+            image::ExtendedColorType::Rgba8,
+        )
+        .map_err(|e| format!("PNG 编码失败: {e}"))?;
     } else {
         let flat = image::DynamicImage::ImageRgba8(img.clone()).to_rgb8();
-        image::ImageEncoder::write_image(encoder, flat.as_raw(), flat.width(), flat.height(), image::ExtendedColorType::Rgb8)
-            .map_err(|e| format!("PNG 编码失败: {e}"))?;
+        image::ImageEncoder::write_image(
+            encoder,
+            flat.as_raw(),
+            flat.width(),
+            flat.height(),
+            image::ExtendedColorType::Rgb8,
+        )
+        .map_err(|e| format!("PNG 编码失败: {e}"))?;
     }
     Ok(out)
 }
@@ -333,5 +362,10 @@ pub fn capture_dom(page: &mut PageSession, url: &str) -> Result<DomCapture, Stri
         false,
     )?;
     let _ = sh;
-    Ok(DomCapture { list, page_png, url_prefix: String::new(), warnings })
+    Ok(DomCapture {
+        list,
+        page_png,
+        url_prefix: String::new(),
+        warnings,
+    })
 }

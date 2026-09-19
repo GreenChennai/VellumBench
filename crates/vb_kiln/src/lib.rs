@@ -12,9 +12,10 @@
 //! - `error`/`report`:全分类错误 + 可观测报告,异常输入不 panic
 
 pub mod anim;
+pub mod animlane;
+pub mod context;
 pub mod domexport;
 pub mod dompaint;
-pub mod context;
 pub mod error;
 pub mod formats;
 pub mod frames;
