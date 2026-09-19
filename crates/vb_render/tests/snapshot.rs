@@ -49,7 +49,7 @@ fn fixed_scene() -> DrawList {
         },
     ];
     items.push(DrawItem {
-            layer: 1,
+        layer: 1,
         sid: String::new(),
         rect: [120.0, 20.0, 60.0, 60.0],
         ellipse: true,

@@ -566,6 +566,8 @@ pub struct StyledPart {
 /// 旧口径不同——旧口径里 SegStyle 的字号/字重/字体全部失效,重点字被
 /// 统一成正文,21 篇 T2)。行划分仍用基础整形的断行结果;dom 路线行由
 /// '\n' 硬换承载且画板够宽,不会触发软换。
+/// 参数面 8 个:基础样式(族/号/重)+ 文本/宽/字距 + 段表 + 回调(clippy 阈值 7)
+#[allow(clippy::too_many_arguments)]
 pub fn for_each_styled_line(
     text: &str,
     base_family: &str,
