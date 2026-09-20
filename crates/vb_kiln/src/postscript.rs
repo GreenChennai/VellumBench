@@ -9,7 +9,7 @@ use vb_render::encode::{DrawItem, DrawKind, FillDef};
 
 use crate::context::ExportContext;
 use crate::error::KilnResult;
-use crate::pdf::{escape_pdf_string, fnum, winansi_escaped, write_pdf};
+use crate::pdf::{escape_pdf_string, fnum, winansi_escaped};
 
 /// EPS 3.0 字节流。
 pub fn write_eps(ctx: &ExportContext) -> KilnResult<Vec<u8>> {

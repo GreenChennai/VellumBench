@@ -1224,13 +1224,13 @@ fn apply_filter_color(mut c: [f32; 4], filter: Option<&vb_render::encode::Filter
     if let Some(f) = filter {
         if (f.brightness - 1.0).abs() > 1e-3 {
             for ch in c.iter_mut().take(3) {
-                *ch = ((*ch as f32) * f.brightness as f32).clamp(0.0, 1.0);
+                *ch = (*ch * f.brightness as f32).clamp(0.0, 1.0);
             }
         }
         if (f.saturate - 1.0).abs() > 1e-3 {
-            let l = 0.2126 * c[0] as f32 + 0.7152 * c[1] as f32 + 0.0722 * c[2] as f32;
+            let l = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
             for ch in c.iter_mut().take(3) {
-                *ch = (l + (*ch as f32 - l) * f.saturate as f32).clamp(0.0, 1.0);
+                *ch = (l + (*ch - l) * f.saturate as f32).clamp(0.0, 1.0);
             }
         }
     }
@@ -1251,13 +1251,13 @@ fn apply_filter_stops(
             let mut c = s.color;
             if (f.brightness - 1.0).abs() > 1e-3 {
                 for ch in c.iter_mut().take(3) {
-                    *ch = ((*ch as f32) * f.brightness as f32).clamp(0.0, 1.0);
+                    *ch = (*ch * f.brightness as f32).clamp(0.0, 1.0);
                 }
             }
             if (f.saturate - 1.0).abs() > 1e-3 {
-                let l = 0.2126 * c[0] as f32 + 0.7152 * c[1] as f32 + 0.0722 * c[2] as f32;
+                let l = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
                 for ch in c.iter_mut().take(3) {
-                    *ch = (l + (*ch as f32 - l) * f.saturate as f32).clamp(0.0, 1.0);
+                    *ch = (l + (*ch - l) * f.saturate as f32).clamp(0.0, 1.0);
                 }
             }
             vb_render::encode::GradientStop {
@@ -1269,15 +1269,17 @@ fn apply_filter_stops(
 }
 
 /// F4: 发射 clip path(W n)。坐标从项局部转换到 PDF 用户空间(Y 翻转)。
+/// (参数与 DrawItem 几何字段一一对应;clippy 阈值 7)
+#[allow(clippy::too_many_arguments)]
 fn emit_clip_path(
     s: &mut String,
     clip: &vb_render::encode::ClipDef,
     x: f64,
-    y: f64,
+    _y: f64,
     w: f64,
     h: f64,
     py: f64,
-    page_h: f64,
+    _page_h: f64,
 ) {
     let pdf_y = |local_y: f64| py + h - local_y;
     match clip {
@@ -1498,8 +1500,8 @@ fn push_stop_color(
                 let span = (b.pos - a.pos).max(1e-6);
                 let k = (t - a.pos) / span;
                 // RGBA 四通道全插值(alpha 漏插曾让半透明渐变整体变不透明)
-                for i in 0..4 {
-                    c[i] = a.color[i] + (b.color[i] - a.color[i]) * k;
+                for (ci, (va, vb)) in c.iter_mut().zip(a.color.iter().zip(b.color.iter())) {
+                    *ci = va + (vb - va) * k;
                 }
                 break;
             }
@@ -2085,7 +2087,7 @@ pub fn merge_pdf_pages_head(pages: &[Vec<u8>], head: &str) -> KilnResult<Vec<u8>
         }
         page_ocg_ids.push(ocg_local);
         page_ocg_names.push(ocg_names);
-        offsets.push(if pi == 0 { 0 } else { 0 }); // 先占位,稍后累计
+        offsets.push(0); // 先占位,稍后累计
         all_objs.push(objs);
     }
     // 偏移:前 i 个输入的最大对象号累计
@@ -2108,15 +2110,15 @@ pub fn merge_pdf_pages_head(pages: &[Vec<u8>], head: &str) -> KilnResult<Vec<u8>
         (global, name)
     };
     let mut name_to_global: BTreeMap<String, u32> = BTreeMap::new();
-    for pi in 0..page_ocg_ids.len() {
-        for k in 0..page_ocg_ids[pi].len() {
+    for (pi, ids) in page_ocg_ids.iter().enumerate() {
+        for k in 0..ids.len() {
             let (global, name) = ocg_global(pi, k);
             name_to_global.entry(name).or_insert(global);
         }
     }
     let mut canonical_ocgs: Vec<u32> = Vec::new();
-    for pi in 0..page_ocg_ids.len() {
-        for k in 0..page_ocg_ids[pi].len() {
+    for (pi, ids) in page_ocg_ids.iter().enumerate() {
+        for k in 0..ids.len() {
             let (global, name) = ocg_global(pi, k);
             let canon = name_to_global.get(&name).copied().unwrap_or(global);
             if !canonical_ocgs.contains(&canon) {
@@ -2159,7 +2161,7 @@ pub fn merge_pdf_pages_head(pages: &[Vec<u8>], head: &str) -> KilnResult<Vec<u8>
         }
     }
     // 新 Catalog(1)与 Pages(2);原输入的 Catalog/Pages 对象弃用
-    let total = out_objs.keys().next_back().copied().unwrap_or(2);
+    let _total = out_objs.keys().next_back().copied().unwrap_or(2);
     let kids: Vec<String> = page_obj_ids
         .iter()
         .enumerate()

@@ -262,11 +262,11 @@ pub fn paintlist_to_document(
                 // 裁剪的邻内容污染);失败回退整页截图裁剪
                 let reason = item.get("reason").and_then(Value::as_str).unwrap_or("");
                 let src = item.get("src").and_then(Value::as_str).unwrap_or("");
-                if reason == "svg-image" && !src.is_empty() {
-                    if try_svg_vector(src, url_prefix, project_dir, &rect, &mut doc, content_layer)
-                    {
-                        continue;
-                    }
+                if reason == "svg-image"
+                    && !src.is_empty()
+                    && try_svg_vector(src, url_prefix, project_dir, &rect, &mut doc, content_layer)
+                {
+                    continue;
                 }
                 meta.raster_count += 1;
                 let id = match page_png {
@@ -629,7 +629,6 @@ fn try_svg_vector(
     doc: &mut Document,
     parent: NodeId,
 ) -> bool {
-    use vb_doc::model::Geom;
     let Some(rest) = src.strip_prefix(prefix) else {
         return false;
     };

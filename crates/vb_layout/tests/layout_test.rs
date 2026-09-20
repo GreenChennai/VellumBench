@@ -139,7 +139,7 @@ fn unparsable_grid_template_warns_and_degrades() {
 .g { display:grid; grid-template-columns:bogus-track(); }
 .g div { height:50px; }
 </style></head><body><div class="poster"><div class="g"><div>a</div><div>b</div></div></div></body></html>"#;
-    let (_doc, ws) = layout(&html);
+    let (_doc, ws) = layout(html);
     assert!(
         ws.iter()
             .any(|w| w.contains("grid-template-columns") && w.contains("未识别")),

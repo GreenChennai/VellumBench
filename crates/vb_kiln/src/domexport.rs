@@ -396,6 +396,8 @@ pub fn export_dom_pages(
 }
 
 /// 单源 → (行数, clip, raster, 警告, 浏览器, w, h, PDF 字节)。
+/// 单源 → (行数, clip, raster, 警告, 浏览器, w, h, PDF 字节)。
+#[allow(clippy::type_complexity)] // 8 元组为内部管道中间态,出口处即拆解
 fn export_dom_pdf_bytes(
     src: &Path,
     transparent: bool,

@@ -132,7 +132,7 @@ fn handle(mut stream: TcpStream, root: Arc<PathBuf>) {
     let target = if rel.is_empty() {
         resolve_index(&root)
     } else {
-        let cand = root.join(&rel);
+        let cand = root.join(rel);
         if cand.is_dir() {
             resolve_index(&cand)
         } else {
@@ -142,8 +142,7 @@ fn handle(mut stream: TcpStream, root: Arc<PathBuf>) {
     // 路径逃逸防护
     let safe = target
         .as_ref()
-        .map(|t| t.canonicalize().ok())
-        .flatten()
+        .and_then(|t| t.canonicalize().ok())
         .map(|c| c.starts_with(root.canonicalize().unwrap_or_else(|_| root.to_path_buf())))
         .unwrap_or(false);
     let Some(file) = target.filter(|_| safe).filter(|t| t.is_file()) else {

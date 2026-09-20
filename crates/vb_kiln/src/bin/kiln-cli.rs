@@ -118,7 +118,7 @@ enum ImgOp {
         direction: String,
         #[arg(long, default_value_t = 0)]
         gap: u32,
-        #[arg(long, default_value = "#ffffff")]
+        #[arg(long, default_value = "#ffffff")] // vb-token-ok:CLI 默认底色,非 UI 主题色
         bg: String,
         #[arg(long, default_value = "start")]
         align: String,
@@ -144,7 +144,7 @@ enum ImgOp {
         width: u32,
         #[arg(long)]
         height: u32,
-        #[arg(long, default_value = "#ffffff")]
+        #[arg(long, default_value = "#ffffff")] // vb-token-ok:CLI 默认底色,非 UI 主题色
         bg: String,
         #[arg(long, default_value = "center")]
         align: String,

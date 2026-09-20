@@ -35,6 +35,12 @@ pub enum FrameOutcome {
     Pong(Vec<u8>), // 已在内部排队 pong 由 WsConn 发送
 }
 
+impl Default for FrameCodec {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FrameCodec {
     pub fn new() -> Self {
         FrameCodec {
@@ -144,7 +150,7 @@ impl FrameCodec {
                 0x9 => return Ok(FrameOutcome::Pong(payload)), // ping(payload 带给传输层回 pong)
                 0xA => continue,                               // pong 忽略,继续解析
                 0x8 => return Err("WS 对端发送 close".into()),
-                0x0 | 0x1 | 0x2 => {}
+                0x0..=0x2 => {}
                 other => return Err(format!("WS 未知 opcode {other}")),
             }
 
@@ -187,6 +193,8 @@ pub struct WsConn {
     stream: TcpStream,
     codec: FrameCodec,
     next_mask_seed: u8,
+    /// ping 帧的 payload 备查;当前传输层直接回 pong,不消费(协议备忘)。
+    #[allow(dead_code)]
     pong_queue: Vec<Vec<u8>>,
 }
 

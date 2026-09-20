@@ -58,7 +58,7 @@ pub fn print_pdf(
         let w_mm = px_to_mm(out_w as f64);
         inject_page_size(page, w_mm, page_h_mm)?;
         let pdf = page.print_to_pdf(w_mm / 25.4, page_h_mm / 25.4, true)?;
-        let pages = (out_h + MAX_PAGE_H_PX - 1) / MAX_PAGE_H_PX;
+        let pages = out_h.div_ceil(MAX_PAGE_H_PX);
         return Ok(PrintOutcome {
             pdf,
             width_css: out_w,

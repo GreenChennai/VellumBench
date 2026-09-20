@@ -27,7 +27,7 @@ pub fn request(
     let deadline = std::time::Instant::now() + timeout;
     let mut raw = Vec::with_capacity(8 * 1024);
     let mut buf = [0u8; 16 * 1024];
-    let (status, head, mut body) = loop {
+    let (status, head, body) = loop {
         // 头部是否完整
         if let Some(header_end) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
             let head = String::from_utf8_lossy(&raw[..header_end]).to_ascii_lowercase();
@@ -103,11 +103,11 @@ fn dechunk_complete(data: &[u8]) -> bool {
 fn dechunk(data: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut pos = 0usize;
-    loop {
-        let line_end = match data[pos..].windows(2).position(|w| w == b"\r\n") {
-            Some(p) => pos + p,
-            None => break,
-        };
+    while let Some(line_end) = data[pos..]
+        .windows(2)
+        .position(|w| w == b"\r\n")
+        .map(|p| pos + p)
+    {
         let size_str = String::from_utf8_lossy(&data[pos..line_end]);
         let size = match usize::from_str_radix(size_str.trim().split(';').next().unwrap_or("0"), 16)
         {

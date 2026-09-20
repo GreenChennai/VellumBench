@@ -87,7 +87,7 @@ fn rounded_rect_radius(segs: &[tiny_skia_path::PathSegment]) -> Option<f64> {
             tiny_skia_path::PathSegment::MoveTo(pt) | tiny_skia_path::PathSegment::LineTo(pt) => {
                 prev = Some(pt);
             }
-            tiny_skia_path::PathSegment::CubicTo(c1, c2, pt) => {
+            tiny_skia_path::PathSegment::CubicTo(c1, _c2, pt) => {
                 let p0 = prev.unwrap_or(c1);
                 let chord = ((pt.x - p0.x).powi(2) + (pt.y - p0.y).powi(2)).sqrt();
                 chords.push(chord);
@@ -196,13 +196,13 @@ impl<'a> SvgWalker<'a> {
                 Some((h, a)) => (h, a * fill.opacity().get()),
                 None => {
                     self.warn("pattern 填充近似为浅灰".into());
-                    ("#e8e8e4".to_string(), 1.0)
+                    ("#e8e8e4".to_string(), 1.0) // vb-token-ok:SVG 纸面色(文档语义,非 UI 主题)
                 }
             },
             None => match p.stroke() {
                 Some(st) => match paint_color(st.paint()) {
                     Some((h, a)) => (h, a * st.opacity().get()),
-                    None => ("#e8e8e4".to_string(), 1.0),
+                    None => ("#e8e8e4".to_string(), 1.0), // vb-token-ok:同上
                 },
                 None => return,
             },
@@ -337,7 +337,7 @@ impl<'a> SvgWalker<'a> {
             .and_then(|s| s.fill())
             .and_then(|f| paint_color(f.paint()))
             .map(|(h, _)| h)
-            .unwrap_or_else(|| "#1a1a1a".to_string());
+            .unwrap_or_else(|| "#1a1a1a".to_string()); // vb-token-ok:SVG 墨色回退
         if let Some(sp) = first_span {
             // 字号以包围盒为主,span 字号只用于缩小包围盒偏差
             let _ = sp.font_size();

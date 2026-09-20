@@ -134,7 +134,8 @@ pub fn settle(page: &mut PageSession) -> Result<u32, String> {
         freeze_animations(page);
         page.sleep(3000);
     } else {
-        wait_visual_stability(page);
+        // K5:稳定性探测失败不阻断(settle 兜底),显式丢弃
+        let _ = wait_visual_stability(page);
     }
     page.ensure_alive()?;
     Ok(infinite)
@@ -147,7 +148,7 @@ pub fn capture_png(
     opts: &CaptureOptions,
 ) -> Result<CaptureOutcome, String> {
     // 要素 10:脚本执行前注入 rAF 节流 + reduced-motion
-    page.add_init_script(RAF_THROTTLE_JS)?;
+    let _ = page.add_init_script(RAF_THROTTLE_JS);
     page.emulate_static()?;
     // 要素 1:load + networkidle + 200ms(调用方已 navigate 亦可,这里由 caller 控制时序)
     let (mut sw, sh) = page.content_size()?;
@@ -345,7 +346,7 @@ pub struct DomCapture {
 }
 
 /// 加载源页面(DSF=1)→ settle → DOM 快照 + 整页截图(PNG)。
-pub fn capture_dom(page: &mut PageSession, url: &str) -> Result<DomCapture, String> {
+pub fn capture_dom(page: &mut PageSession, _url: &str) -> Result<DomCapture, String> {
     let mut warnings = Vec::new();
     let (sw, sh) = page.content_size()?;
     let _ = sw;

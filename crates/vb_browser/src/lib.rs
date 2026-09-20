@@ -162,11 +162,15 @@ fn export_with_url(
     }
 }
 
+/// (预留给 examples/独立入口;主路经 kiln-cli 传 exe。)
+#[allow(dead_code)]
 fn exe_path() -> Result<PathBuf, String> {
     discover_browser(None).ok_or_else(|| "未发现系统浏览器".into())
 }
 
 /// JSON 单行结果(与 kiln-cli 输出风格一致)。
+/// (参数面与 CLI JSON 字段一一对应,10 个;clippy 阈值 7。)
+#[allow(clippy::too_many_arguments)]
 pub fn result_json(
     ok: bool,
     format: &str,
