@@ -89,7 +89,7 @@ pub fn write_pdf_head(ctx: &ExportContext, producer: &str, head: &str) -> KilnRe
     let n_smasks = usage
         .images
         .iter()
-        .filter(|(_, d, _, _)| d.chunks_exact(4).any(|px| px[3] != 255))
+        .filter(|(_, d, _, _)| d.as_chunks::<4>().0.iter().any(|px| px[3] != 255))
         .count() as u32;
     let gs_base_start = sm_base_start + n_smasks;
     let pat_base_start = gs_base_start + usage.opacities.len() as u32;
@@ -290,7 +290,7 @@ end",
         let mut rgb = Vec::with_capacity(data.len() / 4 * 3);
         let mut alpha = Vec::with_capacity(data.len() / 4);
         let mut uniform_opaque = true;
-        for px in data.chunks_exact(4) {
+        for px in data.as_chunks::<4>().0 {
             rgb.extend_from_slice(&[px[0], px[1], px[2]]);
             alpha.push(px[3]);
             if px[3] != 255 {
