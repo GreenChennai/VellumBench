@@ -20,7 +20,8 @@ members = [
 [workspace.package]
 version = "0.9.0"
 edition = "2021"
-license = "MIT"
+# ACL-1.0 是自定义协议(非 SPDX 标准标识符),故用 license-file 指向根 LICENSE
+license-file = "LICENSE"
 repository = "https://github.com/GreenChennai/VellumBench"
 rust-version = "1.85"
 

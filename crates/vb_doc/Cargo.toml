@@ -2,7 +2,7 @@
 name = "vb_doc"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 repository.workspace = true
 description = "Vellum Bench 场景图、命令模式 Undo、HTML 导入导出(核心 crate,可无头测试)"
 

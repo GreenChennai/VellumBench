@@ -2,7 +2,7 @@
 name = "vb_layout"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 repository.workspace = true
 description = "Vellum Bench 文档流布局求值(taffy 封装):flow/flex/absolute → 具体矩形"
 

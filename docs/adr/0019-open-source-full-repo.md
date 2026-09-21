@@ -1,5 +1,8 @@
 # ADR-0019: 仓库以开源形态运营,tests/ 与 tools/ 入库(偏离 MomentShift 排除策略)
 
+> ⚠️ 协议部分已被 **[ADR-0030](0030-license-switch-to-acl-1.md)** 覆盖:本仓协议已由 MIT 切换为 **ACL-1.0**(与 Artboard 同款)。
+> 本 ADR 关于"**全量入库**(tests/、tools/、docs/ 一并入库)"的决策继续有效。
+
 - 状态:已接受(2026-09-09)
 - 背景:设计文档 09 篇 §10 写「GitHub 仅推送 crates/ + assets/ + 元数据;tests/ 与 tools/ 排除(沿用 MomentShift 策略)」;同文档 12 篇 §六又提出「vb_doc / vb_html / vb_css 开源吸引社区贡献」。用户在本次启动指令中明确要求「建立新 GitHub 仓库」。
 - 决策:**仓库全量入库**(含 tests/、tools/、docs/),MIT 许可。排除策略仅适用于历史归档型仓库。

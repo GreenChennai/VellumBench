@@ -2,7 +2,7 @@
 name = "vb_kiln"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 repository.workspace = true
 description = "Kiln - VellumBench 下一代导出核心:九格式(PNG/JPG/GIF/MP4/SVG/PDF/EPS/Ai/PPTX)统一写入器"
 

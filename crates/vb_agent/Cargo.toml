@@ -2,7 +2,7 @@
 name = "vb_agent"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 repository.workspace = true
 description = "Vellum Bench Agent 协作:CLI / patch 事务 / 文件监听(v0.6 MCP)"
 

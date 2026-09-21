@@ -2,7 +2,7 @@
 name = "vb_export"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 repository.workspace = true
 description = "Vellum Bench 导出管线:命名模板、原生引擎调度、WPI 桥接(v0.5)"
 

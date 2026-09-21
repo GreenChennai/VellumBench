@@ -1,8 +1,8 @@
-﻿[package]
+[package]
 name = "vb_app"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 repository.workspace = true
 description = "Vellum Bench 桌面应用(eframe + Vello 画布)"
 

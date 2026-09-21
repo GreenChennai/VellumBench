@@ -1,21 +1,114 @@
-MIT License
+Artboard 社区开源协议(ACL-1.0)
+Artboard Community License, Version 1.0
 
 Copyright (c) 2026 GreenChennai
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+适用范围说明:本仓库(Vellum Bench)与 Artboard 采用**同一份协议 ACL-1.0**;
+第一条对「本软件」的定义各自指向自己仓库的全部内容,其余条款完全一致。
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+========================================================================
+中文版(以中文版为准,英文版仅为便利对照)
+========================================================================
 
+一、定义
+- 「本软件」指本仓库中的全部内容:`crates/`(全部 Rust 源码)、`tools/`、`bench/`、
+  `examples/`、`tests/`、`docs/`、`assets/`、`i18n/`、`dist/`、命令与配置文件
+  (`commands.yaml`、`Cargo.toml`、`Cargo.lock` 等)、`README`、`CONTEXT.md`,
+  以及它们的修改版与衍生作品。
+- 「产出物」指**使用**本软件(或其衍生)运行、渲染、编辑、导出或生成出来的内容成品:
+  HTML/CSS 项目与页面、PNG / JPG / GIF / MP4、矢量文件(SVG/EPS/AI)、PDF、PPTX,
+  以及排版与设计成果等。
+
+二、授予的权利
+任何个人或组织均可免费:使用、学习、复制、修改、合并、翻译、分发本软件,
+并可在合法用途(含商业性内部使用)中运行它——前提是遵守第四条与第五条。
+
+三、产出物归使用者:可商用、无开源义务
+1. 使用本软件产出的内容归使用者所有,可自由商用、闭源、再授权、直接售卖,
+   本协议不要求对产出物开源,也不要求署名。
+2. 仓库内引用或捆绑的第三方素材(依赖库、字体、图标、插画、vendor 库)不属于
+   「产出物」,亦不因本协议而改变其自身授权;使用其成品时请自行核对相应条款。
+
+四、传染条款:复制 / 使用本软件的内容必须同协议开源
+1. 再分发本软件(整体或其**实质部分**),无论是否修改、以源码还是打包形态,
+   必须整体以本协议(ACL-1.0)授权,不得改用更宽松或更严格的其他协议;
+2. 分发时必须随附完整对应源码,并保留版权声明、本协议文本与上游仓库链接;
+3. 把本软件或其衍生合并进另一个产品 / 工具 / 项目再分发的,该项目中
+   含有衍生内容的部分必须按本协议开源,且不得对衍生部分收取许可费;
+4. 通过网络服务方式向用户提供本软件功能(如包装成在线工具、SaaS、API、
+   云端服务)的,视为再分发:必须向服务使用者公开完整对应源码。
+
+五、禁止转售本软件本体
+1. 不得将本软件本体(或其副本、衍生)作为商品单独出售、出租、订阅,
+   或以「软件授权费」名义收费;
+2. 以下行为**不属于**转售,明确允许:
+   a. 收取分发载体成本(介质、运费、带宽)——但软件本身不得标价;
+   b. 收取安装部署、定制开发、培训、咨询等服务费用;
+   c. **销售使用本软件创作出来的产出物**(设计成品、成套物料、代做服务等)。
+
+六、无担保
+本软件按「现状」提供,不附带任何明示或默示的担保(包括适销性与特定用途
+适用性)。作者不对因使用本软件产生的任何主张、损害或其他责任负责。
+
+========================================================================
+English Translation (informational; the Chinese version governs)
+========================================================================
+
+Scope note: This repository (Vellum Bench) and Artboard share the same license,
+ACL-1.0. Section 1 defines "the Software" as the entire contents of the
+respective repository; all other sections are identical.
+
+1. Definitions
+- "The Software" means the entire contents of this repository: crates/ (all Rust
+  sources), tools/, bench/, examples/, tests/, docs/, assets/, i18n/, dist/,
+  command and configuration files (commands.yaml, Cargo.toml, Cargo.lock, ...),
+  README, CONTEXT.md, together with all modifications and derivative works
+  thereof.
+- "Output" means content produced by *running, rendering, editing, exporting
+  with, or generating using* the Software (or a derivative): HTML/CSS projects
+  and pages, PNG / JPG / GIF / MP4, vector files (SVG/EPS/AI), PDF, PPTX, and
+  resulting layout/design deliverables.
+
+2. Grant
+Any person or organization is free of charge to use, study, copy, modify,
+merge, translate and redistribute the Software, and to run it for any lawful
+purpose including commercial internal use — subject to Sections 4 and 5.
+
+3. Output belongs to the user: commercial use allowed, no copyleft duty
+1. Content produced by using the Software belongs to the user, and may be
+   used commercially, kept closed, re-licensed, or sold outright. This
+   License requires neither open-sourcing nor attribution for Output.
+2. Bundled third-party assets (dependency libraries, fonts, icons,
+   illustrations, vendor libraries) are neither "Output" nor re-licensed by
+   this License; verify their own terms when shipping them.
+
+4. Copyleft: copies and derivatives must stay open under this License
+1. Redistribution of the Software (in whole or in substantial part), with or
+   without modification, in source or packaged form, must be licensed
+   entirely under this License (ACL-1.0) — no looser or stricter substitute;
+2. Complete corresponding source must accompany redistribution, together
+   with the copyright notice, this License text, and the upstream repo link;
+3. Merging the Software or a derivative into another product / tool / project
+   and redistributing it requires that the portions containing derivative
+   content be open-sourced under this License, with no license fee charged
+   on them;
+4. Offering the Software's functionality over a network (e.g. wrapped as an
+   online tool, SaaS, API, or hosted service) counts as redistribution:
+   complete corresponding source must be made available to service users.
+
+5. No resale of the Software itself
+1. The Software itself (or copies/derivatives of it) must not be sold,
+   rented, or offered on a subscription basis as a standalone product, nor
+   charged for as a "license fee";
+2. The following are expressly NOT resale and are allowed:
+   a. Charging distribution cost (media, shipping, bandwidth) — the Software
+      itself must remain unpriced;
+   b. Charging for installation, customization, training, or consulting;
+   c. **Selling Output created with the Software** (finished designs,
+      collateral packages, production services).
+
+6. No Warranty
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+IMPLIED, INCLUDING MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
+IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY ARISING FROM THE SOFTWARE.

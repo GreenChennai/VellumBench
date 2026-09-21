@@ -2,7 +2,7 @@
 name = "vb_html"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 repository.workspace = true
 description = "Vellum Bench HTML 忠实解析与 canonical 序列化(往返保真的基石)"
 
