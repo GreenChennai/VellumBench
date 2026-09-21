@@ -64,9 +64,14 @@ fn read_active_port(user_data_dir: &Path) -> Option<u16> {
 fn port_from_listen_line(line: &str) -> Option<u16> {
     let idx = line.find("DevTools listening on ws://")?;
     let rest = &line[idx + "DevTools listening on ws://".len()..];
-    let hostport = rest.trim().trim_start_matches("ws://").trim_end_matches('/');
+    let hostport = rest
+        .trim()
+        .trim_start_matches("ws://")
+        .trim_end_matches('/');
     let hostport = hostport.split_once('/').map(|(h, _)| h).unwrap_or(hostport);
-    hostport.rsplit_once(':').and_then(|(_, p)| p.parse::<u16>().ok())
+    hostport
+        .rsplit_once(':')
+        .and_then(|(_, p)| p.parse::<u16>().ok())
 }
 
 /// 与 playwright headless 对齐的渲染相关默认参数。
