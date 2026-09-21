@@ -48,6 +48,7 @@ fn set_geom(sid: &str, g: Geom) -> Command {
         sid: sid.to_string(),
         new: g,
         old: None,
+        old_declared: None,
     }
 }
 
@@ -717,6 +718,7 @@ fn mixed_compound_does_not_merge() {
                                 h: 80.0,
                             },
                             old: None,
+                            old_declared: None,
                         },
                     ],
                 },

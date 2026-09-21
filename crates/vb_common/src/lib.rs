@@ -10,6 +10,8 @@
 pub mod color;
 pub mod geom;
 pub mod id;
+/// `transform` 平移分量解析(导入折算与导出补偿的**唯一口径**)。
+pub mod transform;
 pub mod units;
 
 pub use color::Rgba;

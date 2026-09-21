@@ -28,7 +28,7 @@
 | **验收门禁(机器出分,禁止手写)**:[`bench/acceptance.py`](bench/acceptance.py) × 用户指定验收集(6 类 26 HTML):**G1** PNG vs 浏览器基线平均 **99.93**(最差 99.65,尺寸严格相等);**G2/G3** PDF/AI vs PNG 平均 **99.37**;**G4** 文本层(容差+栅格化 caveat);**G5** 字体 100% 嵌入 | ✅ |
 | **外部格式导入(`kiln-cli import`)**:HTML 项目;PDF/AI(pdfium.dll 动态绑定,文本可编辑);SVG(usvg 纯 Rust:矩形/圆角/圆/椭圆/真实文本逐对象映射) | ✅ |
 | **位图工具箱 `kiln-cli img`**:crop(box/trim-border)· stitch(vertical/horizontal+gap+bg)· blur(高斯)· pad · info | ✅ |
-| `vellum-cli`:**10 个子命令** + `patch` 的 **16 种 op**(事务 + `base_rev` 乐观锁) | ✅ |
+| `vellum-cli`:**12 个子命令** + `patch` 的 **17 种 op**(事务 + `base_rev` 乐观锁) | ✅ |
 | **vellum-mcp**:MCP stdio Server(**10 工具**,JSON-RPC 2.0) | ✅ |
 | GUI:Vulkan(wgpu 29)+ Vello 画布 | ✅ |
 | 选择/矩形/椭圆/抓手、**Alt 复制、Shift 约束、框选(相交即选)** | ✅ |
@@ -45,16 +45,20 @@
 
 ### 未落地 ⏳ —— 别按「已完成」读
 
+> **单一真相**:下表是摘要;完整清单(能力 / 状态 / 命令 ID / Agent 可复现)
+> 见 `crates/vb_app/src/capabilities.rs`,应用内 **帮助 → 能力台账…** 可直接查看,
+> 并由 `vb_app` 门禁测试逐条校验「列出的命令必须已注册」。
+
 | 缺口 | 现状(代码实测) | 计划 |
 |---|---|---|
-| **快捷键** | 注册表 75 命令 / 61 键位绑定(`commands.yaml` 同步,门禁锁定);02 篇目标 ~120 | P3 剩余批次 |
+| **快捷键** | 注册表 **147 命令 / 76 键位绑定**(`commands.yaml` 同步,门禁锁定);02 篇目标 ~120(命令数已超,键位仍可扩) | P3 剩余批次 |
 | **主题** | 深/浅双令牌 + 切换;vb_ui 已落 theme/fonts/icons/components/cursor | P2 收尾 |
 | 画布真文本 | CPU 导出真字形已落地;画布仍 egui 近似(见 [ADR-0017](docs/adr/0017-canvas-text-approximation-v01.md));Parley 多行/双向留后续 | 复议中 |
-| 路径查找器扩展运算 | 基础四运算已落,扩展 6 运算未开始 | C2 |
-| 响应式断点 / 伪类编辑 | 未开始 | P3 后半 |
+| 路径查找器 | 基础四运算 + **合并 / 减去后方对象 / 裁剪**(与基础同几何内核);**分割 / 修边 / 轮廓**需「一条命令产出多节点」的多结果模型 | C2 |
+| 响应式断点 / 伪类编辑 | 伪类规则**导入保真**(L0);编辑器内的断点与伪类编辑未开始 | P3 后半 |
 | SVG 导入边界 | 自由曲线路径以包围盒矩形近似 + 警告;渐变取中点色;filter/mask/clipPath 跳过 | 逐版补 |
 | PDF 导入边界 | pdfium 对象取色 API 未暴露(统一近似色);路径以盒近似 | 随 pdfium |
-| 门禁 5/10 | **5 性能基线** `tools/bench.ps1`(环形历史+回归告警);**10 三端一致性**(CPU vs SVG 像素容差)已接;6 术语扫描 / i18n ftt 内容未落 | P5 |
+| 门禁 5/10 | **5 性能基线** `tools/bench.ps1`(环形历史+回归告警);**10 三端一致性**(CPU vs SVG 像素容差)已接;6 术语扫描已接 / i18n 内容未落 | P5 |
 | 组件 / 时间轴 / CRDT | 未开始(1→100) | 不承诺档期 |
 
 ## Kiln 导出核心

@@ -53,6 +53,8 @@ pub const L1_PROPS: &[&str] = &[
     "background-size",
     "background-position",
     "background-repeat",
+    // 背景层混合(S4 外观面板:多条填充条目级混合模式的落点)
+    "background-blend-mode",
     // 边框
     "border",
     "border-width",
@@ -62,16 +64,33 @@ pub const L1_PROPS: &[&str] = &[
     "border-right-width",
     "border-bottom-width",
     "border-left-width",
-    "border-style",
     "border-radius",
     "border-top-left-radius",
     "border-top-right-radius",
     "border-bottom-right-radius",
     "border-bottom-left-radius",
+    // 轮廓(S4 描边面板:外侧对齐描边的落点;不占布局,画在 border 之外)
     "outline",
+    "outline-width",
+    "outline-style",
+    "outline-color",
+    "outline-offset",
     // 阴影
     "box-shadow",
     "text-shadow",
+    // SVG 表现属性(S4 描边面板:矢量路径的通用描边落点;钢笔 v0.1
+    // 已在写 fill/stroke/stroke-width,入白名单只为输出顺序稳定)
+    "fill",
+    "fill-opacity",
+    "fill-rule",
+    "stroke",
+    "stroke-width",
+    "stroke-linecap",
+    "stroke-linejoin",
+    "stroke-miterlimit",
+    "stroke-dasharray",
+    "stroke-dashoffset",
+    "stroke-opacity",
     // 文本
     "font-family",
     "font-size",
@@ -80,17 +99,37 @@ pub const L1_PROPS: &[&str] = &[
     "line-height",
     "letter-spacing",
     "text-align",
+    "text-align-last",
+    "vertical-align",
+    "text-indent",
     "color",
+    // 文字描边(S4 外观面板:文字对象描边落点;厂商前缀事实标准)
+    "-webkit-text-stroke",
+    "-webkit-text-stroke-width",
+    "-webkit-text-stroke-color",
     "text-decoration",
     "text-transform",
     "white-space",
     "overflow-wrap",
+    // 中文排版与连字(04 阶段字符/段落面板;标准 CSS 属性,
+    // unknown 保底本就原样保留,入白名单只为输出顺序稳定)
+    "line-break",
+    "hyphens",
+    "hanging-punctuation",
+    "text-wrap",
+    // 抗锯齿(厂商前缀事实标准,design/03 §5.10 抗锯齿字段的落点)
+    "-webkit-font-smoothing",
     // 变换
     "transform",
     "transform-origin",
     // 视觉
     "opacity",
     "mix-blend-mode",
+    // 滤镜与蒙版(S4 外观面板:高斯模糊 → filter;羽化 → mask-image 近似)
+    "filter",
+    "mask-image",
+    // 层叠上下文/分组隔离(S4-b 透明度面板:挖空组 → isolation:isolate)
+    "isolation",
     "overflow",
     "visibility",
     "clip-path",
@@ -201,10 +240,19 @@ fn strip_important(value: &str) -> (String, bool) {
     }
 }
 
+/// `0` 也必须带单位的单位族(角度与时间)。
+///
+/// 「0 不带单位」是**长度**的规则(设计文档 04 §5.2):`0px` → `0` 合法。
+/// 但角度/时间没有无单位形式 —— `linear-gradient(0, …)`、
+/// `animation-duration: 0` 都是**非法 CSS**。此前一刀切会让 `0deg` 的渐变
+/// 被规范化成非法值,并在二次导入时改变字节(L1 幂等破损)。
+const ZERO_KEEPS_UNIT: &[&str] = &["deg", "grad", "rad", "turn", "s", "ms"];
+
 /// 规范化属性值:
 /// - 折叠空白;逗号后一个空格
 /// - hex 颜色 → 小写最短;rgb()/rgba() → hex;命名色 → hex
-/// - 数字保留 ≤4 位小数去尾 0;`0px` → `0`;单位小写
+/// - 数字保留 ≤4 位小数去尾 0;`0px` → `0`(角度/时间单位除外,见
+///   [`ZERO_KEEPS_UNIT`]);单位小写
 /// - 函数名小写;引号内不改动
 pub fn canonical_value(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
@@ -332,7 +380,7 @@ pub fn canonical_value(raw: &str) -> String {
                 let unit: String = chars[j..k].iter().collect::<String>().to_ascii_lowercase();
                 match num_s.parse::<f64>() {
                     Ok(n) if n.is_finite() => {
-                        if n == 0.0 {
+                        if n == 0.0 && !ZERO_KEEPS_UNIT.contains(&unit.as_str()) {
                             // 0 不带单位(设计文档 04 §5.2)
                             out.push('0');
                         } else {
@@ -553,6 +601,76 @@ mod tests {
             ';',
         );
         assert_eq!(parts.len(), 2);
+    }
+
+    /// 04 阶段(字符/段落面板)新增的文本属性必须入白名单:
+    /// 已知属性获得稳定输出顺序(PROP_ORDER),L1 往返幂等依赖这一点。
+    #[test]
+    fn text_props_of_phase04_are_known() {
+        for p in [
+            "text-align-last",
+            "vertical-align",
+            "text-indent",
+            "line-break",
+            "hyphens",
+            "hanging-punctuation",
+            "text-wrap",
+            "-webkit-font-smoothing",
+        ] {
+            assert!(is_known_prop(p), "{p} 应在 L1 白名单");
+            let d = Decl::parse(&format!("{p}: none")).expect("应可解析");
+            assert!(!d.is_unknown());
+        }
+    }
+
+    /// S4(外观/描边面板)新增的外观属性必须入白名单:效果映射
+    /// (filter/mask-image)、文字描边(-webkit-text-stroke*)、
+    /// 背景层混合(background-blend-mode)、外描边(outline-*)、
+    /// SVG 表现属性(fill/stroke 系)—— 每条带解析往返。
+    #[test]
+    fn appearance_props_of_phase_s4_are_known() {
+        let cases: &[(&str, &str)] = &[
+            ("filter", "blur(4px)"),
+            ("mask-image", "radial-gradient(circle, #000, transparent)"),
+            ("-webkit-text-stroke", "2px #1a1a1a"),
+            ("-webkit-text-stroke-width", "2px"),
+            ("-webkit-text-stroke-color", "#1a1a1a"), // vb-token-ok: 测试/映射数据(文档内容色,非 UI 皮肤)
+            ("background-blend-mode", "multiply, normal"),
+            ("outline", "3px solid #ff0000"),
+            ("outline-width", "3px"),
+            ("outline-style", "dashed"),
+            ("outline-color", "#ff0000"), // vb-token-ok: 测试/映射数据(文档内容色,非 UI 皮肤)
+            ("outline-offset", "0px"),
+            ("fill", "#d4d4d4"), // vb-token-ok: 测试/映射数据(文档内容色,非 UI 皮肤)
+            ("fill-opacity", "0.5"),
+            ("fill-rule", "evenodd"),
+            ("stroke", "#1a1a1a"), // vb-token-ok: 测试/映射数据(文档内容色,非 UI 皮肤)
+            ("stroke-width", "1.5px"),
+            ("stroke-linecap", "round"),
+            ("stroke-linejoin", "bevel"),
+            ("stroke-miterlimit", "4"),
+            ("stroke-dasharray", "6px, 3px"),
+            ("stroke-dashoffset", "0"),
+            ("stroke-opacity", "1"),
+        ];
+        for (p, v) in cases {
+            assert!(is_known_prop(p), "{p} 应在 L1 白名单");
+            let d = Decl::parse(&format!("{p}: {v}")).unwrap_or_else(|| panic!("{p} 应可解析"));
+            assert!(!d.is_unknown());
+            // 往返:to_css 再解析,声明等值(L1 幂等的最小单元)
+            let d2 = Decl::parse(&d.to_css()).expect("to_css 应可再解析");
+            assert_eq!(d, d2, "{p} 往返不等值");
+        }
+    }
+
+    /// 白名单内不得出现重复项:重复会让 sort_decls 的稳定序对同一文档
+    /// 在不同编译路径下不可预测(此前 border-style/outline 曾重复)。
+    #[test]
+    fn l1_props_has_no_duplicates() {
+        let mut seen = std::collections::BTreeSet::new();
+        for p in L1_PROPS {
+            assert!(seen.insert(*p), "L1_PROPS 重复项:{p}");
+        }
     }
 }
 

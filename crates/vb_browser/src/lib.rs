@@ -58,6 +58,18 @@ pub struct LaneRequest {
     pub scale: u32,
     /// 透明背景(仅 PNG)。
     pub transparent: bool,
+    /// 画板取景(P0-3):宽来自目标画板**声明尺寸**而非显式 `--width`。
+    /// true 时按画板契约取景:重置 body 页边距(页边距属页面 chrome,
+    /// 不属画板画布,与 native 车道「画板即画布」同语义),PNG 裁剪
+    /// 画板矩形,PDF 纸张 = 声明尺寸。
+    pub artboard: bool,
+}
+
+/// 采集视口(P0-3):显式宽 > 0 用之,否则历史兜底 1080;
+/// 高 > 0 用之,否则与宽同值(防 100vh 撑爆的占位口径)。
+pub fn viewport_dims(width: u32, height: u32) -> (u32, u32) {
+    let w = if width == 0 { 1080 } else { width };
+    (w, if height == 0 { w } else { height })
 }
 
 /// 车道 B 导出结果(统一 JSON 用)。
@@ -120,9 +132,11 @@ fn export_with_url(
     engine_hint: &str,
 ) -> Result<LaneOutcome, String> {
     let mut page = page::PageSession::attach(proc)?;
-    // 要素 2/3:视口只定宽(高占位同宽,防 100vh 撑爆),DSF 原生倍率
-    let init_w = if req.width == 0 { 1080 } else { req.width };
-    page.set_device_metrics(init_w, init_w, req.scale.clamp(1, 8))?;
+    // 要素 2/3:视口只定宽(高占位同宽,防 100vh 撑爆),DSF 原生倍率。
+    // P0-3:画板声明尺寸下发后,宽高均按声明值定视口(此前高占位 = 宽,
+    // 声明 1080 高的海报会被撑成 1080×1080 视口)。
+    let (init_w, init_h) = viewport_dims(req.width, req.height);
+    page.set_device_metrics(init_w, init_h, req.scale.clamp(1, 8))?;
     page.navigate(url)?;
     page.wait_network_idle(std::time::Duration::from_secs(3));
     page.sleep(200);
@@ -134,6 +148,7 @@ fn export_with_url(
                 height_lock: (req.height > 0).then_some(req.height),
                 scale: req.scale.clamp(1, 8),
                 transparent: req.transparent,
+                artboard: req.artboard,
             };
             let outcome = capture_png(&mut page, &opts)?;
             Ok(LaneOutcome {
@@ -145,7 +160,12 @@ fn export_with_url(
             })
         }
         LaneFormat::Pdf | LaneFormat::Ai => {
-            let outcome = print_pdf(&mut page, init_w, (req.height > 0).then_some(req.height))?;
+            let outcome = print_pdf(
+                &mut page,
+                init_w,
+                (req.height > 0).then_some(req.height),
+                req.artboard,
+            )?;
             let bytes = if req.format == LaneFormat::Ai {
                 ai_from_pdf(outcome.pdf)
             } else {
@@ -213,5 +233,16 @@ mod tests {
     fn encode_path() {
         assert_eq!(encode("橙青色.html"), "%E6%A9%99%E9%9D%92%E8%89%B2.html");
         assert_eq!(encode("index.html"), "index.html");
+    }
+
+    #[test]
+    fn viewport_dims_fallback_and_declared() {
+        // P0-3:无声明保持历史 1080 兜底(WPI 口径不变)
+        assert_eq!(viewport_dims(0, 0), (1080, 1080));
+        // 声明画板尺寸:宽高均按声明(此前高占位 = 宽,1080 高被撑成 1080×1080)
+        assert_eq!(viewport_dims(1920, 1080), (1920, 1080));
+        assert_eq!(viewport_dims(750, 1334), (750, 1334));
+        // 只给宽:高占位同宽(既有口径)
+        assert_eq!(viewport_dims(750, 0), (750, 750));
     }
 }

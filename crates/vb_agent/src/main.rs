@@ -163,10 +163,18 @@ impl From<anyhow::Error> for CliError {
 fn open_doc(path: &Path) -> Result<(Document, UndoStack, PathBuf), CliError> {
     let r = import_project(path).map_err(|e| CliError::Other(format!("导入失败:{e}")))?;
     let dir = r.project_dir.clone();
+    let synthetic = r.synthetic_artboard;
+    let mut doc = r.doc;
     for w in &r.warnings {
         eprintln!("⚠ {w}");
     }
-    Ok((r.doc, UndoStack::new(), dir))
+    // P0-1:文档流布局求值(taffy)——声明几何(百分比/inset/流式)在内存中
+    // 解析为具体几何,供画布/tree/get/渲染与导出尺寸使用;声明本身保留,
+    // 保存不烤入(与 kiln native 车道同口径)
+    for w in vb_layout::apply_import_layout(&mut doc, Some(&dir), synthetic) {
+        eprintln!("⚠ {w}");
+    }
+    Ok((doc, UndoStack::new(), dir))
 }
 
 fn run(cli: Cli) -> Result<(), CliError> {
@@ -822,23 +830,20 @@ fn validate(doc_path: &Path, json: bool) -> Result<(), CliError> {
             if depth != 0 {
                 issues.push(format!("{path}: 花括号不配平(净 {depth})"));
             }
-            let body = content
-                .strip_prefix(":root {")
-                .and_then(|r| r.rsplit_once('}'))
-                .map(|(_, rest)| rest)
-                .unwrap_or(content);
-            for decl in body.split(';') {
-                let decl = decl.replace(['{', '}', '\n', '\r'], " ");
-                let decl = decl.trim();
-                // 跳过选择器段(最后一个 '{' 之后才是声明)
+            // 逐声明扫描:按 ';' 切分后剥离每个分片的 selector 前缀
+            // (`.foo {\n  prop: value`)与收尾 '}'。此前先把 '{}' 替换成空格
+            // 再找分隔符,分隔符已消失,selector 粘进声明 → 无 :root 的文档
+            // 每条规则都误报「非法声明」。
+            for decl in content.split(';') {
                 let decl = match decl.rsplit_once('}') {
-                    Some((_, d)) => d.trim(),
+                    Some((d, _)) => d,
                     None => decl,
                 };
                 let decl = match decl.rsplit_once('{') {
-                    Some((_, d)) => d.trim(),
+                    Some((_, d)) => d,
                     None => decl,
                 };
+                let decl = decl.trim();
                 if decl.is_empty() {
                     continue;
                 }
@@ -861,7 +866,10 @@ fn validate(doc_path: &Path, json: bool) -> Result<(), CliError> {
     let first: Vec<(String, String)> = files.files.clone();
     vb_doc::export::write_project(&doc, &tmp).map_err(|e| CliError::Other(e.to_string()))?;
     match vb_doc::import::import_project(&tmp) {
-        Ok(r2) => {
+        Ok(mut r2) => {
+            // 与首次导出同口径:重导入后同样跑内存布局(L1 对比的两侧必须
+            // 处于同一状态,否则布局回填尺寸会被误判为幂等破坏)
+            vb_layout::apply_import_layout(&mut r2.doc, Some(&tmp), r2.synthetic_artboard);
             let second = vb_doc::export::render_project(&r2.doc);
             let map = |fs: &[(String, String)]| -> std::collections::BTreeMap<String, String> {
                 fs.iter().map(|(p, c)| (p.clone(), c.clone())).collect()

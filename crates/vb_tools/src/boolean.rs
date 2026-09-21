@@ -12,7 +12,15 @@ use flo_curves::geo::Coord2;
 
 use vb_common::geom::{BezPath, PathEl};
 
-/// 布尔运算(AI 路径查找器四基本运算;06 篇 §3.9)。
+/// 布尔运算(AI 路径查找器;06 篇 §3.9)。
+///
+/// 基础四运算 + 扩展三运算(阶段 2 / 03-1-4)。**扩展三运算的几何口径**:
+/// 在"两个操作数"下,AI 的「合并 / 减去后方对象 / 裁剪」与
+/// 「联集 / 减去顶层 / 交集」**几何结果相同**(AI 的差异只在 3+ 对象、
+/// 着色或描边层面体现),故这里如实复用同一几何内核、单独给命令 ID。
+/// 「分割 / 修边 / 轮廓」需要**一条命令产出多个节点**(多结果模型),
+/// 当前 `Command::PathBoolean` 是"lhs 替换 + rhs 删除"的二操作数模型 →
+/// 标计划项(见 `shortcuts::PLANNED`),不静默。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BooleanOp {
     /// 联集(合并两个形状)
@@ -23,6 +31,12 @@ pub enum BooleanOp {
     Intersect,
     /// 差集(Xor:非重叠区域)
     Xor,
+    /// 合并(≡ 联集;两操作数下几何相同)
+    Merge,
+    /// 减去后方对象(≡ 减去顶层,只是强制 lhs = 最前)
+    SubtractBack,
+    /// 裁剪(≡ 交集;两操作数下几何相同)
+    Crop,
 }
 
 impl BooleanOp {
@@ -32,6 +46,9 @@ impl BooleanOp {
             "subtract" => Some(Self::Subtract),
             "intersect" => Some(Self::Intersect),
             "xor" => Some(Self::Xor),
+            "merge" => Some(Self::Merge),
+            "subtract_back" => Some(Self::SubtractBack),
+            "crop" => Some(Self::Crop),
             _ => None,
         }
     }
@@ -42,8 +59,32 @@ impl BooleanOp {
             Self::Subtract => "subtract",
             Self::Intersect => "intersect",
             Self::Xor => "xor",
+            Self::Merge => "merge",
+            Self::SubtractBack => "subtract_back",
+            Self::Crop => "crop",
         }
     }
+
+    /// 该运算归约到的**几何内核**(只有四种;扩展运算与基础运算同核)。
+    pub fn kernel(self) -> Kernel {
+        match self {
+            Self::Union | Self::Merge => Kernel::Union,
+            Self::Subtract | Self::SubtractBack => Kernel::Subtract,
+            Self::Intersect | Self::Crop => Kernel::Intersect,
+            Self::Xor => Kernel::Xor,
+        }
+    }
+}
+
+/// 几何内核(四种基本运算)。独立类型的原因:`match op.kernel()` 必须
+/// **穷尽** —— 若内核仍用 `BooleanOp`,扩展三个变体就成了不可达分支,
+/// 编译器无法证明,只能写 `unreachable!()`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kernel {
+    Union,
+    Subtract,
+    Intersect,
+    Xor,
 }
 
 /// kurbo BezPath → flo SimpleBezierPath(flo 路径隐式闭合,
@@ -145,16 +186,14 @@ pub fn boolean_paths(
     let shift = Coord2(rhs_origin.0 - lhs_origin.0, rhs_origin.1 - lhs_origin.1);
     let shifted_rhs = shift_path(&flo_rhs, shift);
 
-    let raw = match op {
-        BooleanOp::Union => path_add::<SimpleBezierPath>(&vec![flo_lhs], &vec![shifted_rhs], 0.01),
-        BooleanOp::Subtract => {
-            path_sub::<SimpleBezierPath>(&vec![flo_lhs], &vec![shifted_rhs], 0.01)
-        }
-        BooleanOp::Intersect => {
+    let raw = match op.kernel() {
+        Kernel::Union => path_add::<SimpleBezierPath>(&vec![flo_lhs], &vec![shifted_rhs], 0.01),
+        Kernel::Subtract => path_sub::<SimpleBezierPath>(&vec![flo_lhs], &vec![shifted_rhs], 0.01),
+        Kernel::Intersect => {
             path_intersect::<SimpleBezierPath>(&vec![flo_lhs], &vec![shifted_rhs], 0.01)
         }
         // flo 0.8.1 无 path_xor:Xor = (A-B) ∪ (B-A)
-        BooleanOp::Xor => {
+        Kernel::Xor => {
             let ab = path_sub::<SimpleBezierPath>(
                 &vec![flo_lhs.clone()],
                 &vec![shifted_rhs.clone()],

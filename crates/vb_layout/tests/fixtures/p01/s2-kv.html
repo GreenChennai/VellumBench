@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><title>青梧智联 · IoT 峰会主视觉</title><style>
+@font-face{font-family:'MiSans';src:url('fonts/MiSans-Regular.ttf');font-weight:400;font-display:block}
+@font-face{font-family:'MiSans';src:url('fonts/MiSans-Semibold.ttf');font-weight:600;font-display:block}
+@font-face{font-family:'MiSans';src:url('fonts/MiSans-Bold.ttf');font-weight:700;font-display:block}
+*{margin:0;padding:0;box-sizing:border-box}body{margin:0;background:#fff}
+.poster{position:relative;width:1920px;height:1080px;overflow:hidden;background:#060d14}
+:root{--c-ink:#eef7f0;--c-teal:#2ee6a8;--c-muted:#7d948a}
+/* L1 深色流体渐变底 */
+.l1{position:absolute;inset:0;background:
+ radial-gradient(46% 52% at 50% 46%, #0a1f18 0%, #071019 55%, #050b12 100%)}
+/* L2 透视网格(低透明结构层) */
+.l2{position:absolute;inset:0;pointer-events:none;
+ background:
+  linear-gradient(rgba(46,230,168,.06) 1px,transparent 1px) 0 0/120px 120px,
+  linear-gradient(90deg,rgba(46,230,168,.06) 1px,transparent 1px) 0 0/120px 120px;
+ -webkit-mask-image:radial-gradient(70% 70% at 50% 46%,#000 20%,transparent 100%)}
+/* L3 同心圆轨道(华为式线束)+ 局部粒子 */
+.orbit{position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);
+ border-radius:50%;border:1px solid rgba(46,230,168,.28)}
+.o1{width:560px;height:560px}.o2{width:820px;height:820px;opacity:.7}
+.o3{width:1100px;height:1100px;opacity:.45}
+.planet{position:absolute;border-radius:50%;background:var(--c-teal);
+ box-shadow:0 0 18px rgba(46,230,168,.9)}
+.p1{width:12px;height:12px;left:50%;top:46%;transform:translate(-410px,-40px)}
+.p2{width:8px;height:8px;left:50%;top:46%;transform:translate(395px,52px)}
+.p3{width:6px;height:6px;left:50%;top:46%;transform:translate(80px,-270px)}
+.dot{position:absolute;border-radius:50%;background:rgba(46,230,168,.7);
+ box-shadow:0 0 10px rgba(46,230,168,.8)}
+.d1{width:5px;height:5px;left:22%;top:26%}.d2{width:4px;height:4px;left:70%;top:20%}
+.d3{width:4px;height:4px;left:80%;top:58%}.d4{width:3px;height:3px;left:16%;top:62%}
+.d5{width:5px;height:5px;left:60%;top:78%}.d6{width:3px;height:3px;left:34%;top:80%}
+/* L4 弥散光斑(局部 1-2 处) */
+.glow{position:absolute;width:900px;height:700px;left:50%;top:46%;
+ transform:translate(-50%,-50%);pointer-events:none;
+ background:radial-gradient(closest-side,rgba(46,230,168,.22),transparent 70%)}
+/* 顶部:logo 左上 / 版本右上 */
+.logo{position:absolute;top:60px;left:96px;font:600 30px/1 'MiSans';
+ color:var(--c-muted);letter-spacing:.4em}
+.edition{position:absolute;top:60px;right:96px;font:400 24px/1 'MiSans';
+ color:var(--c-muted);letter-spacing:.2em}
+/* 中央黄金带:主标(宽字距居中,压最暗圆心) */
+.center{position:absolute;left:0;right:0;top:41%;text-align:center;
+ transform:translateY(-50%)}
+.kick{font:600 27px/1 'MiSans';color:var(--c-teal);letter-spacing:.72em;text-indent:.72em}
+h1{margin-top:40px;font:700 148px/1.1 'MiSans';color:var(--c-ink);
+ letter-spacing:.3em;text-indent:.3em;
+ text-shadow:0 0 60px rgba(46,230,168,.25)}
+.sub{margin-top:44px;font:400 44px/1 'MiSans';color:var(--c-muted);letter-spacing:.5em;text-indent:.5em}
+.date{margin-top:56px;font:600 38px/1 'MiSans';color:var(--c-teal);letter-spacing:.3em;text-indent:.3em}
+.date small{font:400 28px/1 'MiSans';color:var(--c-muted);letter-spacing:.2em}
+/* 底部 15-20%:分档伙伴墙(反白单色,等距网格) */
+.wall{position:absolute;left:96px;right:96px;bottom:60px}
+.tier{margin-top:34px;display:flex;align-items:center;gap:36px}
+.tier .cap{font:600 22px/1 'MiSans';color:rgba(238,247,240,.55);
+ letter-spacing:.32em;min-width:230px;text-align:right}
+.tier .logos{flex:1;display:flex;justify-content:space-around;align-items:center}
+.tier .lg{font:600 30px/1 'MiSans';color:rgba(238,247,240,.62);letter-spacing:.14em}
+.tier .lg small{display:block;text-align:center;font:400 15px/1.6 'MiSans';
+ color:rgba(238,247,240,.35);letter-spacing:.24em}
+.wall .hairline{margin-top:36px;height:1px;
+ background:linear-gradient(90deg,transparent,rgba(46,230,168,.4),transparent)}
+</style></head><body><div class="poster">
+<div class="l1"></div><div class="l2"></div>
+<div class="orbit o3"></div><div class="orbit o2"></div><div class="orbit o1"></div>
+<span class="planet p1"></span><span class="planet p2"></span><span class="planet p3"></span>
+<span class="dot d1"></span><span class="dot d2"></span><span class="dot d3"></span>
+<span class="dot d4"></span><span class="dot d5"></span><span class="dot d6"></span>
+<div class="glow"></div>
+
+<div class="logo">青梧智联 GREENPARASOL</div>
+<div class="edition">青梧智联 IoT 峰会 · 2026</div>
+
+<div class="center">
+ <div class="kick">青梧智联 · IoT 峰会 2026</div>
+ <h1>万物有梧<br>智联可栖</h1>
+ <div class="sub">连接 · 计算 · 生态 —— 下一代物联网操作系统</div>
+ <div class="date">10.16 <small>杭州国际博览中心</small></div>
+</div>
+
+<div class="wall">
+ <div class="tier"><span class="cap">战略合作伙伴</span>
+  <div class="logos">
+   <span class="lg">星阑科技<small>STARLIGHT TECH</small></span>
+   <span class="lg">云穹数据<small>CLOUDDOME DATA</small></span>
+   <span class="lg">白泽半导体<small>BAIZE SEMI</small></span>
+   <span class="lg">澜舟通信<small>LANTERN COMMS</small></span>
+  </div></div>
+ <div class="tier"><span class="cap">生态伙伴</span>
+  <div class="logos">
+   <span class="lg">极目传感</span><span class="lg">深瞳智能</span>
+   <span class="lg">衡芯微电子</span><span class="lg">潮汐能源</span>
+   <span class="lg">临港智造</span><span class="lg">屿见云</span>
+  </div></div>
+ <div class="hairline"></div>
+</div>
+</div></body></html>

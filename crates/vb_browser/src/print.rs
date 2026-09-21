@@ -22,11 +22,19 @@ fn px_to_mm(px: f64) -> f64 {
 }
 
 /// 整页打印(先 settle,与 PNG 同一收敛协议)。
+/// `artboard`(P0-3):画板声明尺寸取景——重置 body 页边距,纸张宽高 =
+/// 声明值(高度不做 min(content) 收缩,尺寸门要求页尺寸与声明严格相等)。
 pub fn print_pdf(
     page: &mut PageSession,
     width: u32,
     height_lock: Option<u32>,
+    artboard: bool,
 ) -> Result<PrintOutcome, String> {
+    if artboard {
+        // 画板即画布:页边距属页面 chrome,须在 settle 前注入(收敛按最终布局)
+        inject_style(page, "body { margin: 0 !important; }")?;
+        page.sleep(120);
+    }
     page.emulate_media_screen()?;
     let mut warnings = page.collect_resource_warnings();
     let infinite = capture::settle(page)?;
@@ -34,8 +42,17 @@ pub fn print_pdf(
         warnings.push(format!("存在 {infinite} 个无限循环动画,画面可能非终态"));
     }
     let (sw, sh) = capture::content_size_value(page)?;
-    let out_w = width.max(1).max(sw.min(width)); // 宽 = 视口宽(与 WPI 一致)
-    let out_h = height_lock.map(|l| l.min(sh)).unwrap_or(sh);
+    // 宽 = 视口宽(与 WPI 一致);画板取景时声明值即纸张值,不被内容收窄
+    let out_w = if artboard {
+        width.max(1)
+    } else {
+        width.max(1).max(sw.min(width))
+    };
+    let out_h = if artboard {
+        height_lock.unwrap_or(sh)
+    } else {
+        height_lock.map(|l| l.min(sh)).unwrap_or(sh)
+    };
 
     page.emulate_media_screen()?;
     if let Some(_lock) = height_lock {

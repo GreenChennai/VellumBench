@@ -9,7 +9,7 @@ use vb_css::Decl;
 
 use vb_common::geom::BezPath;
 
-use crate::model::{Document, Geom, Node, NodeKind, NodeTree};
+use crate::model::{Document, Geom, Node, NodeKind, NodeTree, TextMode, TextSeg};
 use crate::Result;
 use crate::VbError;
 
@@ -52,6 +52,8 @@ pub enum CmdKind {
     SetGeom,
     SetStyle,
     SetText,
+    SetSegs,
+    SetTextMode,
     SetAttrs,
     Rename,
     SetTag,
@@ -62,6 +64,7 @@ pub enum CmdKind {
     Compound,
     SetToken,
     PathBoolean,
+    SetMeta,
 }
 
 /// 结构变更的落点(父 sid + 位置)。
@@ -69,6 +72,13 @@ pub enum CmdKind {
 pub struct Slot {
     parent_sid: String,
     index: usize,
+}
+
+/// 文本编辑快照:SetText 的 `old`(内容 + 段注记,一起逆回)。
+#[derive(Debug, Clone)]
+pub struct TextSnapshot {
+    pub text: String,
+    pub segs: Vec<TextSeg>,
 }
 
 /// 可逆命令(sid 寻址)。
@@ -94,6 +104,9 @@ pub enum Command {
         sid: String,
         new: Geom,
         old: Option<Geom>,
+        /// (P0-1)首次应用前的 `geom_declared`(None = 尚未应用)。
+        /// 显式移动/缩放会把声明几何兑换为显式几何(materialize),撤销时原样还原。
+        old_declared: Option<bool>,
     },
     SetStyle {
         sid: String,
@@ -103,7 +116,22 @@ pub enum Command {
     SetText {
         sid: String,
         new: String,
-        old: Option<String>,
+        /// 编辑快照(内容 + 段注记):模型不变量「编辑 text 时必须清空
+        /// segments」的可逆承载 —— 撤销时二者一起还原。
+        old: Option<TextSnapshot>,
+    },
+    /// 段内富文本注记整体替换(04 字符面板:run 级样式写入)。
+    /// `new` 必须是 `text` 字节区间上的升序不重叠区间(apply 校验)。
+    SetSegs {
+        sid: String,
+        new: Vec<TextSeg>,
+        old: Option<Vec<TextSeg>>,
+    },
+    /// 点文本 ↔ 区域文本切换(04-3 Shift+T;模式影响断行/布局,可撤销)。
+    SetTextMode {
+        sid: String,
+        new: TextMode,
+        old: Option<TextMode>,
     },
     SetAttrs {
         sid: String,
@@ -168,6 +196,12 @@ pub enum Command {
         /// 应用快照:lhs 原 (path, geom) + rhs 槽位与子树
         captured: Option<(Option<BezPath>, Geom, Slot, NodeTree)>,
     },
+    /// 文档标题(S1-c 控制面板固定区:文档改名 → `<title>`;可撤销)。
+    /// 标题是文档级状态(非节点),故不走 Rename;导出写 `<title>`。
+    SetMetaTitle {
+        new: String,
+        old: Option<String>,
+    },
 }
 
 fn no_such(sid: &str) -> VbError {
@@ -183,6 +217,8 @@ impl Command {
             Command::SetGeom { .. } => CmdKind::SetGeom,
             Command::SetStyle { .. } => CmdKind::SetStyle,
             Command::SetText { .. } => CmdKind::SetText,
+            Command::SetSegs { .. } => CmdKind::SetSegs,
+            Command::SetTextMode { .. } => CmdKind::SetTextMode,
             Command::SetAttrs { .. } => CmdKind::SetAttrs,
             Command::Rename { .. } => CmdKind::Rename,
             Command::SetTag { .. } => CmdKind::SetTag,
@@ -193,6 +229,7 @@ impl Command {
             Command::Compound { .. } => CmdKind::Compound,
             Command::SetToken { .. } => CmdKind::SetToken,
             Command::PathBoolean { .. } => CmdKind::PathBoolean,
+            Command::SetMetaTitle { .. } => CmdKind::SetMeta,
         }
     }
 
@@ -203,14 +240,60 @@ impl Command {
             Command::SetGeom { sid, .. }
             | Command::SetStyle { sid, .. }
             | Command::SetText { sid, .. }
+            | Command::SetSegs { sid, .. }
             | Command::Rename { sid, .. }
             | Command::SetTag { sid, .. }
             | Command::SetVector { sid, .. } => Some((self.kind(), sid.clone())),
+            // SetTextMode 是离散动作(两次切换 = 两步 undo),不参与合并。
             // 渐变拖拽每帧一条 Compound(逐目标 SetStyle)、多选拖拽每帧
             // 一条 Compound(逐目标 SetGeom):不可合并会把一次拖拽稀释成
             // 几百步 undo。仅当全部子命令为**同一类** Set* 时可合并,
             // key = 类别标记 + 目标 sid 集合。
+            //
+            // S4 外观面板(05-1):每次条目写回 = 同一目标的
+            // Compound[SetStyle(重编译), SetAttrs(模型 JSON)] —— 这类
+            // 「同目标混合」同样可合并,NumField 提交会话里拖数值只产生
+            // 一条 undo。键必须带变体组成签名(纯 SetStyle 的单目标
+            // Compound = 渐变拖拽每帧;混合 = 外观条目写回),两类绝不
+            // 互并 —— 否则合并时 replace_new 找不到 SetAttrs 配对,模型
+            // 属性会丢最后一帧更新。
             Command::Compound { cmds } if !cmds.is_empty() => {
+                let mut same_target = true;
+                let mut only_sid: Option<&String> = None;
+                let mut has_style = false;
+                let mut has_attrs = false;
+                for c in cmds {
+                    let sid = match c {
+                        Command::SetStyle { sid, .. } => {
+                            has_style = true;
+                            sid
+                        }
+                        Command::SetAttrs { sid, .. } => {
+                            has_attrs = true;
+                            sid
+                        }
+                        _ => {
+                            same_target = false;
+                            break;
+                        }
+                    };
+                    match only_sid {
+                        None => only_sid = Some(sid),
+                        Some(p) if p == sid => {}
+                        _ => {
+                            same_target = false;
+                            break;
+                        }
+                    }
+                }
+                if same_target {
+                    if let (Some(sid), true) = (only_sid, has_style && has_attrs) {
+                        return Some((self.kind(), format!("mas{sid}")));
+                    }
+                    if let (Some(sid), false) = (only_sid, has_attrs) {
+                        return Some((self.kind(), format!("ms{sid}")));
+                    }
+                }
                 let mut key = String::new();
                 let mut tag = ' ';
                 for c in cmds {
@@ -247,6 +330,8 @@ impl Command {
             Command::SetGeom { .. } => "变换",
             Command::SetStyle { .. } => "修改样式",
             Command::SetText { .. } => "编辑文本",
+            Command::SetSegs { .. } => "修改字符样式",
+            Command::SetTextMode { .. } => "切换文本模式",
             Command::SetAttrs { .. } => "修改 HTML 属性",
             Command::Rename { .. } => "重命名",
             Command::SetTag { .. } => "切换语义标签",
@@ -257,6 +342,7 @@ impl Command {
             Command::Compound { .. } => "复合操作",
             Command::SetToken { .. } => "修改设计令牌",
             Command::PathBoolean { .. } => "路径查找器",
+            Command::SetMetaTitle { .. } => "重命名文档",
         }
     }
 
@@ -274,6 +360,34 @@ impl Command {
             .unwrap_or(0);
         let parent_sid = doc.nodes.get(parent).unwrap().sid.as_str().to_string();
         Ok(Slot { parent_sid, index })
+    }
+
+    /// 段注记区间校验(model.rs 不变量):升序、互不重叠、不越界。
+    /// apply/redo 双侧把守,坏区间不得落盘。
+    fn validate_segs(segs: &[TextSeg], text_len: usize) -> Result<()> {
+        let mut prev_end = 0usize;
+        for s in segs {
+            if s.start > s.end {
+                return Err(VbError::Conflict(format!(
+                    "段区间起止倒置: {}..{}",
+                    s.start, s.end
+                )));
+            }
+            if s.start < prev_end {
+                return Err(VbError::Conflict(format!(
+                    "段区间重叠或乱序: 上一区间止于 {prev_end},本区间始于 {}",
+                    s.start
+                )));
+            }
+            if s.end > text_len {
+                return Err(VbError::Conflict(format!(
+                    "段区间越界: {}..{} 超出文本长度 {text_len}",
+                    s.start, s.end
+                )));
+            }
+            prev_end = s.end;
+        }
+        Ok(())
     }
 
     pub fn apply(&mut self, doc: &mut Document) -> Result<ChangeSet> {
@@ -371,12 +485,23 @@ impl Command {
                 doc.sync_artboards();
                 Ok(ChangeSet::full())
             }
-            Command::SetGeom { sid, new, old } => {
+            Command::SetGeom {
+                sid,
+                new,
+                old,
+                old_declared,
+            } => {
                 let id = doc.find_by_sid(sid).ok_or_else(|| no_such(sid))?;
                 let n = doc.nodes.get_mut(id).unwrap();
                 if old.is_none() {
                     *old = Some(n.geom);
                 }
+                if old_declared.is_none() {
+                    *old_declared = Some(n.geom_declared);
+                }
+                // 用户显式几何编辑:声明几何(百分比锚/流式等)兑换为显式 px,
+                // 此后该节点导出写显式值(不再原样回写原始声明)
+                n.materialize_geom();
                 n.geom = *new;
                 Ok(ChangeSet::style_geom())
             }
@@ -394,17 +519,65 @@ impl Command {
                 let n = doc.nodes.get_mut(id).unwrap();
                 if old.is_none() {
                     *old = Some(match &n.kind {
-                        NodeKind::Text { text, .. } => text.clone(),
+                        NodeKind::Text { text, segments, .. } => TextSnapshot {
+                            text: text.clone(),
+                            segs: segments.clone(),
+                        },
                         _ => return Err(VbError::Unsupported("该对象不是文本".into())),
                     });
                 }
-                if let NodeKind::Text { text, .. } = &mut n.kind {
-                    *text = new.clone();
+                if let NodeKind::Text { text, segments, .. } = &mut n.kind {
+                    // 模型不变量(model.rs:segments 注记「编辑 text 时必须
+                    // 清空」在命令层强制执行):内容变化 → 字节区间全体失效,
+                    // 段注记随内容一起清空;内容未变则不动(重提交不丢 run)。
+                    if text != new {
+                        *text = new.clone();
+                        segments.clear();
+                    }
                 }
                 Ok(ChangeSet {
                     structure: false,
                     style: false,
                     geometry: false,
+                    text: true,
+                })
+            }
+            Command::SetSegs { sid, new, old } => {
+                let id = doc.find_by_sid(sid).ok_or_else(|| no_such(sid))?;
+                let n = doc.nodes.get_mut(id).unwrap();
+                if old.is_none() {
+                    *old = Some(match &n.kind {
+                        NodeKind::Text { segments, .. } => segments.clone(),
+                        _ => return Err(VbError::Unsupported("该对象不是文本".into())),
+                    });
+                }
+                if let NodeKind::Text { text, segments, .. } = &mut n.kind {
+                    Self::validate_segs(new, text.len())?;
+                    *segments = new.clone();
+                }
+                Ok(ChangeSet {
+                    structure: false,
+                    style: true,
+                    geometry: false,
+                    text: true,
+                })
+            }
+            Command::SetTextMode { sid, new, old } => {
+                let id = doc.find_by_sid(sid).ok_or_else(|| no_such(sid))?;
+                let n = doc.nodes.get_mut(id).unwrap();
+                if old.is_none() {
+                    *old = Some(match &n.kind {
+                        NodeKind::Text { mode, .. } => *mode,
+                        _ => return Err(VbError::Unsupported("该对象不是文本".into())),
+                    });
+                }
+                if let NodeKind::Text { mode, .. } = &mut n.kind {
+                    *mode = *new;
+                }
+                Ok(ChangeSet {
+                    structure: false,
+                    style: false,
+                    geometry: true,
                     text: true,
                 })
             }
@@ -744,6 +917,18 @@ impl Command {
                     text: false,
                 })
             }
+            Command::SetMetaTitle { new, old } => {
+                if old.is_none() {
+                    *old = Some(doc.meta.title.clone());
+                }
+                doc.meta.title = new.clone();
+                Ok(ChangeSet {
+                    structure: false,
+                    style: true,
+                    geometry: false,
+                    text: false,
+                })
+            }
         }
     }
 
@@ -783,10 +968,19 @@ impl Command {
                 doc.sync_artboards();
                 Ok(ChangeSet::full())
             }
-            Command::SetGeom { sid, old, .. } => {
+            Command::SetGeom {
+                sid,
+                old,
+                old_declared,
+                ..
+            } => {
+                let id = doc.find_by_sid(sid).ok_or_else(|| no_such(sid))?;
+                let n = doc.nodes.get_mut(id).unwrap();
                 if let Some(g) = old {
-                    let id = doc.find_by_sid(sid).ok_or_else(|| no_such(sid))?;
-                    doc.nodes.get_mut(id).unwrap().geom = *g;
+                    n.geom = *g;
+                }
+                if let Some(d) = old_declared {
+                    n.geom_declared = *d;
                 }
                 Ok(ChangeSet::style_geom())
             }
@@ -798,17 +992,48 @@ impl Command {
                 Ok(ChangeSet::style_geom())
             }
             Command::SetText { sid, old, .. } => {
-                if let Some(t) = old {
+                if let Some(s) = old {
                     let id = doc.find_by_sid(sid).ok_or_else(|| no_such(sid))?;
                     let n = doc.nodes.get_mut(id).unwrap();
-                    if let NodeKind::Text { text, .. } = &mut n.kind {
-                        *text = t.clone();
+                    if let NodeKind::Text { text, segments, .. } = &mut n.kind {
+                        *text = s.text.clone();
+                        *segments = s.segs.clone();
                     }
                 }
                 Ok(ChangeSet {
                     structure: false,
                     style: false,
                     geometry: false,
+                    text: true,
+                })
+            }
+            Command::SetSegs { sid, old, .. } => {
+                if let Some(s) = old {
+                    let id = doc.find_by_sid(sid).ok_or_else(|| no_such(sid))?;
+                    let n = doc.nodes.get_mut(id).unwrap();
+                    if let NodeKind::Text { segments, .. } = &mut n.kind {
+                        *segments = s.clone();
+                    }
+                }
+                Ok(ChangeSet {
+                    structure: false,
+                    style: true,
+                    geometry: false,
+                    text: true,
+                })
+            }
+            Command::SetTextMode { sid, old, .. } => {
+                if let Some(m) = old {
+                    let id = doc.find_by_sid(sid).ok_or_else(|| no_such(sid))?;
+                    let n = doc.nodes.get_mut(id).unwrap();
+                    if let NodeKind::Text { mode, .. } = &mut n.kind {
+                        *mode = *m;
+                    }
+                }
+                Ok(ChangeSet {
+                    structure: false,
+                    style: false,
+                    geometry: true,
                     text: true,
                 })
             }
@@ -968,6 +1193,17 @@ impl Command {
                         let i = (*idx).min(doc.tokens.len());
                         doc.tokens.insert(i, (name.clone(), val.clone()));
                     }
+                }
+                Ok(ChangeSet {
+                    structure: false,
+                    style: true,
+                    geometry: false,
+                    text: false,
+                })
+            }
+            Command::SetMetaTitle { old, .. } => {
+                if let Some(prev) = old {
+                    doc.meta.title = prev.clone();
                 }
                 Ok(ChangeSet {
                     structure: false,

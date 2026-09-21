@@ -5,18 +5,31 @@
 //! - [`fonts`]：Inter → MiSans → 系统 CJK 五族字体 fallback 链
 //! - [`icons`]：Lucide 图标语义名映射（iconflow，pack-lucide）
 //! - [`components`]：ToolButton / NumField / ColorField / SectionHeader /
-//!   PanelTabs / LayerRow 六个组件 + 文本助手
+//!   PanelTabs / LayerRow 组件 + 文本助手(S1-b:NumField scrubby+表达式、
+//!   ColorField 取色器浮窗)
+//! - [`expr`]：数值框数学表达式解析器(纯函数,02-6-1)
+//! - [`dock`]：面板坞折叠规则与宽度钳制(纯函数,02-1)
+//! - [`toast`]：可堆叠通知(错误可复制,02-6-6)
+//! - [`gradient`]：渐变结构化模型 + **自绘色标条**(阶段 4 / 05-2,V4 决策)
 //! - [`cursor`]：工具/手柄 → 系统光标映射
 //!
-//! 依赖方向：vb_ui 不依赖 vb_app，可被 vb_app 与 vb_agent 复用。
+//! 依赖方向：vb_ui 不依赖 vb_app/vb_doc,可被 vb_app 与 vb_agent 复用
+//! (颜色解析借 vb_common,是既有底层设施)。
 
 pub mod components;
 pub mod cursor;
+pub mod dock;
+pub mod expr;
 pub mod fonts;
+pub mod gradient;
 pub mod icons;
 pub mod theme;
+pub mod toast;
 
 pub use components::{
-    caption, icon_button, label, mono, strong, ColorField, LayerRow, LayerRowResponse, NumField,
-    PanelTabs, SectionHeader, ToolButton,
+    caption, icon_button, label, mono, strong, ColorField, ColorFieldResponse, LayerRow,
+    LayerRowResponse, NumField, NumFieldResponse, PanelTabs, SectionHeader, TabsResponse,
+    ToolButton,
 };
+pub use gradient::{gradient_bar, GradKind, Gradient, GradientBarResponse, Stop};
+pub use toast::{Toast, ToastHost, ToastKind};

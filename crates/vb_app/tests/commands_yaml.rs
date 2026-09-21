@@ -98,6 +98,14 @@ fn gen() {
 }
 
 fn is_undoable(id: &str) -> bool {
+    // 计划项(未落地,只给提示)不改文档 → 一律不可撤销
+    if vb_app::shortcuts::planned_reason(id).is_some() {
+        return false;
+    }
+    // 「对齐到」只改面板偏好,不动文档(阶段 2 / 03-5)
+    if id.starts_with("align.to_") {
+        return false;
+    }
     id.starts_with("object.")
         || id.starts_with("align.")
         || id.starts_with("canvas.nudge_")
@@ -105,6 +113,22 @@ fn is_undoable(id: &str) -> bool {
         || id == "edit.cut"
         || id == "edit.paste"
         || id == "edit.paste_in_place"
+        // 04:Shift+T 循环对选中文本对象发 SetTextMode(可撤销文档命令)
+        || id == "tool.text_cycle_mode"
+        // S4-b:颜色动作里改文档的两条(切换目标只是面板状态,不可撤销)
+        || id == "color.swap_fill_stroke"
+        || id == "color.default_fill_stroke"
+        // 阶段 5:改文档的菜单命令(选择/窗口/帮助类只改界面状态)
+        || id == "text.upper_case"
+        || id == "text.lower_case"
+        || id == "effect.repeat_last"
+        || id == "effect.drop_shadow"
+        || id == "effect.inner_shadow"
+        || id == "effect.outer_glow"
+        || id == "effect.inner_glow"
+        || id == "effect.round_corners"
+        || id == "effect.gaussian_blur"
+        || id == "effect.feather"
 }
 
 fn is_agent_exposed(id: &str) -> bool {

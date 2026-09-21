@@ -190,6 +190,7 @@ fn cmd_set_geom() {
             sid: fx.a.clone(),
             new: box_geom(20.0, 80.0, 260.0, 140.0),
             old: None,
+            old_declared: None,
         },
     );
 }
@@ -383,6 +384,7 @@ fn cmd_compound() {
                     sid: fx.a.clone(),
                     new: box_geom(0.0, 0.0, 50.0, 50.0),
                     old: None,
+                    old_declared: None,
                 },
                 Command::Rename {
                     sid: fx.a.clone(),
@@ -439,6 +441,7 @@ fn all_command_variants_covered() {
             sid: fx.a.clone(),
             new: box_geom(0.0, 0.0, 1.0, 1.0),
             old: None,
+            old_declared: None,
         },
         Command::SetStyle {
             sid: fx.a.clone(),

@@ -1,0 +1,14 @@
+# 04 阶段富文本字符段:段样式内联发射与往返幂等
+# L0:样式化 span 保真(字色/粗体/斜体/行距/字距/基线/下划线)
+color: #c20
+font-weight: 700
+font-style: italic
+line-height: 24px
+letter-spacing: 1px
+vertical-align: 2px
+text-decoration: underline
+# 文本内容保真
+限时
+五折
+运费险
+活动条款:

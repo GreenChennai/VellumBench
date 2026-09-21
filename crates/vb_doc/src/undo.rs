@@ -18,6 +18,10 @@ pub struct UndoStack {
     last_merge: Option<(crate::commands::CmdKind, String, Instant)>,
     /// 压栈时是否允许合并(拖动中为 true,松手后首次压栈为 false 由调用方控制)。
     pub merging_enabled: bool,
+    /// 提交会话(S1-b 02-6-2:NumField 连续 scrubby/键入合并为一次 undo)。
+    /// 会话期间合并不看 500ms 窗口 —— 慢速拖动/逐字键入拆条才是 bug;
+    /// `end_session` 时清 `last_merge`,会话外的相邻编辑不误并。
+    session_merge: bool,
 }
 
 impl UndoStack {
@@ -27,6 +31,7 @@ impl UndoStack {
             redo: Vec::new(),
             last_merge: None,
             merging_enabled: true,
+            session_merge: false,
         }
     }
 
@@ -39,7 +44,7 @@ impl UndoStack {
         };
         let mergeable = match (&key, &self.last_merge) {
             (Some((k, t)), Some((lk, lt, at))) => {
-                k == lk && t == lt && at.elapsed() <= MERGE_WINDOW
+                k == lk && t == lt && (self.session_merge || at.elapsed() <= MERGE_WINDOW)
             }
             _ => false,
         };
@@ -145,6 +150,29 @@ impl UndoStack {
     pub fn push_compound(&mut self, doc: &mut Document, cmds: Vec<Command>) -> Result<ChangeSet> {
         self.push(doc, Command::Compound { cmds })
     }
+
+    /// 开始提交会话(S1-b 02-6-2)。会话期间,同目标的可合并命令
+    /// (Set*/同类 Compound,见 `Command::merge_target`)**不受 500ms
+    /// 窗口限制**地并入栈顶条目 —— NumField 的连续 scrubby/键盘步进/
+    /// 连续表达式提交,无论多慢都只算一次 undo。
+    ///
+    /// 嵌套调用安全:重复 `begin_session` 只置位;会话由第一个
+    /// `end_session` 结束(宿主保证一一配对,见 `vb_app` 的 `num_commit`)。
+    pub fn begin_session(&mut self) {
+        self.session_merge = true;
+    }
+
+    /// 结束提交会话。同时清 `last_merge`:会话结束后的第一条同目标
+    /// 命令是**新的一次编辑**,不该并进会话条目。
+    pub fn end_session(&mut self) {
+        self.session_merge = false;
+        self.last_merge = None;
+    }
+
+    /// 会话是否进行中(宿主断言配对用)。
+    pub fn session_active(&self) -> bool {
+        self.session_merge
+    }
 }
 
 /// 用 `src` 的 new 值覆盖 `top` 的 new 值(合并时保持最初 old)。
@@ -156,6 +184,7 @@ fn replace_new(top: &mut Command, src: &Command) {
         (SetGeom { new, .. }, SetGeom { new: n2, .. }) => *new = *n2,
         (SetStyle { new, .. }, SetStyle { new: n2, .. }) => *new = n2.clone(),
         (SetText { new, .. }, SetText { new: n2, .. }) => *new = n2.clone(),
+        (SetSegs { new, .. }, SetSegs { new: n2, .. }) => *new = n2.clone(),
         (Rename { new, .. }, Rename { new: n2, .. }) => *new = n2.clone(),
         (SetTag { new, .. }, SetTag { new: n2, .. }) => *new = n2.clone(),
         (SetVector { new, .. }, SetVector { new: n2, .. }) => *new = n2.clone(),
@@ -168,6 +197,16 @@ fn replace_new(top: &mut Command, src: &Command) {
                         if let Some(SetStyle { new: n2, .. }) = scmds
                             .iter()
                             .find(|c| matches!(c, SetStyle { sid: s2, .. } if s2 == sid))
+                        {
+                            *new = n2.clone();
+                        }
+                    }
+                    // S4 外观条目写回(merge_target "mas"):SetAttrs 与
+                    // SetStyle 一同按 sid 配对更新,模型 JSON 不丢最后一帧
+                    SetAttrs { sid, new, .. } => {
+                        if let Some(SetAttrs { new: n2, .. }) = scmds
+                            .iter()
+                            .find(|c| matches!(c, SetAttrs { sid: s2, .. } if s2 == sid))
                         {
                             *new = n2.clone();
                         }

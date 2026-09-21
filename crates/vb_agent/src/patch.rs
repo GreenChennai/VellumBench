@@ -320,6 +320,7 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<(Vec<Command>, Vec<Str
                 h: box_.h,
             },
             old: None,
+            old_declared: None,
         }],
         PatchOp::Rename { id, name } => {
             vec![Command::Rename {
@@ -390,8 +391,8 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<(Vec<Command>, Vec<Str
             }]
         }
         PatchOp::Align { ids, mode, to } => {
-            let _ = to; // v0.1:对齐到画板(selection 集合的公共画板)
-            let (c, w) = align_cmds(doc, ids, mode)?;
+            // `to` 缺省 = 选区(公共包围盒);可选 artboard / key_object(03-5-2)
+            let (c, w) = align_cmds(doc, ids, mode, to.as_deref())?;
             warnings = w;
             c
         }
@@ -508,15 +509,36 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<(Vec<Command>, Vec<Str
 }
 
 /// 对齐(相对所属画板;08 篇 §五 align op)。
-/// geom.x/y 是**画板本地**坐标:跨画板的成员不能混进同一组 min/max,
-/// 按画板分组各自对齐;落单成员跳过并给出 warning。
+/// 对齐(阶段 2 / 03-5 的 Agent 侧入口)。
+///
+/// **坐标系纪律(2026-09-21 修复)**:节点的 `geom` 是**父相对**坐标,
+/// 而"对齐"必须比较**绝对盒**。此前这里把 `geom.x/y` 当画板本地坐标直接
+/// 算 `min_x / 中心 / max_r`,于是:
+/// 1. 不同父级的成员被拿错参照系的数字比较 → 对齐结果错(浏览器里也跳);
+/// 2. 写回的 `geom` 落盘后与重导入值不等 → **每存一次漂移一次**,L1 幂等被打穿。
+///
+/// 现在改为:目标盒与成员盒都取 [`vb_tools::align::AbsBox`](绝对盒),
+/// 位移用绝对系差值平移节点自身 `geom`(平移与参照系无关)。
+/// 跨画板的成员**不能混**进同一组 min/max,按画板分组各自对齐;
+/// 需要 ≥2 个成员的模式下,落单成员跳过并给出 warning。
 fn align_cmds(
     doc: &Document,
     ids: &[String],
     mode: &str,
+    to: Option<&str>,
 ) -> Result<(Vec<Command>, Vec<String>), PatchError> {
+    use vb_tools::align::{aligned_delta, AbsBox, AlignMode, AlignTo};
+
+    let mode =
+        AlignMode::parse(mode).ok_or_else(|| PatchError::Op(format!("未知对齐模式:{mode}")))?;
+    let to = AlignTo::parse(to.unwrap_or("selection"))
+        .ok_or_else(|| PatchError::Op(format!("未知对齐目标:{:?}", to)))?;
+    // 「对齐到选区/关键对象」需要至少两个成员才有意义;「对齐到画板」单个也可
+    let need_two = matches!(to, AlignTo::Selection | AlignTo::KeyObject);
+
     // 按公共画板分组(保序)
-    let mut groups: Vec<(vb_doc::model::NodeId, Vec<(String, Geom)>)> = Vec::new();
+    type Member = (String, Geom, AbsBox);
+    let mut groups: Vec<(vb_doc::model::NodeId, Vec<Member>)> = Vec::new();
     let mut warnings = Vec::new();
     for id in ids {
         let nid = doc
@@ -528,17 +550,22 @@ fn align_cmds(
             warnings.push("align 跳过文档根节点".to_string());
             continue;
         }
+        let Some(bb) = AbsBox::of(doc, nid) else {
+            warnings.push(format!("align 跳过 {id}:无绝对几何"));
+            continue;
+        };
         let ab = artboard_of(doc, nid);
         let g = doc.nodes.get(nid).unwrap().geom;
         if let Some(entry) = groups.iter_mut().find(|(a, _)| *a == ab) {
-            entry.1.push((id.clone(), g));
+            entry.1.push((id.clone(), g, bb));
         } else {
-            groups.push((ab, vec![(id.clone(), g)]));
+            groups.push((ab, vec![(id.clone(), g, bb)]));
         }
     }
+
     let mut cmds = Vec::new();
     for (ab, members) in &groups {
-        if members.len() < 2 {
+        if need_two && members.len() < 2 {
             let name = doc
                 .find_by_sid(&members[0].0)
                 .and_then(|nid| doc.nodes.get(nid))
@@ -547,40 +574,33 @@ fn align_cmds(
             warnings.push(format!("align 跳过 {name}:与其余成员不在同一画板或落单"));
             continue;
         }
-        let _ = ab;
-        let geoms = members;
-        let min_x = geoms.iter().map(|(_, g)| g.x).fold(f64::INFINITY, f64::min);
-        let min_y = geoms.iter().map(|(_, g)| g.y).fold(f64::INFINITY, f64::min);
-        let max_r = geoms
-            .iter()
-            .map(|(_, g)| g.x + g.w)
-            .fold(f64::NEG_INFINITY, f64::max);
-        let max_b = geoms
-            .iter()
-            .map(|(_, g)| g.y + g.h)
-            .fold(f64::NEG_INFINITY, f64::max);
-        let center_x = (min_x + max_r) / 2.0;
-        let center_y = (min_y + max_b) / 2.0;
-
-        let moved = |g: Geom, x: f64, y: f64| Command::SetGeom {
-            sid: String::new(),
-            new: Geom { x, y, ..g },
-            old: None,
+        let boxes: Vec<AbsBox> = members.iter().map(|(_, _, b)| *b).collect();
+        let target = match to {
+            AlignTo::Selection => AbsBox::union(&boxes),
+            // 关键对象 = **最后**选中者(与画布/面板同口径)
+            AlignTo::KeyObject => boxes.last().copied(),
+            AlignTo::Artboard => doc
+                .nodes
+                .get(*ab)
+                .map(|n| AbsBox::new(0.0, 0.0, n.geom.w, n.geom.h)),
         };
-        for (id, g) in geoms {
-            let mut c = match mode {
-                "left" => moved(*g, min_x, g.y),
-                "right" => moved(*g, max_r - g.w, g.y),
-                "hcenter" => moved(*g, center_x - g.w / 2.0, g.y),
-                "top" => moved(*g, g.x, min_y),
-                "bottom" => moved(*g, g.x, max_b - g.h),
-                "vcenter" => moved(*g, g.x, center_y - g.h / 2.0),
-                other => return Err(PatchError::Op(format!("未知对齐模式:{other}"))),
-            };
-            if let Command::SetGeom { sid, .. } = &mut c {
-                *sid = id.clone();
-            }
-            cmds.push(c);
+        let Some(target) = target else {
+            warnings.push("align 跳过:无法确定对齐目标".to_string());
+            continue;
+        };
+        for (id, g, bb) in members {
+            let (dx, dy) = aligned_delta(mode, bb, &target);
+            cmds.push(Command::SetGeom {
+                sid: id.clone(),
+                new: Geom {
+                    x: g.x + dx,
+                    y: g.y + dy,
+                    w: g.w,
+                    h: g.h,
+                },
+                old: None,
+                old_declared: None,
+            });
         }
     }
     Ok((cmds, warnings))
@@ -705,6 +725,8 @@ fn collect_affected(cmd: &Command, out: &mut PatchOutcome) {
         | Command::SetGeom { sid, .. }
         | Command::SetStyle { sid, .. }
         | Command::SetText { sid, .. }
+        | Command::SetSegs { sid, .. }
+        | Command::SetTextMode { sid, .. }
         | Command::SetAttrs { sid, .. }
         | Command::Rename { sid, .. }
         | Command::SetTag { sid, .. }
@@ -734,7 +756,8 @@ fn collect_affected(cmd: &Command, out: &mut PatchOutcome) {
                 collect_affected(c, out);
             }
         }
-        Command::SetToken { .. } => {}
+        // 令牌 / 文档标题:非节点级变更,无受影响 sid
+        Command::SetToken { .. } | Command::SetMetaTitle { .. } => {}
     }
 }
 

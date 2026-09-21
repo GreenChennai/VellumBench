@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::abprobe::viewport_plan;
 use crate::dompaint::{paintlist_to_document, DomPaintMeta};
 use crate::{ExportRequest, Format};
 
@@ -45,18 +46,25 @@ pub fn export_dom(
     let proc = vb_browser::browser::BrowserProcess::launch(&exe)?;
     let browser_ver = proc.version();
     let mut page = vb_browser::page::PageSession::attach(&proc)?;
-    // 视口宽 = 目标导出宽(--width;默认 1080 起探测,海报类固定宽 body 不受影响);
+    // 采集视口(P0-3 尺寸门):显式 --width/--height 优先,否则按画板声明
+    // 尺寸取景(abprobe,与导入器同一识别口径),再否则历史兜底 1080。
+    // 此前视口宽固定 1080:1920 宽内容被裁掉 44%(PDF 页只剩 1080×1080)。
+    let (vw, vh, artboard) = viewport_plan(source, width, height);
     // 视口高 = --height 锁定值(动画卡 100vh 型必须锁,否则 100vh 撑成视口宽)。
     // 采集 DSF:位图降级裁剪的分辨率上限;超长页(易拉宝 11812px)按 1 兜底,
     // 否则整页截图会超过浏览器单帧上限。矢量与图片项不受影响(后者原生分辨率)。
-    let vw = if width > 0 { width } else { 1080 };
-    let vh = if height > 0 { height } else { vw };
     let mut dsf = scale.clamp(1, 8);
     if (vh as u64 * dsf as u64) > 15_000 || (vw as u64 * dsf as u64) > 15_000 {
         dsf = 1;
     }
     page.set_device_metrics(vw, vh, dsf)?;
     page.navigate(&url)?;
+    if artboard {
+        // 画板即画布(P0-3):页边距属页面 chrome,重置后与画板声明几何对齐
+        // (与 native 车道同语义;缺显式标记仍以 degraded_artboard 诚实标注)
+        let _ = page.evaluate(vb_browser::page::BODY_MARGIN_RESET_JS, false);
+        page.sleep(120);
+    }
     page.wait_network_idle(std::time::Duration::from_secs(3));
     page.sleep(200);
     let cap = vb_browser::capture::capture_dom(&mut page, &url)?;
@@ -93,7 +101,9 @@ pub fn export_dom(
         Some(&cap.page_png),
         &prefix,
         dsf as f64,
-        height as f64,
+        vh as f64,
+        // 画板取景时声明宽是唯一真相(透明容器不产生绘制项,启发式会低估)
+        if artboard { vw as f64 } else { 0.0 },
     )?;
     if std::env::var("KILN_DUMP_DRAWLIST").is_ok() {
         if let Ok(list) = vb_render::encode::encode_artboard_opts(&dom.doc, dom.artboard, false) {
@@ -421,10 +431,14 @@ fn export_dom_pdf_bytes(
     let proc = vb_browser::browser::BrowserProcess::launch(&exe)?;
     let browser_ver = proc.version();
     let mut page = vb_browser::page::PageSession::attach(&proc)?;
-    let vw = if width > 0 { width } else { 1080 };
-    let vh = if height > 0 { height } else { vw };
+    // P0-3:逐源取画板声明尺寸(多画板按各自尺寸),显式 --width/--height 优先
+    let (vw, vh, artboard) = viewport_plan(src, width, height);
     page.set_device_metrics(vw, vh, 1)?;
     page.navigate(&url)?;
+    if artboard {
+        let _ = page.evaluate(vb_browser::page::BODY_MARGIN_RESET_JS, false);
+        page.sleep(120);
+    }
     page.wait_network_idle(std::time::Duration::from_secs(3));
     page.sleep(200);
     let cap = vb_browser::capture::capture_dom(&mut page, &url)?;
@@ -441,7 +455,8 @@ fn export_dom_pdf_bytes(
         Some(&cap.page_png),
         &prefix,
         1.0,
-        height as f64,
+        vh as f64,
+        if artboard { vw as f64 } else { 0.0 },
     )?;
     let (w, h) = (
         dom.doc

@@ -77,6 +77,12 @@ const CONTAINER_BOX_TAGS: &[&str] = &[
     "div", "section", "article", "header", "footer", "main", "aside", "nav", "ul", "ol", "form",
     "fieldset", "table", "thead", "tbody", "tfoot", "tr", "figure", "details",
 ];
+/// 画板启发式识别的候选标签(= 容器标签;P0-1,08c 报告 §2.4)。
+/// 仅当 body 顶层无任何显式 vb-/vs-/vsm-artboard 标记时启用。
+const HEURISTIC_ARTBOARD_TAGS: &[&str] = CONTAINER_BOX_TAGS;
+/// 启发式画板的最小声明边:合并声明中的显式 px width/height 必须 ≥100px,
+/// 避免把小卡片/按钮误识别为画布。
+const HEURISTIC_ARTBOARD_MIN_PX: f64 = 100.0;
 
 pub struct ImportResult {
     pub doc: Document,
@@ -287,7 +293,46 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
 
     let mut synthetic_flag = false;
     if artboard_nodes.is_empty() {
-        // 无画板标记:整个 body 内容收进一个合成画板
+        // P0-1 画板启发式识别(08c §2.4):body 顶层**容器元素**的合并声明
+        // 同时含显式 px width/height(≥ HEURISTIC_ARTBOARD_MIN_PX)→ 识别为
+        // 画板(几何取声明值;序列化标签保真)。仅当无任何显式画板标记时
+        // 启用(显式路径不回退);识别成功仍告警 —— 降级不静默。
+        let candidates: Vec<&HtmlNode> = body
+            .children
+            .iter()
+            .filter(|c| {
+                c.as_element()
+                    .map(|el| HEURISTIC_ARTBOARD_TAGS.contains(&el.name.as_str()))
+                    .unwrap_or(false)
+            })
+            .collect();
+        let mut recognized = 0usize;
+        for child in &candidates {
+            let Some(el) = child.as_element() else {
+                continue;
+            };
+            let Some((w, h)) = heuristic_artboard_size(&mut importer, el) else {
+                continue;
+            };
+            let id = importer.build_artboard(child);
+            if let Some(n) = importer.doc.node_mut(id) {
+                n.geom.w = w;
+                n.geom.h = h;
+            }
+            artboard_nodes.push(id);
+            recognized += 1;
+        }
+        if recognized > 0 {
+            importer.warnings.push(
+                "未找到 vb-artboard 画板标记:已按启发式识别顶层容器为画板(降级,可能误识别)"
+                    .to_string(),
+            );
+            // 已识别的候选不再作为游离内容二次构建(否则子树翻倍)
+            loose.retain(|c| !candidates.iter().any(|k| std::ptr::eq(*k, *c)));
+        }
+    }
+    if artboard_nodes.is_empty() {
+        // 无画板标记且启发式未命中:整个 body 内容收进一个合成画板
         synthetic_flag = true;
         // body 显式约束(html,body{width/max-width/height}px)→ 画板初始几何。
         // 浏览器语义:画布宽 = body 宽(max-width 生效),横向溢出被
@@ -1081,6 +1126,9 @@ impl<'a> NodeImporter<'a> {
         );
         if let Some(n) = self.doc.node_mut(id) {
             n.authored = authored_wh;
+            // 画板序列化标签保真(08c §2.4):div.poster 保存后仍是 div,
+            // 不改写默认 section
+            n.tag = el.name.clone();
         }
         let child_refs: Vec<&HtmlNode> = el_node.children.iter().collect();
         self.build_children(id, &child_refs);
@@ -1221,15 +1269,23 @@ impl<'a> NodeImporter<'a> {
         }
     }
 
-    /// 单个块级子元素 → 节点(含「无 left/top 定位」告警)。
+    /// 单个块级子元素 → 节点(无显式 left/top → 「几何由布局求值」告警;
+    /// 08c §3:不再用字符串嗅探的 has_explicit_position,以 authored 旗标为准)。
     fn build_node_into(&mut self, parent: NodeIdT, node: &HtmlNode) {
         let id = self.build_node(node, parent);
-        if id.is_some() && !has_explicit_position(node, self.sheet) {
-            if let Some(el2) = node.as_element() {
-                self.warnings.push(format!(
-                    "元素 <{}> 无 left/top 定位(流式页面),已摆到 (0,0)",
-                    el2.name
-                ));
+        if let Some(id) = id {
+            let flow = self
+                .doc
+                .node(id)
+                .map(|n| !n.authored[0] && !n.authored[1])
+                .unwrap_or(false);
+            if flow {
+                if let Some(el2) = node.as_element() {
+                    self.warnings.push(format!(
+                        "元素 <{}> 无显式 left/top 定位(流式/声明几何):几何由布局求值",
+                        el2.name
+                    ));
+                }
             }
         }
     }
@@ -1346,6 +1402,29 @@ impl<'a> NodeImporter<'a> {
                 .or(if semantic_italic { Some(true) } else { None }),
             font_size: get("font-size").and_then(|v| vb_common::units::parse_px(&v)),
             font_family: get("font-family"),
+            // 04 扩展:行距(显式 px,或无单位倍数 × 本段字号)、字距、
+            // 基线偏移(vertical-align px)、下划线/删除线(text-decoration)
+            line_height: get("line-height").and_then(|v| {
+                let t = v.trim();
+                if t.ends_with("px") {
+                    vb_common::units::parse_px(t)
+                } else if let Ok(mult) = t.parse::<f64>() {
+                    // 无单位倍数 × 本段字号(CSS line-height 语义)
+                    get("font-size")
+                        .and_then(|fs| vb_common::units::parse_px(&fs))
+                        .map(|fs| mult * fs)
+                } else {
+                    None
+                }
+            }),
+            letter_spacing: get("letter-spacing").and_then(|v| vb_common::units::parse_px(&v)),
+            baseline_shift: get("vertical-align").and_then(|v| vb_common::units::parse_px(&v)),
+            underline: get("text-decoration")
+                .filter(|v| v.contains("underline"))
+                .map(|_| true),
+            strikethrough: get("text-decoration")
+                .filter(|v| v.contains("line-through"))
+                .map(|_| true),
         }
     }
 
@@ -1435,7 +1514,18 @@ impl<'a> NodeImporter<'a> {
                     segments,
                 };
             } else {
-                kind = NodeKind::Box;
+                // vb-layer / vb-group 升格(08c §2.6):此前标记类被剥离、
+                // 节点静默降格为 Box,导出丢失容器语义;现在保留为对应
+                // NodeKind,导出侧 marker 写回即自动统一 vb- 前缀。
+                let is_layer = el.class_list().iter().any(|c| LAYER_CLASSES.contains(c));
+                let is_group = el.class_list().iter().any(|c| GROUP_CLASSES.contains(c));
+                kind = if is_layer {
+                    NodeKind::Layer
+                } else if is_group {
+                    NodeKind::Group
+                } else {
+                    NodeKind::Box
+                };
             }
         }
 
@@ -1481,9 +1571,16 @@ impl<'a> NodeImporter<'a> {
             px(&get("height")).is_some(),
         ];
 
-        // 几何属性从 style 中移除(导出时由 geom 字段重建,避免双写)
-        for p in ["left", "top", "width", "height", "position"] {
-            style.retain(|d| d.prop != p);
+        // 几何分流(P0-1,08c §2.2):全部显式 px + 绝对定位 → 无损折叠
+        // (声明移除,导出由 geom 重建,避免双写);百分比锚 / inset /
+        // right|bottom / 流式 → 声明层:原始声明**原样保留**在 style,
+        // 导出不把 geom 烤进 CSS(geom_declared = true),画布几何由
+        // vb_layout 求值回填。
+        let foldable = foldable_abs_geom(&style);
+        if foldable {
+            for p in ["left", "top", "width", "height", "position"] {
+                style.retain(|d| d.prop != p);
+            }
         }
 
         // `display: none` 回读为 hidden 标志,与导出侧「hidden → display:none」对称。
@@ -1506,6 +1603,7 @@ impl<'a> NodeImporter<'a> {
         n.geom = Geom { x, y, w, h };
         n.authored = authored;
         n.authored_position = position_authored.clone();
+        n.geom_declared = !foldable;
         let id = self.attach(parent, n);
 
         // 容器:递归子节点(行内内容分组进富文本段);压栈自身上下文供
@@ -1551,6 +1649,47 @@ fn prettify_class(c: &str) -> String {
 }
 
 /// 拆分属性:data-vb-id → sid;data-vb-name → 名称;class/style 拿走;其余保留。
+/// 启发式画板判定(规则见文件头常量注释):返回声明的画布尺寸 (w, h)。
+/// 只认 body 顶层容器标签 + 显式正 px 宽高(≥ [`HEURISTIC_ARTBOARD_MIN_PX`])。
+fn heuristic_artboard_size(importer: &mut NodeImporter, el: &Element) -> Option<(f64, f64)> {
+    if !HEURISTIC_ARTBOARD_TAGS.contains(&el.name.as_str()) {
+        return None;
+    }
+    let decls = importer.merged_class_decls(el);
+    let get = |p: &str| decls.iter().find(|d| d.prop == p).map(|d| d.value.clone());
+    let px = |v: Option<String>| {
+        v.and_then(|v| vb_common::units::parse_px(&v))
+            .filter(|px| *px >= HEURISTIC_ARTBOARD_MIN_PX)
+    };
+    let (w, h) = (px(get("width")), px(get("height")));
+    match (w, h) {
+        (Some(w), Some(h)) => Some((w, h)),
+        _ => None,
+    }
+}
+
+/// 声明几何可否**无损折叠**为显式 px 绝对定位(P0-1 分流判据;规则即常量,
+/// 供后续 ADR 引用):① left/top 均显式 px;② width/height 均显式 px;
+/// ③ 未使用 right/bottom/inset;④ position 缺省或 absolute/fixed。
+/// 任一不满足 → 原始声明必须原样保留(geom_declared = true)。
+fn foldable_abs_geom(style: &[Decl]) -> bool {
+    let get = |p: &str| style.iter().find(|d| d.prop == p).map(|d| d.value.clone());
+    let px = |v: Option<String>| v.and_then(|v| vb_common::units::parse_px(&v));
+    if px(get("left")).is_none() || px(get("top")).is_none() {
+        return false;
+    }
+    if px(get("width")).is_none() || px(get("height")).is_none() {
+        return false;
+    }
+    if get("right").is_some() || get("bottom").is_some() || get("inset").is_some() {
+        return false;
+    }
+    match get("position").as_deref() {
+        None => true,
+        Some(v) => matches!(v.trim(), "absolute" | "fixed"),
+    }
+}
+
 fn split_attrs(
     el: &Element,
     doc: &mut Document,
@@ -1576,29 +1715,6 @@ fn split_attrs(
         }
     }
     (attrs, sid.unwrap_or_else(|| doc.alloc_sid()))
-}
-
-fn has_explicit_position(node: &HtmlNode, sheet: &Stylesheet) -> bool {
-    let Some(el) = node.as_element() else {
-        return false;
-    };
-    if el
-        .attr("style")
-        .map(|s| s.contains("left") || s.contains("top"))
-        .unwrap_or(false)
-    {
-        return true;
-    }
-    for c in el.class_list() {
-        for (_, _, decls) in &sheet.class_rules {
-            if decls.iter().any(|d| d.prop == "left" || d.prop == "top")
-                && matches!(simple_class_selector(&format!(".{c}")), Some((cl, _)) if cl == c)
-            {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 /// class 规则在前,inline 在后覆盖(同 prop 保留后者)。

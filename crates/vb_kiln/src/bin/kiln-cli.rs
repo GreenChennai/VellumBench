@@ -257,6 +257,24 @@ fn run_export(
     // auto=浏览器可用即用(保真优先);browser=强制;native=跳过本段
     let engine_mode = engine.trim().to_ascii_lowercase();
     let vector_mode = vector.trim().to_ascii_lowercase();
+    // ---- P0-3 尺寸门:画板声明尺寸探测(与 vb_doc 导入器同一识别口径)----
+    // 浏览器两道的取景尺寸不再依赖「有无 vb-artboard 标记」:显式标记与
+    // P0-1 启发式容器同口径下发声明尺寸;缺显式标记只影响诚实降级标注。
+    // 显式 --width/--height 仍最高优先(自定取景,保持 WPI 通用行为)。
+    let probe = vb_kiln::abprobe::probe_artboard(&source);
+    let lane_degraded_artboard = !probe.as_ref().is_some_and(|p| p.explicit);
+    let lane_w = if width > 0 {
+        width
+    } else {
+        probe.as_ref().and_then(|p| p.width).unwrap_or(0)
+    };
+    let lane_h = if height > 0 {
+        height
+    } else {
+        probe.as_ref().and_then(|p| p.height).unwrap_or(0)
+    };
+    // 画板取景 = 宽来自画板声明(用户显式给宽则视为自定取景)
+    let artboard_frame = width == 0 && probe.as_ref().is_some_and(|p| p.width.is_some());
     // ---- ADR-0021/ADR-0022:期望路线表(auto 的放行范围按格式显式定义)----
     // AI/SVG/EPS(可编辑矢量)→ dom;PDF(打印阅读 + 可编辑)→ dom;
     // PNG/JPG(光栅)→ 浏览器原生截屏,不入本闸门(ADR-0022:曾因 PNG 走
@@ -299,7 +317,7 @@ fn run_export(
                     (out.width, out.height)
                 };
                 let json = format!(
-                    "{{'ok':true,'format':'{}','path':'{}','width':{:.0},'height':{:.0},'scale':{},'transparent':{},'warnings':{},'frames':1,'degraded':false,'degraded_artboard':false,'bytes':{},'encode_ms':{},'engine':'browser-dom','browser':'{}','vector':'dom','text_lines':{},'clip_demand':{},'raster_items':{}}}",
+                    "{{'ok':true,'format':'{}','path':'{}','width':{:.0},'height':{:.0},'scale':{},'transparent':{},'warnings':{},'frames':1,'degraded':false,'degraded_artboard':{},'bytes':{},'encode_ms':{},'engine':'browser-dom','browser':'{}','vector':'dom','text_lines':{},'clip_demand':{},'raster_items':{}}}",
                     fmt_str.to_uppercase(),
                     output.display(),
                     ow,
@@ -307,6 +325,7 @@ fn run_export(
                     scale.clamp(1, 8),
                     transparent,
                     out.warnings.len(),
+                    lane_degraded_artboard,
                     out.bytes.len(),
                     0,
                     out.browser.replace('"', "'"),
@@ -385,10 +404,11 @@ fn run_export(
     if engine_mode != "native" && matches!(fmt_str.to_uppercase().as_str(), "PNG" | "PDF" | "AI") {
         let req = vb_browser::LaneRequest {
             format: vb_browser::LaneFormat::parse(&fmt_str).expect("格式已白名单"),
-            width,
-            height,
+            width: lane_w,
+            height: lane_h,
             scale: scale.clamp(1, 8),
             transparent,
+            artboard: artboard_frame,
         };
         match vb_browser::export_source(&source, &req) {
             Ok(outcome) => {
@@ -400,7 +420,7 @@ fn run_export(
                     return 4;
                 }
                 let json = format!(
-                    "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':1,'degraded':false,'degraded_artboard':false,'bytes':{},'encode_ms':{},'engine':'browser','browser':'{}'}}",
+                    "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':1,'degraded':false,'degraded_artboard':{},'bytes':{},'encode_ms':{},'engine':'browser','browser':'{}'}}",
                     fmt_str.to_uppercase(),
                     output.display(),
                     outcome.width,
@@ -408,6 +428,7 @@ fn run_export(
                     req.scale,
                     transparent,
                     outcome.warnings.len(),
+                    lane_degraded_artboard,
                     outcome.bytes.len(),
                     t0.elapsed().as_millis(),
                     outcome.engine_hint.replace('"', "'"),
@@ -470,7 +491,12 @@ fn run_export(
     // 文档流布局求值(M1.0):flow/flex/absolute → 具体矩形写回 geom;
     // 矢量模式文档(全显式定位)求值结果与作者输入一致,无副作用
     let synthetic = imported.synthetic_artboard;
-    let mut degraded_artboard = false;
+    // P0-1:缺 vb-artboard 标记(合成兜底或启发式识别)= 画板语义降级,
+    // 结构化标记诚实输出(degraded_artboard),不静默
+    let mut degraded_artboard = imported.warnings.iter().any(|w| w.contains("画板标记"));
+    for w in &imported.warnings {
+        eprintln!("{{\"warn\":\"{w}\"}}");
+    }
     for w in vb_layout::apply_to_doc(&mut imported.doc, ab, Some(&dir), synthetic) {
         // 画板尺寸回填 / 裁剪 / grid 降级 = 合成画板与作者声明可能不一致,
         // 输出结构化标记供脚本判定(此前静默 ok:true,存量项目失真无告警)

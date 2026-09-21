@@ -9,6 +9,11 @@ description = "Vellum Bench 界面层：设计令牌、主题、字体、图标�
 [dependencies]
 egui = "0.35.0"
 iconflow = { version = "1.0", features = ["pack-lucide"] }
+# 02-6-3:取色器的 var(--x)/hex/rgb()/hsl() 解析走 vb_common 现有颜色设施,不重复造
+vb_common.workspace = true
+# 阶段 4(05-2):渐变值必须走**与导出同一套** canonical 规范化(#fff / 0 不带单位),
+# 否则首帧写回的值与二次导入的值不同 → L1 字节幂等破损(见 vb_css::canonical_value)。
+vb_css.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

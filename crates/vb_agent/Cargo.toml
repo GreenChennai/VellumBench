@@ -22,6 +22,7 @@ vb_common = { workspace = true }
 vb_html = { workspace = true }
 vb_css = { workspace = true }
 vb_doc = { workspace = true }
+vb_layout = { workspace = true }
 vb_render = { path = "../vb_render" }
 vb_tools = { path = "../vb_tools" }
 vb_export = { path = "../vb_export" }

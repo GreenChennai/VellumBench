@@ -11,6 +11,7 @@
 //! - `pdf`/`postscript`/`ooxml`:自研矢量容器(PDF/EPS/Ai 与 PPTX)
 //! - `error`/`report`:全分类错误 + 可观测报告,异常输入不 panic
 
+pub mod abprobe;
 pub mod anim;
 pub mod animlane;
 pub mod context;

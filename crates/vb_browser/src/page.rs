@@ -121,6 +121,39 @@ pub const RESOURCE_WARNINGS_JS: &str = r#"() => {
     return out;
 }"#;
 
+/// 画板取景:重置 body 页边距(P0-3)。页边距属页面 chrome 而非画板画布,
+/// 与 native 车道「画板即画布」同语义;仅在画板声明尺寸取景时注入。
+pub const BODY_MARGIN_RESET_JS: &str = r#"(() => {
+    const s = document.createElement('style');
+    s.textContent = 'body { margin: 0 !important; }';
+    document.head.appendChild(s);
+    return true;
+})()"#;
+
+/// 画板矩形定位(P0-3):优先显式 `vb-artboard` 标记(含旧前缀),否则在
+/// body 顶层元素里找边界盒与声明尺寸一致者(与 vb_doc 导入器的启发式同
+/// 口径的采集侧镜像)。返回视口相对坐标(调用方保证 scrollY=0,即文档坐标)。
+pub const ARTBOARD_RECT_JS: &str = r#"(w, h) => {
+    const SELS = ['.vb-artboard', '.vs-artboard', '.vsm-artboard'];
+    let el = null;
+    for (const s of SELS) {
+        el = document.querySelector(s);
+        if (el) break;
+    }
+    if (!el && document.body) {
+        for (const c of document.body.children) {
+            const r = c.getBoundingClientRect();
+            if (r.width > 0 && Math.abs(r.width - w) < 1 && (h <= 0 || Math.abs(r.height - h) < 1)) {
+                el = c;
+                break;
+            }
+        }
+    }
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return [r.x, r.y, r.width, r.height];
+}"#;
+
 /// 页面会话:一条 CDP 连接 + 协议级状态(load/网络活动)。
 pub struct PageSession {
     pub cdp: Cdp,

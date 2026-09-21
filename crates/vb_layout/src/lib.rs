@@ -29,6 +29,27 @@ use vb_doc::model::{Document, Geom, Node, NodeId, NodeKind};
 
 mod calc;
 
+// ---------- transform 平移折算 ----------
+
+/// 节点**自身** `transform` 里的平移分量(世界单位)。
+///
+/// 为什么必须折:浏览器里 `translate(-50%,-50%)` 是视觉居中,画布若只按
+/// `left/top` 摆位,视觉位置会差半宽/半高(`s2-kv` 的轨道环、
+/// `show2-card` 的四角都是这种形态)—— 判据 A「画布与浏览器一致」因此不成立。
+///
+/// **实现已上收到 `vb_common::transform`**:导出侧要用**相反符号**把这份
+/// 平移补偿回去(见 `vb_doc::export::geom_decls`),两处必须同源,否则
+/// "编辑一次跳一次、每存一轮漂一截"(2026-09-21 总验收实测)。
+pub use vb_common::transform::parse_translate;
+
+/// 从节点声明里取平移分量(无 `transform` → 零)。
+fn own_translate(style: &[vb_css::Decl], w: f64, h: f64) -> (f64, f64) {
+    match style.iter().find(|d| d.prop == "transform") {
+        Some(d) => parse_translate(&d.value, w, h),
+        None => (0.0, 0.0),
+    }
+}
+
 // ---------- 公开接口 ----------
 
 /// 布局告警(解析失败降级等;不阻断导出)。
@@ -36,6 +57,25 @@ pub struct LayoutOutcome {
     /// 每节点画板本地**绝对**矩形(sid → [x, y, w, h])。
     pub rects: HashMap<String, [f64; 4]>,
     pub warnings: Vec<String>,
+}
+
+/// 导入后对**全部画板**求值布局(P0-1:画布与几何查询用的坐标在内存计算)。
+///
+/// 无标记稿件的声明几何(百分比锚/inset/right|bottom/流式)经 taffy 解析为
+/// 具体矩形写回 `Node::geom`;声明本身保留在 `Node::style`(`geom_declared`),
+/// 保存时不烤入。`synthetic` 透传给[`apply_to_doc`](仅首个画板,与导入器
+/// 「无标记才合成」的语义一致)。
+pub fn apply_import_layout(
+    doc: &mut Document,
+    project_dir: Option<&Path>,
+    synthetic: bool,
+) -> Vec<String> {
+    let mut ws = Vec::new();
+    let boards = doc.artboards.clone();
+    for (i, ab) in boards.into_iter().enumerate() {
+        ws.extend(apply_to_doc(doc, ab, project_dir, synthetic && i == 0));
+    }
+    ws
 }
 
 /// 在导入后求值指定画板的布局,并把结果写回 `doc` 的节点几何
@@ -85,10 +125,14 @@ pub fn apply_to_doc(
             continue;
         }
         let (px0, py0) = parent_abs.unwrap_or((0.0, 0.0));
+        // 自身 `transform` 的平移分量折进画布几何(见 `own_translate`):
+        // 祖先的平移经"父相对坐标"自然继承(每个祖先自己也折了),
+        // 因此这里只需加自己的那一份。
+        let (tx, ty) = own_translate(&node.style, g.w, g.h);
         if let Some(n) = doc.node_mut(id) {
             n.geom = Geom {
-                x: g.x - px0,
-                y: g.y - py0,
+                x: g.x - px0 + tx,
+                y: g.y - py0 + ty,
                 w: g.w,
                 h: g.h,
             };
@@ -953,6 +997,8 @@ fn lpa_of(
 }
 
 /// 盒简写 1-4 值展开(返回原始值串;调用方按属性类型解析)。
+/// CSS 级联语义:同侧**长边声明覆盖简写**(`margin:0; margin-top:34px` 的
+/// 顶边是 34px)——此前简写存在时直接短路,长边被忽略,flow 间距全塌。
 fn expand_raw(
     all: Option<&str>,
     top: Option<&str>,
@@ -977,9 +1023,9 @@ fn expand_raw(
         _ => vec![toks[0], toks[1], toks[2], toks[3]],
     };
     Some(Rect {
-        top: order[0].to_string(),
-        right: order[1].to_string(),
-        bottom: order[2].to_string(),
-        left: order[3].to_string(),
+        top: own(top).unwrap_or_else(|| order[0].to_string()),
+        right: own(right).unwrap_or_else(|| order[1].to_string()),
+        bottom: own(bottom).unwrap_or_else(|| order[2].to_string()),
+        left: own(left).unwrap_or_else(|| order[3].to_string()),
     })
 }

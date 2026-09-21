@@ -153,6 +153,7 @@ fn compound_failure_rolls_back() {
                             h: 1.0,
                         },
                         old: None,
+                        old_declared: None,
                     },
                 ],
             },

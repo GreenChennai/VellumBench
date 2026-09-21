@@ -1,0 +1,13 @@
+* { margin: 8px; }
+.vb-artboard.poster {
+  position: relative;
+  width: 750px;
+  height: 1334px;
+  overflow: hidden;
+}
+.title {
+  position: absolute;
+  left: 48px;
+  top: 120px;
+  font: 700 64px/1.2 sans-serif;
+}

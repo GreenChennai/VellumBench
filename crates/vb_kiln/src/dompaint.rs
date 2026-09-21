@@ -69,6 +69,9 @@ fn base_node(doc: &mut Document, name: &str, kind: NodeKind, rect: [f64; 4]) -> 
 }
 
 /// 构造 Document。`page_png` 为整页截图(位图降级裁剪源),None 时降级项画占位框。
+/// `declared_width`(P0-3):画板声明宽(>0 时为唯一真相)——透明容器
+/// (无背景的 `.poster` 等)不产生绘制项,「最大绘制右边界」启发式会取到
+/// 内层元素的右缘而低估画板宽(1920 → 1824);尺寸门要求与声明严格相等。
 pub fn paintlist_to_document(
     list: &Value,
     project_dir: &Path,
@@ -76,6 +79,7 @@ pub fn paintlist_to_document(
     url_prefix: &str,
     capture_scale: f64,
     height_lock: f64,
+    declared_width: f64,
 ) -> Result<DomPaint, String> {
     let vp = list
         .get("viewport")
@@ -109,9 +113,11 @@ pub fn paintlist_to_document(
             (a.len() == 4).then(|| a[0] + a[2])
         })
         .fold(0.0f64, f64::max);
-    // 优先级:body 实宽(非视口拉伸)> 内容层右边界 > 视口宽
+    // 优先级:声明宽(P0-3 尺寸门)> body 实宽(非视口拉伸)> 内容层右边界 > 视口宽
     let body_w = list.get("bodyWidth").and_then(Value::as_f64).unwrap_or(0.0);
-    let w = if body_w > 200.0 && body_w < vw - 0.5 {
+    let w = if declared_width > 0.0 {
+        declared_width
+    } else if body_w > 200.0 && body_w < vw - 0.5 {
         body_w
     } else if (200.0..=vw).contains(&content_right) && content_right < vw - 0.5 {
         content_right.round()

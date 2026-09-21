@@ -7,6 +7,7 @@
 //!
 //! 路径布尔运算见 `boolean` 模块(ADR-0012,批次 C1)。
 
+pub mod align;
 pub mod boolean;
 
 use vb_common::geom::Rect;

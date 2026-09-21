@@ -1,9 +1,20 @@
 //! SVG 导出回归测试(15 号计划 A2:双重缩放 / 渐变 userSpaceOnUse / 透明导出)。
 
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use vb_doc::import::import_project;
 
+/// 并行测试的目录名去重(同二进制内 style.len() 相同的两个测试
+/// 曾撞同一目录,全仓并行时偶发 flake)。
+static SEQ: AtomicU32 = AtomicU32::new(0);
+
 fn doc_with_node(style: &str) -> (vb_doc::Document, std::path::PathBuf) {
-    let dir = std::env::temp_dir().join(format!("vb-svg-{}-{}", style.len(), std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "vb-svg-{}-{}-{}",
+        style.len(),
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(

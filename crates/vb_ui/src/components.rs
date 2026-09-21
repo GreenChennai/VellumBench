@@ -257,16 +257,76 @@ impl<'a> ToolButton<'a> {
 
 // ──────────────────────────── 2. NumField ────────────────────────────
 
-/// 数值字段（属性面板里的 X / Y / 宽 / 高 / 角度 / 缩放）。
+/// scrubby 步进(纯函数;02-6-1 ⭐)。
 ///
-/// 统一了：标签宽度、单位后缀、拖拽速度、圆角、对齐。调用方只描述**数值语义**。
+/// 横向拖动 `dx` 像素 → 数值增量 = `dx × speed × 修饰键倍率`:
+/// **Alt = 细调 ×0.1,Shift = 粗调 ×10**(同时按下按 Alt 优先,
+/// 细调是更精细的意图);无修饰键 = ×1。
+pub fn scrub_step(dx: f32, speed: f64, shift: bool, alt: bool) -> f64 {
+    let k = if alt {
+        0.1
+    } else if shift {
+        10.0
+    } else {
+        1.0
+    };
+    dx as f64 * speed * k
+}
+
+/// 数值格式化(输入框回显):整数不带小数点,小数最多 2 位去尾零。
+pub fn format_num(v: f64) -> String {
+    if v.is_finite() && v.fract() == 0.0 && v.abs() < 1e15 {
+        format!("{}", v as i64)
+    } else {
+        let s = format!("{v:.2}");
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    }
+}
+
+/// [`NumField`] 的交互结果。
+///
+/// `changed` = 值在本帧变了(scrubby / 键盘步进 / 表达式提交),
+/// 调用方据此走命令路径;`scrub_started`/`scrub_ended`/`focus_lost`
+/// 是**提交会话**信号(02-6-2:连续 scrubby/键入合并为一次 undo),
+/// 由 `vb_app` 统一折算成 `UndoStack::begin_session / end_session`。
+#[derive(Debug, Clone, Default)]
+pub struct NumFieldResponse {
+    /// 值已变化(调用方应提交命令)。
+    pub changed: bool,
+    /// 表达式解析失败(中文文案,调用方直接 toast)。
+    pub expr_error: Option<String>,
+    /// scrubby 拖拽本帧开始。
+    pub scrub_started: bool,
+    /// scrubby 拖拽本帧结束。
+    pub scrub_ended: bool,
+    /// 输入框本帧失去焦点(提交会话应结束)。
+    pub focus_lost: bool,
+}
+
+/// 数值字段(属性面板里的 X / Y / 宽 / 高 / 角度 / 缩放)。
+///
+/// 02-6-1/2 全面升级,一处实现全面板受益:
+/// - **拖动标签 scrubby**(⭐ 必做):横向拖动改值,`Shift` 粗调 ×10、
+///   `Alt` 细调 ×0.1;拖动时光标变左右箭头、指针旁浮层显示当前值;
+/// - 键盘 `↑/↓` 步进 `step`(默认 = speed;几何字段 speed=1 即规格的
+///   ±1),`Shift+↑/↓` 步进 ×10;
+/// - **数学表达式**:`320/2`、`12*3+4`、`50%`(相对基准由调用方给,
+///   面板里 = 画板宽/高)回车求值写入;解析见 [`crate::expr`],
+///   失败给中文错误(经 [`NumFieldResponse::expr_error`]);
+/// - 提交会话:宿主把会话信号折算成 undo 合并(见 [`NumFieldResponse`])。
 pub struct NumField<'a> {
     label: &'a str,
     value: &'a mut f64,
     unit: &'a str,
     speed: f64,
+    step: Option<f64>,
     range: Option<(f64, f64)>,
     width: f32,
+    /// 标签区宽度(scrubby 拖动源)。默认 [`FIELD_LABEL_WIDTH`];
+    /// 单字母字段(X/Y/W/H)可收窄。
+    label_width: f32,
+    /// `50%` 的相对基准(None 时 `%` = /100,见 expr 模块注释)。
+    percent_base: Option<f64>,
 }
 
 impl<'a> NumField<'a> {
@@ -277,20 +337,29 @@ impl<'a> NumField<'a> {
             value,
             unit: "",
             speed: 1.0,
+            step: None,
             range: None,
             width: 72.0,
+            label_width: FIELD_LABEL_WIDTH,
+            percent_base: None,
         }
     }
 
-    /// 单位后缀（`px` / `°` / `%`）。
+    /// 单位后缀(`px` / `°` / `%`)。
     pub fn unit(mut self, u: &'a str) -> Self {
         self.unit = u;
         self
     }
 
-    /// 拖拽速度（每像素改变量）。
+    /// 拖拽速度(每像素改变量)。
     pub fn speed(mut self, s: f64) -> Self {
         self.speed = s;
+        self
+    }
+
+    /// 键盘步进(`↑/↓`;`Shift+↑/↓` = ×10)。默认 = [`NumField::speed`]。
+    pub fn step(mut self, s: f64) -> Self {
+        self.step = Some(s);
         self
     }
 
@@ -306,40 +375,209 @@ impl<'a> NumField<'a> {
         self
     }
 
-    /// 画出字段，返回内部控件的响应。
-    pub fn ui(self, ui: &mut Ui) -> Response {
-        field_row(ui, self.label, |ui| {
-            let mut dv = egui::DragValue::new(self.value)
-                .speed(self.speed)
-                .max_decimals(2);
-            if let Some((lo, hi)) = self.range {
-                dv = dv.range(lo..=hi);
+    /// 百分号表达式的相对基准(面板里传画板宽/高)。
+    pub fn percent_base(mut self, base: f64) -> Self {
+        self.percent_base = Some(base);
+        self
+    }
+
+    /// 标签区宽度(单字母字段传窄值,如 20.0)。
+    pub fn label_width(mut self, w: f32) -> Self {
+        self.label_width = w;
+        self
+    }
+
+    fn clamp(&self, v: f64) -> f64 {
+        match self.range {
+            Some((lo, hi)) => v.clamp(lo, hi),
+            None => v,
+        }
+    }
+
+    /// 画出字段,返回交互结果(见 [`NumFieldResponse`])。
+    pub fn ui(self, ui: &mut Ui) -> NumFieldResponse {
+        let t = theme::tokens(ui.ctx());
+        let mut out = NumFieldResponse::default();
+
+        // ── 标签区(scrubby 拖动源)──
+        let (lrect, lresp) = ui.allocate_exact_size(
+            Vec2::new(self.label_width, theme::space::ROW_HEIGHT),
+            Sense::drag(),
+        );
+        let hover_t = ui.ctx().animate_bool_with_time(
+            ui.id().with(("vbnumlbl", self.label)),
+            lresp.hovered() || lresp.dragged(),
+            theme::motion::HOVER,
+        );
+        ui.painter().rect_filled(
+            lrect,
+            theme::radius::sm(),
+            blend(Color32::TRANSPARENT, t.bg_hover, hover_t * 0.6),
+        );
+        ui.painter().text(
+            pos2(lrect.left() + 2.0, lrect.center().y),
+            egui::Align2::LEFT_CENTER,
+            self.label,
+            fonts::font(12.0, fonts::Weight::Medium),
+            blend(t.text_2, t.text, hover_t),
+        );
+        if lresp.hovered() {
+            ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::ResizeHorizontal);
+        }
+
+        // ── 输入框(缓冲存 egui 内存;未聚焦时回显当前值)──
+        let field_id = ui.id().with(("vbnum", self.label));
+        let buf_id = field_id.with("buf");
+        let focused = ui.ctx().memory(|m| m.has_focus(field_id));
+        let mut buf = if focused {
+            ui.ctx()
+                .memory(|m| m.data.get_temp::<String>(buf_id))
+                .unwrap_or_else(|| format_num(*self.value))
+        } else {
+            format_num(*self.value)
+        };
+        let edit = ui.add_sized(
+            Vec2::new(self.width, theme::space::ROW_HEIGHT - 4.0),
+            egui::TextEdit::singleline(&mut buf)
+                .id(field_id)
+                .font(fonts::font(12.0, fonts::Weight::Regular))
+                .hint_text(format_num(*self.value)),
+        );
+        if !self.unit.is_empty() {
+            ui.painter().text(
+                pos2(edit.rect.right() + theme::space::S1, edit.rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                self.unit,
+                fonts::font(11.0, fonts::Weight::Regular),
+                t.text_3,
+            );
+        }
+
+        // ── 键盘步进(聚焦时;全局方向键走 TextEdit 上下文不会抢)──
+        if edit.has_focus()
+            && ui
+                .ctx()
+                .input(|i| i.key_pressed(egui::Key::ArrowUp) || i.key_pressed(egui::Key::ArrowDown))
+        {
+            let (up, shift) = ui
+                .ctx()
+                .input(|i| (i.key_pressed(egui::Key::ArrowUp), i.modifiers.shift));
+            let step = self.step.unwrap_or(self.speed) * if shift { 10.0 } else { 1.0 };
+            *self.value = self.clamp(if up {
+                *self.value + step
+            } else {
+                *self.value - step
+            });
+            buf = format_num(*self.value);
+            out.changed = true;
+            edit.request_focus();
+        }
+
+        // ── 表达式提交(回车或失焦;文本与回显不同才求值)──
+        let enter = edit.has_focus() && ui.ctx().input(|i| i.key_pressed(egui::Key::Enter));
+        let commit = enter || edit.lost_focus();
+        if commit && buf != format_num(*self.value) {
+            match crate::expr::eval_expr(&buf, self.percent_base) {
+                Ok(v) => {
+                    let v = self.clamp(v);
+                    if v != *self.value {
+                        *self.value = v;
+                        out.changed = true;
+                    }
+                    buf = format_num(*self.value);
+                }
+                Err(e) => {
+                    out.expr_error = Some(e.to_string());
+                    buf = format_num(*self.value); // 还原回显
+                }
             }
-            let resp = ui.add_sized(Vec2::new(self.width, theme::space::ROW_HEIGHT - 4.0), dv);
-            if !self.unit.is_empty() {
-                ui.label(
-                    RichText::new(self.unit)
-                        .font(fonts::font(11.0, fonts::Weight::Regular))
-                        .color(theme::tokens(ui.ctx()).text_3),
-                );
+        }
+        ui.ctx().memory_mut(|m| m.data.insert_temp(buf_id, buf));
+        if enter {
+            edit.request_focus(); // 回车提交后保留焦点(连续键入同一会话)
+        }
+        out.focus_lost = edit.lost_focus() && !enter;
+
+        // ── scrubby 拖动 ──
+        if lresp.drag_started() {
+            out.scrub_started = true;
+        }
+        if lresp.dragged() {
+            let dx = lresp.drag_delta().x;
+            if dx != 0.0 {
+                let (shift, alt) = ui.ctx().input(|i| (i.modifiers.shift, i.modifiers.alt));
+                *self.value = self.clamp(*self.value + scrub_step(dx, self.speed, shift, alt));
+                out.changed = true;
             }
-            resp
-        })
+            ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::ResizeHorizontal);
+            // 拖动浮层:指针旁显示当前值(不与画布浮层混用,组件自管)
+            let p = ui.ctx().pointer_latest_pos().unwrap_or(lrect.center());
+            let layer = ui.ctx().layer_painter(egui::LayerId::new(
+                egui::Order::Tooltip,
+                egui::Id::new("vb_num_overlay"),
+            ));
+            let text = format!("{}{}", format_num(*self.value), self.unit);
+            let galley = ui.painter().layout(
+                text.clone(),
+                fonts::font(11.0, fonts::Weight::Regular),
+                t.text,
+                120.0,
+            );
+            let size = galley.size() + Vec2::new(theme::space::S4 * 2.0, theme::space::S1 * 2.0);
+            let rect =
+                egui::Rect::from_min_size(p + Vec2::new(theme::space::S5, -size.y - 6.0), size);
+            layer.rect_filled(rect, theme::radius::sm(), t.bg_raised);
+            layer.rect_stroke(
+                rect,
+                theme::radius::sm(),
+                Stroke::new(theme::stroke::HAIRLINE, t.border),
+                egui::StrokeKind::Inside,
+            );
+            layer.galley(
+                rect.left_top() + Vec2::new(theme::space::S4, theme::space::S1),
+                galley,
+                t.text,
+            );
+        }
+        if lresp.drag_stopped() {
+            out.scrub_ended = true;
+        }
+
+        out
     }
 }
 
 // ──────────────────────────── 3. ColorField ────────────────────────────
 
-/// 颜色字段（填充 / 描边 / 文字色）。
+/// [`ColorField`] 的交互结果(02-6-3)。
+#[derive(Debug, Clone, Default)]
+pub struct ColorFieldResponse {
+    /// 颜色已改变(色块或取色器;调用方提交命令)。
+    pub changed: bool,
+    /// 被清空为「无」。
+    pub cleared: bool,
+    /// 用户在取色器确认了 CSS 变量(名称,**不带** `--`;
+    /// 调用方应把样式值写成 `var(--{name})`)。
+    pub var_picked: Option<String>,
+}
+
+/// 颜色字段(填充 / 描边 / 文字色)。
 ///
-/// 比裸用 `color_edit_button_srgba` 多了：固定宽度标签、十六进制回显
-/// （等宽字体，方便 Agent 与人类对照）、可选的"无"状态。
+/// 02-6-3 升级:自绘色块 + 等宽 hex 回显;**点击弹取色器浮窗**
+/// (紧凑:预览 + HEX + CSS 变量),**Alt+点击弹完整取色器**
+/// (另含 RGB / HSL 输入与文档令牌色板)。`var(--x)` 解析走
+/// `vb_common::color::parse_color` 现有设施,不重复造。
+///
+/// 令牌数据由调用方注入(见 [`ColorField::doc_tokens`])—— `vb_ui`
+/// 不依赖 `vb_doc`,只认 `(名称, 值)` 对。
 pub struct ColorField<'a> {
     label: &'a str,
     value: &'a mut Color32,
     alpha: bool,
-    /// 允许清空为"无"（如 `background-color` 未设置）。
+    /// 允许清空为"无"(如 `background-color` 未设置)。
     clearable: Option<&'a mut bool>,
+    /// 文档令牌 `(name, value)`,供 `var(--x)` 解析与色板(可空)。
+    tokens: &'a [(String, String)],
 }
 
 impl<'a> ColorField<'a> {
@@ -350,6 +588,7 @@ impl<'a> ColorField<'a> {
             value,
             alpha: true,
             clearable: None,
+            tokens: &[],
         }
     }
 
@@ -359,22 +598,58 @@ impl<'a> ColorField<'a> {
         self
     }
 
-    /// 允许清空；返回 `true` 表示本次被清空。
+    /// 允许清空;返回的 [`ColorFieldResponse::cleared`] 为 `true` 表示本次被清空。
     pub fn clearable(mut self, flag: &'a mut bool) -> Self {
         self.clearable = Some(flag);
         self
     }
 
-    /// 画出字段；返回 `(是否改变, 是否被清空)`。
-    pub fn ui(mut self, ui: &mut Ui) -> (bool, bool) {
+    /// 注入文档令牌(取色器里可解析 `var(--x)`、可点色板)。
+    pub fn doc_tokens(mut self, tokens: &'a [(String, String)]) -> Self {
+        self.tokens = tokens;
+        self
+    }
+
+    /// 画出字段,返回交互结果。
+    pub fn ui(mut self, ui: &mut Ui) -> ColorFieldResponse {
+        let t = theme::tokens(ui.ctx());
+        let mut out = ColorFieldResponse::default();
+        let swatch_id = ui.id().with(("vbcolor", self.label));
         let mut cleared = false;
-        let changed = field_row(ui, self.label, |ui| {
-            let mut changed = if self.alpha {
-                ui.color_edit_button_srgba(self.value).changed()
-            } else {
-                ui.color_edit_button_srgb(&mut [self.value.r(), self.value.g(), self.value.b()])
-                    .changed()
-            };
+
+        field_row(ui, self.label, |ui| {
+            // ── 自绘色块(点击/Alt+点击开取色器)──
+            let (rect, resp) = ui.allocate_exact_size(
+                Vec2::new(
+                    theme::space::ROW_HEIGHT - 6.0,
+                    theme::space::ROW_HEIGHT - 6.0,
+                ),
+                Sense::click(),
+            );
+            let hover_t =
+                ui.ctx()
+                    .animate_bool_with_time(swatch_id, resp.hovered(), theme::motion::HOVER);
+            ui.painter()
+                .rect_filled(rect, theme::radius::sm(), *self.value);
+            ui.painter().rect_stroke(
+                rect,
+                theme::radius::sm(),
+                Stroke::new(theme::stroke::HAIRLINE, blend(t.border, t.text, hover_t)),
+                egui::StrokeKind::Inside,
+            );
+            if resp.clicked() {
+                let full = ui.ctx().input(|i| i.modifiers.alt);
+                ui.ctx().memory_mut(|m| {
+                    let st = picker_state(m, swatch_id);
+                    st.open = true;
+                    st.full |= full;
+                    st.hex = hex_of(*self.value);
+                    st.err = None;
+                });
+            }
+            let _ = resp.on_hover_text("点击:取色器(HEX)· Alt+点击:完整取色器(RGB/HSL/CSS 变量)");
+
+            // ── 清除按钮 ──
             if let Some(ref mut flag) = self.clearable {
                 if ui
                     .add(egui::Button::new(icons::rich(icons::Name::Close, 12.0)).frame(false))
@@ -382,15 +657,340 @@ impl<'a> ColorField<'a> {
                     .clicked()
                 {
                     **flag = true;
-                    changed = true;
+                    out.changed = true;
                     cleared = true;
                 }
             }
             ui.label(mono(&hex_of(*self.value)));
-            changed
         });
-        (changed, cleared)
+        out.cleared = cleared;
+
+        // ── 取色器浮窗 ──
+        let mut st = ui.ctx().memory_mut(|m| picker_state(m, swatch_id).clone());
+        if st.open {
+            let mut open = true;
+            let win_id = swatch_id.with("win");
+            egui::Window::new(format!("取色器 — {}", self.label))
+                .id(win_id)
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .show(ui.ctx(), |ui| {
+                    Self::picker_body(
+                        self.value,
+                        self.alpha,
+                        self.tokens,
+                        ui,
+                        win_id,
+                        &mut st,
+                        &mut out,
+                    );
+                });
+            if !open {
+                st.open = false;
+            }
+            ui.ctx().memory_mut(|m| *picker_state(m, swatch_id) = st);
+        }
+
+        out
     }
+
+    /// 取色器窗口内容。`base` 为窗口内控件的 id 基(按字段隔离)。
+    /// 值/alpha/令牌以参数传入(闭包内多次可变借用,`&self` 不够写)。
+    fn picker_body(
+        value: &mut Color32,
+        alpha: bool,
+        tokens: &[(String, String)],
+        ui: &mut Ui,
+        base: egui::Id,
+        st: &mut PickerState,
+        out: &mut ColorFieldResponse,
+    ) {
+        let t = theme::tokens(ui.ctx());
+        let hex_id = base.with("hex");
+        let var_id = base.with("var");
+        // 预览大色块
+        let (rect, _) = ui.allocate_exact_size(
+            Vec2::new(ui.available_width(), theme::space::S8),
+            Sense::hover(),
+        );
+        ui.painter().rect_filled(rect, theme::radius::md(), *value);
+        ui.painter().rect_stroke(
+            rect,
+            theme::radius::md(),
+            Stroke::new(theme::stroke::HAIRLINE, t.border),
+            egui::StrokeKind::Inside,
+        );
+        ui.add_space(theme::space::S2);
+
+        // ── HEX 输入(紧凑/完整都有)──
+        ui.horizontal(|ui| {
+            ui.label(strong("HEX"));
+            let focused = ui.ctx().memory(|m| m.has_focus(hex_id));
+            let mut hex = if focused {
+                st.hex.clone()
+            } else {
+                hex_of(*value)
+            };
+            let resp = ui.add_sized(
+                [120.0, theme::space::ROW_HEIGHT - 4.0],
+                egui::TextEdit::singleline(&mut hex)
+                    .id(hex_id)
+                    .font(egui::FontId::new(12.0, fonts::family_mono())),
+            );
+            let enter = resp.has_focus() && ui.ctx().input(|i| i.key_pressed(egui::Key::Enter));
+            if (enter || resp.lost_focus()) && hex != hex_of(*value) {
+                match vb_parse_color(&hex) {
+                    Some(c) => {
+                        write_color(value, alpha, out, c);
+                        st.hex = hex_of(*value);
+                        st.err = None;
+                    }
+                    None => {
+                        st.err = Some(
+                            "无法识别的颜色(支持 #RGB/#RRGGBB/#RRGGBBAA、rgb()、hsl()、常用命名色)"
+                                .into(),
+                        );
+                    }
+                }
+            } else if hex != st.hex {
+                st.hex = hex;
+            }
+        });
+
+        // ── CSS 变量(紧凑/完整都有)──
+        ui.horizontal(|ui| {
+            ui.label(strong("var"));
+            let resp = ui.add_sized(
+                [160.0, theme::space::ROW_HEIGHT - 4.0],
+                egui::TextEdit::singleline(&mut st.var)
+                    .id(var_id)
+                    .hint_text("var(--名称)")
+                    .font(egui::FontId::new(12.0, fonts::family_mono())),
+            );
+            let enter = resp.has_focus() && ui.ctx().input(|i| i.key_pressed(egui::Key::Enter));
+            if (enter || resp.lost_focus()) && !st.var.is_empty() {
+                match resolve_var(&st.var, tokens) {
+                    Some((name, c)) => {
+                        out.var_picked = Some(name);
+                        write_color(value, alpha, out, c);
+                        st.err = None;
+                    }
+                    None => {
+                        st.err = Some("找不到该 CSS 变量(先在「令牌」页创建)".into());
+                    }
+                }
+            }
+        });
+
+        // ── 完整模式(Alt+点击):RGB / HSL / 令牌色板 ──
+        if st.full {
+            ui.separator();
+            let [r, g, b, a] = value.to_srgba_unmultiplied();
+            let (mut h, mut s, mut l) = rgb_to_hsl(r, g, b);
+            ui.horizontal(|ui| {
+                ui.label(label("RGB"));
+                let mut cr = r;
+                let mut cg = g;
+                let mut cb = b;
+                let ch1 = ui.add(egui::Slider::new(&mut cr, 0..=255).text("R"));
+                let ch2 = ui.add(egui::Slider::new(&mut cg, 0..=255).text("G"));
+                let ch3 = ui.add(egui::Slider::new(&mut cb, 0..=255).text("B"));
+                if ch1.changed() || ch2.changed() || ch3.changed() {
+                    write_color(value, alpha, out, rgba_color(cr, cg, cb, a));
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label(label("HSL"));
+                let ch_h = ui.add(egui::Slider::new(&mut h, 0.0..=360.0).text("色相"));
+                let ch_s = ui.add(egui::Slider::new(&mut s, 0.0..=100.0).text("饱和"));
+                let ch_l = ui.add(egui::Slider::new(&mut l, 0.0..=100.0).text("亮度"));
+                if ch_h.changed() || ch_s.changed() || ch_l.changed() {
+                    let [nr, ng, nb] = hsl_to_rgb(h, s, l);
+                    write_color(value, alpha, out, rgba_color(nr, ng, nb, a));
+                }
+            });
+            if alpha {
+                let mut na = a;
+                ui.horizontal(|ui| {
+                    ui.label(label("Alpha"));
+                    if ui.add(egui::Slider::new(&mut na, 0..=255)).changed() {
+                        let [r2, g2, b2, _] = value.to_srgba_unmultiplied();
+                        write_color(value, alpha, out, rgba_color(r2, g2, b2, na));
+                    }
+                });
+            }
+
+            // 令牌色板(点击 = 用 var(--x))
+            let color_tokens: Vec<(String, Color32)> = tokens
+                .iter()
+                .filter_map(|(n, v)| vb_parse_color(v).map(|c| (n.clone(), c)))
+                .collect();
+            if !color_tokens.is_empty() {
+                ui.separator();
+                ui.label(label("文档令牌(点击采用 var)"));
+                egui::Grid::new("token_swatches").show(ui, |ui| {
+                    for (i, (name, c)) in color_tokens.iter().enumerate() {
+                        if i > 0 && i % 8 == 0 {
+                            ui.end_row();
+                        }
+                        let (srect, sresp) =
+                            ui.allocate_exact_size(Vec2::splat(18.0), Sense::click());
+                        ui.painter().rect_filled(srect, theme::radius::sm(), *c);
+                        ui.painter().rect_stroke(
+                            srect,
+                            theme::radius::sm(),
+                            Stroke::new(theme::stroke::HAIRLINE, t.border),
+                            egui::StrokeKind::Inside,
+                        );
+                        if sresp.clicked() {
+                            out.var_picked = Some(name.clone());
+                            st.var = format!("var(--{name})");
+                            st.err = None;
+                        }
+                        let _ = sresp.on_hover_text(format!("--{name}"));
+                    }
+                });
+            }
+        }
+
+        if let Some(err) = &st.err {
+            ui.add_space(theme::space::S1);
+            ui.label(
+                RichText::new(err)
+                    .font(fonts::font(11.0, fonts::Weight::Regular))
+                    .color(t.danger),
+            );
+        }
+    }
+}
+
+/// 写回颜色(保持字段的 alpha 语义:非 alpha 字段沿用原 alpha)。
+fn write_color(value: &mut Color32, alpha_aware: bool, out: &mut ColorFieldResponse, c: Color32) {
+    let next = if alpha_aware {
+        c
+    } else {
+        let [r, g, b, _] = c.to_srgba_unmultiplied();
+        let a = value.to_srgba_unmultiplied()[3];
+        Color32::from_rgba_unmultiplied(r, g, b, a)
+    };
+    if next != *value {
+        *value = next;
+        out.changed = true;
+    }
+}
+
+/// 取色器窗口状态(存 egui 内存,按字段 id 隔离)。
+#[derive(Debug, Clone, Default)]
+struct PickerState {
+    open: bool,
+    /// 完整模式(Alt+点击):多出 RGB / HSL / 令牌色板。
+    full: bool,
+    hex: String,
+    var: String,
+    err: Option<String>,
+}
+
+fn picker_state(m: &mut egui::Memory, id: egui::Id) -> &mut PickerState {
+    m.data.get_temp_mut_or_default::<PickerState>(id)
+}
+
+/// RGB(u8) → (h°, s%, l%)。
+fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
+    let rf = r as f32 / 255.0;
+    let gf = g as f32 / 255.0;
+    let bf = b as f32 / 255.0;
+    let max = rf.max(gf).max(bf);
+    let min = rf.min(gf).min(bf);
+    let l = (max + min) / 2.0;
+    if (max - min).abs() < f32::EPSILON {
+        return (0.0, 0.0, l * 100.0);
+    }
+    let d = max - min;
+    let s = if l > 0.5 {
+        d / (2.0 - max - min)
+    } else {
+        d / (max + min)
+    };
+    let h = if max == rf {
+        ((gf - bf) / d + if gf < bf { 6.0 } else { 0.0 }) * 60.0
+    } else if max == gf {
+        ((bf - rf) / d + 2.0) * 60.0
+    } else {
+        ((rf - gf) / d + 4.0) * 60.0
+    };
+    (h, s * 100.0, l * 100.0)
+}
+
+/// (h°, s%, l%) → [r, g, b](u8)。
+fn hsl_to_rgb(h: f32, s: f32, l: f32) -> [u8; 3] {
+    let hf = (h / 360.0).rem_euclid(1.0);
+    let sf = (s / 100.0).clamp(0.0, 1.0);
+    let lf = (l / 100.0).clamp(0.0, 1.0);
+    if sf == 0.0 {
+        let v = (lf * 255.0).round() as u8;
+        return [v, v, v];
+    }
+    let q = if lf < 0.5 {
+        lf * (1.0 + sf)
+    } else {
+        lf + sf - lf * sf
+    };
+    let p = 2.0 * lf - q;
+    let hue = |mut t: f32| -> f32 {
+        if t < 0.0 {
+            t += 1.0
+        }
+        if t > 1.0 {
+            t -= 1.0
+        }
+        if t < 1.0 / 6.0 {
+            p + (q - p) * 6.0 * t
+        } else if t < 0.5 {
+            q
+        } else if t < 2.0 / 3.0 {
+            p + (q - p) * (2.0 / 3.0 - t) * 6.0
+        } else {
+            p
+        }
+    };
+    [
+        (hue(hf + 1.0 / 3.0) * 255.0).round() as u8,
+        (hue(hf) * 255.0).round() as u8,
+        (hue(hf - 1.0 / 3.0) * 255.0).round() as u8,
+    ]
+}
+
+/// `vb_common::Rgba` → egui 颜色(非预乘视角,与回显一致)。
+fn rgba_color(r: u8, g: u8, b: u8, a: u8) -> Color32 {
+    Color32::from_rgba_unmultiplied(r, g, b, a)
+}
+
+/// 走 `vb_common::color::parse_color`(hex/rgb()/hsl()/命名色;
+/// 02-6-3 纪律:不重复造解析)。
+fn vb_parse_color(s: &str) -> Option<Color32> {
+    vb_common::color::parse_color(s).map(|c| Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a))
+}
+
+/// 解析 `var(--x)` / `--x` / `x`,从文档令牌取色。
+/// 返回 `(名称不带 --, 颜色)`。
+fn resolve_var(input: &str, tokens: &[(String, String)]) -> Option<(String, Color32)> {
+    let t = input.trim();
+    let t = t
+        .strip_prefix("var(")
+        .and_then(|r| r.strip_suffix(')'))
+        .unwrap_or(t)
+        .trim();
+    // `--` 前缀可选:`var(--x)` / `--x` / `x` 三种写法等价(输入框友好)
+    let name = t.strip_prefix("--").unwrap_or(t).trim().to_string();
+    if name.is_empty() {
+        return None;
+    }
+    tokens
+        .iter()
+        .find(|(n, _)| *n == name)
+        .and_then(|(_, v)| vb_parse_color(v))
+        .map(|c| (name, c))
 }
 
 /// `#RRGGBB` 或带 alpha 的 `#RRGGBBAA`。
@@ -502,25 +1102,55 @@ impl<'a> SectionHeader<'a> {
 
 // ──────────────────────────── 5. PanelTabs ────────────────────────────
 
-/// 面板坞的 Tab 条（属性 / 图层 / 令牌 / 导出）。
+/// [`PanelTabs`] 的交互结果(S1-b 02-1-2:Tab 顺序内存可换)。
+#[derive(Debug, Clone, Default)]
+pub struct TabsResponse {
+    /// 本次是否切换了 Tab(`active` 已被改写)。
+    pub changed: bool,
+    /// 右键菜单请求的顺序调整:`(槽位, 方向)`,方向 -1 = 左移、+1 = 右移。
+    /// 调用方把它应用到自己的顺序表(持久化为阶段 7 的 workspace.json)。
+    pub reorder: Option<(usize, i32)>,
+}
+
+/// 面板坞的 Tab 条(S1-b 起 4 页:属性 / 图层 / 画板 / 令牌)。
 ///
 /// 下划线指示器走 accent 色；切换动效 200ms（`motion::PANEL`），
 /// 因为 Tab 是"层级跳转"而不是"悬停"，用 80ms 会显得突兀。
+///
+/// `reorderable(true)` 时每个 Tab 支持右键菜单「左移 / 右移」,
+/// 请求经 [`TabsResponse::reorder`] 交给调用方落自己的顺序表。
 pub struct PanelTabs<'a> {
     labels: &'a [&'a str],
     active: &'a mut usize,
+    reorderable: bool,
 }
 
 impl<'a> PanelTabs<'a> {
     /// 新建 Tab 条。
     pub fn new(labels: &'a [&'a str], active: &'a mut usize) -> Self {
-        Self { labels, active }
+        Self {
+            labels,
+            active,
+            reorderable: false,
+        }
+    }
+
+    /// 允许右键重排(02-1-2)。
+    pub fn reorderable(mut self, v: bool) -> Self {
+        self.reorderable = v;
+        self
     }
 
     /// 画出 Tab 条；返回本次**是否切换了 Tab**。
     pub fn ui(self, ui: &mut Ui) -> bool {
+        self.ui_ex(ui).changed
+    }
+
+    /// 画出 Tab 条,返回完整交互结果(含重排请求)。
+    pub fn ui_ex(self, ui: &mut Ui) -> TabsResponse {
+        let mut out = TabsResponse::default();
         if self.labels.is_empty() {
-            return false;
+            return out;
         }
         let t = theme::tokens(ui.ctx());
         let h = 28.0;
@@ -567,9 +1197,26 @@ impl<'a> PanelTabs<'a> {
                     *self.active = i;
                     changed = true;
                 }
+                if self.reorderable {
+                    let mut reorder: Option<(usize, i32)> = None;
+                    resp.context_menu(|ui| {
+                        if i > 0 && ui.button("左移").clicked() {
+                            reorder = Some((i, -1));
+                            ui.close();
+                        }
+                        if i + 1 < self.labels.len() && ui.button("右移").clicked() {
+                            reorder = Some((i, 1));
+                            ui.close();
+                        }
+                    });
+                    if reorder.is_some() {
+                        out.reorder = reorder;
+                    }
+                }
             }
         });
-        changed
+        out.changed = changed;
+        out
     }
 }
 
@@ -883,5 +1530,101 @@ mod tests {
                 "标签宽度要能放下「宽度」两个字，否则会与输入框挤在一起"
             );
         }
+    }
+
+    // ── 02-6-1:scrubby 步进(纯函数) ──
+
+    /// 横向拖动 1px = speed;Shift 粗调 ×10;Alt 细调 ×0.1;同时按 Alt 优先。
+    #[test]
+    fn scrub_step_multipliers() {
+        assert_eq!(scrub_step(10.0, 1.0, false, false), 10.0, "基础 = dx×speed");
+        assert_eq!(scrub_step(5.0, 0.5, false, false), 2.5);
+        assert_eq!(scrub_step(3.0, 1.0, true, false), 30.0, "Shift 粗调 ×10");
+        assert!(
+            (scrub_step(3.0, 1.0, false, true) - 0.3).abs() < 1e-9,
+            "Alt 细调 ×0.1"
+        );
+        assert!(
+            (scrub_step(3.0, 1.0, true, true) - 0.3).abs() < 1e-9,
+            "同时按下按 Alt(细调)优先"
+        );
+        assert_eq!(scrub_step(-4.0, 2.0, false, false), -8.0, "负方向");
+        assert_eq!(scrub_step(0.0, 1.0, true, false), 0.0);
+    }
+
+    /// 数值回显格式:整数不带小数点,小数最多 2 位去尾零。
+    #[test]
+    fn num_formatting() {
+        assert_eq!(format_num(120.0), "120");
+        assert_eq!(format_num(160.5), "160.5");
+        assert_eq!(format_num(160.25), "160.25");
+        assert_eq!(format_num(160.2500000), "160.25");
+        assert_eq!(format_num(0.0), "0");
+        assert_eq!(format_num(-12.0), "-12");
+        assert_eq!(format_num(-0.5), "-0.5");
+    }
+
+    /// 表达式提交语义由 vb_ui(expr)与 vb_app(会话)分别把关;
+    /// 这里锁「参数到画布的语义」:单位后缀不进求值器(缓冲只存数字)。
+    #[test]
+    fn unit_is_display_only() {
+        let s = format_num(1440.0);
+        assert_eq!(crate::expr::eval_expr(&s, Some(1440.0)).unwrap(), 1440.0);
+    }
+
+    // ── 02-6-3:RGB ↔ HSL 往返 ──
+
+    #[test]
+    fn rgb_hsl_roundtrip() {
+        for (r, g, b) in [
+            (255u8, 0u8, 0u8),
+            (0, 255, 0),
+            (0, 0, 255),
+            (128, 128, 128),
+            (255, 255, 255),
+            (0, 0, 0),
+            (255, 128, 0),
+        ] {
+            let (h, s, l) = rgb_to_hsl(r, g, b);
+            let [r2, g2, b2] = hsl_to_rgb(h, s, l);
+            assert!((r2 as i32 - r as i32).abs() <= 1, "r {r} → {r2}");
+            assert!((g2 as i32 - g as i32).abs() <= 1, "g {g} → {g2}");
+            assert!((b2 as i32 - b as i32).abs() <= 1, "b {b} → {b2}");
+        }
+    }
+
+    /// 主色相锚点:HSL 语义正确(红=0°、绿=120°、蓝=240°)。
+    #[test]
+    fn hsl_anchors() {
+        let (h, s, l) = rgb_to_hsl(255, 0, 0);
+        assert!((h - 0.0).abs() < 1.0 && (s - 100.0).abs() < 1.0 && (l - 50.0).abs() < 1.0);
+        let (h, _, _) = rgb_to_hsl(0, 255, 0);
+        assert!((h - 120.0).abs() < 1.0);
+        let (h, _, _) = rgb_to_hsl(0, 0, 255);
+        assert!((h - 240.0).abs() < 1.0);
+        // 灰色 s=0
+        let (_, s, _) = rgb_to_hsl(130, 130, 130);
+        assert!(s.abs() < 0.001);
+    }
+
+    /// var(--x) 解析:`var(--name)` / `--name` / `name` 三种写法等价;
+    /// 找不到令牌返回 None(调用方报中文错误)。
+    #[test]
+    fn var_resolution() {
+        let tokens = vec![
+            ("brand-1".to_string(), "#ff5a1f".to_string()), // vb-token-ok: 测试夹具
+            ("gray".to_string(), "hsl(0, 0%, 50%)".to_string()),
+        ];
+        for input in ["var(--brand-1)", "--brand-1", "brand-1", " var(--brand-1) "] {
+            let (name, c) = resolve_var(input, &tokens).expect(input);
+            assert_eq!(name, "brand-1");
+            let [r, g, b, _] = c.to_srgba_unmultiplied();
+            assert_eq!((r, g, b), (0xFF, 0x5A, 0x1F));
+        }
+        assert!(resolve_var("var(--missing)", &tokens).is_none());
+        assert!(
+            resolve_var("var(--gray)", &tokens).is_some(),
+            "hsl() 令牌经 vb_common 解析"
+        );
     }
 }

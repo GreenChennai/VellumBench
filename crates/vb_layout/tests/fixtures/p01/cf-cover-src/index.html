@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>封面:真人+标题</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { background: #0f1115; }
+.poster {
+  position: relative; width: 1080px; height: 1920px; overflow: hidden;
+  background: linear-gradient(165deg, #10141c 0%, #16202e 48%, #0e211c 100%);
+  font-family: "Microsoft YaHei", sans-serif; color: #fff;
+}
+.grid {
+  position: absolute; inset: 0;
+  background-image:
+    linear-gradient(rgba(255,212,0,0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,212,0,0.055) 1px, transparent 1px);
+  background-size: 108px 108px;
+}
+.glow {
+  position: absolute; width: 1500px; height: 1500px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(47,208,140,0.16) 0%, transparent 62%);
+  top: 260px; left: -460px;
+}
+.person {
+  position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
+  width: 1120px; height: auto;
+  filter: drop-shadow(0 30px 60px rgba(0,0,0,0.55));
+}
+.scrim {
+  position: absolute; top: 0; left: 0; right: 0; height: 900px;
+  background: linear-gradient(180deg, rgba(10,12,16,0.82), transparent);
+}
+.badge {
+  position: absolute; top: 110px; left: 80px;
+  padding: 14px 34px; border-radius: 999px; background: #ffd400; color: #10131a;
+  font-size: 34px; font-weight: 900; letter-spacing: 6px;
+}
+.title {
+  position: absolute; top: 210px; left: 80px; right: 80px;
+  font-size: 120px; font-weight: 900; line-height: 1.28;
+  text-shadow: 0 8px 32px rgba(0,0,0,0.6);
+}
+.title .em { color: #ffd400; }
+.sub {
+  position: absolute; top: 700px; left: 82px;
+  font-size: 44px; color: #c9d2dc; letter-spacing: 2px;
+  text-shadow: 0 4px 18px rgba(0,0,0,0.7);
+}
+.foot {
+  position: absolute; bottom: 90px; left: 80px; right: 80px;
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 32px; color: rgba(255,255,255,0.75); letter-spacing: 4px;
+}
+.play {
+  width: 110px; height: 110px; border-radius: 50%; background: rgba(255,212,0,0.95);
+  display: flex; align-items: center; justify-content: center;
+}
+.play::after {
+  content: ""; border-left: 34px solid #10131a; border-top: 20px solid transparent;
+  border-bottom: 20px solid transparent; margin-left: 8px;
+}
+</style></head>
+<body>
+  <div class="poster">
+    <div class="grid"></div>
+    <div class="glow"></div>
+    <img class="person" src="person.png">
+    <div class="scrim"></div>
+    <div class="badge">运营小课堂</div>
+    <div class="title">店群运营<br>= <span class="em">拆分收入</span>?</div>
+    <div class="sub">进攻 · 防守 · 一店一照 · 关联风控</div>
+    <div class="foot">
+      <span>CUTFLOW 出品</span>
+      <div class="play"></div>
+    </div>
+  </div>
+</body>
+</html>

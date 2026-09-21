@@ -1,0 +1,19 @@
+* { margin: 0; padding: 0; }
+.poster {
+  position: relative;
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+}
+.title {
+  position: absolute;
+  left: 120px;
+  top: 440px;
+  font: 700 96px/1.2 sans-serif;
+}
+.badge {
+  position: absolute;
+  right: 96px;
+  bottom: 72px;
+  font: 400 32px/1 sans-serif;
+}

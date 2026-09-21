@@ -1,0 +1,19 @@
+# S4 外观堆叠:条目模型属性 + 编译产物经 HTML 管线无损往返
+# 模型属性逐字节往返(顺序/眼睛/混合模式)
+data-vb-appearance
+# 多填充:纯色层以同色双 stop 渐变承载 + background-color 底条
+background-image: linear-gradient(#ff5a1f, #ff5a1f), linear-gradient(90deg, #204060 0, #90c0f0 100%)
+background-color: #102030
+background-blend-mode: multiply, normal
+# 多效果:阴影段序 = 条目序;模糊 filter;圆角
+box-shadow: 8px 12px 24px 4px #00000059, inset 0 0 10px #ffffff40
+filter: blur(2px)
+border-radius: 6px
+# 文字外观:描边与阴影落点
+-webkit-text-stroke-width: 2px
+-webkit-text-stroke-color: #36f
+text-shadow: 2px 2px 3px #00000080
+# 描边:内侧 dashed 近似 + 外侧 outline
+border-style: dashed
+outline-width: 2px
+outline-color: #0af

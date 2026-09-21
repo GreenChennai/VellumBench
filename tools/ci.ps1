@@ -80,9 +80,8 @@ Mark-Gate "6 术语扫描" $LASTEXITCODE
 
 # ---- 门禁 7:输出校验(良构 + sid 唯一 + CSS 合法 + L1 幂等) ----
 Write-GateHeader "门禁 7 · 输出校验(validate:示例工程全检)"
-$cli = "target\debugellum-cli.exe"
-if (-not (Test-Path $cli)) { $cli = "target
-eleaseellum-cli.exe" }
+$cli = 'target/debug/vellum-cli.exe'
+if (-not (Test-Path $cli)) { $cli = 'target/release/vellum-cli.exe' }
 cargo build --bin vellum-cli 2>&1 | Out-Null
 & $cli --doc examples/landing/index.html validate
 Mark-Gate "7 输出校验" $LASTEXITCODE

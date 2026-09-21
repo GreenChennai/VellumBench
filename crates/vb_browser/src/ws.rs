@@ -217,9 +217,11 @@ impl WsConn {
             .unwrap_or(0x9E3779B97F4A7C15)
             ^ ((std::process::id() as u64) << 32);
         for (i, b) in key_bytes.iter_mut().enumerate() {
-            let x = seed
+            // 全程 wrapping:i×常数在 i≥13 时溢出 u64——release 默认关闭
+            // 溢出检查掩盖了此点,debug 构建(ci.ps1 门禁 3/e2e)panic
+            let x = (seed)
                 .wrapping_mul(0x9E3779B97F4A7C15)
-                .wrapping_add(i as u64 * 0xBF58476D1CE4E5B9);
+                .wrapping_add((i as u64).wrapping_mul(0xBF58476D1CE4E5B9));
             *b = (x >> 24) as u8 ^ (x >> 8) as u8;
         }
         let key = b64::encode(&key_bytes);

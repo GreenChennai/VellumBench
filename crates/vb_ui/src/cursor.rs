@@ -44,6 +44,13 @@ pub const ZOOM_IN: CursorIcon = CursorIcon::ZoomIn;
 /// 见 [`ZOOM_IN`]。
 pub const ZOOM_OUT: CursorIcon = CursorIcon::ZoomOut;
 
+/// 直接选择工具(阶段 6 / 07-3-5)。
+///
+/// ⚠️ Illustrator 给的是**空心箭头**、悬停锚点给**锚点光标**;egui 两者都没有。
+/// `Cell`(方框十字)是最接近"锚点/顶点"语义的内置图标,与「选择」的默认箭头
+/// **明确不同** —— 已是本约束下的最优解,由下方测试钉住这个妥协。
+pub const DIRECT_SELECT: CursorIcon = CursorIcon::Cell;
+
 /// 8 个缩放手柄 → 光标。
 ///
 /// 手柄编号与 `vb_app::app::hit_handle` 一致：
@@ -107,6 +114,17 @@ mod tests {
         assert_eq!(for_hover(true), LOCKED);
         assert_eq!(for_hover(false), HOVER_OBJECT);
         assert_ne!(for_hover(true), for_hover(false));
+    }
+
+    /// 阶段 6:选择与直接选择必须给出**不同**光标,否则用户分不出当前工具。
+    /// 直接选择用 `Cell` 是 egui 无空心箭头/锚点光标下的**已知妥协**。
+    #[test]
+    fn direct_select_is_distinct_from_plain_select() {
+        assert_ne!(
+            DIRECT_SELECT, CANVAS_DEFAULT,
+            "直接选择不能与普通选择同光标"
+        );
+        assert_ne!(DIRECT_SELECT, PEN, "直接选择与钢笔应可分(方框十字 vs 十字)");
     }
 
     /// 旋转光标与对角缩放手柄撞车是**已知妥协**（egui 无自定义光标图片）。

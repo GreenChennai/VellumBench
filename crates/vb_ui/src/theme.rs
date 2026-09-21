@@ -205,6 +205,20 @@ pub mod semantic {
             FROZEN_FILL_LIGHT
         }
     }
+
+    /// 区域文本溢出红点(design/03 §六:文本框右下角红点)。
+    pub const OVERFLOW_DOT_DARK: Color32 = Color32::from_rgb(0xFF, 0x45, 0x3A);
+    /// 区域文本溢出红点(浅色,加深保证对比)。
+    pub const OVERFLOW_DOT_LIGHT: Color32 = Color32::from_rgb(0xD7, 0x00, 0x15);
+
+    /// 按主题取溢出红点色。
+    pub fn overflow_dot(dark: bool) -> Color32 {
+        if dark {
+            OVERFLOW_DOT_DARK
+        } else {
+            OVERFLOW_DOT_LIGHT
+        }
+    }
 }
 
 // ───────────────────────── 间距 / 圆角 / 描边 ─────────────────────────
@@ -227,6 +241,8 @@ pub mod space {
     pub const STATUS_BAR_HEIGHT: f32 = 28.0;
     /// 底部浮动工具条高度。
     pub const FLOATING_TOOLBAR_HEIGHT: f32 = 40.0;
+    /// 控制面板高度(S1-c 02-2:菜单栏下 40px 随工具上下文条)。
+    pub const CONTROL_BAR_HEIGHT: f32 = 40.0;
     /// 右侧坞默认宽度。
     pub const DOCK_WIDTH: f32 = 280.0;
     /// 低于此宽度右侧坞自动折叠。

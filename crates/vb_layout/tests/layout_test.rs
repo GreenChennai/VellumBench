@@ -23,7 +23,8 @@ fn layout_mut(html: &str) -> (vb_doc::model::Document, Vec<String>) {
     let r = import_html(html, &dir).expect("导入");
     let mut doc = r.doc;
     let ab = doc.artboards[0];
-    let ws = vb_layout::apply_to_doc(&mut doc, ab, Some(&dir), true);
+    // synthetic 透传导入器判定(无标记才合成;P0-1 后启发式画板不算合成)
+    let ws = vb_layout::apply_to_doc(&mut doc, ab, Some(&dir), r.synthetic_artboard);
     let _ = std::fs::remove_dir_all(&dir);
     (doc, ws)
 }

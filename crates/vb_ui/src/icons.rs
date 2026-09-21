@@ -53,6 +53,8 @@ pub enum Name {
     // ── 工具箱 ──
     /// 选择工具。
     ToolSelect,
+    /// 直接选择工具(阶段 6:与「选择」明确区分的**独立**工具/图标)。
+    ToolDirectSelect,
     /// 矩形工具。
     ToolRect,
     /// 椭圆工具。
@@ -147,6 +149,14 @@ pub enum Name {
     Close,
     /// 信息。
     Info,
+    /// 复制文本(toast 错误可复制,02-6-6)。
+    Copy,
+
+    // ── 面板坞 Tab(02-1:4 页 + 折叠图标条) ──
+    /// 属性面板 Tab。
+    PanelProperties,
+    /// 令牌面板 Tab。
+    PanelTokens,
 
     // ── 折叠指示 ──
     /// 已折叠（箭头朝右）。
@@ -159,6 +169,7 @@ impl Name {
     /// 全部图标（供测试与遍历）。
     pub const ALL: &'static [Name] = &[
         Name::ToolSelect,
+        Name::ToolDirectSelect,
         Name::ToolRect,
         Name::ToolEllipse,
         Name::ToolHand,
@@ -201,6 +212,9 @@ impl Name {
         Name::Check,
         Name::Close,
         Name::Info,
+        Name::Copy,
+        Name::PanelProperties,
+        Name::PanelTokens,
         Name::Collapsed,
         Name::Expanded,
     ];
@@ -209,6 +223,8 @@ impl Name {
     pub const fn lucide(self) -> &'static str {
         match self {
             Name::ToolSelect => "mouse-pointer-2",
+            // 空心指针:与「选择」的实心指针区分(阶段 6 / design/06 §3.2)
+            Name::ToolDirectSelect => "mouse-pointer",
             Name::ToolRect => "square",
             Name::ToolEllipse => "circle",
             Name::ToolHand => "hand",
@@ -256,6 +272,10 @@ impl Name {
             Name::Check => "check",
             Name::Close => "x",
             Name::Info => "info",
+            Name::Copy => "copy",
+
+            Name::PanelProperties => "sliders-horizontal",
+            Name::PanelTokens => "palette",
 
             Name::Collapsed => "chevron-right",
             Name::Expanded => "chevron-down",
@@ -376,7 +396,7 @@ mod tests {
         // 枚举变体总数（含 ALL 自己占的一行由 compiler 保证一致）
         assert_eq!(
             Name::ALL.len(),
-            45,
+            49,
             "Name::ALL 的条数与枚举变体数不符：新增图标后要同步 ALL"
         );
     }

@@ -38,6 +38,24 @@ fn finalize_classes(doc: &mut Document) {
     use std::collections::HashSet;
     let mut used: HashSet<String> = HashSet::new();
     let ids = ordered_source(doc);
+
+    // ② 占名预扫(P0-2):Frozen 节点参与「类名占额」但**不造类/不改名**。
+    // Frozen 的 HTML 是原样裸片段(无处写 class 属性),然而 `render_css` 对
+    // 「非 `#text` 且 class 非空」的节点一律出规则 —— 它的原生类会真写在同名
+    // 选择器下。若不让它占额,后面的普通节点会认领同名类作规则选择器,于是
+    // 两条规则同选择器互相折叠:重导入时 Frozen 也吃到该规则样式,下一轮便
+    // 多出一条重复规则(两步收敛,单步 L1 门假绿)。
+    for &id in &ids {
+        if let Some(n) = doc.nodes.get(id) {
+            if matches!(n.kind, NodeKind::Frozen { .. }) {
+                for c in &n.classes {
+                    used.insert(c.clone());
+                }
+            }
+        }
+    }
+
+    // ① 造类 / ③ 改名:首类(规则选择器)类成员级全局唯一。
     for id in ids {
         let node = match doc.nodes.get_mut(id) {
             Some(n) => n,
@@ -46,7 +64,9 @@ fn finalize_classes(doc: &mut Document) {
         // `#text`(行内文本段)在 HTML 里被内联进父元素正文,没有 class 属性可挂,
         // 因此不得为它生成占位类——否则导出的 CSS 会带上一条无人引用的规则,
         // 二次导入时被判为"孤儿类规则"塞进 raw_css,破坏 L1 幂等。
-        if node.tag == "#text" {
+        // Frozen 节点同理(P0-2):导出走原样 HTML 片段,造出的类没有 HTML
+        // 载体,每轮成为孤儿规则再重新生成(规则增殖);一律不造类/不改名。
+        if node.tag == "#text" || matches!(node.kind, NodeKind::Frozen { .. }) {
             continue;
         }
         if node.classes.is_empty() {
@@ -65,6 +85,11 @@ fn finalize_classes(doc: &mut Document) {
                 node.classes.insert(0, gen.clone());
             }
             used.insert(gen);
+            // 主类冲突即移除冲突类(P0-1 L1 稳定化的另一半):节点样式已
+            // 包含该类合并后的全部声明,唯一类规则完整承载;若保留冲突类,
+            // 下一轮导入会把「首个认领者的完整规则」(含其几何)误并入本
+            // 节点的级联 —— 共享类漂移,L1 字节幂等被打破。
+            node.classes.retain(|c| c != &primary);
         } else {
             used.insert(primary);
         }
@@ -296,6 +321,7 @@ fn push_text_with_breaks(s: &str, out: &mut Vec<HtmlNode>) {
 }
 
 /// 段样式 → 内联 style 值(固定属性顺序,保证 L1 幂等)。
+/// 与 import `inline_style_of` 的捕获集对称:发什么捕什么,捕什么发什么。
 fn seg_style_attr(st: &SegStyle) -> String {
     let mut parts: Vec<String> = Vec::new();
     if let Some(c) = &st.color {
@@ -313,10 +339,47 @@ fn seg_style_attr(st: &SegStyle) -> String {
     if let Some(ff) = &st.font_family {
         parts.push(format!("font-family: {ff}"));
     }
+    if let Some(lh) = st.line_height {
+        parts.push(format!("line-height: {}px", vb_common::units::fmt_num(lh)));
+    }
+    if let Some(ls) = st.letter_spacing {
+        parts.push(format!(
+            "letter-spacing: {}px",
+            vb_common::units::fmt_num(ls)
+        ));
+    }
+    if let Some(bs) = st.baseline_shift {
+        parts.push(format!(
+            "vertical-align: {}px",
+            vb_common::units::fmt_num(bs)
+        ));
+    }
+    let mut deco: Vec<&str> = Vec::new();
+    if st.underline == Some(true) {
+        deco.push("underline");
+    }
+    if st.strikethrough == Some(true) {
+        deco.push("line-through");
+    }
+    if !deco.is_empty() {
+        parts.push(format!("text-decoration: {}", deco.join(" ")));
+    }
     parts.join("; ")
 }
 
 // ---------- CSS ----------
+
+/// 节点**自身** `transform` 的平移分量(与 `vb_layout` 同源解析)。
+///
+/// `vb_doc` 不能依赖 `vb_layout`(方向相反),故实现放在 `vb_common::transform`。
+fn node_own_translate(node: &Node) -> (f64, f64) {
+    let tf = node
+        .style
+        .iter()
+        .find(|d| d.prop == "transform")
+        .map(|d| d.value.as_str());
+    vb_common::transform::own_translate(tf, node.geom.w, node.geom.h)
+}
 
 fn geom_decls(node: &Node, is_artboard: bool) -> Vec<vb_css::Decl> {
     let mut d = Vec::new();
@@ -329,11 +392,50 @@ fn geom_decls(node: &Node, is_artboard: bool) -> Vec<vb_css::Decl> {
         d.push(decl("position", "absolute".into()));
     }
     if !is_artboard {
-        d.push(decl("left", format!("{}px", fmt_num(node.geom.x))));
-        d.push(decl("top", format!("{}px", fmt_num(node.geom.y))));
+        // 自身 `transform` 的平移分量**补偿**:`geom` 承载的是**视觉盒**
+        // (导入时已把 `left/top + translate` 折进来,见 `vb_layout`),而
+        // `transform` 声明在下面会被原样保留 —— 浏览器最终位置 =
+        // `left/top + translate`,故这里必须写 `geom − translate`,写 `geom`
+        // 会让对象在浏览器里整体偏掉一个 translate(对齐到画板左边会跳出去),
+        // 且重导入后每存一轮再漂一次,直接打穿 L1 判据 C。
+        let (tx, ty) = node_own_translate(node);
+        d.push(decl("left", format!("{}px", fmt_num(node.geom.x - tx))));
+        d.push(decl("top", format!("{}px", fmt_num(node.geom.y - ty))));
     }
     d.push(decl("width", format!("{}px", fmt_num(node.geom.w))));
     d.push(decl("height", format!("{}px", fmt_num(node.geom.h))));
+    d
+}
+
+/// 规范化(非声明)节点的 style 中要过滤的几何属性:这些节点的定位/尺寸
+/// 已由 `geom` 显式承载,style 中遗留的原始几何声明(百分比锚/inset 等,
+/// 声明几何节点被显式移动后遗留)不得参与级联,否则与显式值双写冲突。
+const GEOM_STYLE_PROPS: &[&str] = &[
+    "position", "left", "top", "right", "bottom", "inset", "width", "height",
+];
+
+/// 节点导出声明(P0-1 保真往返核心):
+/// - 画板:声明尺寸由 geom 重建(width/height),其余声明原样;
+/// - `geom_declared`(声明几何,未编辑):**只写原始声明**——百分比锚 /
+///   inset / right|bottom / 流式语义原样往返,内存求值的 geom 不烤进 CSS;
+/// - 规范化节点(显式 px,或已被显式几何编辑 materialize):由 geom 写
+///   显式 px,并过滤 style 中遗留的几何声明(防双写/级联覆盖)。
+fn node_decls(node: &Node) -> Vec<vb_css::Decl> {
+    if matches!(node.kind, NodeKind::Artboard) {
+        let mut d = geom_decls(node, true);
+        d.extend(node.style.iter().cloned());
+        return d;
+    }
+    if node.geom_declared {
+        return node.style.clone();
+    }
+    let mut d = geom_decls(node, false);
+    d.extend(
+        node.style
+            .iter()
+            .filter(|decl| !GEOM_STYLE_PROPS.contains(&decl.prop.as_str()))
+            .cloned(),
+    );
     d
 }
 
@@ -367,7 +469,6 @@ fn render_css(doc: &Document) -> String {
     }
 
     for node in ordered {
-        let is_ab = matches!(node.kind, NodeKind::Artboard);
         // `#text` 没有 class 属性(见 finalize_classes),自然也不该有 CSS 规则。
         if node.tag == "#text" {
             continue;
@@ -375,8 +476,7 @@ fn render_css(doc: &Document) -> String {
         if node.classes.is_empty() {
             continue;
         }
-        let mut decls = geom_decls(node, is_ab);
-        decls.extend(node.style.iter().cloned());
+        let mut decls = node_decls(node);
         if node.hidden {
             decls.push(vb_css::Decl {
                 prop: "display".into(),

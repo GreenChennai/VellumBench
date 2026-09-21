@@ -378,4 +378,364 @@
   keys: { win: "" }
   undoable: false
   expose_to_agent: false
+- id: view.toggle_layers_panel
+  label: 图层面板显隐
+  keys: { win: "F7" }
+  undoable: false
+  expose_to_agent: false
+- id: view.toggle_all_panels
+  label: 隐藏 / 恢复所有面板
+  keys: { win: "Tab" }
+  undoable: false
+  expose_to_agent: false
+- id: view.toggle_char_panel
+  label: 字符面板显隐
+  keys: { win: "Ctrl+T" }
+  undoable: false
+  expose_to_agent: false
+- id: view.toggle_para_panel
+  label: 段落面板显隐
+  keys: { win: "Ctrl+Alt+T" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.text_cycle_mode
+  label: 文字工具:点/区域循环
+  keys: { win: "Shift+T" }
+  undoable: true
+  expose_to_agent: false
+- id: view.toggle_appearance_panel
+  label: 外观面板显隐
+  keys: { win: "Shift+F6" }
+  undoable: false
+  expose_to_agent: false
+- id: view.toggle_stroke_panel
+  label: 描边面板显隐
+  keys: { win: "Ctrl+F10" }
+  undoable: false
+  expose_to_agent: false
+- id: view.toggle_gradient_panel
+  label: 渐变面板显隐
+  keys: { win: "Ctrl+F9" }
+  undoable: false
+  expose_to_agent: false
+- id: view.toggle_opacity_panel
+  label: 透明度面板显隐
+  keys: { win: "Ctrl+Shift+F10" }
+  undoable: false
+  expose_to_agent: false
+- id: view.toggle_color_panel
+  label: 颜色面板显隐
+  keys: { win: "F6" }
+  undoable: false
+  expose_to_agent: false
+- id: color.toggle_target
+  label: 颜色:切换填充/描边
+  keys: { win: "X" }
+  undoable: false
+  expose_to_agent: false
+- id: color.swap_fill_stroke
+  label: 颜色:交换填充与描边
+  keys: { win: "Shift+X" }
+  undoable: true
+  expose_to_agent: false
+- id: color.default_fill_stroke
+  label: 颜色:恢复默认填色/描边色
+  keys: { win: "D" }
+  undoable: true
+  expose_to_agent: false
+- id: file.close
+  label: 关闭文档
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: true
+- id: file.import_html
+  label: 导入 HTML…
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: true
+- id: file.print
+  label: 打印…
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: true
+- id: edit.preferences
+  label: 首选项…
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: edit.keyboard_shortcuts
+  label: 键盘快捷键…
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: object.clip_mask
+  label: 建立剪切蒙版
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: true
+- id: object.release_clip_mask
+  label: 释放剪切蒙版
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: true
+- id: object.outline_stroke
+  label: 轮廓化描边
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: true
+- id: text.upper_case
+  label: 更改大小写 → 大写
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: false
+- id: text.lower_case
+  label: 更改大小写 → 小写
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: false
+- id: text.create_outlines
+  label: 创建轮廓
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: text.find_font
+  label: 查找字体…
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: select.inverse
+  label: 选择反向
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: select.next_object
+  label: 选择上方的下一个对象
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: select.prev_object
+  label: 选择下方的下一个对象
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: select.same_fill
+  label: 选择相同填充色
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: select.same_stroke
+  label: 选择相同描边色
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: select.same_stroke_width
+  label: 选择相同描边粗细
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: select.all_text
+  label: 选择全部文本对象
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: select.all_locked
+  label: 选择所有锁定对象
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: select.all_hidden
+  label: 选择所有隐藏对象
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: effect.repeat_last
+  label: 应用上一个效果
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: false
+- id: effect.drop_shadow
+  label: 效果:投影
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: false
+- id: effect.inner_shadow
+  label: 效果:内阴影
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: false
+- id: effect.outer_glow
+  label: 效果:外发光
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: false
+- id: effect.inner_glow
+  label: 效果:内发光
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: false
+- id: effect.round_corners
+  label: 效果:圆角
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: false
+- id: effect.gaussian_blur
+  label: 效果:高斯模糊
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: false
+- id: effect.feather
+  label: 效果:羽化
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: false
+- id: effect.distort
+  label: 扭曲和变换…
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: view.hide_edges
+  label: 隐藏边缘
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: view.browser_proof
+  label: 浏览器校对…
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: window.workspace_basic
+  label: 工作区:基本功能
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: window.workspace_type
+  label: 工作区:排版
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: window.workspace_export
+  label: 工作区:导出
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: window.new_workspace
+  label: 新建工作区…
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: window.tab_properties
+  label: 面板坞:属性
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: window.tab_layers
+  label: 面板坞:图层
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: window.tab_artboards
+  label: 面板坞:画板
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: window.tab_tokens
+  label: 面板坞:令牌
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: help.shortcuts
+  label: 键位速查表…
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: help.check_update
+  label: 检查更新…
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: help.capabilities
+  label: 能力台账(做了什么/没做什么)
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: view.dock_toolbar_top
+  label: 工具箱:停靠到顶部
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: view.dock_toolbar_left
+  label: 工具箱:停靠到左侧
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: view.dock_toolbar_right
+  label: 工具箱:停靠到右侧
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: view.dock_toolbar_bottom
+  label: 工具箱:停靠到底部
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: view.toolbar_columns_1
+  label: 工具箱:单列
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: view.toolbar_columns_2
+  label: 工具箱:双列
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: path.merge
+  label: 路径查找器:合并
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: true
+- id: path.subtract_back
+  label: 路径查找器:减去后方对象
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: true
+- id: path.crop
+  label: 路径查找器:裁剪
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: true
+- id: view.toggle_transform_panel
+  label: 变换面板显隐
+  keys: { win: "Shift+F8" }
+  undoable: false
+  expose_to_agent: false
+- id: view.toggle_align_panel
+  label: 对齐面板显隐
+  keys: { win: "Shift+F7" }
+  undoable: false
+  expose_to_agent: false
+- id: align.to_selection
+  label: 对齐到:选区
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: align.to_key_object
+  label: 对齐到:关键对象
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: align.to_artboard
+  label: 对齐到:画板
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: object.distribute_hspace
+  label: 水平等间隙分布
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: true
+- id: object.distribute_vspace
+  label: 垂直等间隙分布
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: true
 

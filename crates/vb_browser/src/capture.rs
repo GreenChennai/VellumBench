@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use crate::page::{
-    PageSession, CONTENT_SIZE_JS, FREEZE_ANIMATIONS_JS, RAF_THROTTLE_JS, WAIT_ASSETS_JS,
+    PageSession, ARTBOARD_RECT_JS, BODY_MARGIN_RESET_JS, CONTENT_SIZE_JS, FREEZE_ANIMATIONS_JS,
+    RAF_THROTTLE_JS, WAIT_ASSETS_JS,
 };
 
 /// 捕获参数(与 WPI CLI 参数面一致)。
@@ -19,6 +20,9 @@ pub struct CaptureOptions {
     pub scale: u32,
     /// 保留透明背景。
     pub transparent: bool,
+    /// 画板取景(P0-3):重置 body 页边距,PNG 按画板矩形裁剪,
+    /// 尺寸 = 声明画板尺寸(高度不因内容收缩,尺寸门要求严格相等)。
+    pub artboard: bool,
 }
 
 pub struct CaptureOutcome {
@@ -150,6 +154,12 @@ pub fn capture_png(
     // 要素 10:脚本执行前注入 rAF 节流 + reduced-motion
     let _ = page.add_init_script(RAF_THROTTLE_JS);
     page.emulate_static()?;
+    if opts.artboard {
+        // 画板即画布(P0-3):页边距属页面 chrome,重置后再收敛,
+        // 使画板矩形落在文档原点(与 native 车道同语义)
+        let _ = page.evaluate(BODY_MARGIN_RESET_JS, false);
+        page.sleep(120);
+    }
     // 要素 1:load + networkidle + 200ms(调用方已 navigate 亦可,这里由 caller 控制时序)
     let (mut sw, sh) = page.content_size()?;
     sw = sw.max(opts.width);
@@ -166,7 +176,26 @@ pub fn capture_png(
         (sh, opts.width)
     };
 
-    let png: Vec<u8> = if opts.height_lock.is_some() {
+    let png: Vec<u8> = if opts.artboard {
+        // P0-3 画板取景:单拍按画板矩形裁剪(视口已按声明尺寸设定)。
+        // 尺寸恒为声明画板尺寸——高度不做 min(content) 收缩,尺寸门要求
+        // 物理像素与声明严格相等;命中不到画板元素时回落文档原点。
+        page.set_device_metrics(
+            opts.width,
+            opts.height_lock.unwrap_or(opts.width),
+            opts.scale,
+        )?;
+        page.sleep(150);
+        page.scroll_to(0);
+        page.wait_two_raf();
+        let rect = artboard_rect_of(page, opts.width, opts.height_lock.unwrap_or(0));
+        let clip_h = match opts.height_lock {
+            Some(lock) => lock,
+            None => page.content_size()?.1,
+        };
+        let (cx, cy, cw, ch) = artboard_clip_rect(rect, opts.width, clip_h);
+        page.screenshot("png", None, Some((cx, cy, cw, ch)), true, opts.transparent)?
+    } else if opts.height_lock.is_some() {
         // 锁定高度:单次视口相对 clip(视口已设为锁定高)
         page.scroll_to(0);
         page.wait_two_raf();
@@ -210,6 +239,29 @@ pub fn capture_png(
         warnings,
         infinite_animations: infinite,
     })
+}
+
+/// 画板矩形定位(采集侧):返回 `Some((x, y, w, h))` 或 None(未命中)。
+fn artboard_rect_of(page: &mut PageSession, w: u32, h: u32) -> Option<(f64, f64, f64, f64)> {
+    let js = format!("({ARTBOARD_RECT_JS})({w}, {h})");
+    let v = page.evaluate(&js, false).ok()?;
+    let arr = v.as_array()?;
+    let nums: Vec<f64> = arr.iter().filter_map(Value::as_f64).collect();
+    (nums.len() == 4).then_some((nums[0], nums[1], nums[2], nums[3]))
+}
+
+/// 画板取景裁剪框(P0-3,纯函数):命中画板元素时用其**原点**(页边距/
+/// 居中等偏移不进画布),未命中回落文档原点;尺寸恒为声明画板尺寸
+/// (不采信元素实测宽高,尺寸门要求物理像素与声明严格相等)。
+pub fn artboard_clip_rect(
+    rect: Option<(f64, f64, f64, f64)>,
+    width: u32,
+    height: u32,
+) -> (f64, f64, f64, f64) {
+    match rect {
+        Some((x, y, _, _)) => (x, y, width as f64, height as f64),
+        None => (0.0, 0.0, width as f64, height as f64),
+    }
 }
 
 /// 分块滚动截图 + 纵向拼接(WPI `capture_highres` 协议)。
@@ -369,4 +421,31 @@ pub fn capture_dom(page: &mut PageSession, _url: &str) -> Result<DomCapture, Str
         url_prefix: String::new(),
         warnings,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clip_rect_uses_element_origin_with_declared_size() {
+        // P0-3:body 默认 margin 8px 使画板位于 (8,8)、整页 766×1350,
+        // 裁剪框必须取画板原点 + **声明**尺寸(examples/poster 形态)
+        let clip = artboard_clip_rect(Some((8.0, 8.0, 766.0, 1350.0)), 750, 1334);
+        assert_eq!(clip, (8.0, 8.0, 750.0, 1334.0));
+    }
+
+    #[test]
+    fn clip_rect_falls_back_to_origin() {
+        // 未命中画板元素:回落文档原点,尺寸仍为声明值
+        let clip = artboard_clip_rect(None, 1920, 1080);
+        assert_eq!(clip, (0.0, 0.0, 1920.0, 1080.0));
+    }
+
+    #[test]
+    fn clip_rect_declared_size_not_content_size() {
+        // 尺寸门:高度不因内容收缩(此前 height-lock 分支取 min(lock, contentH))
+        let clip = artboard_clip_rect(Some((0.0, 0.0, 1920.0, 800.0)), 1920, 1080);
+        assert_eq!(clip, (0.0, 0.0, 1920.0, 1080.0));
+    }
 }

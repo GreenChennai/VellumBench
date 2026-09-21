@@ -73,6 +73,12 @@ pub enum NodeKind {
 }
 
 /// 行内段样式(相对节点自身样式的覆盖;None = 继承节点)。
+///
+/// 04 阶段(字符面板)扩展:在原 color/bold/italic/font_size/font_family
+/// 基础上增加 line_height / letter_spacing / baseline_shift(px,Option)与
+/// underline / strikethrough(Option<bool>)。**捕获与发射必须对称**
+/// (import `inline_style_of` ⇔ export `seg_style_attr`),扩展字段必须带
+/// 「HTML → 模型 → HTML」往返幂等测试(`tests/charseg_roundtrip.rs`)。
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SegStyle {
     pub color: Option<String>,
@@ -80,6 +86,16 @@ pub struct SegStyle {
     pub italic: Option<bool>,
     pub font_size: Option<f64>,
     pub font_family: Option<String>,
+    /// 行距,px(捕获:显式 px,或无单位倍数 × 本段 font_size)。
+    pub line_height: Option<f64>,
+    /// 字距(tracking),px。
+    pub letter_spacing: Option<f64>,
+    /// 基线偏移,px(正 = 升,负 = 降;落点 `vertical-align`)。
+    pub baseline_shift: Option<f64>,
+    /// 下划线 / 删除线(同落点 `text-decoration`;仅 Some(true) 生效,
+    /// None = 继承/无)。
+    pub underline: Option<bool>,
+    pub strikethrough: Option<bool>,
 }
 
 /// 富文本段:`text` 的字节区间 + 样式。
@@ -158,6 +174,16 @@ pub struct Node {
     pub authored: [bool; 4],
     /// 作者声明的 position(导入记录;布局层区分显式定位与推断)。
     pub authored_position: Option<String>,
+    /// 作者原始几何声明仍完整保留在 `style` 中(P0-1 保真往返的分层标志)。
+    ///
+    /// - `true`(声明层):该节点的定位/尺寸**不能无损折叠**为 px left/top +
+    ///   width/height(百分比锚 / inset / right|bottom 锚 / 流式 / 自动尺寸),
+    ///   原始声明原样留在 `style`;`geom` 只是 vb_layout 的内存求值结果,供画布
+    ///   与几何查询使用,**保存时不得把 geom 烤进 CSS**(导出只写 style)。
+    /// - `false`(规范化层):导入期已把几何无损折叠进 `geom`,或用户已通过
+    ///   [`Node::materialize_geom`] 显式编辑过几何;导出由 `geom` 写显式 px,
+    ///   并过滤 style 中遗留的几何声明(防双写/级联覆盖)。
+    pub geom_declared: bool,
     pub hidden: bool,
     pub locked: bool,
 }
@@ -189,6 +215,7 @@ impl Node {
             geom: Geom::default(),
             authored: [false; 4],
             authored_position: None,
+            geom_declared: false,
             hidden: false,
             locked: false,
         }
@@ -226,6 +253,21 @@ impl Node {
         let before = self.style.len();
         self.style.retain(|d| d.prop != prop);
         self.style.len() != before
+    }
+
+    /// 把声明几何兑换为显式几何(用户**显式移动/缩放/对齐**该节点时调用;
+    /// `Command::SetGeom` 应用时触发)。
+    ///
+    /// 只翻状态位、不改 `style`:原始几何声明仍留在 style 中,由导出层对
+    /// `geom_declared == false` 的节点统一过滤(见 export::geom_decls)——
+    /// 这样撤销(SetGeom revert 恢复 geom)无需额外捕获 style 快照。
+    /// materialize 之后该节点的导出与布局都以显式 px 为准。
+    pub fn materialize_geom(&mut self) {
+        if self.geom_declared {
+            self.geom_declared = false;
+        }
+        self.authored = [true, true, true, true];
+        self.authored_position = Some("absolute".to_string());
     }
 
     /// 解析填充色(纯色)。
