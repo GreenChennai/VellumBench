@@ -50,6 +50,25 @@ pub fn browser_version(exe: &Path) -> String {
     exe.display().to_string()
 }
 
+/// 从 `<user-data-dir>/DevToolsActivePort` 读内核自选端口。
+///
+/// 这是跨平台稳妥回退:Windows 版 msedge headless 把端点**只写文件、
+/// 不打印 stderr 行**(实测),只解析 stderr 的实现在 Edge 上必然失败。
+/// 文件首行 = 端口,次行 = browser websocket 路径(本模块只需端口)。
+fn read_active_port(user_data_dir: &Path) -> Option<u16> {
+    let text = std::fs::read_to_string(user_data_dir.join("DevToolsActivePort")).ok()?;
+    text.lines().next()?.trim().parse::<u16>().ok()
+}
+
+/// 从 "DevTools listening on ws://127.0.0.1:PORT/…" 行中取端口。
+fn port_from_listen_line(line: &str) -> Option<u16> {
+    let idx = line.find("DevTools listening on ws://")?;
+    let rest = &line[idx + "DevTools listening on ws://".len()..];
+    let hostport = rest.trim().trim_start_matches("ws://").trim_end_matches('/');
+    let hostport = hostport.split_once('/').map(|(h, _)| h).unwrap_or(hostport);
+    hostport.rsplit_once(':').and_then(|(_, p)| p.parse::<u16>().ok())
+}
+
 /// 与 playwright headless 对齐的渲染相关默认参数。
 fn launch_args(user_data_dir: &Path, debug_port: u16) -> Vec<String> {
     vec![
@@ -86,7 +105,11 @@ pub struct BrowserProcess {
 }
 
 impl BrowserProcess {
-    /// 启动浏览器并解析 DevTools 端点(解析 stderr 的 "DevTools listening on ws://")。
+    /// 启动浏览器并解析 DevTools 端点。
+    ///
+    /// 双路取端口:① stderr 的 `DevTools listening on ws://…`(Chrome 打印);
+    /// ② `<user-data-dir>/DevToolsActivePort` 文件(msedge headless 在 Windows
+    /// 上只写文件不打印,只认 ① 的实现会整体失败)。
     pub fn launch(exe: &Path) -> Result<Self, String> {
         let port = 0; // 由内核自选,stderr 回报
         let user_data_dir = std::env::temp_dir().join(format!(
@@ -123,37 +146,42 @@ impl BrowserProcess {
                 }
             }
         });
-        let mut ws_endpoint = None;
+        // 两条取得端点的路:stderr 行(Chrome 会打印)与 DevToolsActivePort
+        // 文件(msedge headless 只写文件)。逐 200ms 双路轮询,任一先到即用。
+        let mut resolved = None;
         while std::time::Instant::now() < deadline {
+            if let Some(p) = read_active_port(&user_data_dir) {
+                resolved = Some(p);
+                break;
+            }
             match rx.recv_timeout(Duration::from_millis(200)) {
                 Ok(line) => {
-                    if let Some(idx) = line.find("DevTools listening on ws://") {
-                        ws_endpoint = Some(
-                            line[idx + "DevTools listening on ws://".len()..]
-                                .trim()
-                                .to_string(),
-                        );
+                    if let Some(p) = port_from_listen_line(&line) {
+                        resolved = Some(p);
                         break;
                     }
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                // stderr 已关闭不代表失败:继续按文件路等到 deadline
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    std::thread::sleep(Duration::from_millis(200));
+                    if let Some(p) = read_active_port(&user_data_dir) {
+                        resolved = Some(p);
+                    }
+                    break;
+                }
             }
         }
-        let Some(endpoint) = ws_endpoint else {
+        let Some(resolved) = resolved else {
             let _ = child.kill();
             return Err(format!(
-                "未捕获 DevTools 端点({} 可能不支持 --remote-debugging-port=0)",
-                exe.display()
+                "未捕获 DevTools 端点:{} 既未在 stderr 打印 DevTools 行,\
+                 也未写出 {}/DevToolsActivePort。可设环境变量 VB_BROWSER_PATH \
+                 指定 Chrome/Edge 可执行文件后重试",
+                exe.display(),
+                user_data_dir.display()
             ));
         };
-        // ws://127.0.0.1:PORT/devtools/browser/UUID
-        let rest = endpoint.trim_start_matches("ws://").trim_end_matches('/');
-        let (hostport, _path) = rest.split_once('/').unwrap_or((rest, ""));
-        let resolved = hostport
-            .rsplit_once(':')
-            .and_then(|(_, p)| p.parse::<u16>().ok())
-            .ok_or_else(|| format!("DevTools 端口解析失败: {endpoint}"))?;
         Ok(BrowserProcess {
             exe: exe.to_path_buf(),
             port: resolved,

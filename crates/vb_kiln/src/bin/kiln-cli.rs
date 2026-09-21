@@ -29,6 +29,15 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// 导出(WPI 参数兼容)
+    #[command(after_help = concat!(
+        "环境变量:\n",
+        "  VB_BROWSER_PATH   指定浏览器可执行文件(Chrome/Edge 绝对路径),\n",
+        "                    优先于自动探测;Edge 探测存疑时用它直接换 Chrome\n",
+        "  PDFIUM_DLL        指定 pdfium.dll(import 子命令读 PDF/AI 时用)\n",
+        "说明:\n",
+        "  浏览器车道(engine=auto/browser)依赖系统 Edge/Chrome;不可用时\n",
+        "  engine=auto 会降级自研引擎并在结果 JSON 置 engine_fallback:true",
+    ))]
     Export {
         /// 源 HTML 文件或项目目录(可重复:多源 = 多画板,仅 dom 矢量路线)
         #[arg(long = "source", required = true)]
@@ -156,6 +165,32 @@ enum ImgOp {
     },
 }
 
+/// 最小 JSON 字符串转义。
+///
+/// 本 CLI 的结果 JSON 由 `format!` 手拼(末行单行 JSON 契约),`{}` 里塞的是
+/// **任意文本**(输出路径 / 浏览器指纹)。此前直接 `output.display()` 插入,
+/// Windows 路径里的 `\` 不转义 → 产出非法 JSON(`json.loads` 报
+/// `Invalid \escape`)→ 调用方永远解析不到 width/height/engine。这里是根修。
+///
+/// 注意:调用方末尾还有一次 `.replace('\'', "\"")`(把格式串里的 `'` 占位
+/// 换成 `"`),因此单引号转义成 `\u0027` 而不是 `\'`,避免被那次替换吃掉。
+fn jesc(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\'' => out.push_str("\\u0027"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 fn main() {
     let cli = Cli::parse();
     let code = match cli.cmd {
@@ -257,6 +292,10 @@ fn run_export(
     // auto=浏览器可用即用(保真优先);browser=强制;native=跳过本段
     let engine_mode = engine.trim().to_ascii_lowercase();
     let vector_mode = vector.trim().to_ascii_lowercase();
+    // auto 车道失败后落到自研引擎的显式标记:自研引擎对真实海报页会丢照片/
+    // 渐变/绝对定位(实测只剩系统字体堆叠),必须让调用方看得见,不能 ok:true
+    // 静默混过去(Bug B)。`--engine native` 是用户主动选择,不算降级。
+    let mut lane_fallback_native = false;
     // ---- P0-3 尺寸门:画板声明尺寸探测(与 vb_doc 导入器同一识别口径)----
     // 浏览器两道的取景尺寸不再依赖「有无 vb-artboard 标记」:显式标记与
     // P0-1 启发式容器同口径下发声明尺寸;缺显式标记只影响诚实降级标注。
@@ -319,7 +358,7 @@ fn run_export(
                 let json = format!(
                     "{{'ok':true,'format':'{}','path':'{}','width':{:.0},'height':{:.0},'scale':{},'transparent':{},'warnings':{},'frames':1,'degraded':false,'degraded_artboard':{},'bytes':{},'encode_ms':{},'engine':'browser-dom','browser':'{}','vector':'dom','text_lines':{},'clip_demand':{},'raster_items':{}}}",
                     fmt_str.to_uppercase(),
-                    output.display(),
+                    jesc(&output.display().to_string()),
                     ow,
                     oh,
                     scale.clamp(1, 8),
@@ -328,7 +367,7 @@ fn run_export(
                     lane_degraded_artboard,
                     out.bytes.len(),
                     0,
-                    out.browser.replace('"', "'"),
+                    jesc(&out.browser),
                     out.meta.line_count,
                     out.meta.clip_demand,
                     out.meta.raster_count,
@@ -342,6 +381,7 @@ fn run_export(
                     eprintln!("{{\"ok\":false,\"error\":\"DOM 快照路线失败:{e}\"}}");
                     return 4;
                 }
+                lane_fallback_native = true;
                 eprintln!("{{\"warn\":\"DOM 快照路线失败,降级 printToPDF:{e}\"}}");
             }
         }
@@ -372,7 +412,7 @@ fn run_export(
                 let json = format!(
                     "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':{},'degraded':false,'degraded_artboard':false,'bytes':{},'encode_ms':{},'engine':'browser-anim','browser':'{}'}}",
                     fmt_str.to_uppercase(),
-                    output.display(),
+                    jesc(&output.display().to_string()),
                     width,
                     height,
                     scale.clamp(1, 8),
@@ -381,7 +421,7 @@ fn run_export(
                     out.frames,
                     out.bytes.len(),
                     t0.elapsed().as_millis(),
-                    out.browser.replace('"', "'"),
+                    jesc(&out.browser),
                 )
                 .replace('\'', "\"");
                 println!("{json}");
@@ -392,6 +432,7 @@ fn run_export(
                     eprintln!("{{\"ok\":false,\"error\":\"动画浏览器路线失败:{e}\"}}");
                     return 4;
                 }
+                lane_fallback_native = true;
                 eprintln!("{{\"warn\":\"动画浏览器路线不可用,降级自研逐帧:{e}\"}}");
             }
         }
@@ -422,7 +463,7 @@ fn run_export(
                 let json = format!(
                     "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':1,'degraded':false,'degraded_artboard':{},'bytes':{},'encode_ms':{},'engine':'browser','browser':'{}'}}",
                     fmt_str.to_uppercase(),
-                    output.display(),
+                    jesc(&output.display().to_string()),
                     outcome.width,
                     outcome.height,
                     req.scale,
@@ -431,7 +472,7 @@ fn run_export(
                     lane_degraded_artboard,
                     outcome.bytes.len(),
                     t0.elapsed().as_millis(),
-                    outcome.engine_hint.replace('"', "'"),
+                    jesc(&outcome.engine_hint),
                 )
                 .replace('\'', "\"");
                 println!("{json}");
@@ -442,6 +483,7 @@ fn run_export(
                     eprintln!("{{\"ok\":false,\"error\":\"浏览器车道失败:{e}\"}}");
                     return 4;
                 }
+                lane_fallback_native = true;
                 eprintln!("{{\"warn\":\"浏览器车道不可用,降级自研引擎:{e}\"}}");
             }
         }
@@ -538,19 +580,20 @@ fn run_export(
     let _ = width; // WPI 兼容:Kiln 以画板几何为准
 
     let json = format!(
-        "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':{},'degraded':{},'degraded_artboard':{},'bytes':{},'encode_ms':{},'engine':'kiln'}}",
+        "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':{},'degraded':{},'degraded_artboard':{},'bytes':{},'encode_ms':{},'engine':'kiln','engine_fallback':{}}}",
         fmt_str.to_uppercase(),
-        output.display(),
+        jesc(&output.display().to_string()),
         w,
         h,
         req.scale,
         transparent,
         report.warnings.len(),
         report.frame_count,
-        report.degraded,
+        report.degraded || lane_fallback_native,
         degraded_artboard,
         bytes.len(),
-        t0.elapsed().as_millis()
+        t0.elapsed().as_millis(),
+        lane_fallback_native
     )
     .replace('\'', "\"");
     println!("{json}");
@@ -595,7 +638,7 @@ fn run_import(source: PathBuf, output: PathBuf) -> i32 {
                 Ok(files) => {
                     let list: Vec<String> = files
                         .iter()
-                        .map(|p| p.display().to_string().replace('\\', "/"))
+                        .map(|p| jesc(&p.display().to_string().replace('\\', "/")))
                         .collect();
                     println!(
                         "{{\"ok\":true,\"files\":[\"{}\"],\"count\":{}}}",
