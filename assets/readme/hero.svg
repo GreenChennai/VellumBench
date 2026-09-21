@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420"
+     role="img" aria-labelledby="heroTitle heroDesc">
+  <title id="heroTitle">Vellum Bench 绘台:用 Illustrator 的操作心智编辑 100% 标准 HTML/CSS</title>
+  <desc id="heroDesc">左侧为项目名与一句话定位、三个关键事实;右侧为画布核心手势示意图——一个被选中的元素带八个变换手柄与稳定编号 data-vb-id,以及它在 CSS 中对应的真实声明(取自仓库内 examples/poster 的主标题)。</desc>
+
+  <defs>
+    <linearGradient id="heroGlow" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#16202B"/>
+      <stop offset="1" stop-color="#0E1216"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 自带底色:浅色与深色主题下都可读 -->
+  <rect x="0" y="0" width="1200" height="420" rx="24" fill="#0B0D10"/>
+  <rect x="0.75" y="0.75" width="1198.5" height="418.5" rx="23.25" fill="none"
+        stroke="#232A33" stroke-width="1.5"/>
+
+  <!-- ───────── 左:定位 ───────── -->
+  <g id="title-block">
+    <text x="64" y="92" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+          font-size="20" letter-spacing="2.4" fill="#8B96A5">RUST · VELLO 画布 · 12 CRATE 工作区</text>
+
+    <text x="64" y="178" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif"
+          font-size="76" font-weight="700" letter-spacing="-1" fill="#E8ECF1">Vellum Bench</text>
+
+    <text x="64" y="222" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif"
+          font-size="30" font-weight="500" fill="#C6CFDA">绘台 · HTML 设计工作台</text>
+
+    <text x="64" y="286" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif"
+          font-size="27" fill="#C6CFDA">像用 Illustrator 一样编辑 100% 标准 HTML/CSS</text>
+    <text x="64" y="326" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif"
+          font-size="27" fill="#C6CFDA">Agent 可读写同一份文件,输出永远是干净源码</text>
+
+    <g id="metadata" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="19">
+      <rect x="64" y="352" width="146" height="36" rx="8" fill="#151A20" stroke="#232A33" stroke-width="1.5"/>
+      <text x="82" y="376" fill="#8B96A5">147 条命令</text>
+
+      <rect x="222" y="352" width="176" height="36" rx="8" fill="#151A20" stroke="#232A33" stroke-width="1.5"/>
+      <text x="240" y="376" fill="#8B96A5">L0 · L1 往返幂等</text>
+
+      <rect x="410" y="352" width="190" height="36" rx="8" fill="#151A20" stroke="#232A33" stroke-width="1.5"/>
+      <text x="428" y="376" fill="#8B96A5">九格式 · 零浏览器</text>
+    </g>
+  </g>
+
+  <!-- ───────── 右:画布手势与落点(示意图;数值取自 examples/poster) ───────── -->
+  <g id="project-proof">
+    <rect x="676" y="52" width="460" height="316" rx="14" fill="url(#heroGlow)" stroke="#232A33" stroke-width="1.5"/>
+
+    <text x="700" y="84" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+          font-size="19" fill="#8B96A5">画布选中 → HTML 属性 → CSS 声明</text>
+    <line x1="676" y1="102" x2="1136" y2="102" stroke="#232A33" stroke-width="1.5"/>
+
+    <!-- 被选中的元素 -->
+    <rect x="716" y="124" width="252" height="76" rx="6" fill="#1B2A38" stroke="#2F3B48" stroke-width="1.5"/>
+    <text x="736" y="172" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif"
+          font-size="32" font-weight="700" fill="#E8ECF1">主标题</text>
+
+    <!-- 选中框 + 八个手柄 + 旋转圈 = 产品最核心的手势语言 -->
+    <rect x="710" y="118" width="264" height="88" fill="none" stroke="#4EA1FF" stroke-width="1.5"
+          stroke-dasharray="7 5"/>
+    <g fill="#0B0D10" stroke="#4EA1FF" stroke-width="1.5">
+      <rect x="706" y="114" width="8" height="8"/><rect x="838" y="114" width="8" height="8"/><rect x="970" y="114" width="8" height="8"/>
+      <rect x="706" y="158" width="8" height="8"/><rect x="970" y="158" width="8" height="8"/>
+      <rect x="706" y="202" width="8" height="8"/><rect x="838" y="202" width="8" height="8"/><rect x="970" y="202" width="8" height="8"/>
+    </g>
+    <circle cx="974" cy="118" r="9" fill="none" stroke="#E8B84B" stroke-width="1.5"/>
+
+    <!-- 稳定编号:人类与 Agent 共用同一个寻址键 -->
+    <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18">
+      <rect x="710" y="224" width="250" height="30" rx="6" fill="#101519" stroke="#232A33" stroke-width="1.5"/>
+      <text x="724" y="245" fill="#7FD1A6">data-vb-id=&quot;p00006&quot;</text>
+    </g>
+
+    <line x1="676" y1="272" x2="1136" y2="272" stroke="#232A33" stroke-width="1.5"/>
+    <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#C6CFDA">
+      <text x="700" y="298">position: absolute;</text>
+      <text x="700" y="322">left: 60px;  top: 140px;</text>
+      <text x="700" y="346">font-size: 84px;  letter-spacing: 10px;</text>
+    </g>
+    <text x="1112" y="298" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+          font-size="18" fill="#6F7A88">examples/poster</text>
+  </g>
+</svg>
