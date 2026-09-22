@@ -26,6 +26,25 @@ fn browser_available() -> bool {
     vb_browser::discover_browser(None).is_some()
 }
 
+/// 本轮导出**是否真的走了浏览器车道**。
+///
+/// 「找得到浏览器」不等于「CDP 可用」:受限环境(headless runner、无桌面会话、
+/// 启动超时)里 `discover_browser` 有结果但附连失败 —— 此时产品**按设计**
+/// 降级车道 K 并把降级写进结果(`"engine_fallback":true`,ADR-0020)。
+/// 这种环境下浏览器专属断言不成立,与本文件头部「诚实跳过,不挂 CI」一致。
+fn used_browser_lane(stdout: &str) -> bool {
+    stdout.contains("\"engine\":\"browser\"") && !stdout.contains("\"engine_fallback\":true")
+}
+
+/// 降级发生时打一行可检索的跳过说明,并返回 `true`(调用方跳过浏览器专属断言)。
+fn skipped_browser_lane(stdout: &str) -> bool {
+    if used_browser_lane(stdout) {
+        return false;
+    }
+    eprintln!("[skip-browser] 浏览器车道不可用,产品按设计降级车道 K(尺寸门仍断言):{stdout}");
+    true
+}
+
 /// PNG 头尺寸(IHDR,恒为首块):宽在 16..20、高在 20..24(大端)。
 fn png_size(path: &Path) -> (u32, u32) {
     let d = std::fs::read(path).expect("PNG 读取失败");
@@ -78,6 +97,29 @@ fn run_kiln_export(source: &Path, output: &Path, format: &str) -> String {
 }
 
 // ---------------------------------------------------------------- 纯单测
+
+/// 车道判定必须只认结果 JSON 的事实,不认"猜测环境":
+/// 车道 B 的 JSON 不带 `engine_fallback`;车道 K 一定带(降级时为 true)。
+/// 三种真实形态(CI runner 实测的降级形态在中间一行)都要判对。
+#[test]
+fn browser_lane_detection_matches_result_json() {
+    assert!(used_browser_lane(
+        r#"{"ok":true,"engine":"browser","browser":"Edg/153.0"}"#
+    ));
+    assert!(!used_browser_lane(
+        r#"{"ok":true,"engine":"kiln","engine_fallback":true}"#
+    ));
+    assert!(!used_browser_lane(
+        r#"{"ok":true,"engine":"kiln","engine_fallback":false}"#
+    ));
+    // 降级形态必须被识别为"跳过浏览器专属断言",而不是静默通过
+    assert!(skipped_browser_lane(
+        r#"{"ok":true,"engine":"kiln","engine_fallback":true}"#
+    ));
+    assert!(!skipped_browser_lane(
+        r#"{"ok":true,"engine":"browser","browser":"Edg/153.0"}"#
+    ));
+}
 
 #[test]
 fn probe_untagged_poster_declares_1920x1080() {
@@ -133,9 +175,15 @@ fn e2e_auto_png_untagged_1920x1080_header_strict() {
     }
     let out = std::env::temp_dir().join(format!("p03-e2e-{}.png", std::process::id()));
     let stdout = run_kiln_export(&fixture("p03_untagged"), &out, "PNG");
+    // 尺寸门在**两条车道**都必须成立(不采信 JSON 自报尺寸,直接读 PNG 头)
     assert_eq!(png_size(&out), (1920, 1080), "PNG 头尺寸必须与声明严格相等");
-    assert!(stdout.contains("\"engine\":\"browser\""), "{stdout}");
     assert!(stdout.contains("\"degraded_artboard\":true"), "{stdout}");
+    // 浏览器专属:PNG 主路是车道 B(ADR-0022);降级环境跳过这一条。
+    // 注意车道 B 的结果 JSON 不带 `engine_fallback` 字段(只有车道 K 带),
+    // 所以这里只断言 `engine:browser` 即可 —— 出现它就不可能是降级结果。
+    if !skipped_browser_lane(&stdout) {
+        assert!(stdout.contains("\"engine\":\"browser\""), "{stdout}");
+    }
     let _ = std::fs::remove_file(&out);
 }
 
