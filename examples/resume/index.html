@@ -15,7 +15,9 @@
     </div>
     <div class="item item2" data-vb-id="rz0010" data-vb-name="经历二">
       <h3 class="it" data-vb-id="rz0011" data-vb-name="公司二">某互联网公司 2020–2022</h3>
-      <p class="id3" data-vb-id="rz0012" data-vb-name="描述二">主导 3 条业务线的设计语言统一</p>
+      <!-- id3 规则是页面坐标,但本元素嵌在绝对定位的 .item2 内(包含块语义),
+           会落到 (620,1012) 页面右下角;改用条目相对的 id2(与描述一同款) -->
+      <p class="id2" data-vb-id="rz0012" data-vb-name="描述二">主导 3 条业务线的设计语言统一</p>
     </div>
     <div class="side-accent" data-vb-id="rz0013" data-vb-name="侧栏点缀"></div>
   </section>

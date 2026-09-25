@@ -279,6 +279,31 @@ impl Node {
     }
 }
 
+/// 05-5 断点覆盖规则:`@media (max-width: {max_width}px)` 块内的一条类规则。
+///
+/// 以**节点 sid** 寻址(命令层同款纪律,Undo/重排下 NodeId 会变);
+/// 导出期解析为该节点的**首类**选择器(`finalize_classes` 保证唯一),
+/// 序列化为 canonical `@media (max-width: Npx) { .cls { … } }` 块。
+#[derive(Debug, Clone, PartialEq)]
+pub struct MediaRule {
+    /// 断点宽(px;查询固定为 max-width 语义)。
+    pub max_width: u32,
+    /// 目标节点 sid。
+    pub sid: String,
+    /// 覆盖声明(空声明条目不存在 —— 命令层以空值表达删除)。
+    pub decls: Vec<Decl>,
+}
+
+/// 05-5 伪类规则(最小闭环:仅 `:hover`;其余伪类保持冻结块原文)。
+#[derive(Debug, Clone, PartialEq)]
+pub struct PseudoRule {
+    /// 目标节点 sid。
+    pub sid: String,
+    /// 伪类名(当前固定 "hover";预留扩展位,序列化 `{selector}:{pseudo}`)。
+    pub pseudo: String,
+    pub decls: Vec<Decl>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Document {
     /// 修订号:每次命令应用 +1(Agent 乐观锁)。
@@ -288,6 +313,15 @@ pub struct Document {
     pub root: NodeId,
     /// 画板顺序 = 导出顺序。
     pub artboards: Vec<NodeId>,
+    /// 05-8 符号主件定义区(ADR-VB-L10):与 `root` 平级的第二棵 arena 树,
+    /// **不在任何画板下** —— 画布/布局/导出页面内容都只走 `artboards`,
+    /// 主件原型因此天然不参与页面渲染。
+    ///
+    /// 每个直接子节点 = 一个主件定义容器(tag div、`hidden` 属性、
+    /// `data-vb-name` = 主件名;导出时补写标记类 `vb-symbol-defs`),
+    /// 容器的**子树**即主件原型(真实节点,可被普通命令编辑 —— 这是
+    /// 「编辑主件 → 同步实例」能用现有命令底座的前提)。
+    pub defs_root: NodeId,
     /// 设计令牌 → `:root` CSS 变量(不带 `--` 前缀存储)。
     pub tokens: Vec<(String, String)>,
     /// 白名单外/复杂选择器 CSS 块(verbatim 保底)。
@@ -300,6 +334,10 @@ pub struct Document {
     pub extra_html_attrs: Vec<(String, String)>,
     /// `<body>` 元素的保真属性(B5)。
     pub extra_body_attrs: Vec<(String, String)>,
+    /// 05-5:断点覆盖规则(`@media (max-width: Npx)` 内的类规则,可编辑)。
+    pub media_rules: Vec<MediaRule>,
+    /// 05-5:伪类规则(最小闭环 :hover;可编辑)。
+    pub pseudo_rules: Vec<PseudoRule>,
     sid_next: u64,
 }
 
@@ -324,6 +362,14 @@ impl Document {
             "__root__",
             StableId::from_seed(0),
         ));
+        // 主件定义区根:与 root 平级的 arena 节点(parent = None),
+        // sid 固定 "defs"(parse 允许 [a-z0-9-],不与短码空间冲突 ——
+        // 短码纯 base36,不会撞上带连字符的保留名)。
+        let defs_root = nodes.insert(Node::new(
+            NodeKind::Layer,
+            "__symbol_defs__",
+            StableId::parse("defs").expect("保留 sid 合法"),
+        ));
         Document {
             rev: 0,
             meta: Meta {
@@ -333,6 +379,7 @@ impl Document {
             },
             nodes,
             root,
+            defs_root,
             artboards: Vec::new(),
             tokens: Vec::new(),
             raw_css: Vec::new(),
@@ -340,6 +387,8 @@ impl Document {
             head_extra: Vec::new(),
             extra_html_attrs: Vec::new(),
             extra_body_attrs: Vec::new(),
+            media_rules: Vec::new(),
+            pseudo_rules: Vec::new(),
             sid_next: 1,
         }
     }

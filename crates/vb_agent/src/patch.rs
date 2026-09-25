@@ -488,6 +488,17 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<(Vec<Command>, Vec<Str
             }]
         }
         PatchOp::Boolean { mode, lhs, rhs } => {
+            // 05-3 / X-1:分割 / 修边 / 轮廓是多结果运算(一次操作 → 多节点),
+            // 走 vb_tools::pathfinder 的统一入口产出 MultiResult 事务。
+            if let Some(multi) = vb_tools::pathfinder::MultiOp::parse(mode) {
+                let plan = vb_tools::pathfinder::pathfinder_multi_cmds(
+                    doc,
+                    multi,
+                    &[lhs.clone(), rhs.clone()],
+                )
+                .map_err(PatchError::Op)?;
+                return Ok((vec![plan.command], warnings));
+            }
             let op_kind = vb_tools::boolean::BooleanOp::parse(mode)
                 .ok_or_else(|| PatchError::Op(format!("未知布尔运算:{mode}")))?;
             let lhs_id = require_child(doc, lhs, "boolean")?;
@@ -721,6 +732,25 @@ fn collect_affected(cmd: &Command, out: &mut PatchOutcome) {
             out.changed_ids.push(lhs_sid.clone());
             out.changed_ids.push(rhs_sid.clone());
         }
+        Command::MultiResult {
+            src_sids, results, ..
+        } => {
+            // N 个源被删除 + M 个结果被创建(05-3 多结果事务)
+            for s in src_sids {
+                out.changed_ids.push(s.clone());
+            }
+            for t in results {
+                out.changed_ids.push(t.root_sid().to_string());
+            }
+        }
+        Command::SymbolSync { container_sid, inner } => {
+            // 05-8 主件同步:全部实例被子树替换;容器计入变更(懒构建的
+            // 内层事务若已物化,其逐目标变更在内层 collect 时补齐)
+            out.changed_ids.push(container_sid.clone());
+            if let Some(c) = inner {
+                collect_affected(c, out);
+            }
+        }
         Command::Move { sid, .. }
         | Command::SetGeom { sid, .. }
         | Command::SetStyle { sid, .. }
@@ -731,7 +761,12 @@ fn collect_affected(cmd: &Command, out: &mut PatchOutcome) {
         | Command::Rename { sid, .. }
         | Command::SetTag { sid, .. }
         | Command::SetVector { sid, .. }
-        | Command::SetFlags { sid, .. } => out.changed_ids.push(sid.clone()),
+        | Command::SetFlags { sid, .. }
+        // 05-5:断点/伪类覆盖只改目标节点(文档级存储,按 sid 计入变更)
+        | Command::SetMediaStyle { sid, .. }
+        | Command::SetPseudoStyle { sid, .. }
+        // 05-9:对象动画(@keyframes 块 + animation 声明)按 sid 计入变更
+        | Command::SetNodeAnimation { sid, .. } => out.changed_ids.push(sid.clone()),
         Command::Group {
             member_sids,
             group_sid,
@@ -758,6 +793,10 @@ fn collect_affected(cmd: &Command, out: &mut PatchOutcome) {
         }
         // 令牌 / 文档标题:非节点级变更,无受影响 sid
         Command::SetToken { .. } | Command::SetMetaTitle { .. } => {}
+        // 替换图像引用(07-K):节点级变更,src 所在节点受影响
+        Command::SetImageSrc { sid, .. } => {
+            out.changed_ids.push(sid.clone());
+        }
     }
 }
 

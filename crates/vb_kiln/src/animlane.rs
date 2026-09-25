@@ -19,6 +19,31 @@ pub struct AnimLaneResult {
     pub frames: usize,
     pub browser: String,
     pub warnings: Vec<String>,
+    /// 动画覆盖矩阵(VB-3):浏览器车道全量播放,`animated` = 源中声明的
+    /// 全部关键帧属性;无动画声明时为 None。
+    pub anim_coverage: Option<crate::anim::AnimCoverage>,
+}
+
+/// 从 HTML 源提取 `<style>` 块内容(anim_coverage 判定用;不入 Document,
+/// 只读文本,与浏览器实际播放的声明同源——内联 style 块)。
+fn style_blocks_of_html(html: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    let Ok(text) = std::fs::read_to_string(html) else {
+        return out;
+    };
+    let mut rest = text.as_str();
+    while let Some(start) = rest.find("<style") {
+        let Some(open_rel) = rest[start..].find('>') else {
+            break;
+        };
+        let after = start + open_rel + 1;
+        let Some(close) = rest[after..].find("</style>") else {
+            break;
+        };
+        out.push(rest[after..after + close].to_string());
+        rest = &rest[after + close + "</style>".len()..];
+    }
+    out
 }
 
 /// 单源动画导出:浏览器实时采样 → 帧序 → GIF/MP4。
@@ -192,6 +217,7 @@ pub fn export_anim(
         mp4_bitrate_kbps: bitrate_kbps,
         jpeg_quality: 92,
         build_warnings: Vec::new(),
+        anim_coverage: None,
         project_dir: None,
     };
     let bytes = match format {
@@ -203,10 +229,21 @@ pub fn export_anim(
         }
         _ => crate::frames::encode_gif(&ctx).map_err(|e| e.to_string())?,
     };
+    // VB-1:静态资源 404 不许静默;VB-3:覆盖矩阵随结果输出
+    warnings.extend(
+        srv.take_not_found()
+            .iter()
+            .map(|s| vb_browser::staticsrv::asset_not_found_message(s)),
+    );
+    let anim_coverage = crate::anim::AnimCoverage::from_keyframes(
+        &crate::anim::parse_keyframes(&style_blocks_of_html(&html_path)),
+        "browser",
+    );
     Ok(AnimLaneResult {
         bytes,
         frames: n,
         browser,
         warnings,
+        anim_coverage,
     })
 }

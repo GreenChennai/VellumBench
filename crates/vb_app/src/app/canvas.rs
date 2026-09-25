@@ -9,16 +9,32 @@ use vb_ui::theme::{semantic, Tokens};
 
 use super::{Drag, GpuCanvas, Tool, VellumApp};
 
+/// 每帧画布矩形求值(P0-③):本帧绘制、纹理尺寸与命中测试共用的矩形。
+///
+/// `stored` 是上一帧存下的画布矩形,`current` 是本帧 CentralPanel 的实际
+/// 矩形。调用方把返回值写回 `self.canvas_rect`,同帧输入命中与缩放适配
+/// 读到的就是与本帧绘制一致的矩形。
+pub(crate) fn canvas_rect_next(stored: Option<Rect>, current: Rect) -> Rect {
+    // 历史实现(下方注释)是"旧矩形 ∩ 当前矩形"——交集**只缩不涨**:
+    // 窗口首帧偏小(启动瞬态/停靠面板未稳)后再放大,画布矩形被钉死在
+    // 历史最小值,GPU 纹理不再随之增长,首屏之外的内容(第二画板等)
+    // 永远画不出来,表现为"画板被无辜裁掉"(P0-③ 实测:1696×1039 启动
+    // 后放到 2560×1400,stored 仍为 (3,71)-(1397,935),Features 画板
+    // 只剩约 180px 可见,而文档模型是正确的 520px)。
+    // `stored.map(|r| r.intersect(current))`
+    let _ = stored;
+    current
+}
+
 impl VellumApp {
     pub(crate) fn canvas(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         egui::CentralPanel::default()
             .frame(egui::Frame::canvas(ui.style()).fill(Tokens::get(self.theme_dark).bg_canvas))
             .show(ui, |ui| {
-                let Some(rect) = self
-                    .canvas_rect
-                    .or(Some(ui.max_rect()))
-                    .map(|r| r.intersect(ui.max_rect()))
-                else {
+                let Some(rect) = Some(super::canvas::canvas_rect_next(
+                    self.canvas_rect,
+                    ui.max_rect(),
+                )) else {
                     return;
                 };
                 let rect = rect.expand(0.0);
@@ -26,9 +42,15 @@ impl VellumApp {
                 let response = ui.allocate_rect(rect, Sense::click_and_drag());
                 let painter = ui.painter().with_clip_rect(rect);
 
-                // 网格画在最底层
+                // 网格画在最底层(基础间距 = 首选项「参考线与网格」的 grid_size)
                 if self.grid_on {
-                    draw_grid(&painter, rect, &self.camera, self.theme_dark);
+                    draw_grid(
+                        &painter,
+                        rect,
+                        &self.camera,
+                        self.theme_dark,
+                        self.grid_size,
+                    );
                 }
 
                 // 渲染画布内容(GPU,画板背景会盖住网格)
@@ -48,8 +70,50 @@ impl VellumApp {
                 }
                 self.draw_artboards(&painter, rect.min.to_vec2());
                 self.draw_overlays(&painter, rect);
+                // 03-5-1 诚实标注(ADR-0017):画布角落常驻低对比提示,
+                // 用户不会被误导为「画布 = 成片」;指向浏览器校对入口。
+                // 与画板标注同层(egui 层),不进 GPU 纹理(--canvas-shot 不受影响)
+                let hint_t = Tokens::get(self.theme_dark);
+                painter.text(
+                    pos2(rect.right() - 6.0, rect.bottom() - 6.0),
+                    Align2::RIGHT_BOTTOM,
+                    "预览为近似渲染 · 视图 → 浏览器校对可对比",
+                    FontId::proportional(11.0),
+                    hint_t.text_3,
+                );
 
                 self.handle_canvas_input(&response, ui.ctx().clone(), rect);
+
+                // 07-M 可用性补口:右键画布(有选区且参考线未锁)→
+                // 「从对象生成参考线」。横/竖各取选中对象包围盒的
+                // 左/中/右、上/中/下,与 Mod+5 / 视图菜单同一命令路径
+                // (view.guides_from_selection),Agent 可复现。
+                //
+                // 05-2(09-D):选中的是图像节点 → 右键补「替换图像…」
+                // (与资产面板「替换」/ 对象菜单同一命令 object.replace_image)。
+                if !self.selection.is_empty() {
+                    let is_image = self.selection.first().is_some_and(|sid| {
+                        self.doc.find_by_sid(sid).is_some_and(|nid| {
+                            matches!(
+                                self.doc.nodes.get(nid).map(|n| &n.kind),
+                                Some(NodeKind::Image { .. })
+                            )
+                        })
+                    });
+                    response.context_menu(|ui| {
+                        if is_image && ui.button("替换图像…").clicked() {
+                            self.run_command("object.replace_image", false, false);
+                            ui.close();
+                        }
+                        if !self.selection.is_empty()
+                            && !self.guides_locked
+                            && ui.button("从对象生成参考线(取对象边)").clicked()
+                        {
+                            self.run_command("view.guides_from_selection", false, false);
+                            ui.close();
+                        }
+                    });
+                }
             });
     }
 
@@ -107,9 +171,11 @@ impl VellumApp {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Rgba8Unorm,
+                // COPY_SRC:03-3 canvas-shot 门禁采样要把这张纹理读回落盘
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                     | wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::STORAGE_BINDING,
+                    | wgpu::TextureUsages::STORAGE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             });
             let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
@@ -122,6 +188,14 @@ impl VellumApp {
         }
 
         // 编码 + 渲染(当前画板;多画板逐个编码)
+        // 05-9(09-I):动画预览激活(播放中 / 播放头不在 0)时,逐画板
+        // 把 t 时刻动画状态应用到 DrawList —— **与导出共用同一求值入口**
+        // `vb_kiln::anim::apply_frame_state`(ADR-VB-L11,一致性由构造保证)
+        let anims = if self.anim_preview_active() {
+            Some(self.anim_instances())
+        } else {
+            None
+        };
         let mut scene = vello::Scene::new();
         for &ab in &self.doc.artboards {
             let mut list = match encode_artboard(&self.doc, ab) {
@@ -144,6 +218,9 @@ impl VellumApp {
                     cache.insert(src.to_string(), bmp.clone());
                     Some(bmp)
                 });
+            }
+            if let Some(anims) = &anims {
+                vb_kiln::anim::apply_frame_state(anims, &mut list, self.anim_time);
             }
             {
                 let n = self.doc.nodes.get(ab).unwrap();
@@ -321,6 +398,44 @@ impl VellumApp {
         let t = Tokens::get(self.theme_dark);
         let origin = viewport.min.to_vec2();
 
+        // ── 05-5:断点预览带(活动画板左缘起断点宽度的区域)──
+        // 诚实边界:画布内容仍按默认样式渲染(不模拟 @media),预览带 +
+        // 状态栏提示指出"覆盖样式以浏览器校对为准";带内宽 = 断点视宽。
+        if let (Some(bp), Some(ab)) = (self.active_breakpoint, self.active_artboard()) {
+            if let Some(n) = self.doc.nodes.get(ab) {
+                let (ax, ay) = (n.geom.x, n.geom.y);
+                let (x0, y0) = self.camera.world_to_screen(ax, ay);
+                let (x1, _) = self.camera.world_to_screen(ax + bp as f64, ay);
+                let (_, y1) = self.camera.world_to_screen(ax, ay + n.geom.h);
+                let band = Rect::from_min_max(
+                    pos2(x0 as f32 + origin.x, y0 as f32 + origin.y),
+                    pos2(x1 as f32 + origin.x, y1 as f32 + origin.y),
+                );
+                painter.rect_filled(band, 0.0, semantic::GUIDE_RULER.gamma_multiply(0.12));
+                painter.line_segment(
+                    [
+                        pos2(band.left(), band.top()),
+                        pos2(band.left(), band.bottom()),
+                    ],
+                    Stroke::new(1.0, semantic::GUIDE_RULER),
+                );
+                painter.line_segment(
+                    [
+                        pos2(band.right(), band.top()),
+                        pos2(band.right(), band.bottom()),
+                    ],
+                    Stroke::new(1.0, semantic::GUIDE_RULER),
+                );
+                painter.text(
+                    pos2(band.left() + 4.0, band.top() + 2.0),
+                    egui::Align2::LEFT_TOP,
+                    format!("{} {bp}px", crate::i18n::t("bp.switcher")),
+                    egui::FontId::proportional(11.0),
+                    semantic::GUIDE_RULER,
+                );
+            }
+        }
+
         // P4.2 标尺参考线(青色;从选区生成/从标尺拖出,世界坐标)
         if self.guides_visible {
             for &(h, pos) in &self.guides {
@@ -403,6 +518,185 @@ impl VellumApp {
                 // 智能参考线品红是**语义色**(AI 品红,02/03 篇钉死),深/浅主题共用同一个值;
                 // vb-token-ok:不参与令牌化,P2 只把它挪进 vb_ui::theme 的 const
                 Stroke::new(1.0, Color32::from_rgb(0xff, 0x00, 0xff)),
+            );
+        }
+
+        // ── 05-2(X-4):变换工具族的中心标记(单击设定的中心 + 默认中心)──
+        if self.tool.is_transform_family() {
+            let c = if let Some(c) = self.xf_center {
+                Some(c)
+            } else if !self.selection.is_empty() {
+                // 默认中心 = 选区包围盒中心(半透明提示,可单击覆盖)
+                let mut acc: Option<vb_common::geom::Rect> = None;
+                for sid in &self.selection {
+                    if let Some(nid) = self.doc.find_by_sid(sid) {
+                        if let Some(bb) = vb_tools::abs_bbox_world(&self.doc, nid) {
+                            acc = Some(match acc {
+                                Some(a) => a.union(bb),
+                                None => bb,
+                            });
+                        }
+                    }
+                }
+                acc.map(|r| (r.x0 + r.width() / 2.0, r.y0 + r.height() / 2.0))
+            } else {
+                None
+            };
+            if let Some((wx, wy)) = c {
+                let (sx, sy) = self.camera.world_to_screen(wx, wy);
+                let c2 = pos2(sx as f32 + origin.x, sy as f32 + origin.y);
+                let col = if self.xf_center.is_some() {
+                    semantic::SELECT_BOX
+                } else {
+                    t.text_3
+                };
+                // 十字准星(中心显式设定 = 实线;默认中心 = 细线)
+                let r = 7.0;
+                let stroke = Stroke::new(if self.xf_center.is_some() { 1.5 } else { 1.0 }, col);
+                painter.line_segment([pos2(c2.x - r, c2.y), pos2(c2.x + r, c2.y)], stroke);
+                painter.line_segment([pos2(c2.x, c2.y - r), pos2(c2.x, c2.y + r)], stroke);
+                painter.circle_stroke(c2, r, stroke);
+            }
+        }
+
+        // ── 05-2(X-5):铅笔笔迹预览 ──
+        if let Drag::PencilStroke { pts, .. } = &self.drag {
+            if pts.len() >= 2 {
+                let to_screen = |p: (f64, f64)| {
+                    let (sx, sy) = self.camera.world_to_screen(p.0, p.1);
+                    pos2(sx as f32 + origin.x, sy as f32 + origin.y)
+                };
+                let stroke = Stroke::new(1.4, semantic::SELECT_BOX);
+                for w in pts.windows(2) {
+                    painter.line_segment([to_screen(w[0]), to_screen(w[1])], stroke);
+                }
+            }
+        }
+
+        // ── 05-2(09-E):度量工具 —— 拖动中的量距线 + 松手后的持续标注 ──
+        let measure = match &self.drag {
+            Drag::Measure { start, cur } => Some((*start, *cur, false)),
+            _ => match (self.measure_anchor, self.measure_result) {
+                (Some(a), Some((dx, dy, _))) => Some((a, (a.0 + dx, a.1 + dy), true)),
+                _ => None,
+            },
+        };
+        if let Some((a, b, persisted)) = measure {
+            let to_screen = |p: (f64, f64)| {
+                let (sx, sy) = self.camera.world_to_screen(p.0, p.1);
+                pos2(sx as f32 + origin.x, sy as f32 + origin.y)
+            };
+            let (pa, pb) = (to_screen(a), to_screen(b));
+            let col = if persisted {
+                semantic::GUIDE_RULER
+            } else {
+                semantic::SELECT_BOX
+            };
+            painter.line_segment([pa, pb], Stroke::new(1.2, col));
+            for p in [pa, pb] {
+                painter.circle_filled(p, 3.0, col);
+            }
+            let d = (b.0 - a.0).hypot(b.1 - a.1);
+            painter.text(
+                pos2((pa.x + pb.x) / 2.0 + 8.0, (pa.y + pb.y) / 2.0 - 8.0),
+                Align2::LEFT_CENTER,
+                format!("{d:.1}px (Δ{:.0},{:.0})", b.0 - a.0, b.1 - a.1),
+                FontId::monospace(11.0),
+                col,
+            );
+        }
+
+        // ── 05-2(09-C):切片工具态下显示全部切片范围(虚线框 + 名)──
+        if self.tool == Tool::Slice {
+            let mut ids = Vec::new();
+            for &ab in &self.doc.artboards {
+                self.doc.subtree(ab, &mut ids);
+            }
+            for id in ids {
+                let Some(n) = self.doc.nodes.get(id) else {
+                    continue;
+                };
+                if !matches!(n.kind, NodeKind::Slice) {
+                    continue;
+                }
+                let Some(bb) = vb_tools::abs_bbox_world(&self.doc, id) else {
+                    continue;
+                };
+                let (sx, sy) = self.camera.world_to_screen(bb.x0, bb.y0);
+                let (ex, ey) = self.camera.world_to_screen(bb.x1, bb.y1);
+                let r = Rect::from_min_max(
+                    pos2(sx as f32 + origin.x, sy as f32 + origin.y),
+                    pos2(ex as f32 + origin.x, ey as f32 + origin.y),
+                );
+                // 画布 overlay 用语义青(参考线同族),导出链不经过此层
+                painter.rect_stroke(
+                    r,
+                    0.0,
+                    Stroke::new(1.0, semantic::GUIDE_RULER),
+                    egui::StrokeKind::Middle,
+                );
+                painter.text(
+                    pos2(r.left() + 2.0, r.top() + 2.0),
+                    Align2::LEFT_TOP,
+                    &n.name,
+                    FontId::monospace(10.0),
+                    semantic::GUIDE_RULER,
+                );
+            }
+        }
+
+        // ── 05-2(09-E):像素预览 —— 缩放 ≥ 阈值时按物理像素画边界网格,
+        // 并把相机平移吸附到整物理像素(「1:1 设备像素光栅」的最小实现)──
+        if self.pixel_preview && self.camera.zoom >= Self::PIXEL_PREVIEW_MIN_ZOOM {
+            // 世界 1px = zoom 物理 px;主线间隔取「≥8 物理 px」的世界步长,
+            // 与轮廓/参考线同族语义色,只在预览态覆盖绘制(不进导出链)。
+            let mut level = 1.0f64;
+            while level * self.camera.zoom < 8.0 {
+                level *= 2.0;
+            }
+            let step = (level * self.camera.zoom) as f32;
+            let minor = Stroke::new(0.5, semantic::guide_grid(self.theme_dark));
+            let major = Stroke::new(0.8, semantic::GUIDE_RULER);
+            let wx0 = (viewport.left() as f64 - self.camera.pan_x) / self.camera.zoom;
+            let mut x = wx0.floor() as i64;
+            loop {
+                let sx = (x as f64 * self.camera.zoom + self.camera.pan_x) as f32 + origin.x;
+                if sx > viewport.right() {
+                    break;
+                }
+                if sx >= viewport.left() {
+                    painter.line_segment(
+                        [pos2(sx, viewport.top()), pos2(sx, viewport.bottom())],
+                        if x % 8 == 0 { major } else { minor },
+                    );
+                }
+                x += 1;
+            }
+            let wy0 = (viewport.top() as f64 - self.camera.pan_y) / self.camera.zoom;
+            let mut y = wy0.floor() as i64;
+            loop {
+                let sy = (y as f64 * self.camera.zoom + self.camera.pan_y) as f32 + origin.y;
+                if sy > viewport.bottom() {
+                    break;
+                }
+                if sy >= viewport.top() {
+                    painter.line_segment(
+                        [pos2(viewport.left(), sy), pos2(viewport.right(), sy)],
+                        if y % 8 == 0 { major } else { minor },
+                    );
+                }
+                y += 1;
+            }
+            let _ = step;
+            painter.text(
+                pos2(viewport.left() + 8.0, viewport.top() + 8.0),
+                Align2::LEFT_TOP,
+                format!(
+                    "像素预览 {}×(世界 1px = {} 物理 px;视图 → 像素预览可关)",
+                    self.camera.zoom as i64, self.camera.zoom as i64
+                ),
+                FontId::monospace(11.0),
+                semantic::GUIDE_RULER,
             );
         }
         if std::env::var("VB_NO_OVERLAY").is_ok() {
@@ -759,10 +1053,17 @@ impl VellumApp {
     }
 }
 
-fn draw_grid(painter: &egui::Painter, rect: Rect, cam: &Camera, dark: bool) {
+fn draw_grid(painter: &egui::Painter, rect: Rect, cam: &Camera, dark: bool, base_size: f64) {
     // 世界锚定:网格线 = 世界 k*level,屏幕位 = k*level*zoom + pan。
     // 此前按屏幕取整导致平移时网格纹丝不动、缩放时相对世界跳动。
-    let mut level = 64.0f64;
+    // 基础间距可配(05-4-A2 首选项「参考线与网格」;默认 64 = 既有行为,
+    // 非法值由 workspace normalize 兜底,这里再防一手)。
+    let base = if base_size.is_finite() && base_size >= 2.0 {
+        base_size
+    } else {
+        64.0
+    };
+    let mut level = base;
     while level * cam.zoom < 16.0 {
         level *= 4.0;
     }
@@ -791,5 +1092,28 @@ fn draw_grid(painter: &egui::Painter, rect: Rect, cam: &Camera, dark: bool) {
             [pos2(rect.left(), y), pos2(rect.right(), y)],
             Stroke::new(0.5, color),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::canvas_rect_next;
+    use egui::{pos2, Rect};
+
+    /// P0-③ 回归:画布矩形必须能随窗口**增长**。
+    ///
+    /// 实测复现(2026-09-23):1696×1039 启动后把窗口放到 2560×1400,
+    /// CentralPanel 已是 (3,71)-(2261,1296),画布矩形却仍是首帧的
+    /// (3,71)-(1397,935) → GPU 纹理停在旧尺寸,第二画板(世界 y 680 起)
+    /// 只剩约 180px 可见,即"第二画板被裁"。修复后画布矩形取本帧当前值。
+    #[test]
+    fn canvas_rect_tracks_window_growth() {
+        let first_frame = Rect::from_min_max(pos2(3.0, 71.0), pos2(1397.0, 935.0));
+        let after_resize = Rect::from_min_max(pos2(3.0, 71.0), pos2(2261.0, 1296.0));
+        let rect = canvas_rect_next(Some(first_frame), after_resize);
+        assert_eq!(rect, after_resize, "画布矩形必须取本帧当前值(可增长)");
+        // 缩小方向同样跟随本帧(不保留旧的大矩形)
+        let shrunk = Rect::from_min_max(pos2(3.0, 71.0), pos2(1024.0, 700.0));
+        assert_eq!(canvas_rect_next(Some(first_frame), shrunk), shrunk);
     }
 }

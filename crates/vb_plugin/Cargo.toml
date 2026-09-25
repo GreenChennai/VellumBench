@@ -1,0 +1,25 @@
+[package]
+name = "vb_plugin"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+description = "Vellum Bench 插件宿主:外部子进程 + stdio JSON-RPC 2.0 + manifest 权限(09-J,ADR-VB-L12)"
+
+[lib]
+path = "src/lib.rs"
+
+# 示例插件(09-J 05-10-6):仓库自带的「统计元素」插件,同时是门禁测试
+# 的夹具可执行(测试经 CARGO_BIN_EXE_example-stats-plugin 取路径)。
+[[bin]]
+name = "example-stats-plugin"
+path = "src/bin/example-stats-plugin.rs"
+
+[dependencies]
+vb_doc = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+vb_common = { workspace = true }

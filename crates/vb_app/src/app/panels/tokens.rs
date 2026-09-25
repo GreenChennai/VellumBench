@@ -42,10 +42,11 @@ impl VellumApp {
                         }
                     }
                 }
-                let resp = ui.add_sized([70.0, 18.0], egui::Label::new(format!("--{name}")));
+                let h = vb_ui::theme::row_height(ui.ctx());
+                let resp = ui.add_sized([70.0, h], egui::Label::new(format!("--{name}")));
                 let _ = resp;
                 if ui
-                    .add_sized([110.0, 18.0], egui::TextEdit::singleline(&mut v))
+                    .add_sized([110.0, h], egui::TextEdit::singleline(&mut v))
                     .lost_focus()
                     && v != *value
                 {

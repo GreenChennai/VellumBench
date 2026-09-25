@@ -27,6 +27,8 @@ New-Item -ItemType Directory -Force -Path $ArchiveDir | Out-Null
 Copy-Item "$Root\target\release\vellumbench.exe" $ArchiveDir
 Copy-Item "$Root\target\release\vellum-cli.exe" $ArchiveDir
 Copy-Item "$Root\target\release\vellum-mcp.exe" $ArchiveDir -ErrorAction SilentlyContinue
+# 06-2:发布包必须随附协议文本(ACL-1.0,与 README 许可段同口径;门禁 tools/check_license.py)
+Copy-Item "$Root\LICENSE" $ArchiveDir
 Copy-Item "$Root\README.md" $ArchiveDir
 Copy-Item "$Root\examples" "$ArchiveDir\examples" -Recurse -Force
 Set-Content -Path "$ArchiveDir\VERSION.txt" -Value "$Version`ngit: $ShortHash`nbuild: $(Get-Date -Format 'yyyy-MM-dd HH:mm')"

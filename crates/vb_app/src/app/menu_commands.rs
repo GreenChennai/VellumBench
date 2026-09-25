@@ -242,6 +242,18 @@ impl VellumApp {
         }
         match id {
             // ── 文字 ──
+            // 09-O(05-4-A2):查找/替换缺失字体(打开专项对话框;
+            // 打开文档时的自动检测在 assemble::construct)
+            "text.find_font" => {
+                let missing = crate::app::font_dialog::scan_missing_fonts(&self.doc);
+                if missing.is_empty() {
+                    self.say("查找字体:文档没有缺失字体(判定口径见对话框说明)");
+                } else {
+                    self.font_dialog = Some(crate::app::font_dialog::FontDialogState::new(missing));
+                    self.say("查找字体:发现缺失字体,已打开替换对话框");
+                }
+                true
+            }
             "text.upper_case" | "text.lower_case" => {
                 let upper = id == "text.upper_case";
                 let mut n = 0;
@@ -348,19 +360,25 @@ impl VellumApp {
             "effect.gaussian_blur" => self.remember_and_apply(Effect::GaussianBlur { radius: 4.0 }),
             "effect.feather" => self.remember_and_apply(Effect::Feather { radius: 12.0 }),
             // ── 窗口:工作区 ──
+            // X-7(05-4-A2):新建工作区对话框(保存当前布局为命名预设 +
+            // 用户预设列表切换/删除;预设落 workspace.json workspace_presets)
+            "window.new_workspace" => {
+                self.workspace_dialog_open = true;
+                self.say("工作区:可保存当前布局为命名预设,并可切换/删除");
+                true
+            }
             // 工作区预设与 `workspace.json` 联动(副文档 07-4-2):
             // 预设会**覆盖**工具栏停靠位(这正是"工作区"的意义),并立即落盘。
+            // 04-2:预设同步次级面板坞(停靠/组选择),不再出现级联浮窗。
             "window.workspace_basic" => {
                 self.panels_hidden = false;
                 self.dock_collapsed = false;
                 self.panel_tab = panels::TAB_PROPERTIES;
-                self.char_panel_open = false;
-                self.para_panel_open = false;
-                self.appearance_panel_open = false;
-                self.stroke_panel_open = false;
-                self.gradient_panel_open = false;
-                self.opacity_panel_open = false;
-                self.color_panel_open = false;
+                // 九面板全部关闭 + 全部停靠(下次打开从次级坞出现)
+                for p in super::panel_dock::SecPanel::ALL {
+                    self.sec_set_open(p, false);
+                    self.sec.floating[p.index()] = false;
+                }
                 self.toolbar_dock = super::dock_layout::DockSide::Left;
                 self.toolbar_columns = 1;
                 self.say("工作区:基本功能(工具箱在左 + 属性面板)");
@@ -371,16 +389,26 @@ impl VellumApp {
                 self.panels_hidden = false;
                 self.dock_collapsed = false;
                 self.panel_tab = panels::TAB_PROPERTIES;
-                self.char_panel_open = true;
-                self.para_panel_open = true;
+                for p in super::panel_dock::SecPanel::ALL {
+                    self.sec_set_open(p, false);
+                    self.sec.floating[p.index()] = false;
+                }
+                // 排版工作区:字符 + 段落停靠打开,聚焦文字组
+                self.sec_set_open(super::panel_dock::SecPanel::Char, true);
+                self.sec_set_open(super::panel_dock::SecPanel::Para, true);
+                self.sec_focus(super::panel_dock::SecPanel::Char);
                 self.toolbar_dock = super::dock_layout::DockSide::Left;
                 self.toolbar_columns = 1;
-                self.say("工作区:排版(工具箱在左 + 字符/段落面板)");
+                self.say("工作区:排版(工具箱在左 + 字符/段落面板停靠)");
                 self.save_workspace();
                 true
             }
             "window.workspace_export" => {
                 self.show_export = true;
+                for p in super::panel_dock::SecPanel::ALL {
+                    self.sec_set_open(p, false);
+                    self.sec.floating[p.index()] = false;
+                }
                 self.toolbar_dock = super::dock_layout::DockSide::Bottom;
                 self.toolbar_columns = 1;
                 self.say("工作区:导出(工具箱在底 + 导出对话框)");

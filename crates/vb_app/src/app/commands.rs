@@ -310,8 +310,8 @@ impl VellumApp {
         self.create_vector_node(path, closed);
     }
 
-    /// 由路径创建矢量节点(P4.5)。
-    fn create_vector_node(&mut self, path: vb_common::geom::BezPath, closed: bool) {
+    /// 由路径创建矢量节点(P4.5;铅笔 05-2 共用:closed=false 时仅描边)。
+    pub(crate) fn create_vector_node(&mut self, path: vb_common::geom::BezPath, closed: bool) {
         use kurbo::Shape;
         let (minx, miny, maxx, maxy) = {
             let bb = path.bounding_box();
@@ -477,7 +477,7 @@ impl VellumApp {
 
     /// 对齐(P3.8):多选 → 在选择包围盒内对齐;单选 → 对齐所属画板。
     /// 路径查找器(C1):对选中的两个矢量路径执行布尔运算。
-    /// AI 语义:减去顶层 = z 序在上者减去在下者;联集/交集/差集与顺序无关。
+    /// AI/Adobe 语义:联集/交集/差集与顺序无关;减法族见下方 z 序映射注释。
     pub(crate) fn path_boolean(&mut self, op: vb_tools::boolean::BooleanOp) {
         if self.selection.len() != 2 {
             self.status = "路径查找器:需要恰好选中 2 个对象".into();
@@ -497,17 +497,27 @@ impl VellumApp {
                 return;
             }
         }
-        // 减法族(减去顶层 / 减去后方对象):z 序在上者为 lhs(被减数)
+        // 减法族 z 序映射(05-C 修正,对齐 Adobe/Illustrator 口径):
+        // - 减去顶层(Subtract)= AI「Minus Front」:**保留下方对象**,减去
+        //   它与最上层对象的重叠部分 → 结果 = 下方 − 上方,存活/样式取下方
+        //   (内核 lhs − rhs,故 z 序**在下者为 lhs**);
+        // - 减去后方对象(SubtractBack)= AI「Minus Back」:最上层减去其
+        //   下方对象、保留最上 → z 序**在上者为 lhs**。
+        // 此前两命令同映射(都是上减下、保留上),减去顶层与 Adobe 口径相反。
         let (lhs, rhs) = if matches!(
             op,
             vb_tools::boolean::BooleanOp::Subtract | vb_tools::boolean::BooleanOp::SubtractBack
         ) {
             let za = z_order(&self.doc, id_a);
             let zb = z_order(&self.doc, id_b);
-            if za >= zb {
-                (sid_a, sid_b)
+            let (top, bottom) = if za >= zb {
+                (sid_a.clone(), sid_b.clone())
             } else {
-                (sid_b, sid_a)
+                (sid_b.clone(), sid_a.clone())
+            };
+            match op {
+                vb_tools::boolean::BooleanOp::Subtract => (bottom, top),
+                _ => (top, bottom),
             }
         } else {
             (sid_a.clone(), sid_b.clone())
@@ -532,6 +542,36 @@ impl VellumApp {
         });
         self.selection = vec![lhs];
         self.status = format!("路径查找器:{}", op.as_str());
+    }
+
+    /// 路径查找器多结果运算(05-3 / X-1:分割 / 修边 / 轮廓)。
+    ///
+    /// 走 `vb_tools::pathfinder::pathfinder_multi_cmds` 统一入口:校验选区、
+    /// 按画板文档序自底向上重排、几何运算产出碎片、预分配结果 sid,折算成
+    /// **一条** `Command::MultiResult` 事务(删 N 源 + 按序插 M 结果,一次
+    /// 撤销)。执行后选区 = 全部结果节点;撤销由 dispatch 的选区恢复臂
+    /// 重选 N 个源。
+    pub(crate) fn path_boolean_multi(&mut self, op: vb_tools::pathfinder::MultiOp) {
+        let selection: Vec<String> = self.selection.clone();
+        let plan = match vb_tools::pathfinder::pathfinder_multi_cmds(&mut self.doc, op, &selection)
+        {
+            Ok(p) => p,
+            Err(e) => {
+                self.status = e;
+                return;
+            }
+        };
+        let vb_tools::pathfinder::PathfinderPlan {
+            command,
+            result_sids,
+        } = plan;
+        self.exec(command);
+        self.selection = result_sids;
+        self.status = format!(
+            "路径查找器:{}:产出 {} 个对象",
+            op.zh(),
+            self.selection.len()
+        );
     }
 
     pub(crate) fn align_selection(&mut self, mode: &str) {
@@ -856,6 +896,76 @@ impl VellumApp {
         };
     }
 
+    /// 切片节点(09-C,design/06 §3.14):`NodeKind::Slice` + `data-vb-slice`
+    /// 属性 = 切片名(Kiln/vellum-cli 导出联动按它取区域出图)。
+    /// 经 Insert 命令入 undo 栈;坐标经 `insert_target` 重定基(与形状同管线)。
+    pub(crate) fn create_slice(&mut self, mut g: Geom) {
+        let count = self.slice_count() + 1;
+        let sid = self.doc.alloc_sid();
+        let name = format!("切片 {count}");
+        let mut n = vb_doc::model::Node::new(NodeKind::Slice, name.clone(), sid.clone());
+        n.geom = g;
+        n.attrs.insert("data-vb-slice".into(), name.clone());
+        let parent = self.insert_target(g.x, g.y);
+        let (lx, ly) = self.world_to_parent_local(parent, g.x, g.y);
+        g.x = lx;
+        g.y = ly;
+        n.geom = g;
+        let parent_sid = self.doc.nodes.get(parent).unwrap().sid.as_str().to_string();
+        let plen = self.doc.nodes.get(parent).unwrap().children.len();
+        let tree = vb_doc::model::NodeTree {
+            node: n,
+            children: vec![],
+        };
+        self.exec(Command::Insert {
+            parent_sid,
+            index: plen,
+            tree,
+        });
+        self.selection = vec![sid.as_str().to_string()];
+        self.status = format!(
+            "已建立切片「{name}」({}×{},Shift+K 拖框可再建;vellum-cli export --slice 按名出图)",
+            g.w as i64, g.h as i64
+        );
+    }
+
+    /// 从选区建立切片(06 篇 §3.14「对象 → 切片 → 建立」):切片 = 选中
+    /// 对象的世界包围盒。
+    pub(crate) fn slice_from_selection(&mut self) {
+        let mut acc: Option<vb_common::geom::Rect> = None;
+        for sid in &self.selection {
+            let Some(nid) = self.doc.find_by_sid(sid) else {
+                continue;
+            };
+            let Some(bb) = vb_tools::abs_bbox_world(&self.doc, nid) else {
+                continue;
+            };
+            acc = Some(match acc {
+                Some(a) => a.union(bb),
+                None => bb,
+            });
+        }
+        let Some(r) = acc else {
+            self.status = "切片:未选中对象".into();
+            return;
+        };
+        self.create_slice(Geom {
+            x: r.x0.round(),
+            y: r.y0.round(),
+            w: (r.x1 - r.x0).round().max(1.0),
+            h: (r.y1 - r.y0).round().max(1.0),
+        });
+    }
+
+    /// 文档内切片节点数(命名递增用)。
+    fn slice_count(&self) -> usize {
+        self.doc
+            .nodes
+            .iter()
+            .filter(|(_, n)| matches!(n.kind, NodeKind::Slice))
+            .count()
+    }
+
     /// 画板工具:在世界坐标处新建画板(画板 geom 即世界坐标)。
     pub(crate) fn create_artboard(&mut self, g: Geom) {
         let count = self.doc.artboards.len();
@@ -889,15 +999,20 @@ impl VellumApp {
 
     /// 新建默认画板(S1-c 控制面板「+画板」与画板面板「+ 新建」共用;
     /// 纵向堆到现有画板最下方,经 Insert 命令入 undo 栈)。
+    /// 默认尺寸 = 首选项「画板」页的新画板预设(05-4-A2;默认 Web 1440×900)。
     pub(crate) fn add_default_artboard(&mut self) {
         let name = format!("画板 {}", self.doc.artboards.len() + 1);
         let sid = self.doc.alloc_sid();
         let mut n = vb_doc::model::Node::new(NodeKind::Artboard, name.clone(), sid.clone());
+        let (pw, ph) = super::panels::artboards::AB_PRESETS
+            .get(self.artboard_preset)
+            .map(|(_, w, h)| (*w, *h))
+            .unwrap_or((1440.0, 900.0));
         n.geom = Geom {
             x: 0.0,
             y: 0.0,
-            w: 1440.0,
-            h: 900.0,
+            w: pw,
+            h: ph,
         };
         // 纵向堆到最下方
         n.geom.y = self
@@ -1174,4 +1289,188 @@ fn z_order(doc: &vb_doc::model::Document, id: vb_doc::model::NodeId) -> usize {
                 .unwrap_or(usize::MAX)
         })
         .unwrap_or(usize::MAX)
+}
+
+// ─────────────────────────── 05-3 / X-1 应用级测试 ───────────────────────────
+
+#[cfg(test)]
+mod pathfinder_tests {
+    use super::*;
+    use crate::app::assemble::tests::app_fresh;
+    use vb_common::geom::{BezPath, Point};
+    use vb_doc::model::{Geom, Node, NodeKind};
+
+    /// 放一个矢量矩形(带填充),返回 sid。
+    fn add_rect(
+        app: &mut VellumApp,
+        name: &str,
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        fill: &str,
+    ) -> String {
+        let mut path = BezPath::new();
+        path.move_to(Point::new(0.0, 0.0));
+        path.line_to(Point::new(w, 0.0));
+        path.line_to(Point::new(w, h));
+        path.line_to(Point::new(0.0, h));
+        path.close_path();
+        let sid = app.doc.alloc_sid();
+        let mut n = Node::new(NodeKind::Vector { path }, name, sid.clone());
+        n.geom = Geom { x, y, w, h };
+        n.style = vec![vb_css::Decl {
+            prop: "fill".into(),
+            value: fill.into(),
+            important: false,
+        }];
+        let ab = app.doc.artboards[0];
+        let id = app.doc.nodes.insert(n);
+        app.doc.nodes.get_mut(id).unwrap().parent = Some(ab);
+        app.doc.nodes.get_mut(ab).unwrap().children.push(id);
+        sid.as_str().to_string()
+    }
+
+    /// 分割(菜单/命令 → MultiResult 事务):选区变 3 结果;撤销恢复
+    /// 2 源并重选;重做后结果 sid 与首次一致。
+    #[test]
+    fn divide_via_command_and_selection_restore() {
+        let _env = crate::ENV_LOCK.lock();
+        let mut app = app_fresh(None);
+        let a = add_rect(&mut app, "A", 0.0, 0.0, 200.0, 200.0, "#ff0000");
+        let b = add_rect(&mut app, "B", 100.0, 50.0, 200.0, 100.0, "#0000ff");
+        app.selection = vec![a.clone(), b.clone()];
+
+        app.run_command("path.divide", false, false);
+        assert_eq!(app.selection.len(), 3, "分割后选区 = 3 个结果");
+        assert!(
+            app.selection
+                .iter()
+                .all(|s| app.doc.find_by_sid(s).is_some()),
+            "选区全部有效"
+        );
+        assert!(app.doc.find_by_sid(&a).is_none(), "源已删除");
+        let result_sids = app.selection.clone();
+
+        // 撤销:源恢复且重选源
+        app.run_command("edit.undo", false, false);
+        assert!(app.doc.find_by_sid(&a).is_some(), "撤销后源 A 恢复");
+        assert!(app.doc.find_by_sid(&b).is_some(), "撤销后源 B 恢复");
+        assert_eq!(app.selection, vec![a.clone(), b.clone()], "撤销重选源");
+
+        // 重做:结果 sid 稳定并重新选中
+        app.run_command("edit.redo", false, false);
+        assert_eq!(app.selection, result_sids, "重做重新选中结果");
+        assert!(app.doc.find_by_sid(&a).is_none());
+    }
+
+    /// 轮廓(单对象):产物置 fill:none,撤销恢复。
+    #[test]
+    fn outline_single_shape_and_undo() {
+        let _env = crate::ENV_LOCK.lock();
+        let mut app = app_fresh(None);
+        let a = add_rect(&mut app, "A", 0.0, 0.0, 100.0, 100.0, "#123456");
+        app.selection = vec![a.clone()];
+
+        app.run_command("path.outline", false, false);
+        assert_eq!(app.selection.len(), 4, "单矩形轮廓产出 4 段");
+        let nid = app.doc.find_by_sid(app.selection[0].as_str()).unwrap();
+        let style = app.doc.nodes.get(nid).unwrap().style.clone();
+        let fill = style.iter().find(|d| d.prop == "fill").expect("有 fill");
+        assert_eq!(fill.value, "none", "轮廓件无填充");
+        let stroke = style.iter().find(|d| d.prop == "stroke").expect("补描边");
+        assert_eq!(stroke.value, "#000000");
+
+        app.run_command("edit.undo", false, false);
+        assert!(app.doc.find_by_sid(&a).is_some(), "撤销恢复原对象");
+        assert_eq!(app.selection, vec![a]);
+    }
+
+    /// 修边:同色合并为一件;命令 label 进撤销栈(历史面板口径)。
+    #[test]
+    fn trim_same_fill_merges_via_command() {
+        let _env = crate::ENV_LOCK.lock();
+        let mut app = app_fresh(None);
+        let a = add_rect(&mut app, "A", 0.0, 0.0, 200.0, 200.0, "#ff0000");
+        let b = add_rect(&mut app, "B", 100.0, 50.0, 200.0, 100.0, "#ff0000");
+        app.selection = vec![a.clone(), b.clone()];
+
+        app.run_command("path.trim", false, false);
+        assert_eq!(app.selection.len(), 1, "同色修边合并为 1 件");
+        assert_eq!(app.undo.undo_label(), Some("路径查找器:修边"));
+
+        app.run_command("edit.undo", false, false);
+        assert!(app.doc.find_by_sid(&a).is_some());
+        assert!(app.doc.find_by_sid(&b).is_some());
+    }
+
+    /// 前置校验:非矢量选区给中文提示,不产生事务。
+    #[test]
+    fn divide_rejects_non_vector() {
+        let _env = crate::ENV_LOCK.lock();
+        let mut app = app_fresh(None);
+        let a = add_rect(&mut app, "A", 0.0, 0.0, 100.0, 100.0, "#ff0000");
+        // 画板不是矢量路径
+        let ab = app
+            .doc
+            .nodes
+            .get(app.doc.artboards[0])
+            .unwrap()
+            .sid
+            .as_str()
+            .to_string();
+        app.selection = vec![a, ab];
+        app.run_command("path.divide", false, false);
+        assert!(
+            app.status.contains("矢量路径"),
+            "提示应说明只支持矢量路径:{}",
+            app.status
+        );
+        assert!(app.undo.undo_label().is_none(), "不得入撤销栈");
+    }
+
+    /// 05-C 语义修正(Adobe 口径)几何门禁:
+    /// - 减去顶层:保留**下方**对象,结果 = 下方 − 上方;
+    /// - 减去后方对象:保留**最上**对象,结果 = 上方 − 下方。
+    ///
+    /// 夹具:A(上,200×200 于原点)、B(下,100×100 于 (50,0));
+    /// 双向互叠互减,断言存活者与结果包围盒。
+    #[test]
+    fn path_boolean_z_order_semantics() {
+        let _env = crate::ENV_LOCK.lock();
+        // A 在下(先建,z 序低),B 在上(后建,z 序高)
+        let mut app = app_fresh(None);
+        let bottom = add_rect(&mut app, "下", 50.0, 0.0, 100.0, 100.0, "#00ff00");
+        let top = add_rect(&mut app, "上", 0.0, 0.0, 100.0, 100.0, "#ff0000");
+        app.selection = vec![bottom.clone(), top.clone()];
+
+        // 减去顶层:存活 = 下方(B);结果 = B − A = 右侧条带 (100,0)-(150,100)
+        app.run_command("path.subtract", false, false);
+        assert_eq!(app.selection, vec![bottom.clone()], "减去顶层保留下方对象");
+        assert!(app.doc.find_by_sid(&top).is_none(), "上方对象被删除");
+        {
+            let nid = app.doc.find_by_sid(&bottom).unwrap();
+            let g = app.doc.nodes.get(nid).unwrap().geom;
+            assert!(
+                (g.x - 100.0).abs() < 1.0 && (g.w - 50.0).abs() < 1.0 && (g.h - 100.0).abs() < 1.0,
+                "减去顶层结果应为 (100,0) 50×100 条带,实际 {g:?}"
+            );
+        }
+
+        // 减去后方对象:撤销恢复后重跑 —— 存活 = 最上(A);结果 = A − B
+        app.run_command("edit.undo", false, false);
+        assert!(app.doc.find_by_sid(&top).is_some(), "撤销恢复上方对象");
+        app.selection = vec![bottom.clone(), top.clone()];
+        app.run_command("path.subtract_back", false, false);
+        assert_eq!(app.selection, vec![top.clone()], "减去后方对象保留最上对象");
+        assert!(app.doc.find_by_sid(&bottom).is_none(), "下方对象被删除");
+        {
+            let nid = app.doc.find_by_sid(&top).unwrap();
+            let g = app.doc.nodes.get(nid).unwrap().geom;
+            assert!(
+                (g.x - 0.0).abs() < 1.0 && (g.w - 50.0).abs() < 1.0 && (g.h - 100.0).abs() < 1.0,
+                "减去后方对象结果应为 (0,0) 50×100 条带,实际 {g:?}"
+            );
+        }
+    }
 }

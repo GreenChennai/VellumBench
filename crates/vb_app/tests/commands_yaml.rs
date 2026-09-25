@@ -106,6 +106,20 @@ fn is_undoable(id: &str) -> bool {
     if id.starts_with("align.to_") {
         return false;
     }
+    // 阶段 2(C1 扩展):路径查找器扩展运算是 PathBoolean 文档命令
+    if matches!(id, "path.merge" | "path.subtract_back" | "path.crop") {
+        return true;
+    }
+    // 05-2(09-C / 09-D):切片建立 / 图像替换均为可撤销文档命令
+    if matches!(
+        id,
+        "object.slice_from_selection"
+            | "object.replace_image"
+            | "object.clip_mask"
+            | "object.release_clip_mask"
+    ) {
+        return true;
+    }
     id.starts_with("object.")
         || id.starts_with("align.")
         || id.starts_with("canvas.nudge_")
@@ -132,6 +146,24 @@ fn is_undoable(id: &str) -> bool {
 }
 
 fn is_agent_exposed(id: &str) -> bool {
+    // 「对齐到」三选一是面板偏好,无 patch 等价 op,不对 Agent 开放(阶段 2)
+    if id.starts_with("align.to_") {
+        return false;
+    }
+    // 阶段 2(C1):路径查找器扩展运算对 Agent 开放(与四基本运算同口径)
+    if matches!(id, "path.merge" | "path.subtract_back" | "path.crop") {
+        return true;
+    }
+    // 05-2(09-C / 09-B / 09-D):文档级对象命令对 Agent 开放
+    if matches!(
+        id,
+        "object.slice_from_selection"
+            | "object.replace_image"
+            | "object.clip_mask"
+            | "object.release_clip_mask"
+    ) {
+        return true;
+    }
     id.starts_with("object.")
         || id.starts_with("align.")
         || id.starts_with("file.")

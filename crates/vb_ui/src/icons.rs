@@ -73,6 +73,20 @@ pub enum Name {
     ToolScissors,
     /// 编组选择工具。
     ToolGroupSelect,
+    /// 旋转工具(05-2 X-4 变换工具族)。
+    ToolRotate,
+    /// 镜像工具(05-2 X-4 变换工具族)。
+    ToolMirror,
+    /// 缩放工具(05-2 X-4 变换工具族)。
+    ToolScale,
+    /// 自由变换工具(05-2 X-4 变换工具族)。
+    ToolFreeTransform,
+    /// 铅笔工具(05-2 X-5 曲线工具)。
+    ToolPencil,
+    /// 曲率工具(05-2 X-5 曲线工具)。
+    ToolCurvature,
+    /// 度量工具(05-2 09-E 编辑态辅助)。
+    ToolMeasure,
 
     // ── 图层树的节点类型 ──
     /// 画板。
@@ -163,6 +177,20 @@ pub enum Name {
     Collapsed,
     /// 已展开（箭头朝下）。
     Expanded,
+
+    // ── 05-9 动效时间轴(09-I):播放控制 ──
+    /// 播放。
+    Play,
+    /// 暂停。
+    Pause,
+
+    // ── U-2 次级坞折叠图标条:插件组 ──
+    /// 插件(折叠图标条上代表「插件」组;其余组复用既有语义图标)。
+    Puzzle,
+
+    // ── U-5 面板空态 ──
+    /// 历史(历史面板空态图标)。
+    History,
 }
 
 impl Name {
@@ -179,6 +207,13 @@ impl Name {
         Name::ToolGradient,
         Name::ToolScissors,
         Name::ToolGroupSelect,
+        Name::ToolRotate,
+        Name::ToolMirror,
+        Name::ToolScale,
+        Name::ToolFreeTransform,
+        Name::ToolPencil,
+        Name::ToolCurvature,
+        Name::ToolMeasure,
         Name::KindArtboard,
         Name::KindLayer,
         Name::KindGroup,
@@ -217,6 +252,10 @@ impl Name {
         Name::PanelTokens,
         Name::Collapsed,
         Name::Expanded,
+        Name::Play,
+        Name::Pause,
+        Name::Puzzle,
+        Name::History,
     ];
 
     /// 对应的 Lucide 图标名（已逐个核对存在于 iconflow 0.1 的 lucide 表）。
@@ -234,6 +273,15 @@ impl Name {
             Name::ToolGradient => "blend",
             Name::ToolScissors => "scissors",
             Name::ToolGroupSelect => "lasso-select",
+
+            // 05-2:新工具图标(全部走 Lucide 既有字形,all_icons_resolve 把关)
+            Name::ToolRotate => "rotate-cw",
+            Name::ToolMirror => "flip-horizontal",
+            Name::ToolScale => "scaling",
+            Name::ToolFreeTransform => "expand",
+            Name::ToolPencil => "pencil",
+            Name::ToolCurvature => "spline",
+            Name::ToolMeasure => "ruler",
 
             Name::KindArtboard => "frame",
             Name::KindLayer => "layers",
@@ -279,6 +327,16 @@ impl Name {
 
             Name::Collapsed => "chevron-right",
             Name::Expanded => "chevron-down",
+
+            // 05-9 动效时间轴(09-I)
+            Name::Play => "play",
+            Name::Pause => "pause",
+
+            // U-2:次级坞折叠图标条(插件组)
+            Name::Puzzle => "puzzle",
+
+            // U-5:历史面板空态
+            Name::History => "history",
         }
     }
 
@@ -396,8 +454,8 @@ mod tests {
         // 枚举变体总数（含 ALL 自己占的一行由 compiler 保证一致）
         assert_eq!(
             Name::ALL.len(),
-            49,
-            "Name::ALL 的条数与枚举变体数不符：新增图标后要同步 ALL"
+            60,
+            "Name::ALL 的条数与枚举变体数不符：新增图标后要同步 ALL(第四轮 U-2 增 Puzzle/U-5 增 History)"
         );
     }
 

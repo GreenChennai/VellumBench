@@ -37,6 +37,9 @@ impl UndoStack {
 
     /// 应用并入栈。返回是否实际应用。
     pub fn push(&mut self, doc: &mut Document, mut cmd: Command) -> Result<ChangeSet> {
+        // 05-8 符号语义收口(所有命令路径的唯一入口):实例编辑自动登记
+        // 覆盖字段,主件编辑自动追加懒构建的 SymbolSync(同一条 undo)。
+        cmd = crate::symbol::wrap_symbol_effects(doc, cmd);
         let key = if self.merging_enabled {
             cmd.merge_target()
         } else {
@@ -146,6 +149,34 @@ impl UndoStack {
         self.redo.last().map(|c| c.label())
     }
 
+    // ── 历史面板只读访问器(vb_app 07-D;不暴露可变性,栈语义不受影响)──
+
+    /// 撤销栈全部命令(保存序 = 旧 → 新;历史列表展示用)。
+    pub fn undo_slice(&self) -> &[Command] {
+        &self.undo
+    }
+
+    /// 重做栈全部命令(保存序 = 下一个重做在末尾)。
+    pub fn redo_slice(&self) -> &[Command] {
+        &self.redo
+    }
+
+    /// 撤销深度(历史"当前位置"= 该值)。
+    pub fn undo_len(&self) -> usize {
+        self.undo.len()
+    }
+
+    /// 重做深度。
+    pub fn redo_len(&self) -> usize {
+        self.redo.len()
+    }
+
+    /// 清空重做尾(历史跳转的"丢弃其后步骤"语义;不影响文档)。
+    pub fn clear_redo(&mut self) {
+        self.redo.clear();
+        self.last_merge = None;
+    }
+
     /// 事务批量应用(一次 patch = 一条 undo,设计文档 08 篇 §五)。
     pub fn push_compound(&mut self, doc: &mut Document, cmds: Vec<Command>) -> Result<ChangeSet> {
         self.push(doc, Command::Compound { cmds })
@@ -188,6 +219,23 @@ fn replace_new(top: &mut Command, src: &Command) {
         (Rename { new, .. }, Rename { new: n2, .. }) => *new = n2.clone(),
         (SetTag { new, .. }, SetTag { new: n2, .. }) => *new = n2.clone(),
         (SetVector { new, .. }, SetVector { new: n2, .. }) => *new = n2.clone(),
+        // 05-9:时间轴连续编辑(拖拽关键帧/改值)同对象合并,只更新
+        // new 值;old 保留首帧捕获的原状(merge_target 已限定同 sid)
+        (
+            SetNodeAnimation {
+                new_keyframes,
+                new_animation,
+                ..
+            },
+            SetNodeAnimation {
+                new_keyframes: k2,
+                new_animation: a2,
+                ..
+            },
+        ) => {
+            *new_keyframes = k2.clone();
+            *new_animation = a2.clone();
+        }
         // 多目标 SetStyle/SetGeom Compound(渐变拖拽/多选拖拽):按 sid
         // 配对更新 new,栈顶首帧捕获的 old 不动(可合并性由 merge_target 校验)
         (Compound { cmds: tcmds, .. }, Compound { cmds: scmds, .. }) => {

@@ -12,13 +12,17 @@ members = [
     "crates/vb_kiln",
     "crates/vb_browser",
     "crates/vb_agent",
+    "crates/vb_plugin",
     "crates/vb_platform",
     "crates/vb_ui",
     "crates/vb_app",
+    # K2 Web 壳(05-11-2,台账 09-K):仅 wasm32 使用;加入 workspace 是为了
+    # 统一版本/过门禁(宿主编译无行为,详见该 crate 文档头)
+    "crates/vb_web",
 ]
 
 [workspace.package]
-version = "0.9.0"
+version = "0.10.0"
 edition = "2021"
 # ACL-1.0 是自定义协议(非 SPDX 标准标识符),故用 license-file 指向根 LICENSE
 license-file = "LICENSE"

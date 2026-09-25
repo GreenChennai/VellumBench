@@ -14,6 +14,12 @@ pub struct DomPaintMeta {
     pub line_count: u32,
     pub clip_demand: u32,
     pub raster_count: u32,
+    /// 内联/资产 SVG 子树被栅格化的项数(VB-2;domexport 定型为
+    /// InlineSvgRasterized{format})。
+    pub inline_svg_rasterized: u32,
+    /// 3D/透视 transform 被丢弃的项数(VB-2;定型为
+    /// UnsupportedPropertyDropped{prop:"transform",lane:"vector"})。
+    pub transform3d_dropped: u32,
     pub warnings: Vec<String>,
 }
 
@@ -155,6 +161,16 @@ pub fn paintlist_to_document(
             _ => item.get("layer").and_then(Value::as_u64).unwrap_or(1) as u32,
         };
         let opacity = item.get("opacity").and_then(Value::as_f64).unwrap_or(1.0) as f32;
+        // VB-2:3D/透视 transform(采集脚本对 matrix3d/perspective 原样上交
+        // 字符串;2D matrix 走数组)——矢量转换不应用变换,计数留痕。
+        if item
+            .get("matrix")
+            .and_then(Value::as_str)
+            .map(|t| t.contains("matrix3d") || t.contains("perspective"))
+            .unwrap_or(false)
+        {
+            meta.transform3d_dropped += 1;
+        }
         match kind {
             "box" => {
                 let id = base_node(&mut doc, "背景盒", NodeKind::Box, rect);
@@ -275,6 +291,12 @@ pub fn paintlist_to_document(
                     continue;
                 }
                 meta.raster_count += 1;
+                // VB-2:内联 <svg> 子树(kind=svg)与矢量导入失败的 svg 资产
+                // 在矢量输出中被整体栅格化(外观保留、真矢量丢失)→ 计数,
+                // domexport 定型为 InlineSvgRasterized{format}。
+                if kind == "svg" || reason == "svg-image" {
+                    meta.inline_svg_rasterized += 1;
+                }
                 let id = match page_png {
                     Some(png) => {
                         let name = format!("r{raster_idx}.png");
@@ -643,12 +665,17 @@ fn try_svg_vector(
     if !path.is_file() {
         return false;
     }
-    let Ok((sub, warnings)) = crate::import_svg::import_svg_to_doc(&path, None) else {
+    let Ok((sub, _warnings, _skipped)) = crate::import_svg::import_svg_to_doc(&path, None) else {
         return false;
     };
-    // v1 边界守卫:自由路径会被包围盒矩形近似(视觉劣化),此类 svg
-    // 整体回退截图裁剪;纯图元(矩形/圆/椭圆)svg 才走矢量导入
-    if warnings.iter().any(|w| w.contains("包围盒矩形近似")) {
+    // v1 边界守卫(05-6 起):自由路径已真实矢量化为 Vector 节点,而本
+    // 函数的移植只做几何仿射缩放、不带路径数据缩放 —— 子树含矢量节点时
+    // 整体回退截图裁剪;纯图元(矩形/圆/文本/图像)svg 才走矢量导入。
+    let has_vector = sub
+        .nodes
+        .values()
+        .any(|n| matches!(n.kind, vb_doc::model::NodeKind::Vector { .. }));
+    if has_vector {
         return false;
     }
     let Some(sub_ab) = sub.artboards.first().copied() else {

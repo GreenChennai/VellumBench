@@ -90,6 +90,12 @@ enum Cmd {
         transparent: bool,
         #[arg(long)]
         all: bool,
+        /// 05-2(09-C):按切片名单独出图(data-vb-slice;png 专用)
+        #[arg(long)]
+        slice: Option<String>,
+        /// 05-2(09-C):导出画板下全部切片(png 专用;out 作为目录)
+        #[arg(long)]
+        slices: bool,
     },
     /// 画板截图(= export png @1x 的快捷方式)
     Shot {
@@ -519,6 +525,8 @@ fn run(cli: Cli) -> Result<(), CliError> {
             out,
             transparent,
             all,
+            slice,
+            slices,
         } => {
             let fmt = format.to_ascii_lowercase();
             // 浏览器引擎格式(PDF/GIF/MP4)走 WPI 桥
@@ -574,7 +582,92 @@ fn run(cli: Cli) -> Result<(), CliError> {
                     "未知格式 {format}:支持 png | svg | pdf | gif | mp4"
                 )));
             }
+            if is_svg && (slice.is_some() || slices) {
+                return Err(CliError::Usage(
+                    "切片导出仅支持 png(--slice/--slices)".into(),
+                ));
+            }
             let (doc, _, dir) = open_doc(&doc_path)?;
+            let ab_id = match &artboard {
+                Some(a) => resolve_artboard(&doc, a),
+                None => doc.artboards.first().copied(),
+            }
+            .ok_or_else(|| CliError::Export("未找到画板".into()))?;
+            // ── 05-2(09-C):切片出图(--slice <名> 单个 / --slices 全部)──
+            if slice.is_some() || slices {
+                let all_slices = vb_export::slice::slices_of(&doc, ab_id);
+                let targets = if slices {
+                    all_slices
+                } else {
+                    let key = slice.as_deref().unwrap_or_default();
+                    match vb_export::slice::resolve_slice(&doc, ab_id, key) {
+                        Some(t) => vec![t],
+                        None => {
+                            return Err(CliError::Export(format!(
+                                "画板下找不到切片「{key}」(Shift+K 拖框 / 对象 → 切片 → 建立 可创建)"
+                            )));
+                        }
+                    }
+                };
+                if targets.is_empty() {
+                    return Err(CliError::Export(
+                        "该画板下没有切片(Shift+K 拖框 / 对象 → 切片 → 建立 可创建)".into(),
+                    ));
+                }
+                let mut results = Vec::new();
+                let multi = targets.len() > 1;
+                for (i, (_sid, name, geom)) in targets.iter().enumerate() {
+                    let (png, warnings) = vb_export::slice::export_slice_png(
+                        &doc,
+                        ab_id,
+                        *geom,
+                        scale as f32,
+                        transparent,
+                        Some(&dir),
+                    )
+                    .map_err(CliError::Export)?;
+                    let file_name = format!(
+                        "{name}@{scale}x.png",
+                        name =
+                            name.replace(['\\', '/', ':', '*', '?', '"', '<', '>', '|', ' '], "-"),
+                    );
+                    let out_path = if multi {
+                        // --slices:out 视作目录(缺省 = 当前目录)
+                        out.parent().unwrap_or(Path::new(".")).join(&file_name)
+                    } else if out.extension().is_some() {
+                        out.clone()
+                    } else {
+                        out.join(&file_name)
+                    };
+                    if let Some(parent) = out_path.parent() {
+                        std::fs::create_dir_all(parent)
+                            .map_err(|e| CliError::Other(format!("建目录失败:{e}")))?;
+                    }
+                    std::fs::write(&out_path, &png)
+                        .with_context(|| format!("写出 {}", out_path.display()))
+                        .map_err(|e| CliError::Other(format!("{e:#}")))?;
+                    for w in &warnings {
+                        eprintln!("⚠ {w}");
+                    }
+                    results.push(json!({
+                        "slice": name, "out": out_path.display().to_string(), "bytes": png.len(),
+                        "box": geom,
+                    }));
+                    let _ = i;
+                }
+                if cli.json {
+                    println!("{}", json!({"ok": true, "slices": results}));
+                } else {
+                    for r in &results {
+                        println!(
+                            "✔ 切片「{}」 → {}",
+                            r["slice"].as_str().unwrap_or(""),
+                            r["out"].as_str().unwrap_or("")
+                        );
+                    }
+                }
+                return Ok(());
+            }
             let targets: Vec<(String, vb_doc::model::NodeId)> = if all {
                 doc.artboards
                     .iter()
@@ -834,11 +927,18 @@ fn validate(doc_path: &Path, json: bool) -> Result<(), CliError> {
             // (`.foo {\n  prop: value`)与收尾 '}'。此前先把 '{}' 替换成空格
             // 再找分隔符,分隔符已消失,selector 粘进声明 → 无 :root 的文档
             // 每条规则都误报「非法声明」。
+            //
+            // 收尾 '}' 必须剥**连续全部**:嵌套 at-rule(@media,导入侧按冻结块
+            // 原样保留,见 vb_doc::import)的最末声明之后是「内层规则收尾 } +
+            // 块收尾 }」相连,只剥一个会残留裸 '}' 被误判为声明(landing 示例
+            // 门禁 7 实测:合法 @media 块报「非法 CSS 声明「}」」)。分片尾部
+            // 剥完剩空 = 该分片本就没有声明,跳过;真声明的合法性仍由
+            // Decl::parse 把关,判定口径未放宽。
             for decl in content.split(';') {
-                let decl = match decl.rsplit_once('}') {
-                    Some((d, _)) => d,
-                    None => decl,
-                };
+                let mut decl = decl.trim_end();
+                while let Some(rest) = decl.strip_suffix('}') {
+                    decl = rest.trim_end();
+                }
                 let decl = match decl.rsplit_once('{') {
                     Some((_, d)) => d,
                     None => decl,

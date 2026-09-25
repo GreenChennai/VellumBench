@@ -133,11 +133,14 @@ pub const BODY_MARGIN_RESET_JS: &str = r#"(() => {
 /// 画板矩形定位(P0-3):优先显式 `vb-artboard` 标记(含旧前缀),否则在
 /// body 顶层元素里找边界盒与声明尺寸一致者(与 vb_doc 导入器的启发式同
 /// 口径的采集侧镜像)。返回视口相对坐标(调用方保证 scrollY=0,即文档坐标)。
-pub const ARTBOARD_RECT_JS: &str = r#"(w, h) => {
+pub const ARTBOARD_RECT_JS: &str = r#"(w, h, i = 0) => {
     const SELS = ['.vb-artboard', '.vs-artboard', '.vsm-artboard'];
     let el = null;
     for (const s of SELS) {
-        el = document.querySelector(s);
+        // i = 第几个画板(0 起;03-4 浏览器校对要取当前画板,多画板文档
+        // 不再固定第一个)。缺省 0 与旧行为一致。
+        const list = document.querySelectorAll(s);
+        el = (list.length > 0) ? list[Math.min(i, list.length - 1)] : null;
         if (el) break;
     }
     if (!el && document.body) {

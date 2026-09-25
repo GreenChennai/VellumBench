@@ -284,19 +284,6 @@ fn hex_of(c: Rgba) -> String {
 // ─────────────────────── 4. 面板 ───────────────────────
 
 impl VellumApp {
-    pub(crate) fn show_color_panel(&mut self, ui: &mut egui::Ui) {
-        if !self.color_panel_open {
-            return;
-        }
-        let mut open = true;
-        egui::Window::new("颜色")
-            .open(&mut open)
-            .collapsible(false)
-            .default_width(300.0)
-            .show(ui.ctx(), |ui| self.color_panel_body(ui));
-        self.color_panel_open = open;
-    }
-
     /// 颜色面板/快捷键共用的目标色写回(离散操作)。
     pub(crate) fn color_apply(&mut self, res: Result<Option<Command>, String>) {
         match res {
@@ -319,6 +306,8 @@ impl VellumApp {
             "颜色面板:作用于填充(X 切到描边)"
         });
         self.color_panel_open = true;
+        // 04-2:自动打开也要有可见反馈 → 聚焦次级坞颜色组
+        self.sec_focus(crate::app::panel_dock::SecPanel::Color);
     }
 
     /// `Shift+X`:交换填充与描边色。
@@ -344,7 +333,7 @@ impl VellumApp {
         self.color_panel_open = true;
     }
 
-    fn color_panel_body(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn color_panel_body(&mut self, ui: &mut egui::Ui) {
         let Some(sid) = self.selection.last().cloned() else {
             ui.label(caption(
                 ui,

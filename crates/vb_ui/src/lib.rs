@@ -10,6 +10,7 @@
 //! - [`expr`]：数值框数学表达式解析器(纯函数,02-6-1)
 //! - [`dock`]：面板坞折叠规则与宽度钳制(纯函数,02-1)
 //! - [`toast`]：可堆叠通知(错误可复制,02-6-6)
+//! - [`motion`]：一次性入场动效(对话框/Tab 淡入,H-1;总开关在 [`theme`])
 //! - [`gradient`]：渐变结构化模型 + **自绘色标条**(阶段 4 / 05-2,V4 决策)
 //! - [`cursor`]：工具/手柄 → 系统光标映射
 //!
@@ -23,13 +24,14 @@ pub mod expr;
 pub mod fonts;
 pub mod gradient;
 pub mod icons;
+pub mod motion;
 pub mod theme;
 pub mod toast;
 
 pub use components::{
-    caption, icon_button, label, mono, strong, ColorField, ColorFieldResponse, LayerRow,
-    LayerRowResponse, NumField, NumFieldResponse, PanelTabs, SectionHeader, TabsResponse,
-    ToolButton,
+    caption, dialog_footer, dialog_footer_btn3, icon_button, key_badge_text, label, mono, strong,
+    ColorField, ColorFieldResponse, LayerRow, LayerRowResponse, NumField, NumFieldResponse,
+    PanelTabs, SectionHeader, TabsResponse, ToolButton,
 };
 pub use gradient::{gradient_bar, GradKind, Gradient, GradientBarResponse, Stop};
 pub use toast::{Toast, ToastHost, ToastKind};

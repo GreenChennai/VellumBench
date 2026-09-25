@@ -4,6 +4,8 @@
 //! - 原生:CPU 光栅 PNG + 矢量 SVG(快、离线、无依赖)
 //! - 浏览器(WPI 进程桥):PNG/GIF/MP4/PDF(像素真值;GIF/MP4 仅浏览器能捕获动画)
 
+/// 切片导出(05-2 / 09-C):按 data-vb-slice 切片单独出图。
+pub mod slice;
 pub mod svg;
 pub mod wpi;
 

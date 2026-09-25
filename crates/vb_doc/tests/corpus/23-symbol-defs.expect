@@ -1,0 +1,12 @@
+# 05-8 符号 / 组件语料:主件定义区(vb-symbol-defs,hidden)+ 两个实例
+# (实例 2 带文本覆盖)。断言只锚定**稳定标记**(属性 / 文本 / hidden),
+# 类名由 finalize 定稿(实例 2 与原型会拿生成类),不做类名断言。
+data-vb-id="sy100"
+data-vb-name="卡片"
+vb-symbol-defs
+data-vb-symbol="卡片"
+data-vb-symbol-ref="sy100"
+data-vb-symbol-overrides="[&quot;0:text&quot;]"
+特例标题
+标准副文案
+hidden=""

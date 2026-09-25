@@ -9,10 +9,15 @@
 //! - `import`:项目目录(index.html + styles/*.css)→ Document
 //! - `export`:Document → canonical HTML/CSS(与导入构成往返)
 
+/// K4 协同会话合并层(05-11-4,ADR-0031):连续属性 LWW CRDT + 共享目录
+/// 传输;结构性变更不走此层(命令 + 三向对比 + rev 乐观锁)。
+pub mod collab;
 pub mod commands;
 pub mod export;
 pub mod import;
 pub mod model;
+/// 05-8 符号 / 组件系统(模型口径、覆盖登记、主件同步与五个符号命令)。
+pub mod symbol;
 pub mod undo;
 
 pub use commands::{ChangeSet, CmdKind, Command};

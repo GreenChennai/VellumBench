@@ -67,7 +67,7 @@ kiln-cli export --source examples/landing --output landing.png --format PNG --en
 
 1. **HTML 是文档格式,不是编译产物** —— 保存即写回 canonical HTML/CSS:`L0` 不损坏(打开别人的工程再存回不丢东西)、`L1` 字节幂等(第二次保存与第一次逐字节相同)。
 2. **Illustrator 心智不可妥协** —— 快捷键、修饰键、术语零学习成本:8 手柄缩放、角外圈旋转、智能参考线、`Mod+D` 再次变换、对齐到「关键对象」、外观多条目……
-3. **Agent 是一等公民** —— 用户能做的 Agent 都能做:147 条命令 + 无头 CLI(12 子命令 / `patch` 17 种 op)+ MCP Server;每个元素有稳定编号 `data-vb-id`,改名/移动/重排都不变。
+3. **Agent 是一等公民** —— 用户能做的 Agent 都能做:203 条命令 + 无头 CLI(12 子命令 / `patch` 17 种 op)+ MCP Server;每个元素有稳定编号 `data-vb-id`,改名/移动/重排都不变。
 
 ---
 
@@ -103,10 +103,14 @@ target/release/vellum-cli.exe --doc examples/landing/index.html validate --json 
 
 `vellum-cli` 的 `patch` 是事务性的(`base_rev` 乐观锁,全部成功或全部回滚),op 覆盖 `set_text` / `set_style` / `set_box` / `group` / `align` / `boolean` / `set_token` 等 17 种。
 
-质量门禁一条命令,本地与 CI 同源:
+质量门禁一条命令,本地与 CI 同源,分两档(06-4-5:重门禁需要 GPU 与窗口系统):
 
 ```bash
-pwsh tools/ci.ps1     # 格式 · clippy -D warnings · 全量测试 · Agent 自检 · 术语扫描 · 输出校验 · 硬编码颜色棘轮 · 三端一致性
+pwsh tools/ci.ps1 -Light   # 轻量档:fmt · clippy -D warnings · 全量测试(含台账 Planned=0 收口门禁)
+                           #   · Agent 自检 · 术语扫描 · 输出校验 · 硬编码颜色棘轮 · 示例体检
+                           #   · 三端一致性 · 许可口径(ACL-1.0 四处一致)
+pwsh tools/ci.ps1          # 全量档:轻量档再加 画布↔导出像素对拍(canvas_parity,需 GPU)
+                           #   ;-UiShots 附带 UI 截图基线比对(报告模式)
 ```
 
 ---
@@ -128,19 +132,29 @@ pwsh tools/ci.ps1     # 格式 · clippy -D warnings · 全量测试 · Agent �
 | **顶部菜单** AI 规范 9 项;工具箱四向停靠 + `workspace.json` 持久化;命令面板 `Ctrl+K` | ✅ |
 | **文件监听热重载**(Agent 改 HTML → 画布更新) | ✅ |
 | **外部格式导入**:`kiln-cli import` —— PDF/AI(pdfium,文本可编辑)、SVG(usvg 纯 Rust,逐对象映射);`kiln-cli img` 位图工具箱(crop / trim-border / stitch / blur / pad / info) | ✅ |
-| **往返语料库 22 例**(L0 无损坏 / L1 字节幂等)+ 全量测试 **435 用例** | ✅ |
-| 147 条命令 / 76 键位绑定(注册表 ↔ `commands.yaml` 门禁锁定);`vellum-mcp` 10 工具 | ✅ |
+| **往返语料库 25 例**(L0 无损坏 / L1 字节幂等)+ 全量测试 **696 用例** | ✅ |
+| 203 条命令 / 84 键位绑定(注册表 ↔ `commands.yaml` 门禁锁定);`vellum-mcp` 10 工具 | ✅ |
+| **交互完整性(05-2)**:变换工具族 R/O/S/E(单击设中心)、曲率 / 铅笔(保真度抽稀)、**剪切蒙版 `Ctrl+7`**(overflow 容器,画布 / 导出 / HTML 三端一致)、**切片 `Shift+K` → `data-vb-slice`**(`vellum-cli export --slice/--slices` 按切片出图)、**置入 / 替换图像**(assets/ 引用制)、像素预览 / 度量工具 | ✅ |
+| **主页与多窗口(阶段 2)**:启动主页(最近项目 / 新建 / 模板 / 会话恢复)、一项目一窗口(独立撤销栈与标题)、`--project` 直达、**自动保存 + 崩溃恢复**(`.vb-autosave/` 快照,恢复 / 丢弃 / 三方差异)、撤销历史面板、项目健康检查 | ✅ |
+| **能力收口(阶段 5)**:**路径查找器 10 运算**(含分割 / 修边 / 轮廓,多结果事务)、**响应式断点 / `:hover` 伪类编辑**、**组件符号**(实例=真实 DOM 副本 + 主件同步,零 JS)、**动效时间轴**(落盘 CSS `@keyframes`,预览与导出同一求值)、**插件系统**(子进程 + stdio JSON-RPC + manifest 权限,仓库自带示例插件)、协同会话合并层(连续属性 CRDT,ADR-0031)、浏览器校对(画布 vs 系统浏览器) | ✅ |
+
+### 明确不做 🚫 —— 台账显式登记,不留灰按钮
+
+以下能力经阶段 5「三态收敛」裁定**不做**(`CapStatus::Dropped`,理由与替代方案登记在[能力台账](crates/vb_app/src/capabilities.rs),UI 无任何入口):
+
+| 不做的能力 | 为什么 | 替代方案 |
+|---|---|---|
+| 实时上色 / 网格工具 / 图像描摹 / 3D / 透视网格 | 无 HTML/CSS 对应,与「用 AI 心智编辑标准 HTML」定位冲突 | 多对象配色走路径查找器;渐变过渡用多层径向渐变叠加;位图素材直接置入后用蒙版裁剪 |
+| 云端工程 / 账号体系 / 资源市场 | 与「本地优先 + HTML 源格式」定位冲突(云端引入账号与素材许可链) | 项目即本地目录(index.html 可 diff);素材走 `assets/` 目录与资产面板;跨机同步交给文件盘/网盘 |
 
 ### 未落地 ⏳ —— 别按「已完成」读
 
-| 缺口 | 现状(代码实测) | 计划 |
+| 缺口 | 现状(代码实测,与[能力台账](crates/vb_app/src/capabilities.rs)同源) | 去向 |
 |---|---|---|
-| 画布真文本 | CPU 导出真字形已落地;画布仍 egui 近似([ADR-0017](docs/adr/0017-canvas-text-approximation-v01.md)),Parley 多行/双向留后续 | 复议中 |
-| 路径查找器 | 四基本运算 + 合并 / 减去后方对象 / 裁剪;**分割 / 修边 / 轮廓**需「一条命令产出多节点」 | v2 |
-| 响应式断点 / 伪类编辑 | 伪类规则**导入保真**;编辑器内的断点与伪类编辑未开始 | v2 |
-| 蒙版 / 切片 / 图像置入 | 不透明度蒙版(`mask-image`)已落地;剪切蒙版、`data-vb-slice`、置入替换 | v2 |
-| SVG / PDF 导入边界 | 自由曲线以包围盒近似 + 警告;渐变取中点色;`filter`/`mask`/`clipPath` 跳过(逐版补,不静默) | 逐版补 |
-| 组件 / 时间轴 / CRDT | 未开始 | 不承诺档期 |
+| 画布真文本(X-2) | CPU 导出真字形已落地;画布仍 egui 近似([ADR-0017](docs/adr/0017-canvas-text-approximation-v01.md)) —— 画布角落与状态栏**常驻「近似渲染」诚实标注**,并可经「视图 → 浏览器校对」对拍真实浏览器 | 复议中(Parley 多行/双向留后续) |
+| SVG / PDF 导入边界(X-3) | SVG 自由曲线已真实矢量化(C/Q 贝塞尔保真,A 圆弧为三次逼近并标注);`filter`/`mask`/`clipPath`/渐变逐项跳过或近似,导入时给**用户可见清单**,不静默;PDF 导入的同类清单与取色标注留后续 | 逐版补 |
+| 多平台与协同 GUI 入口(09-K) | K1 linux/macos 编译级通过 + CI 双 runner(字体回退 / DPI / GPU 画布差异留实机清单);K4 协同会话合并层全绿(LWW CRDT + 共享目录传输),**GUI「启动协同会话」菜单未接** | 实机回填 / 后续接线 |
+| 资产跨文档复用(09-H 半边) | 组件符号已落地(实例=真实 DOM 副本 + 主件同步);**跨文档组件库**(`symbols/*.html` 引用导入)未做 | 留后续复议 |
 
 ---
 

@@ -135,73 +135,63 @@ impl VellumApp {
         ));
     }
 
-    pub(crate) fn show_align_panel(&mut self, ui: &mut egui::Ui) {
-        if !self.align_panel_open {
-            return;
-        }
-        let mut open = true;
+    /// 面板正文(04-2:次级坞与受控浮窗共用;主循环经 `panel_dock` 装配)。
+    pub(crate) fn align_panel_body(&mut self, ui: &mut egui::Ui) {
         let to = self.align_to;
-        egui::Window::new("对齐")
-            .open(&mut open)
-            .collapsible(false)
-            .default_width(232.0)
-            .show(ui.ctx(), |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(vb_ui::components::caption(ui, "对齐到"));
-                    egui::ComboBox::from_id_salt("vb-align-to")
-                        .selected_text(to.label())
-                        .show_ui(ui, |ui| {
-                            for a in [AlignTo::Selection, AlignTo::KeyObject, AlignTo::Artboard] {
-                                let hit = ui.selectable_label(to == a, a.label()).clicked();
-                                if hit {
-                                    self.align_to = a;
-                                }
-                            }
-                        });
-                });
-                ui.separator();
-                ui.label(vb_ui::components::caption(ui, "对齐(6 键)"));
-                ui.horizontal(|ui| {
-                    for (id, label) in [
-                        ("align.left", "左"),
-                        ("align.hcenter", "中"),
-                        ("align.right", "右"),
-                        ("align.top", "顶"),
-                        ("align.vcenter", "中"),
-                        ("align.bottom", "底"),
-                    ] {
-                        if ui.button(label).clicked() {
-                            self.run_command(id, false, false);
+        ui.horizontal(|ui| {
+            ui.label(vb_ui::components::caption(ui, "对齐到"));
+            egui::ComboBox::from_id_salt("vb-align-to")
+                .selected_text(to.label())
+                .show_ui(ui, |ui| {
+                    for a in [AlignTo::Selection, AlignTo::KeyObject, AlignTo::Artboard] {
+                        let hit = ui.selectable_label(to == a, a.label()).clicked();
+                        if hit {
+                            self.align_to = a;
                         }
                     }
                 });
-                ui.separator();
-                ui.label(vb_ui::components::caption(ui, "分布"));
-                ui.horizontal(|ui| {
-                    if ui.button("水平等距").clicked() {
-                        self.run_command("object.distribute_h", false, false);
-                    }
-                    if ui.button("垂直等距").clicked() {
-                        self.run_command("object.distribute_v", false, false);
-                    }
-                });
-                ui.horizontal(|ui| {
-                    if ui.button("水平等间隙").clicked() {
-                        self.run_command("object.distribute_hspace", false, false);
-                    }
-                    if ui.button("垂直等间隙").clicked() {
-                        self.run_command("object.distribute_vspace", false, false);
-                    }
-                });
-                if self.align_to == AlignTo::KeyObject {
-                    ui.separator();
-                    ui.label(vb_ui::components::caption(
-                        ui,
-                        "关键对象 = 最后选中者(选中框已加粗)。",
-                    ));
+        });
+        ui.separator();
+        ui.label(vb_ui::components::caption(ui, "对齐(6 键)"));
+        ui.horizontal(|ui| {
+            for (id, label) in [
+                ("align.left", "左"),
+                ("align.hcenter", "中"),
+                ("align.right", "右"),
+                ("align.top", "顶"),
+                ("align.vcenter", "中"),
+                ("align.bottom", "底"),
+            ] {
+                if ui.button(label).clicked() {
+                    self.run_command(id, false, false);
                 }
-            });
-        self.align_panel_open = open;
+            }
+        });
+        ui.separator();
+        ui.label(vb_ui::components::caption(ui, "分布"));
+        ui.horizontal(|ui| {
+            if ui.button("水平等距").clicked() {
+                self.run_command("object.distribute_h", false, false);
+            }
+            if ui.button("垂直等距").clicked() {
+                self.run_command("object.distribute_v", false, false);
+            }
+        });
+        ui.horizontal(|ui| {
+            if ui.button("水平等间隙").clicked() {
+                self.run_command("object.distribute_hspace", false, false);
+            }
+            if ui.button("垂直等间隙").clicked() {
+                self.run_command("object.distribute_vspace", false, false);
+            }
+        });
+        if self.align_to == AlignTo::KeyObject {
+            ui.separator();
+            ui.label(vb_ui::components::caption(
+                ui,
+                "关键对象 = 最后选中者(选中框已加粗)。",
+            ));
+        }
     }
 }
 

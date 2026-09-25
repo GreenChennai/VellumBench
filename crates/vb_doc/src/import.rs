@@ -279,7 +279,10 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
                 if el.name.eq_ignore_ascii_case("style") {
                     continue; // 已并入样式表,不建节点(UA 默认 display:none)
                 }
-                if is_artboard(el) {
+                if is_symbol_def(el) {
+                    // 05-8:主件定义区 → defs_root(不参与画板/游离内容分流)
+                    let _ = importer.build_symbol_def(child);
+                } else if is_artboard(el) {
                     let id = importer.build_artboard(child);
                     artboard_nodes.push(id);
                 } else {
@@ -302,7 +305,9 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
             .iter()
             .filter(|c| {
                 c.as_element()
-                    .map(|el| HEURISTIC_ARTBOARD_TAGS.contains(&el.name.as_str()))
+                    .map(|el| {
+                        HEURISTIC_ARTBOARD_TAGS.contains(&el.name.as_str()) && !is_symbol_def(el)
+                    })
                     .unwrap_or(false)
             })
             .collect();
@@ -422,6 +427,57 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
         }
     }
 
+    // ── 05-5:断点 / 伪类规则映射到节点 sid ──
+    // 按**首类唯一**定位节点(与导出选择器同一口径);任一条映射失败 →
+    // 整块回冻结原文(保真优先,不静默丢)。
+    for mb in &sheet.media_blocks {
+        let mut mapped: Vec<(String, Vec<Decl>)> = Vec::new();
+        let mut ok = true;
+        for (_, class, decls) in &mb.rules {
+            // 06-4 收口修订:同一首类可被多个节点共享(如三张卡片共用
+            // .feature-card)。级联语义下媒体规则作用于**每一个**命中
+            // 节点 —— 逐 sid 展开;只取单命中会让分类结果依赖「上一次
+            // 保存是否已把类名唯一化」:首存多命中回冻结、次存单命中
+            // 成映射,L1 幂等被破坏(examples/landing 实测踩过)。
+            let hits = nodes_by_primary_class(&doc, class);
+            if hits.is_empty() {
+                ok = false;
+                break;
+            }
+            for id in hits {
+                let sid = doc.nodes.get(id).unwrap().sid.as_str().to_string();
+                mapped.push((sid, decls.clone()));
+            }
+        }
+        if ok {
+            for (sid, decls) in mapped {
+                doc.media_rules.push(crate::model::MediaRule {
+                    max_width: mb.max_width,
+                    sid,
+                    decls,
+                });
+            }
+        } else {
+            doc.raw_css.push(mb.raw.clone());
+        }
+    }
+    for hr in &sheet.hover_rules {
+        // 与媒体块同款:多命中逐 sid 展开(伪类规则同样按选择器作用于
+        // 每个命中节点),零命中回冻结 —— 保证分类与保存次数无关。
+        let hits = nodes_by_primary_class(&doc, &hr.class);
+        if hits.is_empty() {
+            doc.raw_css.push(hr.raw.clone());
+        }
+        for id in hits {
+            let sid = doc.nodes.get(id).unwrap().sid.as_str().to_string();
+            doc.pseudo_rules.push(crate::model::PseudoRule {
+                sid,
+                pseudo: hr.pseudo.clone(),
+                decls: hr.decls.clone(),
+            });
+        }
+    }
+
     // 画板纵向堆叠(HTML 中画板按文档流排列;编辑器画布需要显式且互不重叠的位置)
     {
         let mut y = 0.0f64;
@@ -535,8 +591,34 @@ fn body_explicit_size(css_texts: &[String]) -> (Option<f64>, Option<f64>) {
 
 type NodeIdT = crate::model::NodeId;
 
+/// 按首类定位节点(与导出选择器同一口径:`finalize_classes` 保证首类
+/// 唯一;导入源若首类重复 → None,规则保持冻结,不做歧义改写)。
+/// 首类命中的**全部**节点(导入顺序 = 文档序,确定稳定)。
+fn nodes_by_primary_class(doc: &Document, class: &str) -> Vec<NodeIdT> {
+    doc.nodes
+        .iter()
+        .filter(|(_, n)| n.classes.first().map(|c| c == class).unwrap_or(false))
+        .map(|(id, _)| id)
+        .collect()
+}
+
 fn is_artboard(el: &Element) -> bool {
     el.class_list().iter().any(|c| ARTBOARD_CLASSES.contains(c))
+}
+
+/// 05-8:主件定义容器标记(体格与画板标记同级:导入识别、级联豁免、
+/// 类定稿豁免;导出侧补写)。
+fn is_symbol_def(el: &Element) -> bool {
+    el.class_list().contains(&crate::symbol::SYMBOL_DEF_CLASS)
+}
+
+/// 结构标记类总表(画板 / 图层 / 编组 / 主件定义区):级联匹配豁免 +
+/// 节点 classes 过滤(导出侧按 kind/位置补写,不落在节点 classes 里)。
+fn is_marker_class(c: &str) -> bool {
+    ARTBOARD_CLASSES.contains(&c)
+        || LAYER_CLASSES.contains(&c)
+        || GROUP_CLASSES.contains(&c)
+        || c == crate::symbol::SYMBOL_DEF_CLASS
 }
 
 fn collect_text(node: &HtmlNode) -> String {
@@ -580,6 +662,33 @@ pub struct Stylesheet {
     pub raw_blocks: Vec<String>,
     /// `:root` 中的 CSS 变量。
     pub root_vars: Vec<(String, String)>,
+    /// 05-5:max-width 媒体块(结构化成功者;映射失败回冻结 `raw`)。
+    pub media_blocks: Vec<MediaBlockRaw>,
+    /// 05-5:`.cls:hover` 伪类规则(结构化成功者;映射失败回冻结 `raw`)。
+    pub hover_rules: Vec<HoverRuleRaw>,
+}
+
+/// 05-5:`@media (max-width: Npx)` 块的解析产物。全部内层规则均为简单类
+/// 选择器才结构化成功;`raw` 保留原文,映射失败时整体回冻结块(不静默丢)。
+#[derive(Debug, Clone)]
+pub struct MediaBlockRaw {
+    pub max_width: u32,
+    /// 块原文(trim 过;含 `@media` 头)。
+    pub raw: String,
+    /// 内层规则:(选择器原文, 类名, 声明)。
+    pub rules: Vec<(String, String, Vec<Decl>)>,
+}
+
+/// 05-5:`.cls:hover { … }` 顶层规则的解析产物。
+#[derive(Debug, Clone)]
+pub struct HoverRuleRaw {
+    /// 伪类名(当前仅 "hover")。
+    pub pseudo: String,
+    /// 类名(映射 sid 用)。
+    pub class: String,
+    /// 规则原文(trim 过;映射失败时回冻结)。
+    pub raw: String,
+    pub decls: Vec<Decl>,
 }
 
 /// 一条后代链规则;chain 从祖先到自身,匹配从右往左贪心。
@@ -623,6 +732,10 @@ impl Stylesheet {
         self.rules.extend(other.rules);
         self.raw_blocks.extend(other.raw_blocks);
         self.root_vars.extend(other.root_vars);
+        // 05-5:断点/伪类结构化产物同样合并(此前漏掉会导致多段样式表
+        // 或 body 内嵌 <style> 的媒体块被静默丢弃)
+        self.media_blocks.extend(other.media_blocks);
+        self.hover_rules.extend(other.hover_rules);
     }
 }
 
@@ -749,7 +862,14 @@ pub fn parse_stylesheet(text: &str) -> Stylesheet {
             // ② 破坏 L1 幂等:raw 块在导出时排在节点规则之前,二次导入后
             //    `merged_class_decls` 的"首个规则生效"顺序被改写,导出结果随之漂移。
             // 详见 04 篇 §四(冻结块)与 15 篇 P1 执行记录。
-            sheet.raw_blocks.push(block.trim().to_string());
+            //
+            // 05-5 例外:**纯 max-width 单条件**媒体块且内层全部为简单类选择器时,
+            // 结构化为可编辑断点规则(`sheet.media_blocks`;映射失败仍回冻结)。
+            // 其余 at-rule 组合(@supports / screen and … / 嵌套)照旧冻结。
+            match parse_media_block(block.trim()) {
+                Some(mb) => sheet.media_blocks.push(mb),
+                None => sheet.raw_blocks.push(block.trim().to_string()),
+            }
             continue;
         }
         // 普通规则:selector { body }
@@ -794,6 +914,12 @@ pub fn parse_stylesheet(text: &str) -> Stylesheet {
                     sheet.root_vars.push((var.to_string(), d.value));
                 }
             }
+            continue;
+        }
+        // 05-5:`.cls:<pseudo> { … }` 顶层规则(最小闭环仅收 :hover;其余
+        // 伪类照旧走冻结/孤儿路径)。基选择器必须是简单类选择器才结构化。
+        if let Some(hr) = parse_hover_rule(selector, &body) {
+            sheet.hover_rules.push(hr);
             continue;
         }
         if let Some((class, tag_qualified)) = simple_class_selector(selector) {
@@ -909,6 +1035,97 @@ fn compound_matches_ctx(c: &Compound, tag: &str, classes: &[String]) -> bool {
         }
     }
     c.classes.iter().all(|k| classes.iter().any(|x| x == k))
+}
+
+/// `(max-width: 768px)` → Some(768)。只接受**整个查询恰为一个 max-width
+/// 条件**(纯 max-width 单条件才能成为「断点」;`screen and …` 等组合照旧
+/// 走冻结块,不给半支持)。数值必须是非负整数 px(canonical 形态)。
+fn parse_max_width_query(q: &str) -> Option<u32> {
+    let inner = q.trim().strip_prefix('(')?.strip_suffix(')')?;
+    let (prop, val) = inner.split_once(':')?;
+    if !prop.trim().eq_ignore_ascii_case("max-width") {
+        return None;
+    }
+    val.trim().strip_suffix("px")?.trim().parse::<u32>().ok()
+}
+
+/// `@media (max-width: Npx) { … }` 块 → 结构化断点规则。
+///
+/// 收口条件(全部满足才结构化,否则整块回冻结,不静默降级):
+/// ① 查询为纯 max-width 单条件;② 内层每条规则都是简单类选择器;
+/// ③ 内层无嵌套 at-rule / 花括号。`raw` 保留原文供映射失败时整体冻结。
+fn parse_media_block(block: &str) -> Option<MediaBlockRaw> {
+    let rest = block.strip_prefix("@media")?;
+    let open = rest.find('{')?;
+    let max_width = parse_max_width_query(rest[..open].trim())?;
+    let close = rest.rfind('}')?;
+    if close < open {
+        return None;
+    }
+    let inner: Vec<char> = rest[open + 1..close].chars().collect();
+    let n = inner.len();
+    let mut i = 0usize;
+    let mut rules: Vec<(String, String, Vec<Decl>)> = Vec::new();
+
+    let skip_ws = |i: &mut usize| {
+        while *i < n && inner[*i].is_whitespace() {
+            *i += 1;
+        }
+    };
+    while i < n {
+        skip_ws(&mut i);
+        if i >= n {
+            break;
+        }
+        // 嵌套 at-rule / 注释内的花括号一律拒绝(整块交冻结,保真优先)
+        if inner[i] == '@' || inner[i] == '/' {
+            return None;
+        }
+        // 选择器读到 '{'
+        let sel_start = i;
+        while i < n && inner[i] != '{' {
+            i += 1;
+        }
+        if i >= n {
+            return None;
+        }
+        let selector: String = inner[sel_start..i].iter().collect();
+        let selector = selector.trim().to_string();
+        i += 1; // '{'
+        let body_start = i;
+        while i < n && inner[i] != '}' {
+            i += 1;
+        }
+        if i >= n {
+            return None;
+        }
+        let body: String = inner[body_start..i].iter().collect();
+        i += 1; // '}'
+        let (class, _) = simple_class_selector(&selector)?;
+        rules.push((selector, class, parse_decls(&body)));
+    }
+    Some(MediaBlockRaw {
+        max_width,
+        raw: block.to_string(),
+        rules,
+    })
+}
+
+/// `sel:<pseudo> { … }` 顶层规则 → 结构化伪类规则。05-5 最小闭环只收
+/// `:hover`;其余伪类(`:focus-visible` 等)返回 None 走既有冻结/孤儿路径。
+/// 基选择器必须是简单类选择器。
+fn parse_hover_rule(selector: &str, body: &str) -> Option<HoverRuleRaw> {
+    let (base, pseudo) = selector.trim().rsplit_once(':')?;
+    if pseudo.is_empty() || pseudo.contains(':') || !pseudo.eq_ignore_ascii_case("hover") {
+        return None;
+    }
+    let (class, _) = simple_class_selector(base)?;
+    Some(HoverRuleRaw {
+        pseudo: "hover".into(),
+        class,
+        raw: format!("{} {{{}}}", selector.trim(), body.trim()),
+        decls: parse_decls(body),
+    })
 }
 
 /// `.foo` / `tag.foo` → Some("foo");其余 None(逗号/组合器/伪类都不算)。
@@ -1136,13 +1353,48 @@ impl<'a> NodeImporter<'a> {
         id
     }
 
+    /// 05-8:主件定义容器(`<div class="vb-symbol-defs" hidden …>`)→
+    /// `defs_root` 下的容器节点;原型子树按普通节点管线构建(真实节点、
+    /// 真实样式 —— 「编辑主件 → 同步实例」能用现有命令底座的前提)。
+    /// 容器本身不参与画布/布局;`hidden` 属性经 split_attrs 保真透传。
+    fn build_symbol_def(&mut self, el_node: &HtmlNode) -> NodeIdT {
+        let el = el_node.as_element().expect("build_symbol_def: 元素节点");
+        for c in el.class_list() {
+            self.matched_classes.insert(c.to_string());
+        }
+        let class_rule_decls = self.merged_class_decls(el);
+        let inline = el.attr("style").map(parse_decls).unwrap_or_default();
+        let mut style = merge_decls(class_rule_decls, inline);
+        expand_font_shorthand(&mut style);
+        let (attrs, sid) = split_attrs(el, self.doc);
+        let name = el
+            .attr("data-vb-name")
+            .map(str::to_string)
+            .unwrap_or_else(|| "主件".to_string());
+        let comment = self.take_pending_comments();
+        let mut n = Node::new(NodeKind::Box, name, sid);
+        n.tag = el.name.clone();
+        n.classes = el
+            .class_list()
+            .into_iter()
+            .filter(|c| !is_marker_class(c))
+            .map(str::to_string)
+            .collect();
+        n.attrs = attrs;
+        n.style = style;
+        n.comment_before = comment;
+        // 定义区容器不参与布局;geom_declared = true 让导出不出几何声明
+        n.geom_declared = true;
+        let defs_root = self.doc.defs_root;
+        let id = self.attach(defs_root, n);
+        let children: Vec<&HtmlNode> = el_node.children.iter().collect();
+        self.build_children(id, &children);
+        id
+    }
+
     fn merged_class_decls(&mut self, el: &Element) -> Vec<Decl> {
         let classes = el.class_list();
-        let is_marker = |c: &str| {
-            ARTBOARD_CLASSES.contains(&c)
-                || LAYER_CLASSES.contains(&c)
-                || GROUP_CLASSES.contains(&c)
-        };
+        let is_marker = |c: &str| is_marker_class(c);
         let mut out = Vec::new();
         // CSS 级联:同特异度规则按**样式表出现顺序**后者胜;不同特异度按
         // (类数, tag数) 升序(特异性高的排后面,合并时后写胜)。
@@ -1519,7 +1771,13 @@ impl<'a> NodeImporter<'a> {
                 // NodeKind,导出侧 marker 写回即自动统一 vb- 前缀。
                 let is_layer = el.class_list().iter().any(|c| LAYER_CLASSES.contains(c));
                 let is_group = el.class_list().iter().any(|c| GROUP_CLASSES.contains(c));
-                kind = if is_layer {
+                // 05-2(09-C):`data-vb-slice` 属性 = 切片节点(编辑器
+                // 据此画切片框、vellum-cli export --slice 据此按名出图;
+                // 属性本身经 split_attrs 保留,导出往返无损)
+                let is_slice = el.attr("data-vb-slice").is_some();
+                kind = if is_slice {
+                    NodeKind::Slice
+                } else if is_layer {
                     NodeKind::Layer
                 } else if is_group {
                     NodeKind::Group
@@ -1532,11 +1790,7 @@ impl<'a> NodeImporter<'a> {
         let classes: Vec<String> = el
             .class_list()
             .into_iter()
-            .filter(|c| {
-                !ARTBOARD_CLASSES.contains(c)
-                    && !LAYER_CLASSES.contains(c)
-                    && !GROUP_CLASSES.contains(c)
-            })
+            .filter(|c| !is_marker_class(c))
             .map(str::to_string)
             .collect();
 

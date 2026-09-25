@@ -23,6 +23,7 @@ fn fixed_scene() -> DrawList {
             path: None,
             image: None,
             clip: None,
+            overflow_clip: None,
             filter: None,
         },
         // 蓝色圆角矩形
@@ -45,6 +46,7 @@ fn fixed_scene() -> DrawList {
             path: None,
             image: None,
             clip: None,
+            overflow_clip: None,
             filter: None,
         },
     ];
@@ -76,6 +78,7 @@ fn fixed_scene() -> DrawList {
         path: None,
         image: None,
         clip: None,
+        overflow_clip: None,
         filter: None,
     });
     DrawList {

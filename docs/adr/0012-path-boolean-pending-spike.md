@@ -1,8 +1,9 @@
-# ADR-0012: 路径布尔方案(Spike 已结题)
+﻿# ADR-0012: 路径布尔方案(Spike 已结题)
 
 - 状态:**已采纳 flo_curves 0.8**(Spike 完成,证据见 `crates/vb_tools/tests/boolean_spike.rs`)
 - 候选评估:
-  - **flo_curves(采纳)** — 纯 Rust,crates.io 双许可 MIT/Apache-2.0,与本仓 MIT 兼容;
+  - **flo_curves(采纳)** — 纯 Rust,crates.io 双许可 MIT/Apache-2.0(依赖自身许可,
+    宽松可用于本仓;本仓协议后经 ADR-0030 改为 ACL-1.0,不冲突);
     `flo_curves::bezier::path` 提供贝塞尔级布尔(`path_add/path_sub/path_intersect/path_xor`),
     曲线进曲线出,无需先多边形化
   - skia-safe(否决)— 功能足够但捆绑整个 Skia C++ 库,构建链/体积代价与本项目不成比例
@@ -24,3 +25,23 @@
   (kurbo BezPath ↔ SimpleBezierPath,处理 MoveTo 起始/ClosePath 语义),
   命令层新增 `PathBoolean { op, lhs, rhs }` 可逆命令;GUI 路径查找器面板四键接通。
   开放问题:布尔结果的颜色/描边取自操作数哪一方(AI 默认取上层)。
+
+---
+
+## 追记(2026-09-24,05-3 / X-1:多结果底座 + 10 运算全通)
+
+- **多结果事务**:`Command::MultiResult`(删 N 源 + 按序插 M 结果,一条撤销;
+  结果 sid 由调用方经 `Document::alloc_sid` 预分配,undo/redo 往返稳定;
+  落点策略 `ReplaceAnchor`/`OnTop`)。服务路径查找器多结果三运算与 05-8 主件同步。
+- **分割/修边/轮廓**:`vb_tools::pathfinder` ——
+  分割 = 增量原子分解(逐形状按交/差切开 + 补未覆盖部分,复用 flo 布尔核);
+  修边 = 逐形状减去其上方形状(**逐个相减**,flo 路径列表是单个 even-odd 区域,
+  重叠列表会被偶奇 XOR)+ 同填充色合并;轮廓 = 线段级 `curve_intersects_curve_clip`
+  求交切分,输出开放描边线(同形状自交不切,显式边界)。
+- **绕向规范化**:flo 布尔输出的孔洞子路径绕向不保证与外环相反(nonzero 填充
+  会把孔渲染成实体),`piece_from_flo` 按包含深度定绕向(外环正 / 孔负)。
+- **输出语义**写在对象菜单悬停提示(`PATHFINDER_TIPS`)与本模块单测;
+  填充继承「覆盖碎片的最上层源」,轮廓置 `fill:none` 并继承描边(无描边补 1px 黑)。
+- 已知边界:CPU 导出端 `parse_fill` 不读矢量节点的 `fill`/`stroke` 声明
+  (只认 background-color 族),路径查找器产物在 PNG 导出中暂以默认色呈现 ——
+  与画布矢量渲染的既有近似一致,归渲染侧后续补齐。

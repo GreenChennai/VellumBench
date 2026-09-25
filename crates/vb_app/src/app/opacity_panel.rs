@@ -74,20 +74,7 @@ pub fn knockout_cmd(doc: &Document, sid: &str, on: bool) -> Option<Command> {
 }
 
 impl VellumApp {
-    pub(crate) fn show_opacity_panel(&mut self, ui: &mut egui::Ui) {
-        if !self.opacity_panel_open {
-            return;
-        }
-        let mut open = true;
-        egui::Window::new("透明度")
-            .open(&mut open)
-            .collapsible(false)
-            .default_width(300.0)
-            .show(ui.ctx(), |ui| self.opacity_panel_body(ui));
-        self.opacity_panel_open = open;
-    }
-
-    fn opacity_panel_body(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn opacity_panel_body(&mut self, ui: &mut egui::Ui) {
         let Some(sid) = self.selection.last().cloned() else {
             ui.label(caption(
                 ui,

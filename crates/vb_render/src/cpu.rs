@@ -89,6 +89,23 @@ fn draw_item(
             }
         }
     }
+    // overflow 子树裁剪(05-2 / 09-B 剪切蒙版):与 clip-path 离屏蒙版同款
+    // —— 项原样离屏渲染,再乘裁剪矩形的 alpha 蒙版合成。不能走「缩矩形」
+    // 快路径:文字字形/矢量笔迹会越出几何盒,截断矩形改变不了它们的绘制。
+    if let Some([cx, cy, cw, ch]) = item.overflow_clip {
+        let mut trimmed = item.clone();
+        trimmed.overflow_clip = None;
+        apply_rect_clip_mask(
+            pixmap,
+            &trimmed,
+            [cx, cy, cw, ch],
+            scale,
+            tf,
+            project_dir,
+            warnings,
+        );
+        return;
+    }
     // P4 矢量路径:kurbo BezPath -> tiny_skia Path
     if let Some(kpath) = &item.path {
         if let Some(tp) = kurbo_to_skia_path(kpath, item.rect[0], item.rect[1], item.opacity, item)
@@ -601,6 +618,85 @@ fn apply_clip_mask(
             .invert()
             .unwrap_or_default();
         mask.fill_path(&shape, &white, FillRule::Winding, local, None);
+    }
+    let mask_px = mask.pixels();
+    let sub_px = sub.pixels_mut();
+    for (i, px) in sub_px.iter_mut().enumerate() {
+        let m = mask_px[i].alpha();
+        if m == 255 {
+            continue;
+        }
+        let c = px.demultiply();
+        let a = (c.alpha() as u32 * m as u32 / 255).min(255) as u8;
+        *px = tiny_skia::ColorU8::from_rgba(c.red(), c.green(), c.blue(), a).premultiply();
+    }
+    pixmap.draw_pixmap(
+        bx,
+        by,
+        sub.as_ref(),
+        &tiny_skia::PixmapPaint::default(),
+        Transform::identity(),
+        None,
+    );
+}
+
+/// overflow 矩形裁剪(05-2 / 09-B 剪切蒙版):项离屏渲染 → 裁剪矩形
+/// alpha 蒙版相乘 → 合成回主画布。与 `apply_clip_mask` 同一机制,
+/// 只是蒙版形状是折叠后的裁剪矩形(画板本地 [x,y,w,h])。
+#[allow(clippy::too_many_arguments)]
+fn apply_rect_clip_mask(
+    pixmap: &mut Pixmap,
+    item: &DrawItem,
+    clip: [f64; 4],
+    scale: f32,
+    tf: Transform,
+    project_dir: Option<&std::path::Path>,
+    warnings: &mut Vec<String>,
+) {
+    let sc = scale as f64;
+    let (cx, cy, cw, ch) = (clip[0], clip[1], clip[2], clip[3]);
+    let bx = ((cx * sc).floor() as i32 - 2).max(0);
+    let by = ((cy * sc).floor() as i32 - 2).max(0);
+    let bw = ((cw * sc).ceil() as u32 + 4).min(pixmap.width().saturating_sub(bx as u32));
+    let bh = ((ch * sc).ceil() as u32 + 4).min(pixmap.height().saturating_sub(by as u32));
+    if bw == 0 || bh == 0 {
+        return;
+    }
+    let Some(mut sub) = Pixmap::new(bw, bh) else {
+        return;
+    };
+    let shift = Transform::from_translate(-(bx as f32), -(by as f32));
+    draw_item(
+        &mut sub,
+        item,
+        scale,
+        tf.post_concat(shift),
+        project_dir,
+        warnings,
+    );
+    // 裁剪矩形蒙版(局部坐标)
+    let Some(mut mask) = Pixmap::new(bw, bh) else {
+        return;
+    };
+    let white = Paint {
+        anti_alias: true,
+        shader: tiny_skia::Shader::SolidColor(Color::WHITE),
+        ..Paint::default()
+    };
+    let rect = tiny_skia::Rect::from_ltrb(
+        (cx * sc) as f32 - bx as f32,
+        (cy * sc) as f32 - by as f32,
+        ((cx + cw) * sc) as f32 - bx as f32,
+        ((cy + ch) * sc) as f32 - by as f32,
+    );
+    if let Some(rect) = rect {
+        mask.fill_path(
+            &PathBuilder::from_rect(rect),
+            &white,
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
     }
     let mask_px = mask.pixels();
     let sub_px = sub.pixels_mut();

@@ -66,7 +66,11 @@ fn finalize_classes(doc: &mut Document) {
         // 二次导入时被判为"孤儿类规则"塞进 raw_css,破坏 L1 幂等。
         // Frozen 节点同理(P0-2):导出走原样 HTML 片段,造出的类没有 HTML
         // 载体,每轮成为孤儿规则再重新生成(规则增殖);一律不造类/不改名。
-        if node.tag == "#text" || matches!(node.kind, NodeKind::Frozen { .. }) {
+        // 05-8:主件定义容器同理 —— 标记类 vb-symbol-defs 由导出侧补写,
+        // 容器本身不造类(多个容器同标记类会互相冲突触发改名,反而破坏
+        // 定义区识别);其原型子树节点照常定稿。
+        let is_def_container = node.parent == Some(doc.defs_root);
+        if node.tag == "#text" || is_def_container || matches!(node.kind, NodeKind::Frozen { .. }) {
             continue;
         }
         if node.classes.is_empty() {
@@ -80,10 +84,18 @@ fn finalize_classes(doc: &mut Document) {
         }
         let primary = node.classes[0].clone();
         if used.contains(&primary) {
-            let gen = format!("vb-el-{}", node.sid.as_str());
-            if !node.classes.iter().any(|c| c == &gen) {
-                node.classes.insert(0, gen.clone());
+            // 05-8 符号同步的产物:实例是主件子树的克隆,二者类列表相同;
+            // 主件此前被定稿出的生成类(vb-el-<主件 sid>)会与克隆体撞名,
+            // 旧实现「gen 已在 classes 里就不插入,再移除 primary」会把节点
+            // 清成**空类** —— CSS 规则被跳过,样式在下一轮导入时丢失。
+            // 修复:gen 与已有类/已用类冲突时,确定性追加序号后缀兜底。
+            let mut gen = format!("vb-el-{}", node.sid.as_str());
+            let mut seq = 2usize;
+            while node.classes.iter().any(|c| c == &gen) || used.contains(&gen) {
+                gen = format!("vb-el-{}-{seq}", node.sid.as_str());
+                seq += 1;
             }
+            node.classes.insert(0, gen.clone());
             used.insert(gen);
             // 主类冲突即移除冲突类(P0-1 L1 稳定化的另一半):节点样式已
             // 包含该类合并后的全部声明,唯一类规则完整承载;若保留冲突类,
@@ -171,6 +183,29 @@ fn render_html(doc: &mut Document, css: &str) -> String {
             body.children.extend(render_node(doc, ab, &n));
         }
     }
+    // ── 05-8 主件定义区(ADR-VB-L10):画板内容之后、透传之前 ──
+    // 容器 = `<div class="vb-symbol-defs" hidden …>`,hidden 为原生属性,
+    // 浏览器不渲染;原型子树是真实节点,CSS 规则照常输出(见 ordered_source)。
+    {
+        let defs_root = doc.defs_root;
+        let def_ids = doc
+            .nodes
+            .get(defs_root)
+            .map(|r| r.children.clone())
+            .unwrap_or_default();
+        for did in def_ids {
+            if let Some(n) = doc.nodes.get(did) {
+                for c in &n.comment_before {
+                    body.children.push(HtmlNode {
+                        data: NodeData::Comment(c.clone()),
+                        children: vec![],
+                    });
+                }
+                let n = n.clone();
+                body.children.extend(render_node(doc, did, &n));
+            }
+        }
+    }
     let trailing = doc.trailing_raw.clone();
     for raw in &trailing {
         body.children.push(HtmlNode::raw(raw.clone()));
@@ -233,6 +268,10 @@ fn render_node(doc: &mut Document, id: NodeId, node: &Node) -> Vec<HtmlNode> {
                 NodeKind::Artboard => Some("vb-artboard"),
                 NodeKind::Layer => Some("vb-layer"),
                 NodeKind::Group => Some("vb-group"),
+                // 05-8:主件定义容器(defs_root 直接子节点)补写标记类 ——
+                // 导入侧按 class 识别定义区,标记类不进节点 classes
+                // (不参与类定稿与 CSS 级联),导出时在此统一回写。
+                _ if node.parent == Some(doc.defs_root) => Some(crate::symbol::SYMBOL_DEF_CLASS),
                 _ => None,
             };
             if let Some(m) = marker {
@@ -512,6 +551,42 @@ fn render_css(doc: &Document) -> String {
         out.push_str("}\n\n");
     }
 
+    // ── 05-5:断点覆盖块(@media)──
+    // 位置在节点规则**之后**:同特异性下后出者级联胜出 —— 覆盖语义成立
+    // (raw 冻结块仍在节点规则之前,原保真纪律不变)。宽度降序排列:窄屏
+    // 查询后出,多断点同时命中时窄屏覆盖宽屏(移动优先的级联方向)。
+    {
+        let mut widths: Vec<u32> = doc.media_rules.iter().map(|r| r.max_width).collect();
+        widths.sort_unstable();
+        widths.dedup();
+        for w in widths.into_iter().rev() {
+            out.push_str(&format!("@media (max-width: {w}px) {{\n"));
+            for r in doc.media_rules.iter().filter(|r| r.max_width == w) {
+                let Some((selector, decls)) = media_rule_target(doc, r) else {
+                    continue;
+                };
+                out.push_str(&format!("  {selector} {{\n"));
+                for d in &decls {
+                    out.push_str(&format!("    {};\n", d.to_css()));
+                }
+                out.push_str("  }\n");
+            }
+            out.push_str("}\n\n");
+        }
+    }
+    // ── 05-5:伪类规则(最小闭环 :hover)──
+    // 伪类特异性高于基规则,与位置无关;同样放在节点规则之后,canonical 一致。
+    for pr in &doc.pseudo_rules {
+        let Some((selector, decls)) = pseudo_rule_target(doc, pr) else {
+            continue;
+        };
+        out.push_str(&format!("{selector} {{\n"));
+        for d in &decls {
+            out.push_str(&format!("  {};\n", d.to_css()));
+        }
+        out.push_str("}\n\n");
+    }
+
     // 文件末尾单换行(LF)
     while out.ends_with("\n\n") {
         out.pop();
@@ -520,10 +595,49 @@ fn render_css(doc: &Document) -> String {
     out
 }
 
+/// 断点规则 → (选择器, 排序后的声明)。目标节点必须仍存在、有首类
+/// (finalize_classes 之后必有),且不是 `#text` / 冻结块(无 class 载体)。
+fn media_rule_target(
+    doc: &Document,
+    r: &crate::model::MediaRule,
+) -> Option<(String, Vec<vb_css::Decl>)> {
+    let id = doc.find_by_sid(&r.sid)?;
+    let n = doc.nodes.get(id)?;
+    if n.tag == "#text" || matches!(n.kind, NodeKind::Frozen { .. }) || n.classes.is_empty() {
+        return None;
+    }
+    let mut decls = r.decls.clone();
+    sort_decls(&mut decls);
+    Some((format!(".{}", n.classes[0]), decls))
+}
+
+/// 伪类规则 → (`.cls:hover` 选择器, 排序后的声明)。约束同上。
+fn pseudo_rule_target(
+    doc: &Document,
+    pr: &crate::model::PseudoRule,
+) -> Option<(String, Vec<vb_css::Decl>)> {
+    let id = doc.find_by_sid(&pr.sid)?;
+    let n = doc.nodes.get(id)?;
+    if n.tag == "#text" || matches!(n.kind, NodeKind::Frozen { .. }) || n.classes.is_empty() {
+        return None;
+    }
+    let mut decls = pr.decls.clone();
+    sort_decls(&mut decls);
+    Some((format!(".{}:{}", n.classes[0], pr.pseudo), decls))
+}
+
 fn ordered_source(doc: &Document) -> Vec<NodeId> {
     let mut v = Vec::new();
     for &ab in &doc.artboards {
         doc.subtree(ab, &mut v);
+    }
+    // 05-8:主件定义区排在画板之后(CSS 规则序 = 页面内容优先;类定稿
+    // 与 CSS 输出共用本序,保证定义区原型节点的类与规则一并定稿/输出)
+    if let Some(r) = doc.nodes.get(doc.defs_root) {
+        let kids = r.children.clone();
+        for c in kids {
+            doc.subtree(c, &mut v);
+        }
     }
     v
 }

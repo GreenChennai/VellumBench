@@ -64,7 +64,78 @@ pub enum CmdKind {
     Compound,
     SetToken,
     PathBoolean,
+    /// 多结果事务(05-3 基础件):一次操作删除 N 个源节点 + 按序插入 M 个
+    /// 结果节点。路径查找器(分割/修边/轮廓)与 05-8 主件同步共用此底座。
+    MultiResult,
+    /// 05-8 主件同步(懒构建):首次 apply 时按**编辑后**的主件内容为每个
+    /// 实例折算「替换子树 + 根字段同步」事务(内部复用 MultiResult 底座,
+    /// 见 `symbol::build_sync_commands`)并缓存供 revert/redo 复用 ——
+    /// 结果 sid 首次构建后全生命周期稳定。不能参与 undo 合并:合并会把
+    /// 缓存事务留在过期快照上,重做结果漂移。
+    SymbolSync,
     SetMeta,
+    /// 替换图像引用(阶段 7 / 07-K 资产面板:src 指向另一资产)。
+    SetImageSrc,
+    /// 05-5:断点覆盖样式 / 伪类样式(两个变体各一个 kind,合并键不串)。
+    SetMediaStyle,
+    SetPseudoStyle,
+    /// 05-9 动效时间轴(09-I):对象动画(@keyframes 块 + animation 声明)。
+    SetNodeAnim,
+}
+
+/// 05-9:对象动画的 @keyframes 块名(`vb-anim-<sid>`;小写,解析器按名匹配,
+/// sid 本身即小写 base36,无需再转)。
+pub fn anim_block_name(sid: &str) -> String {
+    format!("vb-anim-{sid}")
+}
+
+/// 在 `raw_css` 中定位某对象的 @keyframes 块下标(块首形如
+/// `@keyframes vb-anim-<sid>`,名字后必须是空白或 `{`,防止撞前缀)。
+pub fn find_anim_block(doc: &Document, sid: &str) -> Option<usize> {
+    let head = format!("@keyframes {}", anim_block_name(sid));
+    doc.raw_css.iter().position(|b| {
+        let t = b.trim_start();
+        t.starts_with(&head)
+            && t[head.len()..]
+                .chars()
+                .next()
+                .map(|c| c.is_whitespace() || c == '{')
+                .unwrap_or(false)
+    })
+}
+
+/// `Delete` 的应用快照:槽位 + 子树 + 级联移除的动画 @keyframes 块
+/// (05-9-6④;块按 raw_css 原下标升序留存,撤销时升序插回)。
+#[derive(Debug, Clone)]
+pub struct DeleteCapture {
+    pub slot: Slot,
+    pub tree: NodeTree,
+    pub anim_blocks: Vec<(usize, String)>,
+}
+
+/// `SetNodeAnimation` 的原状快照(块 + 声明各自独立,None 都要记,
+/// 否则撤销时新增的内容删不掉)。
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnimSnapshot {
+    /// 原 @keyframes 块在 raw_css 的下标(None = 原先无块)。
+    pub raw_index: Option<usize>,
+    /// 原 @keyframes 块全文。
+    pub raw_block: Option<String>,
+    /// 原 animation 声明值(None = 原先无声明)。
+    pub animation: Option<String>,
+}
+
+/// 多结果事务的插入落点策略(05-3:可配置)。
+///
+/// 锚点 = `src_sids[0]`(调用方负责把锚点源放首位;路径查找器约定
+/// 锚点 = 画板文档序最靠下、即 z 序最低的源)。结果节点全部插入
+/// **锚点源的父级**,与源同帧约定由调用方负责(结果 geom 相对锚点父级)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MultiResultSlot {
+    /// 原地:结果插到锚点源的原槽位(整组替换,z 序从原位起堆叠)。
+    ReplaceAnchor,
+    /// 顶层:结果插到锚点父级的末尾(z 序最上)。
+    OnTop,
 }
 
 /// 结构变更的落点(父 sid + 位置)。
@@ -92,7 +163,7 @@ pub enum Command {
     },
     Delete {
         target_sid: String,
-        captured: Option<(Slot, NodeTree)>,
+        captured: Option<DeleteCapture>,
     },
     Move {
         sid: String,
@@ -196,16 +267,120 @@ pub enum Command {
         /// 应用快照:lhs 原 (path, geom) + rhs 槽位与子树
         captured: Option<(Option<BezPath>, Geom, Slot, NodeTree)>,
     },
+    /// 多结果事务(05-3 基础件):删除 N 个源节点 + 按序插入 M 个结果节点,
+    /// 一条 undo。与 `PathBoolean`(二操作数、lhs 原地替换)互补;路径查找器
+    /// 的分割/修边/轮廓(一进多出/多进多出)与 05-8 主件同步共用此底座。
+    ///
+    /// 纪律(ADR-0008):
+    /// - `results` 的根 sid 由调用方**预分配**(`Document::alloc_sid`),首次
+    ///   apply 与重做复用同一批 sid —— `data-vb-id` 全生命周期稳定;
+    /// - `results` 的 geom 必须相对**锚点父级**(锚点 = `src_sids[0]`),
+    ///   帧换算是调用方(vb_tools::pathfinder 统一入口)的职责;
+    /// - 源节点之间不得互为祖先/后代(否则提取顺序无法保证原子性,apply 校验)。
+    MultiResult {
+        /// 展示用运算名(撤销菜单/历史面板:`label()` 返回它)
+        op: String,
+        /// N 个源节点 sid(首位 = 锚点;全部删除,undo 精确放回)
+        src_sids: Vec<String>,
+        /// M 个结果节点(sid 已预分配;undo/redo 往返保持不变)
+        results: Vec<NodeTree>,
+        /// 插入落点策略(锚点父级的原槽位 / 顶层)
+        slot: MultiResultSlot,
+        /// 应用快照:每个源节点的 (槽位, 子树)(apply 首次捕获)
+        captured: Option<Vec<(Slot, NodeTree)>>,
+    },
     /// 文档标题(S1-c 控制面板固定区:文档改名 → `<title>`;可撤销)。
     /// 标题是文档级状态(非节点),故不走 Rename;导出写 `<title>`。
     SetMetaTitle {
         new: String,
         old: Option<String>,
     },
+    /// 05-8 主件同步(ADR-VB-L10):`container_sid` = 主件定义容器 sid。
+    /// `inner` 在首次 apply 时由 `crate::symbol::build_sync_commands` 懒构建
+    /// (此时触发同步的编辑命令已落地,拿到的是编辑后的主件内容)。
+    SymbolSync {
+        container_sid: String,
+        /// Box 打破 Command 递归(懒构建的内层事务)。
+        inner: Option<Box<Command>>,
+    },
+    /// 替换图像引用(阶段 7 / 07-K 资产面板「替换」):把节点的 src 指向
+    /// 另一资产。导入的 `<img>` 在 kind(`NodeKind::Image`)与 attrs(`src`)
+    /// 两处各存一份引用,**apply 必须同步两处**(渲染读 kind、导出读
+    /// attrs),否则画布与落盘漂移;`old` 快照分开记两处原值,撤销精确还原。
+    SetImageSrc {
+        sid: String,
+        new: String,
+        old: Option<SrcSnapshot>,
+    },
+    /// 05-5:断点内覆盖样式(写 `Document::media_rules`;可撤销)。
+    /// `new` 为空 = 删除该 (sid, 断点) 覆盖条目。
+    SetMediaStyle {
+        sid: String,
+        max_width: u32,
+        new: Vec<Decl>,
+        /// 应用快照:原覆盖声明(None = 原先无条目)。
+        old: Option<Option<Vec<Decl>>>,
+    },
+    /// 05-5:伪类样式(最小闭环 :hover;写 `Document::pseudo_rules`;可撤销)。
+    /// `new` 为空 = 删除该 (sid, 伪类) 条目。
+    SetPseudoStyle {
+        sid: String,
+        pseudo: String,
+        new: Vec<Decl>,
+        /// 应用快照:原伪类声明(None = 原先无条目)。
+        old: Option<Option<Vec<Decl>>>,
+    },
+    /// 05-9 动效时间轴(09-I,ADR-VB-L11):对象 CSS 动画落盘(可撤销)。
+    /// 关键帧以 `@keyframes vb-anim-<sid>` **整块**写进 `raw_css`(verbatim
+    /// 冻结块通道保证往返 L0/L1),节点同步写/删 `animation` 声明;
+    /// `new_keyframes = None` = 清除动画(块 + 声明一起删,导出期解析不到
+    /// 关键帧即自然静态 —— 与「删除全部关键帧 = 移除对应 CSS」同义)。
+    SetNodeAnimation {
+        sid: String,
+        /// 新 @keyframes 块全文(含 `@keyframes … { … }`);None = 删除块。
+        new_keyframes: Option<String>,
+        /// 新 animation 声明值;None = 删除节点 animation 声明。
+        new_animation: Option<String>,
+        /// 应用快照(首次 apply 捕获;revert/redo 复用)。
+        old: Option<AnimSnapshot>,
+    },
+}
+
+/// `SetImageSrc` 的旧值快照:kind 源与 attrs 源各自独立(Some/None 都要记,
+/// 否则撤销时新增的 attrs src 删不掉)。
+#[derive(Debug, Clone, PartialEq)]
+pub struct SrcSnapshot {
+    /// 原 kind 源(`NodeKind::Image`);None = 该节点不是 Image kind。
+    pub kind_src: Option<String>,
+    /// 原 attrs `src`;None = 原先没有该属性。
+    pub attr_src: Option<String>,
 }
 
 fn no_such(sid: &str) -> VbError {
     VbError::NoSuchNode(sid.to_string())
+}
+
+/// 05-9-6④:收集子树内全部节点的动画 @keyframes 块(按 raw_css 下标
+/// 升序;(下标, 块全文)对供级联移除/还原)。同下标只收一次。
+fn collect_anim_blocks(doc: &Document, tree: &NodeTree) -> Vec<(usize, String)> {
+    fn walk(t: &NodeTree, out: &mut Vec<String>) {
+        out.push(t.node.sid.as_str().to_string());
+        for c in &t.children {
+            walk(c, out);
+        }
+    }
+    let mut sids = Vec::new();
+    walk(tree, &mut sids);
+    let mut out: Vec<(usize, String)> = Vec::new();
+    for sid in sids {
+        if let Some(i) = find_anim_block(doc, &sid) {
+            if !out.iter().any(|(j, _)| *j == i) {
+                out.push((i, doc.raw_css[i].clone()));
+            }
+        }
+    }
+    out.sort_by_key(|(i, _)| *i);
+    out
 }
 
 impl Command {
@@ -229,7 +404,13 @@ impl Command {
             Command::Compound { .. } => CmdKind::Compound,
             Command::SetToken { .. } => CmdKind::SetToken,
             Command::PathBoolean { .. } => CmdKind::PathBoolean,
+            Command::MultiResult { .. } => CmdKind::MultiResult,
+            Command::SymbolSync { .. } => CmdKind::SymbolSync,
             Command::SetMetaTitle { .. } => CmdKind::SetMeta,
+            Command::SetImageSrc { .. } => CmdKind::SetImageSrc,
+            Command::SetMediaStyle { .. } => CmdKind::SetMediaStyle,
+            Command::SetPseudoStyle { .. } => CmdKind::SetPseudoStyle,
+            Command::SetNodeAnimation { .. } => CmdKind::SetNodeAnim,
         }
     }
 
@@ -244,6 +425,14 @@ impl Command {
             | Command::Rename { sid, .. }
             | Command::SetTag { sid, .. }
             | Command::SetVector { sid, .. } => Some((self.kind(), sid.clone())),
+            // 05-5:断点/伪类覆盖同样按 (kind, sid) 合并 —— 数值框在断点
+            // 态连续拖动只产生一条 undo(键里带 kind,不与基样式互并)。
+            Command::SetMediaStyle { sid, .. } | Command::SetPseudoStyle { sid, .. } => {
+                Some((self.kind(), sid.clone()))
+            }
+            // 05-9:时间轴上连续拖拽/改值关键帧,同一对象动画写回合并为
+            // 一条 undo(键带 kind,不与样式/伪类互并;replace_new 成对更新)。
+            Command::SetNodeAnimation { sid, .. } => Some((self.kind(), sid.clone())),
             // SetTextMode 是离散动作(两次切换 = 两步 undo),不参与合并。
             // 渐变拖拽每帧一条 Compound(逐目标 SetStyle)、多选拖拽每帧
             // 一条 Compound(逐目标 SetGeom):不可合并会把一次拖拽稀释成
@@ -294,6 +483,37 @@ impl Command {
                         return Some((self.kind(), format!("ms{sid}")));
                     }
                 }
+                // 05-8 覆盖登记包装(实例编辑):[Set*(实例内节点)…,
+                // SetAttrs(实例根)…] 的混合形状。逐命令 (tag, sid) 作
+                // 形状签名 —— 同形状的连续帧(拖拽/scrubby)安全合并,
+                // replace_new 按 sid 配对更新全部 new 值。含其他种类
+                // (尤其 SymbolSync / MultiResult)一律不合并:懒构建的
+                // 同步事务不能落在过期快照上。
+                {
+                    let mut sig = String::from("sy");
+                    let mut ok = true;
+                    let mut has_any_attrs = false;
+                    for c in cmds {
+                        let (tag, sid) = match c {
+                            Command::SetStyle { sid, .. } => ('s', sid),
+                            Command::SetGeom { sid, .. } => ('g', sid),
+                            Command::SetAttrs { sid, .. } => {
+                                has_any_attrs = true;
+                                ('a', sid)
+                            }
+                            _ => {
+                                ok = false;
+                                break;
+                            }
+                        };
+                        sig.push(tag);
+                        sig.push_str(sid);
+                        sig.push(',');
+                    }
+                    if ok && has_any_attrs {
+                        return Some((self.kind(), sig));
+                    }
+                }
                 let mut key = String::new();
                 let mut tag = ' ';
                 for c in cmds {
@@ -322,7 +542,10 @@ impl Command {
     }
 
     /// 用户可见名(编辑菜单「撤销 X」,与 AI 一致)。
-    pub fn label(&self) -> &'static str {
+    ///
+    /// 05-3 起 `MultiResult` 的名字来自其 `op` 字段(调用方给出的运算名,
+    /// 如「路径查找器:分割」/ 05-8 的「主件同步」),故返回值借用 `self`。
+    pub fn label(&self) -> &str {
         match self {
             Command::Insert { .. } => "新建对象",
             Command::Delete { .. } => "删除对象",
@@ -342,7 +565,13 @@ impl Command {
             Command::Compound { .. } => "复合操作",
             Command::SetToken { .. } => "修改设计令牌",
             Command::PathBoolean { .. } => "路径查找器",
+            Command::MultiResult { op, .. } => op.as_str(),
+            Command::SymbolSync { .. } => "主件同步",
             Command::SetMetaTitle { .. } => "重命名文档",
+            Command::SetImageSrc { .. } => "替换图像引用",
+            Command::SetMediaStyle { .. } => "修改断点样式",
+            Command::SetPseudoStyle { .. } => "修改悬停样式",
+            Command::SetNodeAnimation { .. } => "修改对象动画",
         }
     }
 
@@ -442,11 +671,32 @@ impl Command {
                     let (_, tree) = doc
                         .extract_subtree(target_sid)
                         .ok_or_else(|| no_such(target_sid))?;
-                    *captured = Some((slot, tree));
+                    // 05-9-6④ 级联清理:子树内各节点的 @keyframes 块一并
+                    // 移除(节点内联 animation 声明随子树快照原样还原,无需
+                    // 额外捕获)。块按原下标升序留存,撤销时升序插回 ——
+                    // undo 的 LIFO 纪律保证 revert 时 raw_css 恰为删除后
+                    // 状态,原下标插入即精确还原块序。
+                    let anim_blocks = collect_anim_blocks(doc, &tree);
+                    for (i, _) in anim_blocks.iter().rev() {
+                        doc.raw_css.remove(*i);
+                    }
+                    *captured = Some(DeleteCapture {
+                        slot,
+                        tree,
+                        anim_blocks,
+                    });
                 } else {
-                    // Redo:节点已被 revert 放回,再次取出(快照保持不变)
+                    // Redo:节点已被 revert 放回,再次取出(快照保持不变);
+                    // 级联清理同样重放(块由 revert 放回,按树内 sid 重新定位)
+                    let cap = captured
+                        .as_ref()
+                        .ok_or_else(|| VbError::Parse("Delete 未捕获快照".into()))?;
                     doc.extract_subtree(target_sid)
                         .ok_or_else(|| no_such(target_sid))?;
+                    let anim_blocks = collect_anim_blocks(doc, &cap.tree);
+                    for (i, _) in anim_blocks.iter().rev() {
+                        doc.raw_css.remove(*i);
+                    }
                 }
                 doc.sync_artboards();
                 Ok(ChangeSet::full())
@@ -893,6 +1143,122 @@ impl Command {
                 doc.sync_artboards();
                 Ok(ChangeSet::full())
             }
+            Command::MultiResult {
+                src_sids,
+                results,
+                slot,
+                captured,
+                ..
+            } => {
+                if src_sids.is_empty() {
+                    return Err(VbError::Parse("多结果事务需要至少一个源节点".into()));
+                }
+                if results.is_empty() {
+                    return Err(VbError::Parse("多结果事务需要至少一个结果节点".into()));
+                }
+                // 前置校验(任一不满足直接报错,不产生半事务):
+                // ① 结果 sid 必须全部空闲(undo 后重做时同样成立 —— 撤销已把结果提出);
+                // ② 源 sid 全部存在且互不重复;
+                // ③ 源之间不得互为祖先/后代(否则提取顺序破坏原子性)。
+                for t in results.iter() {
+                    let sid = t.root_sid();
+                    if doc.find_by_sid(sid).is_some() {
+                        return Err(VbError::Conflict(format!("结果 sid 已存在: {sid}")));
+                    }
+                }
+                {
+                    let mut seen = std::collections::HashSet::new();
+                    for s in src_sids.iter() {
+                        if !seen.insert(s.as_str()) {
+                            return Err(VbError::Conflict(format!("源节点重复: {s}")));
+                        }
+                    }
+                }
+                let ids: Vec<_> = src_sids
+                    .iter()
+                    .map(|s| doc.find_by_sid(s).ok_or_else(|| no_such(s)))
+                    .collect::<Result<_>>()?;
+                for i in 0..ids.len() {
+                    for j in (i + 1)..ids.len() {
+                        if doc.is_descendant_or_self(ids[i], ids[j])
+                            || doc.is_descendant_or_self(ids[j], ids[i])
+                        {
+                            return Err(VbError::Conflict(format!(
+                                "源节点不能互为祖先或后代: {} / {}",
+                                src_sids[i], src_sids[j]
+                            )));
+                        }
+                    }
+                }
+                if captured.is_none() {
+                    // 首次:按源顺序捕获 (槽位, 子树)。**两段式** —— 先把
+                    // 全部槽位记下来,再做提取:提取会平移兄弟索引,边提取
+                    // 边捕获会把后续源的索引记错(撤销后 z 序错乱)。
+                    let slots: Vec<Slot> = src_sids
+                        .iter()
+                        .map(|s| Self::slot_of(doc, s))
+                        .collect::<Result<_>>()?;
+                    let mut snap = Vec::with_capacity(src_sids.len());
+                    for (slot, s) in slots.into_iter().zip(src_sids.iter()) {
+                        let (_, tree) = doc.extract_subtree(s).ok_or_else(|| no_such(s))?;
+                        snap.push((slot, tree));
+                    }
+                    *captured = Some(snap);
+                } else {
+                    // Redo:源已被 revert 放回原槽位,再次取出(快照不动)
+                    for s in src_sids.iter() {
+                        doc.extract_subtree(s).ok_or_else(|| no_such(s))?;
+                    }
+                }
+                // 锚点槽位 = src_sids[0] 的捕获槽位;锚点父级在提取后仍存在
+                // (锚点自己已被提出,但其父级不在源集合里 —— 祖先关系已被拒绝)。
+                let snap = captured.as_ref().unwrap();
+                let anchor_slot = &snap[0].0;
+                let parent = doc
+                    .find_by_sid(&anchor_slot.parent_sid)
+                    .ok_or_else(|| no_such(&anchor_slot.parent_sid))?;
+                let index = match slot {
+                    MultiResultSlot::ReplaceAnchor => {
+                        // 锚点原索引没有补偿「排在它之下、已被移走的源」,
+                        // 与 Group apply 同法:减去原索引小于锚点的已移走源数
+                        let removed_below = snap
+                            .iter()
+                            .filter(|(s, _)| {
+                                s.parent_sid == anchor_slot.parent_sid
+                                    && s.index < anchor_slot.index
+                            })
+                            .count();
+                        anchor_slot
+                            .index
+                            .saturating_sub(removed_below)
+                            .min(doc.nodes.get(parent).unwrap().children.len())
+                    }
+                    MultiResultSlot::OnTop => doc.nodes.get(parent).unwrap().children.len(),
+                };
+                // 依序插入 M 个结果(同槽位递增,z 序按 results 顺序堆叠)
+                for (offset, t) in results.iter().enumerate() {
+                    doc.insert_tree_at(t, &anchor_slot.parent_sid, index + offset);
+                }
+                doc.sync_artboards();
+                Ok(ChangeSet::full())
+            }
+            Command::SymbolSync {
+                container_sid,
+                inner,
+            } => {
+                // 懒构建:首次 apply 时触发同步的编辑已落地(Compound 顺序
+                // 保证),按当前文档折算内层事务并缓存;容器已被删除等
+                // 异常按"无实例可同步"跳过(不产生半事务)。
+                if inner.is_none() {
+                    match doc.find_by_sid(container_sid) {
+                        Some(cid) => {
+                            *inner = Some(Box::new(crate::symbol::build_sync_commands(doc, cid)?));
+                        }
+                        None => *inner = Some(Box::new(Command::Compound { cmds: Vec::new() })),
+                    }
+                }
+                inner.as_mut().unwrap().apply(doc)
+            }
             Command::SetToken { name, new, old } => {
                 if old.is_none() {
                     *old = Some(
@@ -929,6 +1295,139 @@ impl Command {
                     text: false,
                 })
             }
+            Command::SetImageSrc { sid, new, old } => {
+                let id = doc.find_by_sid(sid).ok_or_else(|| no_such(sid))?;
+                let n = doc.nodes.get_mut(id).unwrap();
+                if old.is_none() {
+                    *old = Some(SrcSnapshot {
+                        kind_src: match &n.kind {
+                            NodeKind::Image { src } => Some(src.clone()),
+                            _ => None,
+                        },
+                        attr_src: n.attrs.get("src").cloned(),
+                    });
+                }
+                // 双写同步:渲染读 kind、导出读 attrs(导入 img 两处并存)。
+                // 两处都没有 src 引用的节点不支持替换(硬错误,不静默)。
+                let is_image = matches!(n.kind, NodeKind::Image { .. });
+                let had_attr = n.attrs.contains_key("src");
+                if !is_image && !had_attr {
+                    return Err(VbError::Unsupported("该对象不带 src 图像引用".into()));
+                }
+                if is_image {
+                    if let NodeKind::Image { src } = &mut n.kind {
+                        *src = new.clone();
+                    }
+                }
+                if had_attr {
+                    n.attrs.insert("src".into(), new.clone());
+                }
+                Ok(ChangeSet {
+                    structure: false,
+                    style: true,
+                    geometry: false,
+                    text: false,
+                })
+            }
+            Command::SetMediaStyle {
+                sid,
+                max_width,
+                new,
+                old,
+            } => {
+                // 目标节点必须存在(sid 寻址纪律;节点删除后其覆盖条目由
+                // 导出层跳过,不悬空报错)
+                doc.find_by_sid(sid).ok_or_else(|| no_such(sid))?;
+                if old.is_none() {
+                    *old = Some(
+                        doc.media_rules
+                            .iter()
+                            .find(|r| r.sid == *sid && r.max_width == *max_width)
+                            .map(|r| r.decls.clone()),
+                    );
+                }
+                upsert_media(doc, sid, *max_width, new.clone());
+                Ok(ChangeSet {
+                    structure: false,
+                    style: true,
+                    geometry: false,
+                    text: false,
+                })
+            }
+            Command::SetPseudoStyle {
+                sid,
+                pseudo,
+                new,
+                old,
+            } => {
+                doc.find_by_sid(sid).ok_or_else(|| no_such(sid))?;
+                if old.is_none() {
+                    *old = Some(
+                        doc.pseudo_rules
+                            .iter()
+                            .find(|r| r.sid == *sid && r.pseudo == *pseudo)
+                            .map(|r| r.decls.clone()),
+                    );
+                }
+                upsert_pseudo(doc, sid, pseudo, new.clone());
+                Ok(ChangeSet {
+                    structure: false,
+                    style: true,
+                    geometry: false,
+                    text: false,
+                })
+            }
+            Command::SetNodeAnimation {
+                sid,
+                new_keyframes,
+                new_animation,
+                old,
+            } => {
+                let id = doc.find_by_sid(sid).ok_or_else(|| no_such(sid))?;
+                if old.is_none() {
+                    let idx = find_anim_block(doc, sid);
+                    let raw_block = idx.map(|i| doc.raw_css[i].clone());
+                    let animation = doc
+                        .nodes
+                        .get(id)
+                        .unwrap()
+                        .style_get("animation")
+                        .map(str::to_string);
+                    *old = Some(AnimSnapshot {
+                        raw_index: idx,
+                        raw_block,
+                        animation,
+                    });
+                }
+                // 旧块先移除(redo 时 revert 已放回,同样命中)
+                if let Some(i) = find_anim_block(doc, sid) {
+                    doc.raw_css.remove(i);
+                }
+                if let Some(block) = new_keyframes {
+                    // 替换写回**原下标**(块序稳定,canonical 更可 diff);
+                    // 新块追加尾部
+                    match old.as_ref().and_then(|o| o.raw_index) {
+                        Some(i) => {
+                            let i = i.min(doc.raw_css.len());
+                            doc.raw_css.insert(i, block.clone());
+                        }
+                        None => doc.raw_css.push(block.clone()),
+                    }
+                }
+                let n = doc.nodes.get_mut(id).unwrap();
+                match new_animation {
+                    Some(v) => n.style_set("animation", v),
+                    None => {
+                        n.style_remove("animation");
+                    }
+                }
+                Ok(ChangeSet {
+                    structure: false,
+                    style: true,
+                    geometry: false,
+                    text: false,
+                })
+            }
         }
     }
 
@@ -944,11 +1443,17 @@ impl Command {
                 target_sid,
                 captured,
             } => {
-                let (slot, tree) = captured
+                let cap = captured
                     .as_ref()
                     .ok_or_else(|| VbError::Parse("Delete 未捕获快照".into()))?;
-                doc.insert_tree_at(tree, &slot.parent_sid, slot.index)
+                doc.insert_tree_at(&cap.tree, &cap.slot.parent_sid, cap.slot.index)
                     .ok_or_else(|| no_such(target_sid))?;
+                // 05-9-6④ 级联还原:被删节点们的 @keyframes 块按原下标
+                // 升序插回(升序插入不扰前位,与 apply 的降序移除互逆)
+                for (i, block) in &cap.anim_blocks {
+                    let i = (*i).min(doc.raw_css.len());
+                    doc.raw_css.insert(i, block.clone());
+                }
                 doc.sync_artboards();
                 Ok(ChangeSet::full())
             }
@@ -1186,6 +1691,46 @@ impl Command {
                 doc.sync_artboards();
                 Ok(ChangeSet::full())
             }
+            Command::MultiResult {
+                src_sids,
+                results,
+                captured,
+                ..
+            } => {
+                let snap = captured
+                    .as_ref()
+                    .ok_or_else(|| VbError::Parse("MultiResult 未捕获快照".into()))?;
+                // ① 提出全部结果节点(undo 后结果 sid 重新空闲,重做可复用)
+                for t in results.iter() {
+                    let sid = t.root_sid();
+                    doc.extract_subtree(sid).ok_or_else(|| no_such(sid))?;
+                }
+                // ② 源按 (父级, 原索引) 升序重插(乱序会被 clamp 推挤,z 序错乱;
+                //    与 Group revert 同法)
+                let mut order: Vec<usize> = (0..snap.len()).collect();
+                order.sort_by(|&a, &b| {
+                    snap[a]
+                        .0
+                        .parent_sid
+                        .cmp(&snap[b].0.parent_sid)
+                        .then(snap[a].0.index.cmp(&snap[b].0.index))
+                });
+                for &k in &order {
+                    let (slot, tree) = &snap[k];
+                    doc.insert_tree_at(tree, &slot.parent_sid, slot.index)
+                        .ok_or_else(|| no_such(&src_sids[k]))?;
+                }
+                doc.sync_artboards();
+                Ok(ChangeSet::full())
+            }
+            Command::SymbolSync { inner, .. } => {
+                // revert 必须有缓存事务(apply 时必然已构建;未构建即未应用,
+                // revert 被调到说明状态机有 bug,硬错)
+                let c = inner
+                    .as_mut()
+                    .ok_or_else(|| VbError::Parse("SymbolSync 未构建同步事务".into()))?;
+                c.revert(doc)
+            }
             Command::SetToken { name, old, .. } => {
                 if let Some(prev) = old {
                     doc.tokens.retain(|(n, _)| n != name);
@@ -1212,6 +1757,147 @@ impl Command {
                     text: false,
                 })
             }
+            Command::SetImageSrc { sid, old, .. } => {
+                if let Some(snap) = old {
+                    let id = doc.find_by_sid(sid).ok_or_else(|| no_such(sid))?;
+                    let n = doc.nodes.get_mut(id).unwrap();
+                    // kind 源与 attrs 源各自独立还原(None = 原先没有,须删除)
+                    if let Some(src) = &snap.kind_src {
+                        if let NodeKind::Image { src: k } = &mut n.kind {
+                            *k = src.clone();
+                        }
+                    }
+                    match &snap.attr_src {
+                        Some(v) => {
+                            n.attrs.insert("src".into(), v.clone());
+                        }
+                        None => {
+                            n.attrs.remove("src");
+                        }
+                    }
+                }
+                Ok(ChangeSet {
+                    structure: false,
+                    style: true,
+                    geometry: false,
+                    text: false,
+                })
+            }
+            Command::SetMediaStyle {
+                sid,
+                max_width,
+                old,
+                ..
+            } => {
+                // 精确逆回:原先无条目 → 删除;有 → 原声明原样写回
+                match old
+                    .as_ref()
+                    .ok_or_else(|| VbError::Parse("SetMediaStyle 未捕获快照".into()))?
+                {
+                    Some(decls) => upsert_media(doc, sid, *max_width, decls.clone()),
+                    None => doc
+                        .media_rules
+                        .retain(|r| !(r.sid == *sid && r.max_width == *max_width)),
+                }
+                Ok(ChangeSet {
+                    structure: false,
+                    style: true,
+                    geometry: false,
+                    text: false,
+                })
+            }
+            Command::SetPseudoStyle {
+                sid, pseudo, old, ..
+            } => {
+                match old
+                    .as_ref()
+                    .ok_or_else(|| VbError::Parse("SetPseudoStyle 未捕获快照".into()))?
+                {
+                    Some(decls) => upsert_pseudo(doc, sid, pseudo, decls.clone()),
+                    None => doc
+                        .pseudo_rules
+                        .retain(|r| !(r.sid == *sid && r.pseudo == *pseudo)),
+                }
+                Ok(ChangeSet {
+                    structure: false,
+                    style: true,
+                    geometry: false,
+                    text: false,
+                })
+            }
+            Command::SetNodeAnimation { sid, old, .. } => {
+                let snap = old
+                    .as_ref()
+                    .ok_or_else(|| VbError::Parse("SetNodeAnimation 未捕获快照".into()))?;
+                // 移除 apply 产物块,再把原块按原下标放回(None = 原先无块)
+                if let Some(i) = find_anim_block(doc, sid) {
+                    doc.raw_css.remove(i);
+                }
+                if let (Some(i), Some(block)) = (snap.raw_index, &snap.raw_block) {
+                    let i = i.min(doc.raw_css.len());
+                    doc.raw_css.insert(i, block.clone());
+                }
+                if let Some(id) = doc.find_by_sid(sid) {
+                    let n = doc.nodes.get_mut(id).unwrap();
+                    match &snap.animation {
+                        Some(v) => n.style_set("animation", v),
+                        None => {
+                            n.style_remove("animation");
+                        }
+                    }
+                }
+                Ok(ChangeSet {
+                    structure: false,
+                    style: true,
+                    geometry: false,
+                    text: false,
+                })
+            }
         }
+    }
+}
+
+/// 断点覆盖条目 upsert(空 `new` = 删除;条目保持插入序,canonical 导出
+/// 由导出层负责)。供 apply / revert 两处共用。
+fn upsert_media(doc: &mut Document, sid: &str, max_width: u32, new: Vec<vb_css::Decl>) {
+    if new.is_empty() {
+        doc.media_rules
+            .retain(|r| !(r.sid == sid && r.max_width == max_width));
+        return;
+    }
+    if let Some(r) = doc
+        .media_rules
+        .iter_mut()
+        .find(|r| r.sid == sid && r.max_width == max_width)
+    {
+        r.decls = new;
+    } else {
+        doc.media_rules.push(crate::model::MediaRule {
+            max_width,
+            sid: sid.to_string(),
+            decls: new,
+        });
+    }
+}
+
+/// 伪类条目 upsert(空 `new` = 删除)。
+fn upsert_pseudo(doc: &mut Document, sid: &str, pseudo: &str, new: Vec<vb_css::Decl>) {
+    if new.is_empty() {
+        doc.pseudo_rules
+            .retain(|r| !(r.sid == sid && r.pseudo == pseudo));
+        return;
+    }
+    if let Some(r) = doc
+        .pseudo_rules
+        .iter_mut()
+        .find(|r| r.sid == sid && r.pseudo == pseudo)
+    {
+        r.decls = new;
+    } else {
+        doc.pseudo_rules.push(crate::model::PseudoRule {
+            sid: sid.to_string(),
+            pseudo: pseudo.to_string(),
+            decls: new,
+        });
     }
 }

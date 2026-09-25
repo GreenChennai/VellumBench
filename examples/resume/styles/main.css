@@ -11,38 +11,6 @@
 .it { position: absolute; left: 20px; top: 16px; width: 380px; height: 30px; font-size: 16px; font-weight: 600; color: #22303f; }
 .id2 { position: absolute; left: 20px; top: 52px; width: 380px; height: 48px; font-size: 13px; color: #5b6b7b; }
 
-.item2 {
-  position: absolute;
-  left: 300px;
-  top: 480px;
-  width: 420px;
-  height: 120px;
-  padding: 16px 20px;
-  border-radius: 10px;
-  background-color: #f7f9fc;
-}
-
-.it2 {
-  position: absolute;
-  left: 320px;
-  top: 496px;
-  width: 380px;
-  height: 30px;
-  font-size: 16px;
-  font-weight: 600;
-  color: #22303f;
-}
-
-.id3 {
-  position: absolute;
-  left: 320px;
-  top: 532px;
-  width: 380px;
-  height: 48px;
-  font-size: 13px;
-  color: #5b6b7b;
-}
-
 .side-accent {
   position: absolute;
   left: 0px;

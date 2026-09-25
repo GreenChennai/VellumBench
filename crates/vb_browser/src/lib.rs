@@ -63,6 +63,8 @@ pub struct LaneRequest {
     /// 不属画板画布,与 native 车道「画板即画布」同语义),PNG 裁剪
     /// 画板矩形,PDF 纸张 = 声明尺寸。
     pub artboard: bool,
+    /// 取第几个画板(0 起;03-4 浏览器校对面板选画板用,默认 0)。
+    pub artboard_index: usize,
 }
 
 /// 采集视口(P0-3):显式宽 > 0 用之,否则历史兜底 1080;
@@ -109,7 +111,17 @@ pub fn export_source(source: &Path, req: &LaneRequest) -> Result<LaneOutcome, St
     };
     let proc = browser::BrowserProcess::launch(&exe)?;
     let engine_hint = proc.version();
-    export_with_url(&proc, &url, req, &engine_hint)
+    let mut outcome = export_with_url(&proc, &url, req, &engine_hint)?;
+    // VB-1:静态资源 404 不许静默(浏览器会静默回退系统字体等)——
+    // 服务线程收集的 404 路径在此并入结果告警。
+    if let Some(srv) = _srv.as_ref() {
+        outcome.warnings.extend(
+            srv.take_not_found()
+                .iter()
+                .map(|s| staticsrv::asset_not_found_message(s)),
+        );
+    }
+    Ok(outcome)
 }
 
 fn encode(s: &str) -> String {
@@ -149,6 +161,7 @@ fn export_with_url(
                 scale: req.scale.clamp(1, 8),
                 transparent: req.transparent,
                 artboard: req.artboard,
+                artboard_index: req.artboard_index,
             };
             let outcome = capture_png(&mut page, &opts)?;
             Ok(LaneOutcome {

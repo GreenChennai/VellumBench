@@ -13,3 +13,7 @@ vb_html = { workspace = true }
 kurbo = { workspace = true }
 slotmap = { workspace = true }
 thiserror = { workspace = true }
+# K4 协同会话层(collab.rs):op 序列化(共享目录 JSON 交换)+ 日志(坏文件不静默)
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }

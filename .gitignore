@@ -39,3 +39,13 @@ bench/wpi-baseline/
 bench/__pycache__/
 bench/suite/baseline/
 bench/suite/kiln/
+
+# vb_app 阶段2:项目缩略图缓存(可随时再生成,不入库)
+.vb-cache/
+
+# K2 web 壳:构建产物与内置示例副本(build.ps1 生成,不入库)
+crates/vb_web/web/pkg/
+crates/vb_web/web/example/
+
+# 自动快照目录(自动保存/崩溃恢复)不入库
+.vb-autosave/

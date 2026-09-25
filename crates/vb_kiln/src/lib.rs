@@ -21,6 +21,11 @@ pub mod error;
 pub mod formats;
 pub mod frames;
 pub mod img;
+// K2 Web(05-11-2,台账 09-K):pdfium 的 `bind_to_library` /
+// `load_pdf_from_file` 只有原生动态绑定,wasm32 目标下这些 API 编译不存在。
+// PDF/AI 导入是桌面原生能力,Web 端不承诺(能力边界见 docs/k2-web-capability.md);
+// 其余 Kiln 功能(渲染 / 格式写出)在 wasm32 照常可用。
+#[cfg(not(target_arch = "wasm32"))]
 pub mod import_pdf;
 pub mod import_svg;
 pub mod ooxml;
@@ -54,7 +59,9 @@ pub fn export_artboard(
     let ctx = ExportContext::build(doc, artboard, req, project_dir)?;
     let writer = writer::writer_for(req.format);
     let mut out = Vec::with_capacity(256 * 1024);
-    let report = writer.write(&ctx, &mut out)?;
+    let mut report = writer.write(&ctx, &mut out)?;
+    // 动画覆盖矩阵(VB-3):随报告输出(写入器不感知动画能力,统一在此挂载)
+    report.anim_coverage = ctx.anim_coverage.clone();
     Ok((out, report))
 }
 

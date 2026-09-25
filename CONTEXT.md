@@ -62,6 +62,25 @@
 | **能力台账** | Capability Ledger | 能力 / 状态 / 命令 ID / 是否 Agent 可复现的**单一真相**;应用内「帮助 → 能力台账」可查 | `crates/vb_app/src/capabilities.rs` |
 | **闭环验收** | Closed-loop Acceptance | 打开 artboard 稿件 → 编辑 → 存回 → Kiln 导出 全链可用的总判定(A–G) | 副文档 08 |
 
+## 工作流与运行时(2026-09 第三轮批次)
+
+| 术语 | 英文 | 定义 | 关联 |
+|---|---|---|---|
+| **启动主页** | Launcher | 启动后先出现的窗口:最近项目 / 新建 / 打开 / 移除记录 / 恢复会话;`--project` 直达项目窗口可绕过 | ADR-0033 |
+| **最近项目** | Recent / MRU | 按最近打开时间排序的项目记录(路径 + 名称 + 时间 + 固定位) | ADR-0035 |
+| **会话** | Session | 一次运行中同时打开的项目集合;主页可"恢复上次会话" | ADR-0035 |
+| **项目窗口** | Project Window | 一个项目一个独立窗口(独立文档 / 撤销栈 / 选中态 / 标题) | ADR-0034 |
+| **画布一致性** | Canvas Parity | 画布渲染与 CPU 导出对同一文档的几何 / 像素一致程度(画板矩形硬判据 + 像素分数报告) | ADR-0037 |
+| **面板坞** | Tab Dock | 浮窗面板可停靠进去的 Tab 化容器(区别于右侧固定坞);默认停靠、禁止级联遮挡 | ADR-0036 |
+| **开发者统计** | Dev Stats | FPS / 帧时间 / 节点数 / 渲染后端 / 显卡型号;默认隐藏,`视图 → 开发者统计` 开关 | ADR-0039 |
+| **示例体检** | Example Lint | 对随仓库示例做打开 / 布局 / 文字数 / 覆叠 / 漂位的自动断言 | ADR-0038 |
+| **自动快照** | Autosave Snapshot | 有未保存改动时周期写到项目内 `.vb-autosave/` 的恢复用快照(不覆盖 `index.html`) | ADR-0040 |
+| **符号 / 实例** | Symbol / Instance | **主件**(可同步的源,存 `vb-symbol-defs`)+ **实例**(真实 DOM 副本,可覆盖部分字段) | ADR-0042 |
+| **关键帧** | Keyframe | 时间轴上的 (时刻, 值, 缓动) 三元组;落盘为 CSS `@keyframes vb-anim-<sid>` | ADR-0043 |
+| **插件宿主** | Plugin Host | 承载子进程插件、按 `plugin.json` manifest 授权的运行时 | ADR-0044 |
+| **协同会话** | Collab Session | 多端在同一项目上的合并会话;CRDT 只作用于连续属性,落盘仍是 canonical HTML | ADR-0031 |
+| **能力状态** | CapStatus | 台账三态:`Done` / `Partial(缺哪一半+去向)` / `Dropped(根本冲突才允许)`;悬空 Planned 不允许 | ADR-0041 |
+
 ## 术语禁用表(UI 文案,CI 检查)
 
 | ❌ 禁用 | ✅ 用词 | 原因 |

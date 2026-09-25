@@ -1,0 +1,7 @@
+# L0 期望片段(05-9 关键帧往返:@keyframes 冻结块 + animation 声明原样保真)
+@keyframes vb-anim-1c0002
+@keyframes vb-anim-1c0003
+animation: vb-anim-1c0002 1200ms linear 200ms 1 both;
+animation: vb-anim-1c0003 900ms ease-out 0ms 1 both;
+animation-timing-function: cubic-bezier(0.25, 0.1, 0.25, 1);
+transform: translateX(160px) translateY(-24px)

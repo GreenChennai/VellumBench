@@ -39,15 +39,27 @@ fn select_and_direct_select_are_distinct_tools() {
 
 #[test]
 fn every_tool_appears_exactly_once_and_has_key_and_icon() {
+    // 05-2:度量工具无标准键位(design/02/06 均未定义;工具箱/菜单触发),
+    // 是**唯一**的显式免键位白名单 —— 新工具要么绑键,要么进这份名单并说明。
+    const KEYLESS: &[Tool] = &[Tool::Measure];
     let mut seen: Vec<String> = Vec::new();
     for (tool, _icon, label, key) in TOOLBOX {
         let name = format!("{tool:?}");
         assert!(!seen.contains(&name), "工具箱重复出现:{name}");
         seen.push(name);
         assert!(!label.is_empty(), "{tool:?} 无名称");
-        assert!(!key.is_empty(), "{tool:?} 无键位(工具箱必须能提示快捷键)");
+        if !KEYLESS.contains(tool) {
+            assert!(!key.is_empty(), "{tool:?} 无键位(工具箱必须能提示快捷键)");
+        }
     }
     assert_eq!(seen.len(), TOOLBOX.len());
+    // 白名单里的工具必须真实存在于工具箱(防名单腐烂)
+    for k in KEYLESS {
+        assert!(
+            TOOLBOX.iter().any(|(t, ..)| t == k),
+            "免键位白名单含工具箱外的工具:{k:?}"
+        );
+    }
 }
 
 #[test]

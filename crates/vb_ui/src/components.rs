@@ -74,17 +74,19 @@ pub fn mono(text: &str) -> RichText {
     RichText::new(text).font(egui::FontId::new(12.0, fonts::family_mono()))
 }
 
-/// 一行"标签 + 控件"，标签固定宽度以保证纵向对齐。
+/// 一行"标签 + 控件"(U-3 统一表单行)。
+///
+/// 规格:**标签右对齐**贴住控件列的左缘(纵向多字段时,标签尾字与
+/// 全部输入框的左缘各成一条直线 —— AI 属性条的对齐方式),行高从
+/// 正文字号派生([`theme::row_height`]),标签字号/字重/颜色三处统一。
 pub fn field_row<R>(ui: &mut Ui, label_text: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
     ui.horizontal(|ui| {
-        let (rect, _) = ui.allocate_exact_size(
-            Vec2::new(FIELD_LABEL_WIDTH, theme::space::ROW_HEIGHT),
-            Sense::hover(),
-        );
+        let row_h = theme::row_height(ui.ctx());
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(FIELD_LABEL_WIDTH, row_h), Sense::hover());
         let t = theme::tokens(ui.ctx());
         ui.painter().text(
-            pos2(rect.left(), rect.center().y),
-            egui::Align2::LEFT_CENTER,
+            pos2(rect.right(), rect.center().y),
+            egui::Align2::RIGHT_CENTER,
             label_text,
             fonts::font(12.0, fonts::Weight::Medium),
             t.text_2,
@@ -92,6 +94,79 @@ pub fn field_row<R>(ui: &mut Ui, label_text: &str, add: impl FnOnce(&mut Ui) -> 
         add(ui)
     })
     .inner
+}
+
+/// 键位徽章的标准文本形(H-5):「名称 (键位)」。
+///
+/// tooltip / 菜单 / 命令面板的键位提示统一走这一个函数,保证
+/// 同一语义只有一种写法;`key` 为空时退化为纯名称。
+pub fn key_badge_text(label: &str, key: &str) -> String {
+    if key.trim().is_empty() {
+        label.to_string()
+    } else {
+        format!("{label} ({})", key.trim())
+    }
+}
+
+/// 对话框底部按钮排的统一规格(U-7):分隔线之上一行,**主按钮右下**,
+/// 取消在其左;右对齐保证各对话框的按钮位完全一致。
+///
+/// 返回 `(主操作点击, 取消点击)`。键位约定(Enter = 主操作、
+/// Esc = 取消)由调用方按各自上下文接线 —— 有的对话框没有文本框,
+/// 有的(命令面板)输入框常驻,统一收口反而会误触发。
+pub fn dialog_footer(ui: &mut Ui, primary: &str, cancel: Option<&str>) -> (bool, bool) {
+    let mut primary_clicked = false;
+    let mut cancel_clicked = false;
+    ui.separator();
+    // 先开一条内容高的横条再右对齐:直接 `with_layout(right_to_left)`
+    // 会让按钮在「剩余高度」里垂直居中,把对话框撑出一段大空白。
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .add(egui::Button::new(RichText::new(primary).strong()))
+                .clicked()
+            {
+                primary_clicked = true;
+            }
+            if let Some(cancel_text) = cancel {
+                if ui.button(cancel_text).clicked() {
+                    cancel_clicked = true;
+                }
+            }
+        });
+    });
+    (primary_clicked, cancel_clicked)
+}
+
+/// [`dialog_footer`] 的三钮变体(U-7;确认类对话框用):
+/// 从右到左 `主按钮 / 次按钮 / 取消`,`次按钮` 传空串 = 不画。
+/// 返回 `(主点击, 次点击, 取消点击)`。
+pub fn dialog_footer_btn3(
+    ui: &mut Ui,
+    primary: &str,
+    secondary: &str,
+    cancel: &str,
+) -> (bool, bool, bool) {
+    let mut out = (false, false, false);
+    ui.separator();
+    // 同 dialog_footer:先收一条内容高的横条,避免按钮被垂直居中到剩余空间
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .add(egui::Button::new(RichText::new(primary).strong()))
+                .clicked()
+            {
+                out.0 = true;
+            }
+            if !secondary.trim().is_empty() && ui.button(secondary).clicked() {
+                out.1 = true;
+            }
+            if !cancel.trim().is_empty() && ui.button(cancel).clicked() {
+                out.2 = true;
+            }
+        });
+    });
+    out
 }
 
 // ──────────────────────────── 1. ToolButton ────────────────────────────
@@ -157,12 +232,9 @@ impl<'a> ToolButton<'a> {
         self
     }
 
-    /// tooltip 文本：`名称 (快捷键)`。
+    /// tooltip 文本:`名称 (快捷键)`(键位徽章标准形,见 [`key_badge_text`])。
     fn tooltip_text(&self) -> String {
-        match self.shortcut {
-            Some(k) => format!("{} ({})", self.label, k),
-            None => self.label.to_string(),
-        }
+        key_badge_text(self.label, self.shortcut.unwrap_or(""))
     }
 
     /// 画出按钮。
@@ -183,8 +255,16 @@ impl<'a> ToolButton<'a> {
         let hover_t = ui.ctx().animate_bool_with_time(
             ui.id().with(("vbtb", self.icon, self.label)),
             resp.hovered() && self.enabled,
-            theme::motion::HOVER,
+            theme::anim_time(ui.ctx(), theme::motion::HOVER),
         );
+        // U-4「按下微缩」:按住时图标整体缩到 92%,松手回弹 —— 按压有触感
+        // (不经 hover 通道,避免与悬停底色互相踩)。
+        let press_t = ui.ctx().animate_bool_with_time(
+            ui.id().with(("vbtbpress", self.icon, self.label)),
+            resp.is_pointer_button_down_on() && self.enabled,
+            theme::anim_time(ui.ctx(), theme::motion::HOVER),
+        );
+        let icon_scale = 1.0 - 0.08 * press_t;
 
         // 底色：激活 > 悬停 > 透明
         let base = if self.active {
@@ -219,6 +299,7 @@ impl<'a> ToolButton<'a> {
 
         if self.show_label {
             let icon_rect = rect.shrink2(vec2(0.0, theme::space::S1));
+            let ic = icon_size * icon_scale;
             ui.painter().text(
                 pos2(
                     icon_rect.center().x,
@@ -226,14 +307,14 @@ impl<'a> ToolButton<'a> {
                 ),
                 egui::Align2::CENTER_CENTER,
                 self.icon.glyph().to_string(),
-                icons::font(icon_size),
+                icons::font(ic),
                 fg,
             );
             ui.painter().text(
                 pos2(rect.center().x, rect.bottom() - 6.0),
                 egui::Align2::CENTER_BOTTOM,
                 self.label,
-                fonts::font(11.0, fonts::Weight::Regular),
+                fonts::font(11.0 * icon_scale, fonts::Weight::Regular),
                 fg,
             );
         } else {
@@ -241,7 +322,7 @@ impl<'a> ToolButton<'a> {
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
                 self.icon.glyph().to_string(),
-                icons::font(icon_size),
+                icons::font(icon_size * icon_scale),
                 fg,
             );
         }
@@ -397,17 +478,19 @@ impl<'a> NumField<'a> {
     /// 画出字段,返回交互结果(见 [`NumFieldResponse`])。
     pub fn ui(self, ui: &mut Ui) -> NumFieldResponse {
         let t = theme::tokens(ui.ctx());
+        // 04-3-1:行高从正文字号派生(P1-② 压叠根因 = 写死 20/24pt 小行高),
+        // 界面缩放 / DPI 变化自动跟随;标签与输入框等高,一行一个步进。
+        let row_h = theme::row_height(ui.ctx());
         let mut out = NumFieldResponse::default();
 
-        // ── 标签区(scrubby 拖动源)──
-        let (lrect, lresp) = ui.allocate_exact_size(
-            Vec2::new(self.label_width, theme::space::ROW_HEIGHT),
-            Sense::drag(),
-        );
+        // ── 标签区(scrubby 拖动源;U-3:标签右对齐贴控件列,与
+        // field_row 同一规格 —— 多字段纵排时标签尾字成一条直线)──
+        let (lrect, lresp) =
+            ui.allocate_exact_size(Vec2::new(self.label_width, row_h), Sense::drag());
         let hover_t = ui.ctx().animate_bool_with_time(
             ui.id().with(("vbnumlbl", self.label)),
             lresp.hovered() || lresp.dragged(),
-            theme::motion::HOVER,
+            theme::anim_time(ui.ctx(), theme::motion::HOVER),
         );
         ui.painter().rect_filled(
             lrect,
@@ -415,8 +498,8 @@ impl<'a> NumField<'a> {
             blend(Color32::TRANSPARENT, t.bg_hover, hover_t * 0.6),
         );
         ui.painter().text(
-            pos2(lrect.left() + 2.0, lrect.center().y),
-            egui::Align2::LEFT_CENTER,
+            pos2(lrect.right() - 2.0, lrect.center().y),
+            egui::Align2::RIGHT_CENTER,
             self.label,
             fonts::font(12.0, fonts::Weight::Medium),
             blend(t.text_2, t.text, hover_t),
@@ -437,7 +520,7 @@ impl<'a> NumField<'a> {
             format_num(*self.value)
         };
         let edit = ui.add_sized(
-            Vec2::new(self.width, theme::space::ROW_HEIGHT - 4.0),
+            Vec2::new(self.width, row_h),
             egui::TextEdit::singleline(&mut buf)
                 .id(field_id)
                 .font(fonts::font(12.0, fonts::Weight::Regular))
@@ -626,9 +709,11 @@ impl<'a> ColorField<'a> {
                 ),
                 Sense::click(),
             );
-            let hover_t =
-                ui.ctx()
-                    .animate_bool_with_time(swatch_id, resp.hovered(), theme::motion::HOVER);
+            let hover_t = ui.ctx().animate_bool_with_time(
+                swatch_id,
+                resp.hovered(),
+                theme::anim_time(ui.ctx(), theme::motion::HOVER),
+            );
             ui.painter()
                 .rect_filled(rect, theme::radius::sm(), *self.value);
             ui.painter().rect_stroke(
@@ -1165,7 +1250,7 @@ impl<'a> PanelTabs<'a> {
                 let hover_t = ui.ctx().animate_bool_with_time(
                     ui.id().with(("vbtab", name)),
                     resp.hovered() && !is_active,
-                    theme::motion::HOVER,
+                    theme::anim_time(ui.ctx(), theme::motion::HOVER),
                 );
                 // 选中底：accent 的 16% 透明度
                 let fill = if is_active {
@@ -1313,7 +1398,7 @@ impl<'a> LayerRow<'a> {
         let hover_t = ui.ctx().animate_bool_with_time(
             ui.id().with(("vblayer", self.name, self.depth)),
             resp.hovered() && !self.selected,
-            theme::motion::HOVER,
+            theme::anim_time(ui.ctx(), theme::motion::HOVER),
         );
 
         // 行底：选中 > 悬停 > 透明
@@ -1441,7 +1526,7 @@ pub fn icon_button(ui: &mut Ui, icon: icons::Name, tooltip: &str) -> Response {
     let hover_t = ui.ctx().animate_bool_with_time(
         ui.id().with(("vbib", icon, tooltip)),
         resp.hovered(),
-        theme::motion::HOVER,
+        theme::anim_time(ui.ctx(), theme::motion::HOVER),
     );
     ui.painter().rect_filled(
         rect,

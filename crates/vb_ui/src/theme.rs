@@ -94,14 +94,19 @@ impl Tokens {
             border_strong: Color32::from_rgb(0xC9, 0xC9, 0xC9),
             text: Color32::from_rgb(0x1E, 0x1E, 0x1E),
             text_2: Color32::from_rgb(0x6B, 0x6B, 0x6B),
-            text_3: Color32::from_rgb(0x9B, 0x9B, 0x9B),
+            // U-6:浅底对比度走查 —— #9B9B9B 对白底只有 2.8:1(禁用/占位文字
+            // 也要求 ≥4.5),加深到 #767676(4.54:1);深色侧维持原设计值。
+            text_3: Color32::from_rgb(0x76, 0x76, 0x76),
             // 品牌色两套共用（JSON: "两套主题共用品牌色"）
             accent: Color32::from_rgb(0x0D, 0x99, 0xFF),
             accent_hover: Color32::from_rgb(0x3A, 0xAE, 0xFF),
             accent_dim: Color32::from_rgba_unmultiplied(0x0D, 0x99, 0xFF, 31),
-            danger: Color32::from_rgb(0xF2, 0x48, 0x22),
-            // 浅底上 #FFC700 对比度不足，按设计加深
-            warn: Color32::from_rgb(0xB5, 0x82, 0x00),
+            // U-6:#F24822 对白底 3.67:1,12px 正文不达 AA(4.5);
+            // 加深到 #D93025(4.77:1)。深色侧维持原设计值。
+            danger: Color32::from_rgb(0xD9, 0x30, 0x25),
+            // 浅底上 #FFC700 对比度不足,按设计加深;U-6 走查再加深一档
+            // (#B58200 对白底 3.41:1 → #8F6700 = 5.11:1,达 WCAG AA)
+            warn: Color32::from_rgb(0x8F, 0x67, 0x00),
             success: Color32::from_rgb(0x0E, 0x7C, 0x42),
         }
     }
@@ -219,6 +224,33 @@ pub mod semantic {
             OVERFLOW_DOT_LIGHT
         }
     }
+
+    /// 差异视图·删除行(深色;快照对比「磁盘 −」)。
+    pub const DIFF_DEL_DARK: Color32 = Color32::from_rgb(0xFF, 0x78, 0x64);
+    /// 差异视图·删除行(浅色,加深保对比;同溢出红点浅色的设计值)。
+    pub const DIFF_DEL_LIGHT: Color32 = Color32::from_rgb(0xD7, 0x00, 0x15);
+    /// 差异视图·新增行(深色;快照对比「快照 +」)。
+    pub const DIFF_ADD_DARK: Color32 = Color32::from_rgb(0x82, 0xDC, 0x82);
+    /// 差异视图·新增行(浅色,加深保对比;同 success 浅色的设计值)。
+    pub const DIFF_ADD_LIGHT: Color32 = Color32::from_rgb(0x0E, 0x7C, 0x42);
+
+    /// 按主题取差异删除行色。
+    pub fn diff_del(dark: bool) -> Color32 {
+        if dark {
+            DIFF_DEL_DARK
+        } else {
+            DIFF_DEL_LIGHT
+        }
+    }
+
+    /// 按主题取差异新增行色。
+    pub fn diff_add(dark: bool) -> Color32 {
+        if dark {
+            DIFF_ADD_DARK
+        } else {
+            DIFF_ADD_LIGHT
+        }
+    }
 }
 
 // ───────────────────────── 间距 / 圆角 / 描边 ─────────────────────────
@@ -299,19 +331,68 @@ pub mod motion {
     pub const PANEL: f32 = 0.20;
 }
 
+// ───────────────────── 动效总开关(H-1:可关 + 持久化) ─────────────────────
+//
+// **为什么是开关而不是探测**:egui/winit 不暴露系统「减少动态效果」
+// 无障碍设置的跨平台读取口;这里以**显式设置项**承接同一语义
+// (首选项「常规」/视图菜单可关,状态入 workspace.json,默认开)。
+// 关闭后:① egui 全局 `animation_time` 归零(所有跟随样式的过渡立即到位);
+// ② 组件里显式传时长的 `animate_bool_with_time` 经 [`anim_time`] 同步归零;
+// ③ 对话框/Tab 的一次性淡入(motion 模块)直接跳到终态。
+
+/// 动效开关在 egui 持久数据里的键。
+fn motion_flag_id() -> egui::Id {
+    egui::Id::new("vb_motion_enabled")
+}
+
+/// 写动效总开关(应用启动与切换时调用;未写过时读作「开」)。
+pub fn set_motion_enabled(ctx: &egui::Context, enabled: bool) {
+    ctx.data_mut(|d| d.insert_temp(motion_flag_id(), enabled));
+}
+
+/// 读动效总开关(默认开 —— 未注入过的上下文一律有动效)。
+pub fn motion_enabled(ctx: &egui::Context) -> bool {
+    ctx.data_mut(|d| d.get_temp(motion_flag_id()).unwrap_or(true))
+}
+
+/// 动效感知的时长换算:总开关关闭时任何动效时长都归零
+/// (调用方把返回值喂给 `animate_bool_with_time` 一类 API)。
+pub fn anim_time(ctx: &egui::Context, base: f32) -> f32 {
+    if motion_enabled(ctx) {
+        base
+    } else {
+        0.0
+    }
+}
+
 // ──────────────────────────── 注入 ────────────────────────────
 
 /// 按主题把令牌注入 egui 全局样式（14 篇 §3.8 配方）。
 ///
 /// 幂等：可随时重调（主题切换、窗口尺寸变化都不需要重启）。
 pub fn apply(ctx: &egui::Context, dark: bool) {
-    apply_scaled(ctx, dark, 1.0);
+    apply_ex(ctx, dark, 1.0, true);
 }
 
 /// 同 [`apply`]，但按 `scale` 缩放字号（供后续"界面缩放"设置使用）。
 pub fn apply_scaled(ctx: &egui::Context, dark: bool, scale: f32) {
+    apply_ex(ctx, dark, scale, true);
+}
+
+/// 同 [`apply`]，带动效总开关(H-1):`motion = false` 时全局
+/// `animation_time` 归零,并写入开关供组件侧 [`anim_time`] 读取。
+pub fn apply_ex(ctx: &egui::Context, dark: bool, scale: f32, motion: bool) {
+    set_motion_enabled(ctx, motion);
+    apply_impl(ctx, dark, scale, motion);
+}
+
+fn apply_impl(ctx: &egui::Context, dark: bool, scale: f32, _motion: bool) {
     let t = Tokens::get(dark);
     let scale = if scale > 0.0 { scale } else { 1.0 };
+    // ⚠️ 死锁教训(第四轮实测):动效开关读 egui 数据锁,必须**先算后进** ——
+    // 在 all_styles_mut(持有 Context 写锁)里再调 data_mut 会自锁,
+    // 触发 epaint RwLock 10s DEBUG PANIC(启动即 101 退出)。
+    let anim = anim_time(ctx, motion::STATE);
 
     ctx.all_styles_mut(|s| {
         // ── 色彩 ──
@@ -401,8 +482,8 @@ pub fn apply_scaled(ctx: &egui::Context, dark: bool, scale: f32) {
         s.spacing.icon_width = 14.0;
         s.spacing.icon_spacing = space::S3;
 
-        // ── 动效 ──
-        s.animation_time = motion::STATE;
+        // ── 动效(H-1:总开关关闭时全部过渡立即到位) ──
+        s.animation_time = anim;
 
         // ── 排版 ──
         s.text_styles.insert(
@@ -453,6 +534,48 @@ pub fn apply_scaled(ctx: &egui::Context, dark: bool, scale: f32) {
 pub fn tokens(ctx: &egui::Context) -> Tokens {
     let dark = ctx.theme() == egui::Theme::Dark;
     Tokens::get(dark)
+}
+
+// ─────────────────── 行高度量（04-3-1：行高从字号派生） ───────────────────
+//
+// **缺陷锚点**（实测 `d-char.png`，P1-②）：字符面板的 TextEdit 被钉死 18pt 高，
+// 而 CJK 字形（MiSans / 雅黑）的 galley 高 ≈ 字号 × 1.4~1.5，加上 TextEdit
+// 自带上下边距后需求高度 ≈ 23~26pt —— 内容溢出控件矩形，与下一行互相压叠。
+// `space::ROW_HEIGHT` 这类**写死常量**不随字号/界面缩放走，是压叠的根因。
+//
+// **行高公式单一真相**：行高 = 实测 galley 高（用当前正文字体排一行「字Ag0」，
+// 中英混排取最高者）+ 上下留白，下限仍守住 24pt 的 4 基数刻度。因为它读的是
+// 当前样式的正文字号，界面缩放（zoom_factor）与 DPI 变化都自动跟随。
+
+/// 正文字号（读当前样式的 `TextStyle::Body`；行高派生的唯一输入）。
+pub fn body_font_size(ctx: &egui::Context) -> f32 {
+    let style = ctx.style_of(ctx.theme());
+    style
+        .text_styles
+        .get(&TextStyle::Body)
+        .map(|f| f.size)
+        .unwrap_or(13.0)
+}
+
+/// 控件行高（pt）：用**当前正文字体**实测一行中英混排的 galley 高，
+/// 加 TextEdit 自带上下边距（2+2）与 4pt 呼吸位，下限 24（4 基数）。
+///
+/// 所有承载文字的控件（NumField / 面板 TextEdit / 工具按钮）一律从这里取高，
+/// 禁止再写死 18pt 之类的小行高 —— 这是「无文字压叠」门禁的公式面。
+pub fn row_height(ctx: &egui::Context) -> f32 {
+    let font = ctx
+        .style_of(ctx.theme())
+        .text_styles
+        .get(&TextStyle::Body)
+        .cloned()
+        .unwrap_or_else(|| FontId::new(13.0, fonts::family_regular()));
+    // 「字Ag0」= 最高 CJK 字形 + 带升降部的拉丁字形,取真实排高度
+    let galley_h = ctx.fonts_mut(|f| {
+        f.layout_no_wrap("字Ag0".to_owned(), font, Color32::WHITE)
+            .size()
+            .y
+    });
+    (galley_h + 8.0).ceil().max(space::ROW_HEIGHT)
 }
 
 // ──────────────────────────── 自检 ────────────────────────────
@@ -572,6 +695,38 @@ mod tests {
         }
     }
 
+    /// 04-3-1:行高必须从字号派生 —— 至少包住正文字形的实际排高度(+边距),
+    /// 且不小于 24 的基数下限。这是「无文字压叠」门禁的公式面。
+    #[test]
+    fn row_height_is_derived_from_body_font() {
+        // egui 的字体在首个 pass 才初始化(真实调用点都在 UI 闭包内,
+        // 必然处于 pass 中);测试里手动 begin_pass 等价初始化。
+        let ctx = egui::Context::default();
+        ctx.begin_pass(egui::RawInput::default());
+        let rh = row_height(&ctx);
+        assert!(rh >= space::ROW_HEIGHT, "行高下限 24,得到 {rh}");
+        assert!(
+            rh >= body_font_size(&ctx) * 1.5,
+            "行高必须 ≥ 正文字号 × 1.5(CJK 字形更高),得到 {rh}"
+        );
+        // 行高随字号放大(界面缩放时所有承载文字的控件一起长高)。
+        // 用 Proportional 族(默认绑定已存在);vb 族要 fonts::install 才有。
+        let big = egui::Context::default();
+        big.all_styles_mut(|s| {
+            s.text_styles.insert(
+                TextStyle::Body,
+                FontId::new(26.0, egui::FontFamily::Proportional),
+            );
+        });
+        big.begin_pass(egui::RawInput::default());
+        assert!(
+            row_height(&big) > rh,
+            "正文字号放大后行高必须跟着涨:{}, {}",
+            row_height(&big),
+            rh
+        );
+    }
+
     /// 解析 `#RRGGBB` 或 `rgba(r,g,b,a)`（a 为 0..1 浮点）。
     fn parse_color(v: &str) -> Color32 {
         let v = v.trim();
@@ -617,5 +772,89 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── U-6:浅色主题对比度走查(WCAG AA 门禁) ──
+
+    /// sRGB → 相对亮度(WCAG 2.x 公式)。
+    fn rel_luminance(c: Color32) -> f64 {
+        let lin = |v: u8| {
+            let v = v as f64 / 255.0;
+            if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * lin(c.r()) + 0.7152 * lin(c.g()) + 0.0722 * lin(c.b())
+    }
+
+    /// WCAG 对比度(两色亮度比,亮者分子)。
+    fn contrast(a: Color32, b: Color32) -> f64 {
+        let (la, lb) = (rel_luminance(a), rel_luminance(b));
+        let (hi, lo) = if la >= lb { (la, lb) } else { (lb, la) };
+        (hi + 0.05) / (lo + 0.05)
+    }
+
+    /// U-6 门禁:浅色主题的**正文/次级/禁用级文字**与其承载底色必须达
+    /// WCAG AA(≥4.5:1)。覆盖走查点:次级坞(面板底)、提示条(面板底)、
+    /// toast(凸起底)、输入底上的正文。
+    #[test]
+    fn light_theme_text_meets_wcag_aa() {
+        let l = Tokens::light();
+        for (name, fg, bg) in [
+            ("正文/面板", l.text, l.bg_panel),
+            ("次级文字/面板", l.text_2, l.bg_panel),
+            ("弱文字/面板(禁用态·占位)", l.text_3, l.bg_panel),
+            ("正文/toast(凸起底)", l.text, l.bg_raised),
+            ("次级文字/提示条", l.text_2, l.bg_panel),
+            ("正文/输入底", l.text, l.bg_input),
+        ] {
+            let c = contrast(fg, bg);
+            assert!(
+                c >= 4.5,
+                "浅色 {name} 对比度 {c:.2}:1 < 4.5(WCAG AA),文字色需加深"
+            );
+        }
+    }
+
+    /// U-6 门禁:浅色主题的语义色文字(warn/danger/success 出现在
+    /// toast 与状态栏文本里)在面板/凸起底上同样 ≥4.5:1。
+    #[test]
+    fn light_theme_semantic_text_meets_wcag_aa() {
+        let l = Tokens::light();
+        for (name, fg) in [
+            ("warn", l.warn),
+            ("danger", l.danger),
+            ("success", l.success),
+        ] {
+            for bg_name in ["bg_panel", "bg_raised"] {
+                let bg = match bg_name {
+                    "bg_panel" => l.bg_panel,
+                    _ => l.bg_raised,
+                };
+                let c = contrast(fg, bg);
+                assert!(
+                    c >= 4.5,
+                    "浅色 {name} 文字在 {bg_name} 上对比度 {c:.2}:1 < 4.5"
+                );
+            }
+        }
+    }
+
+    /// 动效总开关(H-1):未注入时默认开;写入后 [`anim_time`] 归零、
+    /// 注入恢复;纯函数语义不经 egui 也能锁定(归零规则)。
+    #[test]
+    fn motion_kill_switch_defaults_on_and_zeroes_times() {
+        let ctx = egui::Context::default();
+        ctx.begin_pass(egui::RawInput::default());
+        assert!(motion_enabled(&ctx), "未注入过 = 默认开");
+        assert!((anim_time(&ctx, motion::HOVER) - motion::HOVER).abs() < f32::EPSILON);
+        set_motion_enabled(&ctx, false);
+        assert!(!motion_enabled(&ctx));
+        assert_eq!(anim_time(&ctx, motion::HOVER), 0.0, "关闭后时长必须归零");
+        assert_eq!(anim_time(&ctx, motion::PANEL), 0.0);
+        set_motion_enabled(&ctx, true);
+        assert!((anim_time(&ctx, motion::STATE) - motion::STATE).abs() < f32::EPSILON);
     }
 }

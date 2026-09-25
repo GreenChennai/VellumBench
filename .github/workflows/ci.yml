@@ -14,10 +14,46 @@ jobs:
         with:
           components: rustfmt, clippy
       # 门禁只有一处定义(tools/ci.ps1),本地与 CI 保证同源。
-      # 覆盖:1 格式 · 2 Lint · 3 测试(含 20 个往返语料 + 命令全变体可逆性 +
-      #       门禁 9 快捷键注册表自检)· 4 Agent selfcheck · 8 硬编码颜色棘轮
-      - name: Quality gates
+      # CI 无头机走轻量档(06-4-5 分档):1 格式 · 2 Lint · 3 测试(含往返
+      # 语料 + 命令可逆性 + 快捷键自检 + 台账 Planned=0 收口门禁)· 4 selfcheck
+      # · 6 术语 · 7 输出校验 · 8 硬编码颜色 · 9 示例体检 · 10 三端一致性
+      # · 13 巨型文件报告 · 14 许可口径。重门禁 11/12(需 GPU 与窗口系统)
+      # 留本地全量档:`pwsh tools/ci.ps1`。
+      - name: Quality gates (light)
         shell: pwsh
-        run: ./tools/ci.ps1
+        run: ./tools/ci.ps1 -Light
+        env:
+          RUST_BACKTRACE: "1"
+
+  # K1 多平台(05-11-1,台账 09-K):非 Windows 平台的编译级 + 测试级验证。
+  # 级别 = cargo check --all-targets + cargo test(不含 tools/ci.ps1 的
+  # Windows 专属门禁,如硬编码颜色棘轮 / UI 截图基线)。
+  # 运行时差异(字体回退 / 窗口 DPI / GPU 画布)不在 CI 判据内 —— 见
+  # docs/k1-nonwindows-runtime-checklist.md 的实机验证清单。
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # fontconfig 走运行时 dlopen(vb_render 默认特性),构建期不需要 dev
+      # 头文件;测试期 fontique 枚举系统字体需要 libfontconfig.so.1 本体。
+      - name: Install fontconfig runtime
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1
+      - name: Check (all targets)
+        run: cargo check --workspace --all-targets
+      - name: Test
+        run: cargo test --workspace
+        env:
+          RUST_BACKTRACE: "1"
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check (all targets)
+        run: cargo check --workspace --all-targets
+      - name: Test
+        run: cargo test --workspace
         env:
           RUST_BACKTRACE: "1"

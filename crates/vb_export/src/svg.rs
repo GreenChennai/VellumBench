@@ -79,8 +79,51 @@ pub fn render_svg(list: &DrawList, scale: u32, transparent: bool) -> String {
         );
     }
 
+    // 05-2(09-B 剪切蒙版):overflow 裁剪组 → `<g clip-path>` 分组;
+    // 裁剪矩形(编码期已按嵌套交集折叠)收集进尾部的 `<clipPath>` defs。
+    let mut clip_defs = String::new();
+    let mut clip_ids: Vec<[f64; 4]> = Vec::new();
+    let mut open_clip: Option<usize> = None;
     for (i, item) in list.items.iter().enumerate() {
+        let cid = item
+            .overflow_clip
+            .filter(|[_, _, cw, ch]| *cw > 0.0 && *ch > 0.0)
+            .map(|rect| {
+                if let Some(pos) = clip_ids.iter().position(|r| *r == rect) {
+                    return pos;
+                }
+                let id = clip_ids.len();
+                let s = scale as f64;
+                clip_defs.push_str(&format!(
+                    r#"  <clipPath id="oc{id}"><rect x="{}" y="{}" width="{}" height="{}"/></clipPath>"#,
+                    rect[0] * s,
+                    rect[1] * s,
+                    rect[2] * s,
+                    rect[3] * s,
+                ));
+                clip_defs.push('\n');
+                clip_ids.push(rect);
+                id
+            });
+        if cid != open_clip {
+            if open_clip.is_some() {
+                out.push_str("</g>\n");
+            }
+            if let Some(id) = cid {
+                let _ = writeln!(out, r#"<g clip-path="url(#oc{id})">"#);
+                open_clip = cid;
+            } else {
+                open_clip = None;
+            }
+        }
         write_item(&mut out, i, item, scale as f64);
+    }
+    if open_clip.is_some() {
+        out.push_str("</g>\n");
+    }
+    if !clip_defs.is_empty() {
+        // 渐变 defs 已闭合:clipPath 以独立 defs 追加(SVG 合法且等价)
+        let _ = writeln!(out, "<defs>\n{clip_defs}</defs>");
     }
 
     out.push_str("</svg>\n");

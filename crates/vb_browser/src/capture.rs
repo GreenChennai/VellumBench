@@ -23,6 +23,8 @@ pub struct CaptureOptions {
     /// 画板取景(P0-3):重置 body 页边距,PNG 按画板矩形裁剪,
     /// 尺寸 = 声明画板尺寸(高度不因内容收缩,尺寸门要求严格相等)。
     pub artboard: bool,
+    /// 取第几个画板(0 起;03-4 浏览器校对用,默认 0 = 旧行为)。
+    pub artboard_index: usize,
 }
 
 pub struct CaptureOutcome {
@@ -188,7 +190,12 @@ pub fn capture_png(
         page.sleep(150);
         page.scroll_to(0);
         page.wait_two_raf();
-        let rect = artboard_rect_of(page, opts.width, opts.height_lock.unwrap_or(0));
+        let rect = artboard_rect_of(
+            page,
+            opts.width,
+            opts.height_lock.unwrap_or(0),
+            opts.artboard_index,
+        );
         let clip_h = match opts.height_lock {
             Some(lock) => lock,
             None => page.content_size()?.1,
@@ -242,8 +249,13 @@ pub fn capture_png(
 }
 
 /// 画板矩形定位(采集侧):返回 `Some((x, y, w, h))` 或 None(未命中)。
-fn artboard_rect_of(page: &mut PageSession, w: u32, h: u32) -> Option<(f64, f64, f64, f64)> {
-    let js = format!("({ARTBOARD_RECT_JS})({w}, {h})");
+fn artboard_rect_of(
+    page: &mut PageSession,
+    w: u32,
+    h: u32,
+    index: usize,
+) -> Option<(f64, f64, f64, f64)> {
+    let js = format!("({ARTBOARD_RECT_JS})({w}, {h}, {index})");
     let v = page.evaluate(&js, false).ok()?;
     let arr = v.as_array()?;
     let nums: Vec<f64> = arr.iter().filter_map(Value::as_f64).collect();

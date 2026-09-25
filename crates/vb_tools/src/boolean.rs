@@ -15,17 +15,20 @@ use vb_common::geom::{BezPath, PathEl};
 /// 布尔运算(AI 路径查找器;06 篇 §3.9)。
 ///
 /// 基础四运算 + 扩展三运算(阶段 2 / 03-1-4)。**扩展三运算的几何口径**:
-/// 在"两个操作数"下,AI 的「合并 / 减去后方对象 / 裁剪」与
-/// 「联集 / 减去顶层 / 交集」**几何结果相同**(AI 的差异只在 3+ 对象、
-/// 着色或描边层面体现),故这里如实复用同一几何内核、单独给命令 ID。
+/// 在"两个操作数"下,AI 的「合并 / 裁剪」与「联集 / 交集」几何结果相同
+/// (AI 的差异只在 3+ 对象、着色或描边层面体现),故这里如实复用同一几何
+/// 内核、单独给命令 ID。**减法族两个变体在命令层语义相反**(05-C 修正,
+/// 对齐 Adobe):内核同为 lhs − rhs,差别在调用方按 z 序映射 lhs/rhs ——
+/// `Subtract`(减去顶层)保留下方对象,z 序在下者为 lhs;`SubtractBack`
+/// (减去后方对象)保留最上,z 序在上者为 lhs。映射在
+/// `vb_app::app::commands::path_boolean`(与 `vb_agent` patch 同一底层)。
 /// 「分割 / 修边 / 轮廓」需要**一条命令产出多个节点**(多结果模型),
-/// 当前 `Command::PathBoolean` 是"lhs 替换 + rhs 删除"的二操作数模型 →
-/// 标计划项(见 `shortcuts::PLANNED`),不静默。
+/// 由 `pathfinder::pathfinder_multi_cmds` 承载。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BooleanOp {
     /// 联集(合并两个形状)
     Union,
-    /// 减去顶层(lhs - rhs)
+    /// 减去顶层(命令层:保留下方,结果 = 下方 − 上方;内核 lhs − rhs)
     Subtract,
     /// 交集(重叠区域)
     Intersect,
@@ -33,7 +36,7 @@ pub enum BooleanOp {
     Xor,
     /// 合并(≡ 联集;两操作数下几何相同)
     Merge,
-    /// 减去后方对象(≡ 减去顶层,只是强制 lhs = 最前)
+    /// 减去后方对象(命令层:保留最上,结果 = 上方 − 下方;内核 lhs − rhs)
     SubtractBack,
     /// 裁剪(≡ 交集;两操作数下几何相同)
     Crop,
@@ -87,53 +90,17 @@ pub enum Kernel {
     Xor,
 }
 
-/// kurbo BezPath → flo SimpleBezierPath(flo 路径隐式闭合,
-/// ClosePath 丢弃;QuadTo 升阶为 CurveTo)。
-fn to_flo(src: &BezPath) -> Option<SimpleBezierPath> {
-    let mut start: Option<Coord2> = None;
-    let mut builder: Option<BezierPathBuilder<SimpleBezierPath>> = None;
-    for el in src.elements() {
-        match el {
-            PathEl::MoveTo(p) => {
-                if builder.is_some() {
-                    // 多子路径:布尔输入按单闭合路径处理,取首条
-                    break;
-                }
-                let c = Coord2(p.x, p.y);
-                start = Some(c);
-                builder = Some(BezierPathBuilder::<SimpleBezierPath>::start(c));
-            }
-            PathEl::LineTo(p) => {
-                builder = builder.map(|b| b.line_to(Coord2(p.x, p.y)));
-            }
-            PathEl::QuadTo(c, p) => {
-                // 二次 → 三次升阶:c1 = P0 + 2/3(C-P0),c2 = P1 + 2/3(C-P1)
-                // (flo builder 不回读当前点:用 C 近似 P0/C 臂,布尔拓扑不受影响)
-                if let Some(b) = builder.take() {
-                    builder = Some(b.curve_to(
-                        (
-                            Coord2((c.x + 2.0 * c.x) / 3.0, (c.y + 2.0 * c.y) / 3.0),
-                            Coord2((p.x + 2.0 * c.x) / 3.0, (p.y + 2.0 * c.y) / 3.0),
-                        ),
-                        Coord2(p.x, p.y),
-                    ));
-                }
-            }
-            PathEl::CurveTo(c1, c2, p) => {
-                builder = builder.take().map(|b| {
-                    b.curve_to((Coord2(c1.x, c1.y), Coord2(c2.x, c2.y)), Coord2(p.x, p.y))
-                });
-            }
-            PathEl::ClosePath => {}
-        }
-    }
-    let _ = start?;
-    Some(builder?.build())
+/// kurbo BezPath → flo SimpleBezierPath 列表(**每个子路径一条**;flo 路径
+/// 隐式闭合,ClosePath 丢弃;QuadTo 升阶为 CurveTo)。05-3 起多子路径
+/// 全部参与运算 —— 此前只取首条子路径,带孔结果(减法产物)回填布尔会
+/// 丢孔洞,由 pathfinder::to_flo_multi 统一承载。
+fn to_flo(src: &BezPath) -> Option<Vec<SimpleBezierPath>> {
+    crate::pathfinder::to_flo_multi(src)
 }
 
 /// flo SimpleBezierPath → kurbo BezPath(多结果路径各自 MoveTo 起头;
-/// 控制点与端点重合的段压回 LineTo)。
-fn from_flo(paths: &[SimpleBezierPath], dx: f64, dy: f64) -> BezPath {
+/// 控制点与端点重合的段压回 LineTo)。pathfinder 模块共用。
+pub(crate) fn from_flo(paths: &[SimpleBezierPath], dx: f64, dy: f64) -> BezPath {
     let mut out = BezPath::new();
     for p in paths {
         let sp = p.start_point();
@@ -177,29 +144,21 @@ pub fn boolean_paths(
     rhs: &BezPath,
     rhs_origin: (f64, f64),
 ) -> Result<(BezPath, [f64; 4]), String> {
-    let flo_lhs = to_flo(lhs).ok_or("lhs 路径无法转换(缺少 MoveTo 或多子路径)")?;
-    let flo_rhs = to_flo(rhs).ok_or("rhs 路径无法转换(缺少 MoveTo 或多子路径)")?;
+    let flo_lhs = to_flo(lhs).ok_or("lhs 路径无法转换(缺少 MoveTo)")?;
+    let flo_rhs = to_flo(rhs).ok_or("rhs 路径无法转换(缺少 MoveTo)")?;
 
-    // rhs 平移到 lhs 帧(flo 无直接平移 API:通过坐标缩放容器重建代价高,
-    // 直接在构造时偏移 —— 重新用 builder 建会丢曲线;改为对采样重建。
-    // 更简单:flo 运算对坐标系不敏感,把 rhs 用 points() 逐点平移重建)
+    // rhs 平移到 lhs 帧(逐子路径平移;flo 运算对坐标系不敏感)
     let shift = Coord2(rhs_origin.0 - lhs_origin.0, rhs_origin.1 - lhs_origin.1);
-    let shifted_rhs = shift_path(&flo_rhs, shift);
+    let shifted_rhs: Vec<SimpleBezierPath> = flo_rhs.iter().map(|p| shift_path(p, shift)).collect();
 
     let raw = match op.kernel() {
-        Kernel::Union => path_add::<SimpleBezierPath>(&vec![flo_lhs], &vec![shifted_rhs], 0.01),
-        Kernel::Subtract => path_sub::<SimpleBezierPath>(&vec![flo_lhs], &vec![shifted_rhs], 0.01),
-        Kernel::Intersect => {
-            path_intersect::<SimpleBezierPath>(&vec![flo_lhs], &vec![shifted_rhs], 0.01)
-        }
+        Kernel::Union => path_add::<SimpleBezierPath>(&flo_lhs, &shifted_rhs, 0.01),
+        Kernel::Subtract => path_sub::<SimpleBezierPath>(&flo_lhs, &shifted_rhs, 0.01),
+        Kernel::Intersect => path_intersect::<SimpleBezierPath>(&flo_lhs, &shifted_rhs, 0.01),
         // flo 0.8.1 无 path_xor:Xor = (A-B) ∪ (B-A)
         Kernel::Xor => {
-            let ab = path_sub::<SimpleBezierPath>(
-                &vec![flo_lhs.clone()],
-                &vec![shifted_rhs.clone()],
-                0.01,
-            );
-            let ba = path_sub::<SimpleBezierPath>(&vec![shifted_rhs], &vec![flo_lhs], 0.01);
+            let ab = path_sub::<SimpleBezierPath>(&flo_lhs.clone(), &shifted_rhs.clone(), 0.01);
+            let ba = path_sub::<SimpleBezierPath>(&shifted_rhs, &flo_lhs, 0.01);
             match (ab.is_empty(), ba.is_empty()) {
                 (true, true) => Vec::new(),
                 (true, false) => ba,

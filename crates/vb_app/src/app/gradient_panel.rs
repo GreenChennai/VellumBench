@@ -186,20 +186,6 @@ pub fn fallback_for(p: &GradProj, doc: &Document, angle: f64) -> Gradient {
 pub const CONIC_TOOLTIP: &str = "角度渐变(conic)计划于 v2 支持;当前提供线性与径向";
 
 impl VellumApp {
-    /// 主循环装配:渐变浮窗(^F9)。
-    pub(crate) fn show_gradient_panel(&mut self, ui: &mut egui::Ui) {
-        if !self.gradient_panel_open {
-            return;
-        }
-        let mut open = true;
-        egui::Window::new("渐变")
-            .open(&mut open)
-            .collapsible(false)
-            .default_width(324.0)
-            .show(ui.ctx(), |ui| self.gradient_panel_body(ui));
-        self.gradient_panel_open = open;
-    }
-
     /// 离散/参数编辑统一收口:成功入 undo,失败 toast(05-6「绝不沉默」)。
     fn grad_apply(&mut self, r: GradResult, discrete: bool) {
         match r {
@@ -273,7 +259,7 @@ impl VellumApp {
         true
     }
 
-    fn gradient_panel_body(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn gradient_panel_body(&mut self, ui: &mut egui::Ui) {
         let Some(sid) = self.selection.last().cloned() else {
             ui.label(caption(ui, "未选中对象 —— 选中一个盒对象后可编辑其渐变。"));
             return;

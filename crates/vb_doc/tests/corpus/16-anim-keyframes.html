@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>动效时间轴关键帧</title>
+  <style>
+
+.ab { width: 1440px; height: 900px; background-color: #ffffff; }
+.card { position: absolute; left: 80px; top: 120px; width: 320px; height: 200px; background-color: #1f6feb; animation: vb-anim-1c0002 1200ms linear 200ms 1 both; }
+.badge { position: absolute; left: 480px; top: 160px; width: 140px; height: 48px; background-color: #ff5a1f; animation: vb-anim-1c0003 900ms ease-out 0ms 1 both; }
+
+@keyframes vb-anim-1c0002 {
+  0% { transform: translateX(0px) translateY(0px); opacity: 1; animation-timing-function: linear; }
+  50% { transform: translateX(160px) translateY(-24px); opacity: 0.7; animation-timing-function: ease-in; }
+  100% { transform: translateX(320px) translateY(0px); opacity: 1; animation-timing-function: cubic-bezier(0.25, 0.1, 0.25, 1); }
+}
+
+@keyframes vb-anim-1c0003 {
+  0% { transform: scale(0.6); opacity: 0; animation-timing-function: ease-out; }
+  100% { transform: scale(1); opacity: 1; animation-timing-function: ease-out; }
+}
+
+  </style>
+</head>
+<body>
+  <section class="vb-artboard ab" data-vb-id="1c0001" data-vb-name="画板">
+    <div class="card" data-vb-id="1c0002" data-vb-name="卡片"></div>
+    <div class="badge" data-vb-id="1c0003" data-vb-name="徽章"></div>
+  </section>
+</body>
+</html>

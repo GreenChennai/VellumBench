@@ -15,6 +15,11 @@ use clap::{Parser, Subcommand};
 use vb_doc::import::import_project;
 use vb_kiln::{ExportRequest, Format};
 
+/// 告警类别计数 → JSON 对象文本(VB-5;键 = KilnWarning::kind 稳定键)。
+fn kinds_json(map: &std::collections::BTreeMap<String, usize>) -> String {
+    serde_json::to_string(map).unwrap_or_else(|_| "{}".into())
+}
+
 #[derive(Parser)]
 #[command(
     name = "Kiln-noGUI-cli",
@@ -356,7 +361,7 @@ fn run_export(
                     (out.width, out.height)
                 };
                 let json = format!(
-                    "{{'ok':true,'format':'{}','path':'{}','width':{:.0},'height':{:.0},'scale':{},'transparent':{},'warnings':{},'frames':1,'degraded':false,'degraded_artboard':{},'bytes':{},'encode_ms':{},'engine':'browser-dom','browser':'{}','vector':'dom','text_lines':{},'clip_demand':{},'raster_items':{}}}",
+                    "{{'ok':true,'format':'{}','path':'{}','width':{:.0},'height':{:.0},'scale':{},'transparent':{},'warnings':{},'degraded':{},'warnings_by_kind':{},'frames':1,'degraded_artboard':{},'bytes':{},'encode_ms':{},'engine':'browser-dom','browser':'{}','vector':'dom','text_lines':{},'clip_demand':{},'raster_items':{}}}",
                     fmt_str.to_uppercase(),
                     jesc(&output.display().to_string()),
                     ow,
@@ -364,6 +369,8 @@ fn run_export(
                     scale.clamp(1, 8),
                     transparent,
                     out.warnings.len(),
+                    out.report.degraded,
+                    kinds_json(&out.report.warnings_by_kind()),
                     lane_degraded_artboard,
                     out.bytes.len(),
                     0,
@@ -409,8 +416,13 @@ fn run_export(
                     eprintln!("{{\"ok\":false,\"error\":\"写文件失败:{e}\"}}");
                     return 4;
                 }
+                let anim_cov = out
+                    .anim_coverage
+                    .as_ref()
+                    .map(|c| c.to_json().to_string())
+                    .unwrap_or_else(|| "null".into());
                 let json = format!(
-                    "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':{},'degraded':false,'degraded_artboard':false,'bytes':{},'encode_ms':{},'engine':'browser-anim','browser':'{}'}}",
+                    "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':{},'degraded':false,'degraded_artboard':false,'anim_coverage':{},'bytes':{},'encode_ms':{},'engine':'browser-anim','browser':'{}'}}",
                     fmt_str.to_uppercase(),
                     jesc(&output.display().to_string()),
                     width,
@@ -419,6 +431,7 @@ fn run_export(
                     transparent,
                     out.warnings.len(),
                     out.frames,
+                    anim_cov,
                     out.bytes.len(),
                     t0.elapsed().as_millis(),
                     jesc(&out.browser),
@@ -450,6 +463,7 @@ fn run_export(
             scale: scale.clamp(1, 8),
             transparent,
             artboard: artboard_frame,
+            artboard_index: 0,
         };
         match vb_browser::export_source(&source, &req) {
             Ok(outcome) => {
@@ -578,9 +592,18 @@ fn run_export(
     let _ = logical_w;
     let (w, h) = raster_dims(&imported, ab, &req);
     let _ = width; // WPI 兼容:Kiln 以画板几何为准
+    let _ = &report; // 下述 JSON 多处借用
+
+    // VB-3/VB-5:动画覆盖矩阵与告警类别计数随结果输出(门禁可编程判定)
+    let anim_cov = report
+        .anim_coverage
+        .as_ref()
+        .map(|c| c.to_json().to_string())
+        .unwrap_or_else(|| "null".into());
+    let kinds = kinds_json(&report.warnings_by_kind());
 
     let json = format!(
-        "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':{},'degraded':{},'degraded_artboard':{},'bytes':{},'encode_ms':{},'engine':'kiln','engine_fallback':{}}}",
+        "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':{},'degraded':{},'warnings_by_kind':{},'anim_coverage':{},'degraded_artboard':{},'bytes':{},'encode_ms':{},'engine':'kiln','engine_fallback':{}}}",
         fmt_str.to_uppercase(),
         jesc(&output.display().to_string()),
         w,
@@ -590,6 +613,8 @@ fn run_export(
         report.warnings.len(),
         report.frame_count,
         report.degraded || lane_fallback_native,
+        kinds,
+        anim_cov,
         degraded_artboard,
         bytes.len(),
         t0.elapsed().as_millis(),
@@ -620,7 +645,11 @@ fn run_import(source: PathBuf, output: PathBuf) -> i32 {
         .unwrap_or_default();
     let assets = output.join("assets");
     let result = match ext.as_str() {
-        "pdf" | "ai" => vb_kiln::import_pdf::import_pdf_to_doc(&source, Some(&assets)),
+        // K2(05-11-2):pdfium 原生绑定仅桌面可用(wasm32 下不编译
+        // import_pdf,见 lib.rs);落到 other 分支得到明确报错,不 panic。
+        #[cfg(not(target_arch = "wasm32"))]
+        "pdf" | "ai" => vb_kiln::import_pdf::import_pdf_to_doc(&source, Some(&assets))
+            .map(|(doc, warns)| (doc, warns, Vec::<vb_kiln::KilnWarning>::new())),
         "svg" => vb_kiln::import_svg::import_svg_to_doc(&source, Some(&assets)),
         other => {
             eprintln!("{{\"ok\":false,\"error\":\"import 不支持 .{other}(支持 pdf/ai/svg)\"}}");
@@ -628,7 +657,7 @@ fn run_import(source: PathBuf, output: PathBuf) -> i32 {
         }
     };
     match result {
-        Ok((mut doc, mut warnings)) => {
+        Ok((mut doc, mut warnings, typed)) => {
             // 布局求值:导入文档全为绝对定位,此调用保持几何并回填画板尺寸
             let abs: Vec<vb_doc::model::NodeId> = doc.artboards.clone();
             for &ab in &abs {
@@ -640,10 +669,25 @@ fn run_import(source: PathBuf, output: PathBuf) -> i32 {
                         .iter()
                         .map(|p| jesc(&p.display().to_string().replace('\\', "/")))
                         .collect();
+                    // 05-6:跳过/近似清单必须用户可见 —— 随结果 JSON 一并输出
+                    // (此前 warnings 被静默丢弃,违反「导入不静默降级」)。
+                    let warns: Vec<String> = warnings
+                        .iter()
+                        .map(|w| format!("\"{}\"", jesc(w)))
+                        .collect();
+                    // VB-4:import 结果与 export 同构 —— 强类型告警聚合为
+                    // KilnReport,输出 degraded + warnings_by_kind(门禁可判定)。
+                    let mut report = vb_kiln::KilnReport::new();
+                    report.warnings = typed;
+                    report.degraded = report.warnings.iter().any(|w| w.is_degrading());
+                    let kinds = kinds_json(&report.warnings_by_kind());
                     println!(
-                        "{{\"ok\":true,\"files\":[\"{}\"],\"count\":{}}}",
+                        "{{\"ok\":true,\"files\":[\"{}\"],\"count\":{},\"warnings\":[{}],\"degraded\":{},\"warnings_by_kind\":{}}}",
                         list.join("\",\""),
-                        list.len()
+                        list.len(),
+                        warns.join(","),
+                        report.degraded,
+                        kinds
                     );
                     0
                 }

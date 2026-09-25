@@ -11,9 +11,41 @@ use vello::Scene;
 use crate::encode::{DrawItem, DrawKind, DrawList, FillDef};
 
 /// 把 DrawList 编码进 Scene(原点 = 画板左上角)。
+///
+/// 05-2(09-B 剪切蒙版):`overflow_clip` 沿编码序在**边界处**推入/弹出
+/// vello 图层(clip = 折叠后的裁剪矩形)—— 同一裁剪组的项共享一层,
+/// 画布与原生 GPU 链路获得与浏览器 overflow:hidden 一致的裁剪效果。
 pub fn encode_scene(scene: &mut Scene, list: &DrawList) {
+    let mut open_clip: Option<[f64; 4]> = None;
     for item in &list.items {
+        if item.overflow_clip != open_clip {
+            if open_clip.is_some() {
+                scene.pop_layer();
+            }
+            if let Some([x, y, w, h]) = item.overflow_clip {
+                if w > 0.0 && h > 0.0 {
+                    // 纯裁剪层(push_clip_layer):组内项被裁剪矩形截断
+                    scene.push_clip_layer(
+                        vello::peniko::Fill::NonZero,
+                        Affine::IDENTITY,
+                        &Rect::new(x, y, x + w, y + h),
+                    );
+                    open_clip = item.overflow_clip;
+                } else {
+                    // 空交集 = 全部裁掉:不推层,直接跳过绘制项
+                    open_clip = None;
+                    continue;
+                }
+            } else {
+                open_clip = None;
+            }
+        } else if open_clip.is_some_and(|[_, _, w, h]| w <= 0.0 || h <= 0.0) {
+            continue;
+        }
         draw_item(scene, item);
+    }
+    if open_clip.is_some() {
+        scene.pop_layer();
     }
 }
 

@@ -20,7 +20,11 @@ vb_layout = { workspace = true }
 vb_tools = { workspace = true }
 vb_render = { path = "../vb_render" }
 vb_export = { path = "../vb_export" }
+# 03-4 浏览器校对:复用车道 B 的原生 CDP 截图(无新增重依赖)
+vb_browser = { path = "../vb_browser" }
 vb_kiln = { path = "../vb_kiln" }
+# 09-J 插件宿主:外部子进程 + stdio JSON-RPC + manifest 权限(零新依赖)
+vb_plugin = { path = "../vb_plugin" }
 image = { workspace = true }
 anyhow = { workspace = true }
 eframe = { version = "0.35.0", features = ["wgpu"] }

@@ -1,0 +1,9 @@
+{
+  "id": "example-stats",
+  "name": "统计元素(示例)",
+  "version": "0.1.0",
+  "entry": "bin:example-stats-plugin",
+  "commands": ["edit.select_all"],
+  "panels": [{ "id": "stats", "title": "元素统计" }],
+  "exports": [{ "id": "png2x", "title": "导出 PNG @2x", "format": "png" }]
+}

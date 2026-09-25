@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 
 use crate::abprobe::viewport_plan;
 use crate::dompaint::{paintlist_to_document, DomPaintMeta};
+use crate::error::KilnWarning;
+use crate::report::KilnReport;
 use crate::{ExportRequest, Format};
 
 pub struct DomExportResult {
@@ -17,6 +19,35 @@ pub struct DomExportResult {
     pub meta: DomPaintMeta,
     pub warnings: Vec<String>,
     pub browser: String,
+    /// 结构化告警 + degraded(VB-1/VB-2/VB-5):AssetNotFound、
+    /// InlineSvgRasterized、UnsupportedPropertyDropped 等的强类型来源,
+    /// 供结果 JSON 输出 warnings_by_kind 与降级判定。
+    pub report: KilnReport,
+}
+
+/// VB-1/VB-2:采集/转换期降级计数 → 强类型告警(format/lane 在此定型)。
+/// - `not_found`:staticsrv 收集的 404 资源路径 → AssetNotFound;
+/// - `meta.inline_svg_rasterized` → InlineSvgRasterized{format};
+/// - `meta.transform3d_dropped` → UnsupportedPropertyDropped{prop:"transform"}。
+pub fn meta_warnings(meta: &DomPaintMeta, fmt: Format, not_found: &[String]) -> Vec<KilnWarning> {
+    let mut w = Vec::new();
+    for src in not_found {
+        w.push(KilnWarning::AssetNotFound { src: src.clone() });
+    }
+    if meta.inline_svg_rasterized > 0 {
+        w.push(KilnWarning::InlineSvgRasterized {
+            count: meta.inline_svg_rasterized as usize,
+            format: fmt.ext(),
+        });
+    }
+    if meta.transform3d_dropped > 0 {
+        w.push(KilnWarning::UnsupportedPropertyDropped {
+            prop: "transform".into(),
+            count: meta.transform3d_dropped as usize,
+            lane: "vector",
+        });
+    }
+    w
 }
 
 /// 单源导出(AI 默认走此路线;PDF 可选)。
@@ -145,7 +176,13 @@ pub fn export_dom(
     let export_res = crate::export_artboard(&dom.doc, dom.artboard, &req, Some(&mount_dir))
         .map_err(|e| format!("DOM 快照导出失败: {e}"));
     cleanup_intermediate(&dom.raster_dir);
-    let (bytes, report) = export_res?;
+    let (bytes, mut report) = export_res?;
+    // VB-1/VB-2:404 与采集期降级并入强类型报告(先于 message 汇总,
+    // 结果 JSON 的 warnings 计数因此包含它们)
+    report
+        .warnings
+        .extend(meta_warnings(&dom.meta, format, &srv.take_not_found()));
+    report.degraded |= report.warnings.iter().any(KilnWarning::is_degrading);
     warnings.extend(report.warnings.iter().map(|w| w.message()));
     warnings.extend(dom.meta.warnings.iter().cloned());
     Ok(DomExportResult {
@@ -155,6 +192,7 @@ pub fn export_dom(
         meta: dom.meta,
         warnings,
         browser: browser_ver,
+        report,
     })
 }
 
@@ -378,23 +416,30 @@ pub fn export_dom_pages(
     let mut page_pdfs: Vec<Vec<u8>> = Vec::new();
     let mut meta = DomPaintMeta::default();
     let mut warnings = Vec::new();
+    let mut typed: Vec<KilnWarning> = Vec::new();
     let mut browser = String::new();
     let mut w0 = 0f64;
     let mut h0 = 0f64;
     for src in sources {
         // 逐源走单页导出(浏览器会话各自起落;效率列 carry-forward)
         let r = export_dom_pdf_bytes(src, transparent, width, height)?;
-        meta.line_count += r.0;
-        meta.clip_demand += r.1;
-        meta.raster_count += r.2;
-        warnings.extend(r.3);
-        browser = r.4;
-        w0 = w0.max(r.5);
-        h0 = h0.max(r.6);
-        page_pdfs.push(r.7);
+        meta.line_count += r.meta.line_count;
+        meta.clip_demand += r.meta.clip_demand;
+        meta.raster_count += r.meta.raster_count;
+        meta.inline_svg_rasterized += r.meta.inline_svg_rasterized;
+        meta.transform3d_dropped += r.meta.transform3d_dropped;
+        warnings.extend(r.warnings);
+        typed.extend(r.typed);
+        browser = r.browser;
+        w0 = w0.max(r.w);
+        h0 = h0.max(r.h);
+        page_pdfs.push(r.bytes);
     }
     let bytes = crate::pdf::merge_pdf_pages_head(&page_pdfs, crate::pdf::AI_HEAD)
         .map_err(|e| format!("多页合并失败: {e}"))?;
+    let mut report = KilnReport::new();
+    report.warnings = typed;
+    report.degraded = report.warnings.iter().any(KilnWarning::is_degrading);
     Ok(DomExportResult {
         bytes,
         width: w0,
@@ -402,18 +447,29 @@ pub fn export_dom_pages(
         meta,
         warnings,
         browser,
+        report,
     })
 }
 
-/// 单源 → (行数, clip, raster, 警告, 浏览器, w, h, PDF 字节)。
-/// 单源 → (行数, clip, raster, 警告, 浏览器, w, h, PDF 字节)。
-#[allow(clippy::type_complexity)] // 8 元组为内部管道中间态,出口处即拆解
+/// 单源浏览器采集 → 单页 PDF 字节(多源导出的内层;告警分强弱类型两路)。
+struct DomPageOut {
+    meta: DomPaintMeta,
+    /// 文本告警(浏览器采集 + 转换层,不可归类的自由文本)。
+    warnings: Vec<String>,
+    /// 强类型告警(VB-1/VB-2:404、内联 SVG 栅格化、3D transform 丢弃)。
+    typed: Vec<KilnWarning>,
+    browser: String,
+    w: f64,
+    h: f64,
+    bytes: Vec<u8>,
+}
+
 fn export_dom_pdf_bytes(
     src: &Path,
     transparent: bool,
     width: u32,
     height: u32,
-) -> Result<(u32, u32, u32, Vec<String>, String, f64, f64, Vec<u8>), String> {
+) -> Result<DomPageOut, String> {
     let (mount_dir, html_path) = resolve_source(src)?;
     let srv = vb_browser::staticsrv::StaticServer::start(&mount_dir)?;
     let url = if src.is_dir() {
@@ -479,19 +535,21 @@ fn export_dom_pdf_bytes(
     let export_res = crate::export_artboard(&dom.doc, dom.artboard, &req, Some(&mount_dir))
         .map_err(|e| format!("DOM 快照导出失败: {e}"));
     cleanup_intermediate(&dom.raster_dir);
-    let (bytes, report) = export_res?;
-    warnings.extend(report.warnings.iter().map(|w| w.message()));
+    let (bytes, mut report) = export_res?;
+    let typed = meta_warnings(&dom.meta, Format::Pdf, &srv.take_not_found());
+    report.warnings.extend(typed.iter().cloned());
+    report.degraded |= report.warnings.iter().any(KilnWarning::is_degrading);
+    warnings.extend(report.warnings.iter().map(|wm| wm.message()));
     warnings.extend(dom.meta.warnings.iter().cloned());
-    Ok((
-        dom.meta.line_count,
-        dom.meta.clip_demand,
-        dom.meta.raster_count,
+    Ok(DomPageOut {
+        meta: dom.meta,
         warnings,
-        browser_ver,
+        typed,
+        browser: browser_ver,
         w,
         h,
         bytes,
-    ))
+    })
 }
 
 // AI 识别注释现由写入器在头部之内落笔(`pdf::AI_HEAD`):事后插入会让

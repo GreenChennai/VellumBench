@@ -31,11 +31,15 @@ impl VellumApp {
                     .iter()
                     .filter(|c| matches!(c.status, CapStatus::Partial(_)))
                     .count();
-                let n_planned = CAPABILITIES.len() - n_done - n_partial;
+                let n_dropped = CAPABILITIES
+                    .iter()
+                    .filter(|c| matches!(c.status, CapStatus::Dropped(_)))
+                    .count();
+                let n_planned = CAPABILITIES.len() - n_done - n_partial - n_dropped;
                 ui.label(caption(
                     ui,
                     &format!(
-                        "共 {} 条:已落地 {n_done} · 部分 {n_partial} · 计划 {n_planned}。\
+                        "共 {} 条:已落地 {n_done} · 部分 {n_partial} · 计划 {n_planned} · 不做 {n_dropped}。\
                          本表是「还有哪些没做」的单一真相。",
                         CAPABILITIES.len()
                     ),
@@ -48,6 +52,8 @@ impl VellumApp {
                                 CapStatus::Done => t.text,
                                 CapStatus::Partial(_) => t.accent,
                                 CapStatus::Planned(_) => t.text_3,
+                                // 05-1 三态收敛:「不做」要一眼可辨且带理由
+                                CapStatus::Dropped(_) => t.text_3,
                             };
                             ui.label(
                                 egui::RichText::new(format!("[{}]", c.status.badge()))

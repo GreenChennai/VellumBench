@@ -391,20 +391,7 @@ fn parent_abs_origin(doc: &Document, id: vb_doc::model::NodeId) -> (f64, f64) {
 // ─────────────────────────── 面板渲染 ───────────────────────────
 
 impl VellumApp {
-    pub(crate) fn show_transform_panel(&mut self, ui: &mut egui::Ui) {
-        if !self.transform_panel_open {
-            return;
-        }
-        let mut open = true;
-        egui::Window::new("变换")
-            .open(&mut open)
-            .collapsible(false)
-            .default_width(268.0)
-            .show(ui.ctx(), |ui| self.transform_panel_body(ui));
-        self.transform_panel_open = open;
-    }
-
-    fn transform_panel_body(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn transform_panel_body(&mut self, ui: &mut egui::Ui) {
         let Some(p) = project(&self.doc, &self.selection) else {
             ui.label(caption(ui, "未选中对象 —— 选中后可数值化变换。"));
             return;

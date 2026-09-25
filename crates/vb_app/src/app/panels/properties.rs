@@ -19,7 +19,8 @@
 use egui::Color32;
 use vb_doc::commands::Command;
 use vb_doc::model::NodeKind;
-use vb_ui::components::{caption, ColorField, NumField, SectionHeader};
+use vb_ui::components::{caption, icon_button, ColorField, NumField, SectionHeader};
+use vb_ui::icons::Name;
 
 use crate::app::control_panel::{
     attr_cmds, combine, geom_field_cmds, rename_cmds, rotation_cmds, rotation_deg_of,
@@ -50,6 +51,39 @@ impl VellumApp {
         let sid = self.selection.last().cloned();
         if let Some(sid) = sid {
             if let Some(nid) = self.doc.find_by_sid(&sid) {
+                // ── 05-5:样式编辑状态(正常 / hover)与断点覆盖模式 ──
+                // 断点态优先:整面板切换为「断点覆盖编辑」最小闭环
+                // (诚实闭环:其余属性只读并给出去向,不放假控件)。
+                if let Some(bp) = self.active_breakpoint {
+                    self.breakpoint_edit_section(ui, &sid, bp);
+                    return;
+                }
+                // 状态下拉(正常 / hover):hover 态整面板切换为伪类最小闭环
+                {
+                    let mut st_sel = self.style_state;
+                    ui.horizontal(|ui| {
+                        ui.label(crate::i18n::t("state.label"));
+                        if ui
+                            .selectable_label(st_sel == 0, crate::i18n::t("state.normal"))
+                            .clicked()
+                        {
+                            st_sel = 0;
+                        }
+                        if ui
+                            .selectable_label(st_sel == 1, crate::i18n::t("state.hover"))
+                            .clicked()
+                        {
+                            st_sel = 1;
+                        }
+                    });
+                    if st_sel != self.style_state {
+                        self.toggle_style_state();
+                    }
+                    if self.style_state == 1 {
+                        self.hover_edit_section(ui, &sid);
+                        return;
+                    }
+                }
                 let sids = self.selection.clone();
                 let (mut hidden, mut locked) = {
                     let n = self.doc.nodes.get(nid).unwrap();
@@ -70,6 +104,67 @@ impl VellumApp {
                 let is_text =
                     matches!(self.doc.nodes.get(nid).unwrap().kind, NodeKind::Text { .. });
                 let (ab_w, ab_h) = self.active_artboard_size();
+
+                // ── 05-8 符号 / 组件(09-H):实例身份横幅 ──
+                // 选中实例(或实例内部节点)时显示「组件实例:<名>」;
+                // 「跳到主件」把选区切到主件原型根(定义区不在画布上,
+                // 属性面板即主件编辑台),并提示同步语义。
+                if let Some(root) = vb_doc::symbol::instance_root_of(&self.doc, nid) {
+                    let inst = self.doc.nodes.get(root).unwrap();
+                    let sym_name = inst
+                        .attrs
+                        .get(vb_doc::symbol::ATTR_SYMBOL)
+                        .cloned()
+                        .unwrap_or_default();
+                    let overrides = inst
+                        .attrs
+                        .get(vb_doc::symbol::ATTR_OVERRIDES)
+                        .cloned()
+                        .unwrap_or_default();
+                    let ref_sid = inst
+                        .attrs
+                        .get(vb_doc::symbol::ATTR_SYMBOL_REF)
+                        .cloned()
+                        .unwrap_or_default();
+                    let is_root = root == nid;
+                    ui.horizontal_wrapped(|ui| {
+                        ui.strong(format!("组件实例:{sym_name}"));
+                        if !overrides.is_empty() {
+                            ui.small(format!("(覆盖 {})", overrides));
+                        }
+                        if ui.small_button("跳到主件").clicked() {
+                            if let Some(cid) = self.doc.find_by_sid(&ref_sid) {
+                                if let Some(pid) =
+                                    self.doc.nodes.get(cid).unwrap().children.first().copied()
+                                {
+                                    self.selection = vec![self
+                                        .doc
+                                        .nodes
+                                        .get(pid)
+                                        .unwrap()
+                                        .sid
+                                        .as_str()
+                                        .to_string()];
+                                    self.say(
+                                        "已选中主件原型(定义区不在画布;编辑主件将同步全部实例)",
+                                    );
+                                }
+                            }
+                        }
+                    });
+                    if !is_root {
+                        ui.small("(内部编辑将登记为覆盖,主件同步时保留)");
+                    }
+                    ui.separator();
+                } else if let Some(c) = vb_doc::symbol::def_container_of(&self.doc, nid) {
+                    // 选中主件定义区节点:显示主件身份(编辑此处将同步全部实例)
+                    let main_name = self.doc.nodes.get(c).unwrap().name.clone();
+                    ui.horizontal_wrapped(|ui| {
+                        ui.strong(format!("主件:{main_name}"));
+                        ui.small("(编辑主件将同步全部实例;定义区不随页面导出为可见内容)");
+                    });
+                    ui.separator();
+                }
 
                 // 顶部「标签」行(design/03 §四 ASCII:分组外)
                 const TAGS: [&str; 16] = [
@@ -559,8 +654,9 @@ impl VellumApp {
                         .unwrap_or_default();
                     ui.horizontal(|ui| {
                         ui.label("链接");
+                        let h = vb_ui::theme::row_height(ui.ctx());
                         if ui
-                            .add_sized([160.0, 18.0], egui::TextEdit::singleline(&mut href))
+                            .add_sized([160.0, h], egui::TextEdit::singleline(&mut href))
                             .lost_focus()
                             && href.trim() != href_value(&attrs, "href")
                         {
@@ -602,8 +698,9 @@ impl VellumApp {
                         let mut val = href_value(&attrs, key);
                         ui.horizontal(|ui| {
                             ui.label(label);
+                            let h = vb_ui::theme::row_height(ui.ctx());
                             if ui
-                                .add_sized([160.0, 18.0], egui::TextEdit::singleline(&mut val))
+                                .add_sized([160.0, h], egui::TextEdit::singleline(&mut val))
                                 .lost_focus()
                                 && val != href_value(&attrs, key)
                             {
@@ -621,8 +718,9 @@ impl VellumApp {
                     let mut nm = name.clone();
                     ui.horizontal(|ui| {
                         ui.label("名称");
+                        let h = vb_ui::theme::row_height(ui.ctx());
                         if ui
-                            .add_sized([160.0, 18.0], egui::TextEdit::singleline(&mut nm))
+                            .add_sized([160.0, h], egui::TextEdit::singleline(&mut nm))
                             .lost_focus()
                             && !nm.trim().is_empty()
                             && nm.trim() != name
@@ -693,15 +791,56 @@ impl VellumApp {
                 ui.separator();
             }
         } else {
-            // --- 空态(02-6-6):不消失,给引导文案 ---
-            ui.label("未选中对象");
-            ui.add_space(4.0);
-            ui.label(caption(ui, "V 点选 / 拖框选 · M 画矩形 · L 画椭圆"));
+            // --- 空态(02-6-6;04-3-3 重制)---
+            // 实测 crop-right.png(P1-⑦):三行长灰文案占满 280px 窄坞,信息密度
+            // 极低。改为「一句短话 + 常用动作入口」:教学细节移进悬停提示,
+            // 垂直空间留给真正能点的动作(全部走既有命令,无假控件)。
+            ui.strong("未选中对象");
             ui.label(caption(
                 ui,
-                "选中后按 变换/外观/布局/交互/无障碍/导出 分组编辑;",
+                "点选画布对象,或从下面开始。",
+            ))
+            .on_hover_text(
+                "选中后按 变换/外观/布局/文本/交互/无障碍/导出 分组编辑;数值框支持拖标签改值与表达式(如 320/2、50%)。",
+            );
+            ui.add_space(vb_ui::theme::space::S3);
+            ui.label(caption(ui, "常用"));
+            ui.horizontal_wrapped(|ui| {
+                for (id, icon, tip) in [
+                    ("tool.select", Name::ToolSelect, "选择工具(V):点选 / 拖框选"),
+                    ("tool.rect", Name::ToolRect, "矩形工具(M):拖框新建"),
+                    ("tool.ellipse", Name::ToolEllipse, "椭圆工具(L):拖框新建"),
+                    (
+                        "tool.text",
+                        Name::ToolText,
+                        "文字工具(T):单击点文本 / 拖框区域文本",
+                    ),
+                ] {
+                    if icon_button(ui, icon, tip).clicked() {
+                        self.run_command(id, false, false);
+                    }
+                }
+            });
+            ui.horizontal_wrapped(|ui| {
+                for (id, icon, tip) in [
+                    ("view.fit", Name::Expanded, "缩放到全部画板可见(Ctrl+0)"),
+                    ("window.tab_layers", Name::KindLayer, "切换到图层面板"),
+                    (
+                        "window.tab_artboards",
+                        Name::ToolArtboard,
+                        "切换到画板面板(可新建画板)",
+                    ),
+                ] {
+                    if icon_button(ui, icon, tip).clicked() {
+                        self.run_command(id, false, false);
+                    }
+                }
+            });
+            ui.add_space(vb_ui::theme::space::S3);
+            ui.label(caption(
+                ui,
+                "提示:V 点选 · M 矩形 · L 椭圆 · Ctrl+0 适合窗口。",
             ));
-            ui.label(caption(ui, "数值框支持拖标签改值与表达式(如 320/2、50%)。"));
             ui.separator();
         }
     }

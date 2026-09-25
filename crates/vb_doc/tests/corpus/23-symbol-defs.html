@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>符号组件</title>
+  <style>
+    .page { position: relative; width: 800px; height: 600px; }
+    .sym-card { position: absolute; width: 220px; height: 90px; background-color: #ffffff; border: 1px solid #222222; border-radius: 8px; }
+    .sym-title { position: absolute; left: 16px; top: 12px; width: 180px; height: 28px; font-size: 18px; font-weight: 700; color: #222222; }
+    .sym-sub { position: absolute; left: 16px; top: 48px; width: 180px; height: 20px; font-size: 13px; color: #666666; }
+  </style>
+</head>
+<body>
+  <section class="vb-artboard page" data-vb-id="p0a11" data-vb-name="页面">
+    <div class="sym-card" style="left: 40px; top: 40px" data-vb-id="i1b22" data-vb-name="卡片 1" data-vb-symbol="卡片" data-vb-symbol-ref="sy100">
+      <p class="sym-title" data-vb-id="i1c33" data-vb-name="标题">标准标题</p>
+      <p class="sym-sub" data-vb-id="i1d44" data-vb-name="副标题">标准副文案</p>
+    </div>
+    <div class="sym-card" style="left: 300px; top: 40px" data-vb-id="i2b22" data-vb-name="卡片 2" data-vb-symbol="卡片" data-vb-symbol-ref="sy100" data-vb-symbol-overrides='["0:text"]'>
+      <p class="sym-title" data-vb-id="i2c33" data-vb-name="标题">特例标题</p>
+      <p class="sym-sub" data-vb-id="i2d44" data-vb-name="副标题">标准副文案</p>
+    </div>
+  </section>
+  <div class="vb-symbol-defs" hidden data-vb-id="sy100" data-vb-name="卡片">
+    <div class="sym-card" style="left: 0px; top: 0px" data-vb-id="sy110" data-vb-name="卡片">
+      <p class="sym-title" data-vb-id="sy120" data-vb-name="标题">标准标题</p>
+      <p class="sym-sub" data-vb-id="sy130" data-vb-name="副标题">标准副文案</p>
+    </div>
+  </div>
+</body>
+</html>

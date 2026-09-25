@@ -26,7 +26,8 @@ impl FormatWriter for Mp4Writer {
         out.extend_from_slice(&bytes);
         let mut r = crate::writer::report_with(warnings, t, bytes.len());
         r.frame_count = ctx.frames.len();
-        r.degraded = degraded;
+        // report_with 已按 VB-2 丢弃告警置 degraded;此处只叠加 ffmpeg 缺失
+        r.degraded |= degraded;
         Ok(r)
     }
 }

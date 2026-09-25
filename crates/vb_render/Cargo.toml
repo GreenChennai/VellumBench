@@ -6,6 +6,16 @@ license-file.workspace = true
 repository.workspace = true
 description = "Vellum Bench 渲染:绘制指令编码 + CPU 光栅(CLI/CI)+ Vello GPU(画布)"
 
+[features]
+default = ["fontconfig-dlopen"]
+# K1 多平台(05-11-1,台账 09-K):Linux 上 fontique 的 fontconfig 绑定默认走
+# dlopen(运行时加载 libfontconfig.so.1),与 winit 在 Linux 上 dlopen X11 的
+# 方式一致 —— 构建期不再要求 pkg-config + fontconfig sysroot,交叉编译
+# (如 Windows 上 `cargo check --target x86_64-unknown-linux-gnu`)与极简
+# 容器内构建都能通过;任何 Linux 桌面发行版运行时都自带 libfontconfig。
+# 该特性在 Windows/macOS 目标上是空操作(依赖本身仅 Linux/FreeBSD 生效)。
+fontconfig-dlopen = ["fontique/fontconfig-dlopen"]
+
 [dependencies]
 fontique = "0.11.1"
 image.workspace = true

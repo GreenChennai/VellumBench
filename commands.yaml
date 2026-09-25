@@ -1,10 +1,10 @@
-# Vellum Bench 命令表
+﻿# Vellum Bench 命令表
 # 单一真相:菜单 / 快捷键 / 面板 / Agent CLI 共用。
 # 本文件由注册表(cmds.yaml 门禁测试)校验同步;ID/label/键位以
 # vb_app::shortcuts 为准,undoable / expose_to_agent 为人工策展列。
 # expose_to_agent: 可通过 `vellum-cli patch {"op":"run","command":...}` 执行
 - id: file.new
-  label: 新建文档
+  label: 新建项目…(对话框,新窗口打开)
   keys: { win: "Ctrl+N" }
   undoable: false
   expose_to_agent: true
@@ -298,6 +298,71 @@
   keys: { win: "Y" }
   undoable: false
   expose_to_agent: false
+- id: tool.rotate
+  label: 旋转工具(单击设中心,拖拽旋转;Shift 15°)
+  keys: { win: "R" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.mirror
+  label: 镜像工具(单击设中心,拖动定镜像轴)
+  keys: { win: "O" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.scale
+  label: 缩放工具(单击设中心,拖拽缩放;Shift 等比)
+  keys: { win: "S" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.free_transform
+  label: 自由变换工具(拖选区四角,对角锚定)
+  keys: { win: "E" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.pencil
+  label: 铅笔工具(自由绘制,按保真度抽稀为路径)
+  keys: { win: "N" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.curvature
+  label: 曲率工具(点击矢量路径自动拟合平滑控制点)
+  keys: { win: "Shift+`" }
+  undoable: false
+  expose_to_agent: false
+- id: edit.pencil_fidelity
+  label: 设置 → 铅笔保真度(档位循环 1–16px)
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.slice
+  label: 切片工具(Shift+K 拖框建立 data-vb-slice 切片)
+  keys: { win: "Shift+K" }
+  undoable: false
+  expose_to_agent: false
+- id: object.slice_from_selection
+  label: 切片 → 从选区建立
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: true
+- id: file.place_image
+  label: 置入图像…(选文件入 assets/,选中设 src 或新建 img)
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: true
+- id: object.replace_image
+  label: 替换图像…(保持几何,SetImageSrc 可撤销)
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: true
+- id: view.pixel_preview
+  label: 像素预览(缩放 ≥8× 对齐物理像素网格)
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: tool.measure
+  label: 度量工具(拖动量距,单击标注对象尺寸)
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
 - id: canvas.cancel
   label: 取消 / 清空选区
   keys: { win: "Esc" }
@@ -345,7 +410,7 @@
   expose_to_agent: false
 - id: view.guides_from_selection
   label: 从选区生成参考线
-  keys: { win: "" }
+  keys: { win: "Ctrl+5" }
   undoable: false
   expose_to_agent: false
 - id: app.command_palette
@@ -444,7 +509,7 @@
   undoable: true
   expose_to_agent: false
 - id: file.close
-  label: 关闭文档
+  label: 关闭窗口(文档)
   keys: { win: "" }
   undoable: false
   expose_to_agent: true
@@ -453,30 +518,40 @@
   keys: { win: "" }
   undoable: false
   expose_to_agent: true
+- id: file.doc_settings
+  label: 文档设置…(项目名/输出模式/网格与参考线,应用后生效)
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: true
+- id: file.resolve_conflict
+  label: 对比并合并…(外部改动三方对比:磁盘/内存/自动快照)
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: true
 - id: file.print
-  label: 打印…
+  label: 打印…(当前画板 → 临时 PDF → 系统程序打开)
   keys: { win: "" }
   undoable: false
   expose_to_agent: true
 - id: edit.preferences
-  label: 首选项…
+  label: 首选项…(九分类;改动即时生效)
   keys: { win: "" }
   undoable: false
   expose_to_agent: false
 - id: edit.keyboard_shortcuts
-  label: 键盘快捷键…
+  label: 键盘快捷键…(键位方案编辑器,方案存 keymap.json)
   keys: { win: "" }
   undoable: false
   expose_to_agent: false
 - id: object.clip_mask
   label: 建立剪切蒙版
-  keys: { win: "" }
-  undoable: false
+  keys: { win: "Ctrl+7" }
+  undoable: true
   expose_to_agent: true
 - id: object.release_clip_mask
   label: 释放剪切蒙版
-  keys: { win: "" }
-  undoable: false
+  keys: { win: "Ctrl+Alt+7" }
+  undoable: true
   expose_to_agent: true
 - id: object.outline_stroke
   label: 轮廓化描边
@@ -499,7 +574,7 @@
   undoable: false
   expose_to_agent: false
 - id: text.find_font
-  label: 查找字体…
+  label: 查找字体…(缺失字体检测与替换,可撤销)
   keys: { win: "" }
   undoable: false
   expose_to_agent: false
@@ -619,7 +694,7 @@
   undoable: false
   expose_to_agent: false
 - id: window.new_workspace
-  label: 新建工作区…
+  label: 新建工作区…(保存当前布局为命名预设,可切换/删除)
   keys: { win: "" }
   undoable: false
   expose_to_agent: false
@@ -703,6 +778,21 @@
   keys: { win: "" }
   undoable: true
   expose_to_agent: true
+- id: path.divide
+  label: 路径查找器:分割
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: true
+- id: path.trim
+  label: 路径查找器:修边
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: true
+- id: path.outline
+  label: 路径查找器:轮廓
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: true
 - id: view.toggle_transform_panel
   label: 变换面板显隐
   keys: { win: "Shift+F8" }
@@ -738,4 +828,198 @@
   keys: { win: "" }
   undoable: true
   expose_to_agent: true
-
+- id: file.home
+  label: 主页…(打开主页窗口)
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: true
+- id: home.new_project
+  label: 主页:新建项目
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: home.open_project
+  label: 主页:打开项目…
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: home.new_from_template
+  label: 主页:从模板新建
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: home.open_selected
+  label: 主页:打开选中的最近项目
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: home.remove_selected
+  label: 主页:移除选中的最近记录
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: home.select_next
+  label: 主页:选中下一项
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: home.select_prev
+  label: 主页:选中上一项
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: home.pin_selected
+  label: 主页:固定/取消固定选中项
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: home.search
+  label: 主页:搜索过滤最近项目
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: home.restore_session
+  label: 主页:恢复上次会话
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: home.capabilities
+  label: 主页:能力台账
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: view.developer_stats
+  label: 开发者统计(调试数据默认隐藏)
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: view.toggle_hints
+  label: 提示条(操作提示/入门教学,可关)
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: view.toggle_motion
+  label: 界面动效(淡入/过渡,可关;首选项「常规」同款开关)
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: view.ui_scale_up
+  label: 界面缩放:增大一档
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: view.ui_scale_down
+  label: 界面缩放:减小一档
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: view.ui_scale_reset
+  label: 界面缩放:复位 100%
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: edit.toggle_unsupported_tools
+  label: 工具 → 显示未支持工具
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: edit.autosave_interval
+  label: 设置 → 自动保存间隔(关/30/60/120/300 档位循环)
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: view.toggle_history_panel
+  label: 历史面板显隐(撤销历史可跳转)
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: file.health_check
+  label: 项目健康检查…
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: true
+- id: view.toggle_assets_panel
+  label: 资产面板显隐(assets/ 清单 + 引用关系 + 定位/替换)
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: view.breakpoint_cycle
+  label: 断点预览:循环切换(默认 → 各断点)
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: true
+- id: style.state_toggle
+  label: 属性面板状态:正常 / 悬停(hover)
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: true
+- id: object.symbol_create
+  label: 创建组件(选中提升为主件,当前位置变为首个实例)
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: true
+- id: object.symbol_detach
+  label: 分离实例(实例转普通元素,不再随主件同步)
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: true
+- id: object.symbol_reset_overrides
+  label: 重置覆盖(实例还原为主件当前内容)
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: true
+- id: object.symbol_swap_main
+  label: 替换主件定义(以实例当前内容为新定义并同步其余实例)
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: true
+- id: object.symbol_select_instances
+  label: 选择所有实例(同主件)
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: true
+- id: view.toggle_timeline_panel
+  label: 时间轴面板(关键帧轨道 + 播放预览)
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: true
+- id: anim.play_toggle
+  label: 动画预览:播放 / 暂停
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: true
+- id: anim.stop
+  label: 动画预览:停止并回零
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: true
+- id: anim.loop_toggle
+  label: 动画预览:循环开 / 关
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: true
+- id: anim.keyframe_add
+  label: 在播放头处加关键帧(选中对象;值取静态值)
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: true
+- id: anim.keyframe_delete
+  label: 删除选中的关键帧
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: true
+- id: anim.clear
+  label: 清除对象动画(移除 @keyframes 与 animation)
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: true
+- id: edit.plugins
+  label: 插件管理…(安装/授权/启停/日志/重启;插件 = 外部进程,默认零权限)
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
+- id: view.toggle_plugins_panel
+  label: 插件面板显隐(Running 插件的注册面板,受控 UI)
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false

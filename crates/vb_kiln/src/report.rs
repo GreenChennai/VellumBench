@@ -1,5 +1,7 @@
 ﻿//! KilnReport:每次导出的告警与指标(对齐并超越 WPI 可观测性)。
 
+use std::collections::BTreeMap;
+
 #[derive(Debug, Clone, Default)]
 pub struct KilnReport {
     /// 告警(不中断导出;错误见 KilnError)。
@@ -10,10 +12,12 @@ pub struct KilnReport {
     pub bytes: usize,
     /// 帧数(动画格式)。
     pub frame_count: usize,
-    /// 是否降级(MP4→GIF 等)。
+    /// 是否降级(MP4→GIF、原语丢弃等;输出与源不等价)。
     pub degraded: bool,
     /// 渲染引擎标识(溯源)。
     pub engine: &'static str,
+    /// 动画覆盖矩阵(VB-3;无动画声明时为 None)。
+    pub anim_coverage: Option<crate::anim::AnimCoverage>,
 }
 
 impl KilnReport {
@@ -26,6 +30,22 @@ impl KilnReport {
 
     pub fn warning_lines(&self) -> Vec<String> {
         self.warnings.iter().map(|w| w.message()).collect()
+    }
+
+    /// 按类别聚合告警计数(VB-5;派生值恒与 warnings 一致,无失步可能)。
+    /// 键为 [`KilnWarning::kind`] 的稳定小写蛇形键,供下游门禁:
+    /// 如「unsupported_dropped > 0 则拒绝交付矢量稿」。
+    pub fn warnings_by_kind(&self) -> BTreeMap<String, usize> {
+        let mut out = BTreeMap::new();
+        for w in &self.warnings {
+            *out.entry(w.kind().to_string()).or_insert(0) += 1;
+        }
+        out
+    }
+
+    /// 单类别告警条数(0 = 无)。
+    pub fn count_of(&self, kind: &str) -> usize {
+        self.warnings_by_kind().get(kind).copied().unwrap_or(0)
     }
 
     /// 单行摘要(状态栏/日志)。

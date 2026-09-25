@@ -112,12 +112,15 @@ pub fn report_with(
     let mut r = KilnReport::new();
     warnings.extend(std::mem::take(&mut r.warnings));
     r.warnings = warnings;
+    // VB-2/ADR-0046:输出与源不等价的告警(原语丢弃/栅格化/形状退化)
+    // 命中即置 degraded,不许静默。
+    r.degraded = r.warnings.iter().any(KilnWarning::is_degrading);
     r.encode_ms = started.elapsed().as_millis() as u64;
     r.bytes = bytes_written;
     r
 }
 
-/// 公共告警:静态画布动画、JPG 透明强制。
+/// 公共告警:静态画布动画、JPG 透明强制、矢量写出器的原语丢弃(VB-2)。
 pub fn common_warnings(ctx: &ExportContext, fmt: Format) -> Vec<KilnWarning> {
     let mut w = ctx.build_warnings.clone();
     if matches!(fmt, Format::Gif | Format::Mp4) && ctx.is_static() {
@@ -125,6 +128,19 @@ pub fn common_warnings(ctx: &ExportContext, fmt: Format) -> Vec<KilnWarning> {
     }
     if matches!(fmt, Format::Jpg) && ctx.requested_transparent {
         w.push(KilnWarning::JpgOpaqueForced);
+    }
+    // VB-2:SVG/EPS/Ai/PPTX 写出器不表达 clip-path(编码期解析出的
+    // ClipDef 在这些写出器中无发射分支,静默丢失)→ 交付前聚合告警。
+    // PDF 有完整 clip 发射(emit_clip_path),不在此列。
+    if matches!(fmt, Format::Svg | Format::Eps | Format::Ai | Format::Pptx) {
+        let n = ctx.list.items.iter().filter(|it| it.clip.is_some()).count();
+        if n > 0 {
+            w.push(KilnWarning::UnsupportedPropertyDropped {
+                prop: "clip-path".into(),
+                count: n,
+                lane: "vector",
+            });
+        }
     }
     w
 }

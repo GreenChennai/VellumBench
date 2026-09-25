@@ -245,6 +245,10 @@ pub struct DrawItem {
     pub image: Option<BitmapData>,
     /// clip-path(L2;动画逐帧可变)。
     pub clip: Option<ClipDef>,
+    /// overflow 子树裁剪(05-2 / 09-B 剪切蒙版):祖先 `overflow:hidden`
+    /// 容器求交后的裁剪矩形(画板本地 [x,y,w,h])。嵌套容器按交集折叠,
+    /// 渲染端只需单层裁剪。
+    pub overflow_clip: Option<[f64; 4]>,
     /// filter(L3;动画逐帧可变)。
     pub filter: Option<FilterDef>,
 }
@@ -712,6 +716,7 @@ pub fn encode_artboard_opts(
             path: None,
             image: None,
             clip: None,
+            overflow_clip: None,
             filter: None,
         });
     }
@@ -728,7 +733,7 @@ pub fn encode_artboard_opts(
             }
             _ => 0,
         };
-        encode_node(doc, c, 0.0, 0.0, 1.0, layer, &mut list);
+        encode_node(doc, c, 0.0, 0.0, 1.0, layer, None, &mut list);
     }
     Ok(list)
 }
@@ -747,10 +752,11 @@ pub fn encode_subtree(doc: &Document, root: NodeId) -> Result<DrawList, VbError>
         background: [0.0, 0.0, 0.0, 0.0],
         items: Vec::new(),
     };
-    encode_node(doc, root, 0.0, 0.0, 1.0, 0, &mut list);
+    encode_node(doc, root, 0.0, 0.0, 1.0, 0, None, &mut list);
     Ok(list)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn encode_node(
     doc: &Document,
     id: NodeId,
@@ -758,6 +764,7 @@ fn encode_node(
     off_y: f64,
     opacity: f32,
     layer: u32,
+    overflow_clip: Option<[f64; 4]>,
     list: &mut DrawList,
 ) {
     let Some(node) = doc.nodes.get(id) else {
@@ -890,12 +897,36 @@ fn encode_node(
             clip: node
                 .style_get("clip-path")
                 .and_then(|v| parse_clip_path(v, w, h)),
+            overflow_clip,
             filter: node.style_get("filter").and_then(parse_filter),
         });
     }
+    // overflow 子树裁剪(05-2 / 09-B 剪切蒙版):容器声明 `overflow:hidden`
+    // 时,子孙项携带「本容器矩形 ∩ 祖先裁剪」的折叠矩形 —— CSS 语义里
+    // overflow 裁剪的是**子孙**,容器自身背景不受影响。
+    let child_clip = if node
+        .style_get("overflow")
+        .map(|v| v.trim() == "hidden")
+        .unwrap_or(false)
+        && !node.children.is_empty()
+    {
+        let own = [x, y, w, h];
+        Some(match overflow_clip {
+            Some([ax, ay, aw, ah]) => {
+                let x0 = own[0].max(ax);
+                let y0 = own[1].max(ay);
+                let x1 = (own[0] + own[2]).min(ax + aw);
+                let y1 = (own[1] + own[3]).min(ay + ah);
+                [x0, y0, (x1 - x0).max(0.0), (y1 - y0).max(0.0)]
+            }
+            None => own,
+        })
+    } else {
+        overflow_clip
+    };
     let children = node.children.clone();
     for c in children {
-        encode_node(doc, c, x, y, op, layer, list);
+        encode_node(doc, c, x, y, op, layer, child_clip, list);
     }
 }
 

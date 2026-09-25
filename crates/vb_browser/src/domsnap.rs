@@ -65,6 +65,9 @@ function hasEffect(cs) {
 function matrix(cs) {
   const t = cs.transform;
   if (!t || t === 'none') return null;
+  // 3D/透视(matrix3d/perspective):2D matrix() 正则不匹配,此前整条
+  // 变换静默丢失。原样上交字符串,Rust 侧(dompaint)据此发降级告警(VB-2)。
+  if (/matrix3d|perspective/i.test(t)) return t;
   const m = /matrix\(([^)]+)\)/.exec(t);
   if (!m) return null;
   return m[1].split(',').map(v => +v.trim());

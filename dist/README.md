@@ -53,3 +53,8 @@ Kiln-noGUI-CLI.exe selfcheck
 | PDF | 浏览器打印流 | 自研矢量(真文本+OCG) |
 
 构建命令(源码):`cargo build -p vb_kiln --release --bin kiln-cli`
+
+## 许可
+
+本发布包与仓库同按 **ACL-1.0**(Artboard 社区开源协议,与 Artboard 同款)分发;
+完整条款见发布包内的 `LICENSE`(`tools/build.ps1` 随包复制)或仓库根目录。

@@ -38,11 +38,11 @@
       "border-strong":    { "value": "#C9C9C9", "egui": "visuals.widgets.hovered.bg_stroke" },
       "text":             { "value": "#1E1E1E", "egui": "visuals.override_text_color" },
       "text-2":           { "value": "#6B6B6B", "egui": "visuals.weak_text_color" },
-      "text-3":           { "value": "#9B9B9B", "egui": "visuals.weak_text_alpha 派生" },
+      "text-3":           { "value": "#767676", "egui": "visuals.weak_text_alpha 派生" },
       "accent":           { "value": "#0D99FF", "desc": "两套主题共用品牌色", "egui": "visuals.selection.bg_fill" },
       "accent-dim":       { "value": "rgba(13,153,255,0.12)", "egui": "—" },
-      "danger":           { "value": "#F24822", "egui": "visuals.error_fg_color" },
-      "warn":             { "value": "#B58200", "desc": "浅底需加深保对比", "egui": "visuals.warn_fg_color" },
+      "danger":           { "value": "#D93025", "egui": "visuals.error_fg_color" },
+      "warn":             { "value": "#8F6700", "desc": "浅底需加深保对比", "egui": "visuals.warn_fg_color" },
       "success":          { "value": "#0E7C42", "egui": "—" }
     },
     "semantic": {

@@ -18,6 +18,81 @@ use vb_doc::model::{Document, Node, NodeId};
 
 use vb_common::units;
 
+// ---------- 覆盖矩阵(VB-3) ----------
+
+/// 动画覆盖矩阵:本源 @keyframes 中的属性按**当前车道**的求值能力分类,
+/// 随导出结果(AnimLaneResult / KilnReport)输出 —— 下游无需试错即可判断
+/// 「这条动效到底动不动」。
+///
+/// 分类口径:
+/// - lane = "browser"(animlane 浏览器实时采样):浏览器全量播放,
+///   所有声明的属性都归 `animated`;
+/// - lane = "native"(Lane K 静态逐帧求值,能力见模块头注释):
+///   `opacity/transform/clip-path/filter` 四类归 `animated`;
+///   其余属性(如 width/stroke-dashoffset)按**静态终值**渲染,归
+///   `static_fallback`;@property 注册的自定义属性(`--*`)归 `unsupported`。
+#[derive(Debug, Clone)]
+pub struct AnimCoverage {
+    /// 车道标识:browser / native。
+    pub lane: &'static str,
+    /// 按车道能力真实动画化的属性(升序)。
+    pub animated: Vec<String>,
+    /// 车道 K:按静态终值渲染的属性(升序)。
+    pub static_fallback: Vec<String>,
+    /// 车道 K:@property 注册自定义属性等不支持项(升序)。
+    pub unsupported: Vec<String>,
+}
+
+impl AnimCoverage {
+    /// Lane K 支持逐帧求值的属性白名单(与 apply_frame_state 实际消费一致)。
+    const NATIVE_ANIMATABLE: &'static [&'static str] =
+        &["opacity", "transform", "clip-path", "filter"];
+
+    /// 从解析出的关键帧集合构建覆盖矩阵;`kf` 为空返回 None(无动画声明,
+    /// 结果 JSON 中 anim_coverage = null)。
+    pub fn from_keyframes(kf: &HashMap<String, Keyframes>, lane: &'static str) -> Option<Self> {
+        let mut props: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for k in kf.values() {
+            for (_, decls) in &k.frames {
+                for d in decls {
+                    props.insert(d.prop.clone());
+                }
+            }
+        }
+        if props.is_empty() {
+            return None;
+        }
+        let (mut animated, mut fallback, mut unsupported) = (Vec::new(), Vec::new(), Vec::new());
+        for p in props {
+            if lane == "browser" {
+                animated.push(p);
+            } else if p.starts_with("--") {
+                unsupported.push(p);
+            } else if Self::NATIVE_ANIMATABLE.contains(&p.as_str()) {
+                animated.push(p);
+            } else {
+                fallback.push(p);
+            }
+        }
+        Some(AnimCoverage {
+            lane,
+            animated,
+            static_fallback: fallback,
+            unsupported,
+        })
+    }
+
+    /// 结果 JSON 字段(与计划文档 VB-3 形状一致)。
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "lane": self.lane,
+            "animated": self.animated,
+            "static_fallback": self.static_fallback,
+            "unsupported": self.unsupported,
+        })
+    }
+}
+
 // ---------- 关键帧模型 ----------
 
 /// 一条 @keyframes:名字 → 帧表(按 offset 升序)。
@@ -43,7 +118,11 @@ pub struct AnimInstance {
 }
 
 /// 缓动。
-#[derive(Debug, Clone, Copy)]
+///
+/// 05-9(ADR-VB-L11):`animation` 简写与关键帧内 `animation-timing-function`
+/// 共用本枚举与 [`parse_timing`] 解析、[`Timing::eval`] 求值 —— 时间轴面板、
+/// 导出期与浏览器真值走同一套缓动语义。
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Timing {
     Linear,
     Ease,
@@ -54,7 +133,9 @@ pub enum Timing {
 }
 
 impl Timing {
-    fn eval(self, p: f64) -> f64 {
+    /// 段内进度 p(0..=1)→ 缓动后进度。
+    /// `pub`:时间轴面板的自绘缓动曲线预览复用同一求解(05-9-2,不写第二套)。
+    pub fn eval(self, p: f64) -> f64 {
         match self {
             Timing::Linear | Timing::Ease => {
                 // ease 近似贝塞尔;v1 用预设曲线
@@ -195,6 +276,39 @@ pub fn parse_keyframes(raw_css: &[String]) -> HashMap<String, Keyframes> {
     out
 }
 
+// ---------- 缓动解析 ----------
+
+/// 解析缓动值(关键字 / cubic-bezier())。`animation` 简写与关键帧内
+/// `animation-timing-function`(05-9 每帧缓动落盘)共用;查不到返回 None。
+/// linear() 弹簧仍按分段线性近似为 Linear(v1 口径);steps()(artboard
+/// 教义禁用)不在此解析,由简写侧按线性近似(与旧口径一致)。
+pub fn parse_timing(v: &str) -> Option<Timing> {
+    let t = v.trim();
+    let kw = match t {
+        "linear" => Timing::Linear,
+        "ease" => Timing::Ease,
+        "ease-in" => Timing::EaseIn,
+        "ease-out" => Timing::EaseOut,
+        "ease-in-out" => Timing::EaseInOut,
+        _ => {
+            if let Some(rest) = t
+                .strip_prefix("cubic-bezier(")
+                .and_then(|s| s.strip_suffix(')'))
+            {
+                let nums: Vec<f64> = rest
+                    .split(',')
+                    .filter_map(|v| v.trim().parse::<f64>().ok())
+                    .collect();
+                if nums.len() == 4 {
+                    return Some(Timing::CubicBezier(nums[0], nums[1], nums[2], nums[3]));
+                }
+            }
+            return None;
+        }
+    };
+    Some(kw)
+}
+
 // ---------- animation 简写解析 ----------
 
 /// 解析一条 animation 简写(单个动画;逗号分隔的多动画由调用方先拆)。
@@ -237,31 +351,13 @@ pub fn parse_animation_shorthand(raw: &str, vars: &[(String, String)]) -> Option
         if matches!(t, "normal" | "reverse" | "running" | "paused") {
             continue;
         }
-        if matches!(
-            t,
-            "ease" | "ease-in" | "ease-out" | "ease-in-out" | "linear" | "step-start" | "step-end"
-        ) {
-            timing = match t {
-                "ease" => Timing::Ease,
-                "ease-in" => Timing::EaseIn,
-                "ease-out" => Timing::EaseOut,
-                "ease-in-out" => Timing::EaseInOut,
-                _ => Timing::Linear,
-            };
+        if matches!(t, "step-start" | "step-end") {
+            // steps()(artboard 教义禁用):按线性近似(旧口径)
+            timing = Timing::Linear;
             continue;
         }
-        if t.starts_with("cubic-bezier(") {
-            let inner = t
-                .strip_prefix("cubic-bezier(")
-                .and_then(|s| s.strip_suffix(')'))
-                .unwrap_or("");
-            let nums: Vec<f64> = inner
-                .split(',')
-                .filter_map(|v| v.trim().parse::<f64>().ok())
-                .collect();
-            if nums.len() == 4 {
-                timing = Timing::CubicBezier(nums[0], nums[1], nums[2], nums[3]);
-            }
+        if let Some(tm) = parse_timing(t) {
+            timing = tm;
             continue;
         }
         if t.starts_with("linear(") {
@@ -580,6 +676,8 @@ pub struct Track {
 }
 
 /// 节点的全部动画实例(已绑关键帧)。
+/// `Clone`:05-9 画布预览按 rev 缓存实例表(rev 未变直接复用)。
+#[derive(Clone)]
 pub struct NodeAnim {
     pub instances: Vec<(AnimInstance, Keyframes)>,
 }
@@ -655,15 +753,23 @@ pub fn track_value_at(
             phase = 1.0 - phase;
         }
     }
-    // 找相邻关键帧
-    let mut values: Vec<(f32, String)> = frames
+    // 找相邻关键帧(值 + 帧内声明的 timing-function;05-9 每帧缓动)。
+    // CSS 语义:某帧声明的 timing-function 管「该帧 → 下一帧」段;
+    // 未声明的帧回退 animation 简写上的时序(与旧口径一致)。
+    let mut values: Vec<(f32, String, Option<Timing>)> = frames
         .frames
         .iter()
         .filter_map(|(off, decls)| {
-            decls
-                .iter()
-                .find(|d| d.prop == prop)
-                .map(|d| (*off, d.value.clone()))
+            let mut v: Option<String> = None;
+            let mut tm: Option<Timing> = None;
+            for d in decls {
+                if d.prop == prop {
+                    v = Some(d.value.clone());
+                } else if d.prop == "animation-timing-function" {
+                    tm = parse_timing(&d.value);
+                }
+            }
+            v.map(|v| (*off, v, tm))
         })
         .collect();
     if values.is_empty() {
@@ -679,12 +785,14 @@ pub fn track_value_at(
         return Some(values[values.len() - 1].1.clone());
     }
     for w in values.windows(2) {
-        let (o0, v0) = &w[0];
-        let (o1, v1) = &w[1];
+        let (o0, v0, tm0) = &w[0];
+        let (o1, v1, _) = &w[1];
         if p >= *o0 && p <= *o1 {
             let span = (o1 - o0).max(1e-6);
             let local = (p - o0) / span;
-            let e = inst.timing.eval(local as f64) as f32;
+            // 段缓动:段首帧声明的 timing-function 优先,否则用简写时序
+            let timing = tm0.unwrap_or(inst.timing);
+            let e = timing.eval(local as f64) as f32;
             return Some(lerp_value(v0, v1, e));
         }
     }
@@ -774,16 +882,21 @@ fn lerp_value(a: &str, b: &str, t: f32) -> String {
 }
 
 /// transform 函数列表插值:translateX/Y(px)、scale(sx[,sy])、rotate(deg)。
+///
+/// 05-9 修复:入站值一律来自 canonical 声明(函数名被 vb_css 小写为
+/// `translatex(...)`),此前按大小写精确匹配 `translateX` 永远查不到,
+/// translate 轨道静默失效;此处统一以小写函数名解析/输出(输出同样
+/// 走小写,再经 apply_transform 消费,与 canonical 口径一致)。
 fn lerp_transform(a: &str, b: &str, t: f64) -> String {
     let fa = parse_transform_funcs(a);
     let fb = parse_transform_funcs(b);
     let mut out = String::new();
     let mut has = false;
     let names = [
-        "translateX",
-        "translateY",
-        "scaleX",
-        "scaleY",
+        "translatex",
+        "translatey",
+        "scalex",
+        "scaley",
         "scale",
         "rotate",
     ];
@@ -802,8 +915,8 @@ fn lerp_transform(a: &str, b: &str, t: f64) -> String {
         let v = va + (vb - va) * t;
         has = true;
         match name {
-            "translateX" => out.push_str(&format!("translateX({}px) ", fmt(v))),
-            "translateY" => out.push_str(&format!("translateY({}px) ", fmt(v))),
+            "translatex" => out.push_str(&format!("translatex({}px) ", fmt(v))),
+            "translatey" => out.push_str(&format!("translatey({}px) ", fmt(v))),
             "rotate" => out.push_str(&format!("rotate({}deg) ", fmt(v))),
             "scale" => out.push_str(&format!("scale({}) ", fmt(v))),
             _ => {}
@@ -815,10 +928,10 @@ fn lerp_transform(a: &str, b: &str, t: f64) -> String {
             .find(|(n, _)| n == want)
             .and_then(|(_, v)| v.first().copied())
     };
-    let sx_a = pick(&fa, "scaleX").or_else(|| pick(&fa, "scale"));
-    let sx_b = pick(&fb, "scaleX").or_else(|| pick(&fb, "scale"));
-    let sy_a = pick(&fa, "scaleY").or_else(|| pick(&fa, "scale"));
-    let sy_b = pick(&fb, "scaleY").or_else(|| pick(&fb, "scale"));
+    let sx_a = pick(&fa, "scalex").or_else(|| pick(&fa, "scale"));
+    let sx_b = pick(&fb, "scalex").or_else(|| pick(&fb, "scale"));
+    let sy_a = pick(&fa, "scaley").or_else(|| pick(&fa, "scale"));
+    let sy_b = pick(&fb, "scaley").or_else(|| pick(&fb, "scale"));
     if let (Some(ox), Some(oy)) = (sx_a.zip(sx_b), sy_a.zip(sy_b)) {
         let sx = ox.0 + (ox.1 - ox.0) * t;
         let sy = oy.0 + (oy.1 - oy.0) * t;
@@ -835,7 +948,9 @@ fn lerp_transform(a: &str, b: &str, t: f64) -> String {
 }
 
 /// transform 函数解析(数值参数列表;px/deg 单位剥除)。
-fn parse_transform_funcs(s: &str) -> Vec<(String, Vec<f64>)> {
+/// 函数名统一小写(入站值已经 vb_css canonical 小写;05-9 修复)。
+/// `pub`:时间轴面板把 transform 声明投影回轨道模型共用本解析(不写第二套)。
+pub fn parse_transform_funcs(s: &str) -> Vec<(String, Vec<f64>)> {
     let mut out = Vec::new();
     let bytes = s.as_bytes();
     let mut i = 0usize;
@@ -845,7 +960,7 @@ fn parse_transform_funcs(s: &str) -> Vec<(String, Vec<f64>)> {
             while i < bytes.len() && (bytes[i].is_ascii_alphabetic() || bytes[i] == b'-') {
                 i += 1;
             }
-            let name = s[start..i].to_string();
+            let name = s[start..i].to_ascii_lowercase();
             if i < bytes.len() && bytes[i] == b'(' {
                 let pstart = i + 1;
                 let mut j = pstart;
@@ -888,15 +1003,15 @@ pub fn apply_transform(item: &mut vb_render::encode::DrawItem, transform: &str) 
     for (name, args) in parse_transform_funcs(transform) {
         let v = args[0];
         match name.as_str() {
-            "translateX" => tx += v,
-            "translateY" => ty += v,
+            "translatex" => tx += v,
+            "translatey" => ty += v,
             "rotate" => rot += v,
             "scale" => {
                 sx = v;
                 sy = args.get(1).copied().unwrap_or(v);
             }
-            "scaleX" => sx = v,
-            "scaleY" => sy = v,
+            "scalex" => sx = v,
+            "scaley" => sy = v,
             _ => {}
         }
     }
@@ -960,6 +1075,41 @@ pub fn eval_node(node_anim: &NodeAnim, t: f64) -> FrameState {
         transform,
         clip_path,
         filter,
+    }
+}
+
+/// 把 t(秒)时刻的动画状态应用到 DrawList(**预览与导出唯一求值入口**)。
+///
+/// 05-9 / ADR-VB-L11:导出期 `ExportContext::build` 的逐帧光栅与画布
+/// 预览(vello 纹理前)都调本函数 —— 同一时刻 t 的属性状态由构造保证
+/// 一致,分叉在结构上不可能。调用方约定:
+/// - `anims` 由 [`parse_keyframes`] + [`resolve_node_anim`] 按 sid 建立
+///   (导出期只收目标画板子树;预览逐画板同法,对画板内节点结果一致);
+/// - `list` 是 [`vb_render::encode::DrawList`] 副本(导出期逐帧 clone /
+///   预览每帧重新编码),本函数就地改写副本。
+pub fn apply_frame_state(
+    anims: &HashMap<String, NodeAnim>,
+    list: &mut vb_render::encode::DrawList,
+    t: f64,
+) {
+    for item in &mut list.items {
+        let Some(na) = anims.get(&item.sid) else {
+            continue;
+        };
+        let st = eval_node(na, t);
+        if let Some(o) = st.opacity {
+            item.opacity *= o as f32;
+        }
+        if let Some(tr) = &st.transform {
+            apply_transform(item, tr);
+        }
+        let [_, _, iw, ih] = item.rect;
+        if let Some(cp) = &st.clip_path {
+            item.clip = vb_render::encode::parse_clip_path(cp, iw, ih);
+        }
+        if let Some(fl) = &st.filter {
+            item.filter = vb_render::encode::parse_filter(fl);
+        }
     }
 }
 
@@ -1029,5 +1179,66 @@ mod tests {
             .expect("ms/除法必须可解析");
         assert!((a.duration - 0.8).abs() < 1e-9);
         assert!((a.delay - 0.5).abs() < 1e-9);
+    }
+
+    /// 05-9 每帧缓动:帧内 animation-timing-function 只管「该帧 → 下一帧」
+    /// 段,未声明的段回退简写时序。构造:0%→50% 段线性(ease-in 声明在
+    /// 0% 帧),50%→100% 段 ease-out(声明在 50% 帧)。
+    #[test]
+    fn keyframe_timing_function_applies_per_segment() {
+        let kf = parse_keyframes(&["@keyframes t {\
+              \n  0% { transform: translateX(0px); animation-timing-function: linear; }\
+              \n  50% { transform: translateX(50px); animation-timing-function: ease-out; }\
+              \n  100% { transform: translateX(100px); }\
+            \n}"
+        .into()]);
+        let frames = kf.get("t").expect("关键帧可解析").clone();
+        let inst = parse_animation_shorthand("t 1s ease-in both", &[]).expect("简写可解析");
+        // 简写是 ease-in:若每帧声明失效,中段 t=0.25 会被 ease-in 加速
+        let mid_left = track_value_at(&inst, &frames, "transform", 0.25).unwrap();
+        let mid_right = track_value_at(&inst, &frames, "transform", 0.75).unwrap();
+        // 0→50 段声明 linear:0.25 处 = 25px(线性)
+        assert!(
+            mid_left.contains("25"),
+            "0→50 段应按帧内 linear 求 25px:{mid_left}"
+        );
+        // 50→100 段声明 ease-out:0.75(段内 0.5)应明显快于线性 75px
+        let v: f64 = mid_right
+            .strip_prefix("translatex(")
+            .and_then(|s| s.strip_suffix("px)"))
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.0);
+        assert!(v > 80.0, "50→100 段应按帧内 ease-out 加速:{mid_right}");
+        // 无帧内声明的情形(构造只有首尾帧):回退简写 ease-in
+        let kf2 =
+            parse_keyframes(&["@keyframes u { 0% { opacity: 0; } 100% { opacity: 1; } }".into()]);
+        let f2 = kf2.get("u").unwrap().clone();
+        let quarter = track_value_at(&inst, &f2, "opacity", 0.25).unwrap();
+        let q: f64 = quarter.parse().unwrap();
+        assert!(
+            q < 0.25,
+            "无帧内声明回退简写 ease-in:t=0.25 应慢于线性:{quarter}"
+        );
+    }
+
+    /// 05-9-6 门禁③:hold 定格语义 —— fill both 下动画结束后保持终值
+    /// (不回退静态样式),delay 前保持首值;这正是 WPI「有限动画
+    /// finish 定格」在自研求值侧的对应物,时间轴产物不得破坏。
+    #[test]
+    fn fill_both_holds_final_value_after_end() {
+        let kf =
+            parse_keyframes(&["@keyframes h { 0% { opacity: 0; } 100% { opacity: 1; } }".into()]);
+        let f = kf.get("h").unwrap().clone();
+        // 动画 1s,导出时长 3s:t=2s 必须定格在终值 1
+        let inst = parse_animation_shorthand("h 1s linear 0s 1 both", &[]).unwrap();
+        let mid = track_value_at(&inst, &f, "opacity", 0.5).unwrap();
+        assert_eq!(mid, "0.5", "段中点 = 线性中值");
+        let after = track_value_at(&inst, &f, "opacity", 2.0).unwrap();
+        assert_eq!(after, "1", "结束后的帧必须 hold 终值(fill both):{after}");
+        let before = track_value_at(&inst, &f, "opacity", -1.0).unwrap();
+        assert_eq!(
+            before, "0",
+            "delay 前必须 hold 首值(fill backwards):{before}"
+        );
     }
 }

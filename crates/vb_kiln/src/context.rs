@@ -47,8 +47,10 @@ pub struct ExportContext {
     pub gif_loops: u16,
     pub mp4_bitrate_kbps: u32,
     pub jpeg_quality: u8,
-    /// 构建期收集的告警(scale 钳制等)。
+    /// 构建期收集的告警(scale 钳制、不支持的绘制原语等)。
     pub build_warnings: Vec<KilnWarning>,
+    /// 动画覆盖矩阵(VB-3;无动画声明时为 None)。
+    pub anim_coverage: Option<crate::anim::AnimCoverage>,
     pub project_dir: Option<PathBuf>,
 }
 
@@ -127,6 +129,8 @@ impl ExportContext {
 
         // 动画解析(M2):raw_css @keyframes + 节点 animation 声明
         let keyframes = crate::anim::parse_keyframes(&doc.raw_css);
+        // 动画覆盖矩阵(VB-3):本源关键帧按车道 K 的求值能力分类
+        let anim_coverage = crate::anim::AnimCoverage::from_keyframes(&keyframes, "native");
         let mut anims: HashMap<String, crate::anim::NodeAnim> = HashMap::new();
         if !keyframes.is_empty() {
             let mut stack = vec![artboard];
@@ -141,6 +145,8 @@ impl ExportContext {
         }
 
         // 光栅帧:动画格式且存在动画实例 → 逐帧求值;否则单帧
+        // (05-9:逐帧应用复用 anim::apply_frame_state —— 与画布预览
+        // 同一求值入口,一致性由构造保证,见 ADR-VB-L11)
         let animated = matches!(req.format, Format::Gif | Format::Mp4) && !anims.is_empty();
         let mut frames = Vec::new();
         if animated {
@@ -148,24 +154,7 @@ impl ExportContext {
             for i in 0..n {
                 let t = i as f64 / fps as f64;
                 let mut f_list = list.clone();
-                for item in &mut f_list.items {
-                    if let Some(na) = anims.get(&item.sid) {
-                        let st = crate::anim::eval_node(na, t);
-                        if let Some(o) = st.opacity {
-                            item.opacity *= o as f32;
-                        }
-                        if let Some(tr) = &st.transform {
-                            crate::anim::apply_transform(item, tr);
-                        }
-                        let [_, _, iw, ih] = item.rect;
-                        if let Some(cp) = &st.clip_path {
-                            item.clip = vb_render::encode::parse_clip_path(cp, iw, ih);
-                        }
-                        if let Some(fl) = &st.filter {
-                            item.filter = vb_render::encode::parse_filter(fl);
-                        }
-                    }
-                }
+                crate::anim::apply_frame_state(&anims, &mut f_list, t);
                 let rgba = crate::raster::rasterize_rgba(&f_list, scale as f64)?;
                 frames.push(Frame {
                     rgba,
@@ -191,6 +180,12 @@ impl ExportContext {
                 Format::Png | Format::Gif | Format::Svg | Format::Pdf
             );
 
+        // VB-2:构建期扫描画板子树,收集本车道不支持的绘制原语
+        // (3D/透视 transform、mask、box-shadow、mix-blend-mode、不可解析
+        // 的 clip-path 形状)。同属性聚合计数,命中置 degraded(report_with)。
+        let lane = lane_of(req.format);
+        build_warnings.extend(collect_unsupported_css(doc, artboard, lane));
+
         Ok(ExportContext {
             artboard_name,
             doc_title,
@@ -209,6 +204,7 @@ impl ExportContext {
             mp4_bitrate_kbps: req.mp4_bitrate_kbps,
             jpeg_quality: req.jpeg_quality.clamp(1, 100),
             build_warnings,
+            anim_coverage,
             project_dir: project_dir.map(|p| p.to_path_buf()),
         })
     }
@@ -217,6 +213,102 @@ impl ExportContext {
     pub fn is_static(&self) -> bool {
         self.frames.len() <= 1
     }
+}
+
+/// 车道标识(VB-2 `lane` 字段):光栅格式走自研引擎 = native;
+/// 矢量写出器(SVG/PDF/EPS/Ai/PPTX)= vector。浏览器车道不经本入口。
+fn lane_of(fmt: Format) -> &'static str {
+    match fmt {
+        Format::Svg | Format::Pdf | Format::Eps | Format::Ai | Format::Pptx => "vector",
+        _ => "native",
+    }
+}
+
+/// `mask` / `box-shadow` 类「存在即降级」属性是否有效声明(非空且非 none)。
+fn prop_set(v: Option<&str>) -> bool {
+    v.map(|s| {
+        let t = s.trim();
+        !t.is_empty() && !t.eq_ignore_ascii_case("none")
+    })
+    .unwrap_or(false)
+}
+
+/// 3D/透视 transform 函数(编码期只支持 2D rotate,其余静默失效 → VB-2 告警)。
+const TRANSFORM_3D_FUNCS: &[&str] = &[
+    "matrix3d(",
+    "perspective(",
+    "rotatex(",
+    "rotatey(",
+    "rotatez(",
+    "rotate3d(",
+    "translate3d(",
+    "translatez(",
+    "scale3d(",
+    "scalez(",
+];
+
+/// 画板子树扫描(VB-2):收集当前车道不支持的 CSS 绘制原语。
+/// 同属性聚合为一条 `UnsupportedPropertyDropped{count}`(验收 G);
+/// 不可解析的 clip-path 形状单发 `ClipShapeApproximated`(按形状聚合)。
+fn collect_unsupported_css(
+    doc: &Document,
+    artboard: NodeId,
+    lane: &'static str,
+) -> Vec<KilnWarning> {
+    let mut props: HashMap<&'static str, usize> = HashMap::new();
+    let mut clips: HashMap<String, usize> = HashMap::new();
+    let mut stack = vec![artboard];
+    while let Some(nid) = stack.pop() {
+        let Some(node) = doc.node(nid) else { continue };
+        if let Some(t) = node.style_get("transform") {
+            let tl = t.to_ascii_lowercase();
+            if TRANSFORM_3D_FUNCS.iter().any(|f| tl.contains(f)) {
+                *props.entry("transform").or_insert(0) += 1;
+            }
+        }
+        if prop_set(node.style_get("mask")) || prop_set(node.style_get("-webkit-mask")) {
+            *props.entry("mask").or_insert(0) += 1;
+        }
+        if prop_set(node.style_get("box-shadow")) {
+            *props.entry("box-shadow").or_insert(0) += 1;
+        }
+        if let Some(b) = node.style_get("mix-blend-mode") {
+            let t = b.trim();
+            if !t.is_empty() && !t.eq_ignore_ascii_case("normal") {
+                *props.entry("mix-blend-mode").or_insert(0) += 1;
+            }
+        }
+        if let Some(cp) = node.style_get("clip-path") {
+            let t = cp.trim();
+            if !t.is_empty() && !t.eq_ignore_ascii_case("none") {
+                let w = node.geom.w.max(1.0);
+                let h = node.geom.h.max(1.0);
+                if vb_render::encode::parse_clip_path(cp, w, h).is_none() {
+                    // 形状原文截断(防超长 path() 刷屏),按形状聚合
+                    let shape: String = t.chars().take(48).collect();
+                    *clips.entry(shape).or_insert(0) += 1;
+                }
+            }
+        }
+        stack.extend(node.children.iter().copied());
+    }
+    let mut out: Vec<KilnWarning> = props
+        .into_iter()
+        .map(|(prop, count)| KilnWarning::UnsupportedPropertyDropped {
+            prop: prop.into(),
+            count,
+            lane,
+        })
+        .collect();
+    let mut shapes: Vec<(String, usize)> = clips.into_iter().collect();
+    shapes.sort();
+    out.extend(
+        shapes
+            .into_iter()
+            .map(|(shape, count)| KilnWarning::ClipShapeApproximated { shape, count }),
+    );
+    out.sort_by(|a, b| a.kind().cmp(b.kind()));
+    out
 }
 
 /// 项目目录下解析位图 → RGBA8(缺失返回 None,writer 画占位兜底)。

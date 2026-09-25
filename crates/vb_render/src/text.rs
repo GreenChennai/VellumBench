@@ -37,6 +37,20 @@ pub fn register_font_file(family: &str, weight: u16, path: PathBuf) {
     }
 }
 
+/// 直接注册字体字节(K2 Web,05-11-2):wasm32 无文件系统,web 壳经
+/// fetch / 文件选择器拿到字节后由此注册;语义与 [`register_font_file`]
+/// 完全一致(同键去重、就近字重匹配)。桌面端不必使用。
+pub fn register_font_bytes(family: &str, weight: u16, bytes: Vec<u8>) {
+    let key = family.trim().to_ascii_lowercase();
+    if let Ok(mut reg) = font_registry().lock() {
+        let slot = reg.entry(key).or_default();
+        if !slot.iter().any(|(w, _)| *w == weight) {
+            slot.push((weight, Arc::new(bytes)));
+            slot.sort_by_key(|(w, _)| *w);
+        }
+    }
+}
+
 /// 清空注册表(换项目导入时)。
 pub fn clear_font_registry() {
     if let Ok(mut reg) = font_registry().lock() {

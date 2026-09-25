@@ -1,0 +1,29 @@
+[package]
+name = "vb_web"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+description = "Vellum Bench Web 壳(K2,台账 09-K):wasm32 只读预览 + 文字轻编辑 + 导出"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+vb_common.workspace = true
+vb_doc.workspace = true
+vb_layout.workspace = true
+vb_render = { path = "../vb_render" }
+vb_kiln = { path = "../vb_kiln" }
+serde_json.workspace = true
+wasm-bindgen = "0.2"
+# web 壳只取最小 web-sys 能力(控制台/窗口);DOM 操作全部留在 JS 侧,
+# 避免把 Rust 绑定写成半个前端框架。
+web-sys = { version = "0.3", features = ["console"] }
+
+# wasm-pack 不做 wasm-opt(省去 binaryen 下载;体积可后补,功能不受影响)
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
+[package.metadata.notes]
+scope = "仅 wasm32 使用;宿主平台编译仅为过 workspace 门禁(clippy/test),无行为"

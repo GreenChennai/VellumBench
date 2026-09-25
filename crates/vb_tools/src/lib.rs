@@ -9,6 +9,10 @@
 
 pub mod align;
 pub mod boolean;
+/// 路径查找器多结果运算(05-3 / X-1:分割/修边/轮廓 + 统一事务入口)。
+pub mod pathfinder;
+/// 变换/自由绘制几何纯函数(阶段 5 / 05-2:X-4 中心点变换 + X-5 铅笔抽稀/曲率拟合)。
+pub mod xform;
 
 use vb_common::geom::Rect;
 use vb_doc::model::{Document, Geom, NodeId, NodeKind};
