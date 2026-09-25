@@ -417,15 +417,19 @@ mod tests {
         } else {
             assert!(s.ends_with("target/debug/example-stats-plugin"), "{s}");
         }
-        // 绝对路径原样
-        let m2 = PluginManifest::parse(
-            r#"{"id":"ab","name":"n","version":"1.0.0","entry":"C:/x/p.exe","commands":[]}"#,
-        )
-        .unwrap();
-        assert_eq!(
-            m2.resolve_entry(Path::new("d"), None),
+        // 绝对路径原样(unix 下 "C:/x/p.exe" 不是绝对路径,会被当相对路径
+        // 拼接——用各平台真实的绝对路径验证 passthrough)
+        let abs = if cfg!(windows) {
             PathBuf::from("C:/x/p.exe")
-        );
+        } else {
+            std::env::temp_dir().join("vb-plugin-entry-abs/p.exe")
+        };
+        let m2 = PluginManifest::parse(&format!(
+            r#"{{"id":"ab","name":"n","version":"1.0.0","entry":{},"commands":[]}}"#,
+            serde_json::to_string(&abs.to_string_lossy()).unwrap(),
+        ))
+        .unwrap();
+        assert_eq!(m2.resolve_entry(Path::new("d"), None), abs);
         // 相对路径 → 相对 manifest 目录
         let m3 = PluginManifest::parse(
             r#"{"id":"ab","name":"n","version":"1.0.0","entry":"run.py","commands":[]}"#,

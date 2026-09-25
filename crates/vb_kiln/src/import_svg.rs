@@ -599,6 +599,32 @@ pub fn import_svg_to_doc(
     let mut opt = usvg::Options::default();
     let mut fontdb = fontdb::Database::new();
     fontdb.load_system_fonts();
+    // usvg 默认族是 Times New Roman——linux/精简容器上不存在,文本节点会被
+    // 静默丢(违反 ADR-0046"降级必须可观测"的底线)。在系统字体里挑一个
+    // 确实存在的默认族:优先 CJK(中文场景字形必须有),退而求其次拉丁族。
+    let preferred: &[&str] = &[
+        "Noto Sans CJK SC",
+        "Source Han Sans SC",
+        "PingFang SC",
+        "Microsoft YaHei",
+        "SimSun",
+        "Arial",
+        "Helvetica",
+        "DejaVu Sans",
+        "Liberation Sans",
+    ];
+    for name in preferred {
+        let q = fontdb::Query {
+            families: &[fontdb::Family::Name(name)],
+            weight: fontdb::Weight::NORMAL,
+            style: fontdb::Style::Normal,
+            stretch: fontdb::Stretch::Normal,
+        };
+        if fontdb.query(&q).is_some() {
+            opt.font_family = (*name).to_string();
+            break;
+        }
+    }
     let fontdb = Arc::new(fontdb);
     opt.fontdb = fontdb;
     let tree = usvg::Tree::from_data(&data, &opt).map_err(|e| format!("SVG 解析失败:{e}"))?;
