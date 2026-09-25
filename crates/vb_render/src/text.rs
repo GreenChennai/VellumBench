@@ -137,12 +137,26 @@ fn resolve_font_weighted(family: &str, weight: u16, text: &str) -> Option<(Arc<V
             .trim()
             .to_string()
     };
+    // 候选族跨平台兜底链:用户族缺失时按 Windows → macOS → Linux 顺序找
+    // 真实存在的替代族。此前只有 Windows 名(YaHei/SimHei/Segoe/Arial),
+    // linux/精简容器上一个都不存在 → 直接回落占位条(真字形管线白装)。
+    // 顺序即优先级:CJK 字形必须优先命中,拉丁族只做最后兜底。
     let candidates = [
         user.clone(),
         "Microsoft YaHei".to_string(),
         "SimHei".to_string(),
+        "PingFang SC".to_string(),
+        "Hiragino Sans GB".to_string(),
+        "Noto Sans CJK SC".to_string(),
+        "Source Han Sans SC".to_string(),
+        "WenQuanYi Micro Hei".to_string(),
         "Segoe UI".to_string(),
         "Arial".to_string(),
+        "Helvetica".to_string(),
+        "Liberation Sans".to_string(),
+        "DejaVu Sans".to_string(),
+        "Noto Sans".to_string(),
+        "Times New Roman".to_string(),
     ];
 
     let mut picked: Option<(Arc<Vec<u8>>, usize)> = None;
