@@ -265,6 +265,17 @@ fn char_node_scope_writes_and_reverts() {
 /// SetGeom undo 精确逆回。量测与导出同引擎(真字形),不依赖 egui。
 #[test]
 fn area_fit_height_expands_to_content_and_reverts() {
+    // CJK 字体探针:精简环境(Ubuntu 最小容器等)没有任何 CJK 字体时,
+    // 量测拿到的字形 advance 为 0 → 既不换行也无溢出,下面的绝对断言
+    // 全部失去意义。诚实跳过并说明(安装 Noto Sans CJK 后自动恢复)。
+    let (probe_w, probe_lines) =
+        vb_render::text::measure_text_weighted("中中中中中", "", 16.0, 400, 24.0, 0.0);
+    if probe_w <= 0.0 || probe_lines <= 1 {
+        eprintln!(
+            "跳过 area_fit_height:环境无 CJK 字体,真字形量测不可用(探针宽 {probe_w}/行 {probe_lines})"
+        );
+        return;
+    }
     let long_text = "这是一段用于溢出测试的中文文案,反复重复以触发换行。".repeat(6);
     let (mut doc, sid) = text_doc(&long_text, TextMode::Area, 120.0, 30.0);
     let nid = doc.find_by_sid(&sid).unwrap();

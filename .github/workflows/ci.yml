@@ -37,8 +37,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       # fontconfig 走运行时 dlopen(vb_render 默认特性),构建期不需要 dev
       # 头文件;测试期 fontique 枚举系统字体需要 libfontconfig.so.1 本体。
-      - name: Install fontconfig runtime
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1
+      # fonts-noto-cjk:真字形量测测试(charpara 溢出估算等)需要 CJK 字体,
+      # ubuntu 最小镜像没有——没有它,中文排版测试只能跳过而非真实执行。
+      - name: Install fontconfig runtime + CJK fonts
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1 fonts-noto-cjk
       - name: Check (all targets)
         run: cargo check --workspace --all-targets
       - name: Test

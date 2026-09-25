@@ -327,18 +327,27 @@ mod tests {
         std::env::temp_dir().join(format!("vb-recent-{tag}-{}.json", std::process::id()))
     }
 
+    /// 跨平台测试路径:字面量 `C:\…` 在 unix 下 `\` 不是分隔符,`file_stem`
+    /// 会把整串当文件名,`name` 断言全炸。统一走 helper 拼绝对路径
+    /// (windows=`C:\` 前缀,unix=`/` 前缀),段间用平台分隔符。
+    fn fx(segs: &[&str]) -> PathBuf {
+        let mut pb = PathBuf::new();
+        pb.push(if cfg!(windows) { "C:\\" } else { "/" });
+        for s in segs {
+            pb.push(s);
+        }
+        pb
+    }
+
     #[test]
     fn save_then_load_roundtrip_with_session() {
         let p = tmp_json("rt");
         let _ = std::fs::remove_file(&p);
         let mut st = RecentStore::default();
-        st.touch(Path::new(r"C:\proj\landing"));
-        st.touch(Path::new(r"C:\proj\poster"));
-        st.toggle_pin(Path::new(r"C:\proj\landing"));
-        st.set_session(&[
-            PathBuf::from(r"C:\proj\landing"),
-            PathBuf::from(r"C:\proj\poster"),
-        ]);
+        st.touch(&fx(&["proj", "landing"]));
+        st.touch(&fx(&["proj", "poster"]));
+        st.toggle_pin(&fx(&["proj", "landing"]));
+        st.set_session(&[fx(&["proj", "landing"]), fx(&["proj", "poster"])]);
         save_to(&p, &st).unwrap();
 
         let (back, warn) = load_from(&p);
@@ -384,15 +393,12 @@ mod tests {
     #[test]
     fn touch_moves_to_front_and_keeps_thumb_and_pin() {
         let mut st = RecentStore::default();
-        st.touch(Path::new(r"C:\p\a"));
-        st.touch(Path::new(r"C:\p\b"));
-        assert_eq!(st.items[0].path, normalize_path(Path::new(r"C:\p\b")));
-        st.toggle_pin(Path::new(r"C:\p\a"));
-        st.set_thumb(
-            Path::new(r"C:\p\a"),
-            Path::new(r"C:\p\a\.vb-cache\thumb.png"),
-        );
-        st.touch(Path::new(r"C:\p\a"));
+        st.touch(&fx(&["p", "a"]));
+        st.touch(&fx(&["p", "b"]));
+        assert_eq!(st.items[0].path, normalize_path(&fx(&["p", "b"])));
+        st.toggle_pin(&fx(&["p", "a"]));
+        st.set_thumb(&fx(&["p", "a"]), &fx(&["p", "a", ".vb-cache", "thumb.png"]));
+        st.touch(&fx(&["p", "a"]));
         assert_eq!(st.items[0].name, "a");
         assert!(st.items[0].pinned, "touch 不得丢固定标记");
         assert!(st.items[0].thumb.is_some(), "touch 不得丢缩略图");
@@ -402,7 +408,7 @@ mod tests {
     fn lru_evicts_oldest_unpinned_beyond_cap() {
         let mut st = RecentStore::default();
         for i in 0..(MAX_ITEMS + 3) {
-            st.touch(Path::new(&format!(r"C:\p\item{i:02}")));
+            st.touch(&fx(&["p", &format!("item{i:02}")]));
         }
         assert_eq!(st.items.len(), MAX_ITEMS, "超限必须淘汰");
         assert!(
@@ -411,10 +417,10 @@ mod tests {
         );
         // 固定项不淘汰
         let mut st2 = RecentStore::default();
-        st2.touch(Path::new(r"C:\p\keep-me"));
-        st2.toggle_pin(Path::new(r"C:\p\keep-me"));
+        st2.touch(&fx(&["p", "keep-me"]));
+        st2.toggle_pin(&fx(&["p", "keep-me"]));
         for i in 0..MAX_ITEMS {
-            st2.touch(Path::new(&format!(r"C:\p\filler{i:02}")));
+            st2.touch(&fx(&["p", &format!("filler{i:02}")]));
         }
         assert_eq!(st2.items.len(), MAX_ITEMS);
         assert!(
@@ -426,10 +432,10 @@ mod tests {
     #[test]
     fn remove_and_toggle_pin() {
         let mut st = RecentStore::default();
-        st.touch(Path::new(r"C:\p\a"));
-        assert!(st.toggle_pin(Path::new(r"C:\p\a")) == Some(true));
-        assert!(st.remove(Path::new(r"C:\p\a")));
-        assert!(!st.remove(Path::new(r"C:\p\a")), "重复移除应返回 false");
+        st.touch(&fx(&["p", "a"]));
+        assert!(st.toggle_pin(&fx(&["p", "a"])) == Some(true));
+        assert!(st.remove(&fx(&["p", "a"])));
+        assert!(!st.remove(&fx(&["p", "a"])), "重复移除应返回 false");
     }
 
     #[test]
