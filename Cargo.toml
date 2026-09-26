@@ -29,6 +29,13 @@ license-file = "LICENSE"
 repository = "https://github.com/GreenChennai/VellumBench"
 rust-version = "1.85"
 
+[profile.dev]
+# 磁盘减脂(2026-09-26):dev/test 的全量调试信息是 target/debug 膨胀主力
+# (单轮迭代可涨 50–100GB)。改行级调试表后回溯仍有 file:line,
+# target 增速约降三分之二;需要完整变量级调试时临时用
+# `cargo build --profile dev2` 之类再加full配置。
+debug = 1
+
 [workspace.dependencies]
 vb_common = { path = "crates/vb_common" }
 vb_css = { path = "crates/vb_css" }
