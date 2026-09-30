@@ -119,12 +119,18 @@ fn main() {
 
 fn real_main() -> i32 {
     // clap 默认以退出码 2 终止参数错误,与「2=文档未打开」约定冲突:
-    // try_parse 拦下后统一按 1 退出(文件头退出码表)
+    // try_parse 拦下后统一按 1 退出(文件头退出码表)。
+    // 例外:--help/--version 是正常求助,退出 0 —— 否则脚本无法用 $?
+    // 区分「看帮助」与「参数出错」。
     let cli = match Cli::try_parse() {
         Ok(c) => c,
         Err(e) => {
+            let help_requested = matches!(
+                e.kind(),
+                clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+            );
             let _ = e.print();
-            return 1;
+            return if help_requested { 0 } else { 1 };
         }
     };
     match run(cli) {
@@ -268,7 +274,9 @@ fn run(cli: Cli) -> Result<(), CliError> {
             // 解析 CSV(首行表头;支持带引号字段)
             let mut csv_text = std::fs::read_to_string(&csv)
                 .with_context(|| format!("读取 {}", csv.display()))
-                .map_err(|e| CliError::Other(format!("{e:#}")))?;
+                .map_err(|e| CliError::Other(format!(
+                    "{e:#}\n提示:若文件来自中文版 Excel,常见原因是 GBK/ANSI 编码 —— 请先在编辑器里另存为「UTF-8 with BOM」或「UTF-8」后重试"
+                )))?;
             // Windows 记事本等常带 UTF-8 BOM:不剥会让首列表头变成
             // \u{feff}col,占位符静默替换失败
             if let Some(rest) = csv_text.strip_prefix("\u{feff}") {

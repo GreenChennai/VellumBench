@@ -190,6 +190,8 @@ impl VellumApp {
             saved_rev: 0,
             watcher_rx: None,
             last_self_write: None,
+            watcher_pending: Vec::new(),
+            watcher_last_event: None,
             clipboard: Vec::new(),
             paste_offset: 0,
             palette_open: false,

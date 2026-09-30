@@ -545,6 +545,11 @@ impl<'a> NumField<'a> {
             let (up, shift) = ui
                 .ctx()
                 .input(|i| (i.key_pressed(egui::Key::ArrowUp), i.modifiers.shift));
+            // 步进前先吸收草稿:已键入未回车的表达式先求值进 value,
+            // 步进基于草稿值 —— 否则下面的回显直接覆盖用户输入(草稿丢失)
+            if let Ok(v) = crate::expr::eval_expr(&buf, self.percent_base) {
+                *self.value = self.clamp(v);
+            }
             let step = self.step.unwrap_or(self.speed) * if shift { 10.0 } else { 1.0 };
             *self.value = self.clamp(if up {
                 *self.value + step
@@ -1505,7 +1510,13 @@ impl<'a> LayerRow<'a> {
         out.toggle_locked = lock_resp.clicked();
         // 点在开关上不算"选中"
         out.clicked = resp.clicked() && !out.toggle_hidden && !out.toggle_locked;
-        out.double_clicked = resp.double_clicked();
+        // 双击眼睛/锁同样不是"双击重命名":开关连点两次会误触调用方的
+        // 重命名语义,必须一并排除
+        out.double_clicked = resp.double_clicked()
+            && !out.toggle_hidden
+            && !out.toggle_locked
+            && !eye_resp.double_clicked()
+            && !lock_resp.double_clicked();
 
         eye_resp.on_hover_text(if self.hidden { "显示" } else { "隐藏" });
         lock_resp.on_hover_text(if self.locked { "解锁" } else { "锁定" });

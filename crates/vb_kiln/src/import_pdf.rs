@@ -75,7 +75,15 @@ pub fn import_pdf_to_doc(
     let mut warnings = Vec::new();
     let mut document = Document::new_empty("", "zh-CN");
 
-    let page_count = doc.pages().len().min(20);
+    // v1 上限 20 页:超出部分不再静默丢弃(降级必须可观测,ADR-0046)
+    const MAX_PAGES: i32 = 20;
+    let total_pages = doc.pages().len();
+    if total_pages > MAX_PAGES {
+        warnings.push(format!(
+            "PDF 共 {total_pages} 页,仅导入前 {MAX_PAGES} 页(超出部分丢弃)"
+        ));
+    }
+    let page_count = total_pages.min(MAX_PAGES);
     for page_idx in 0..page_count {
         let page = doc
             .pages()

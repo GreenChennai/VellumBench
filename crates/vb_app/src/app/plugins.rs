@@ -152,6 +152,8 @@ impl VellumApp {
         if !self.plugins_mgr_open {
             return;
         }
+        // 状态/日志色一律走主题令牌(theme.rs 是全仓唯一颜色字面量文件)
+        let c_error = vb_ui::theme::Tokens::get(self.theme_dark).danger;
         let mut open = true;
         egui::Window::new("插件管理")
             .open(&mut open)
@@ -196,10 +198,7 @@ impl VellumApp {
                     .map(|e| (e.dir.display().to_string(), e.error.clone()))
                     .collect();
                 for (dir, err) in &errors {
-                    ui.colored_label(
-                        egui::Color32::from_rgb(230, 120, 120),
-                        format!("装载失败 {dir}:{err}"),
-                    );
+                    ui.colored_label(c_error, format!("装载失败 {dir}:{err}"));
                 }
                 ui.separator();
                 // 插件行(快照先行,渲染中可变更结构)
@@ -224,6 +223,9 @@ impl VellumApp {
 
     /// 单个插件行:状态徽标 + 启用开关 + 重启/日志/卸载。
     fn plugin_manager_row(&mut self, ui: &mut egui::Ui, info: &PluginInfo) {
+        // 状态/日志色一律走主题令牌(theme.rs 是全仓唯一颜色字面量文件)
+        let t = vb_ui::theme::Tokens::get(self.theme_dark);
+        let (c_error, c_ok, c_warn, c_muted) = (t.danger, t.success, t.warn, t.text_3);
         ui.horizontal(|ui| {
             // 启用开关:勾选 = 启动(未授权 → 先弹授权窗);取消 = 停止
             let enabled = matches!(info.state, PluginState::Starting | PluginState::Running);
@@ -250,11 +252,11 @@ impl VellumApp {
             }
             // 状态徽标
             let badge = match info.state {
-                PluginState::Running => egui::Color32::from_rgb(120, 200, 120),
-                PluginState::Starting => egui::Color32::from_rgb(200, 190, 120),
-                PluginState::Crashed => egui::Color32::from_rgb(230, 120, 120),
-                PluginState::Unauthorized => egui::Color32::from_rgb(200, 160, 120),
-                PluginState::Stopped => egui::Color32::GRAY,
+                PluginState::Running => c_ok,
+                PluginState::Starting => c_warn,
+                PluginState::Crashed => c_error,
+                PluginState::Unauthorized => c_warn,
+                PluginState::Stopped => c_muted,
             };
             ui.colored_label(badge, format!("[{}]", info.state.label()));
             ui.weak(format!("v{}", info.version));
@@ -288,14 +290,11 @@ impl VellumApp {
         ui.horizontal(|ui| {
             ui.weak(info.dir.display().to_string());
             if !info.authorized {
-                ui.colored_label(
-                    egui::Color32::from_rgb(200, 160, 120),
-                    "未授权(启用时需在弹窗确认 manifest 权限)",
-                );
+                ui.colored_label(c_warn, "未授权(启用时需在弹窗确认 manifest 权限)");
             }
         });
         if let Some(note) = (!info.note.is_empty()).then(|| info.note.clone()) {
-            ui.colored_label(egui::Color32::from_rgb(230, 120, 120), note);
+            ui.colored_label(c_error, note);
         }
         // 权限清单摘要(授权闸门的可见性)
         if !info.manifest.commands.is_empty() {
@@ -313,9 +312,9 @@ impl VellumApp {
                     .show(ui, |ui| {
                         for l in self.plugin_host.logs(&info.id) {
                             let color = match l.level.as_str() {
-                                "error" => egui::Color32::from_rgb(230, 120, 120),
-                                "warn" => egui::Color32::from_rgb(220, 180, 110),
-                                _ => egui::Color32::PLACEHOLDER,
+                                "error" => c_error,
+                                "warn" => c_warn,
+                                _ => c_muted,
                             };
                             ui.colored_label(color, format!("[{}] {}", l.level, l.text));
                         }

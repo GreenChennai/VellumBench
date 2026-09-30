@@ -354,9 +354,14 @@ impl VellumApp {
                                     }
                                 });
                             }
-                            if self.export_format == 0 {
-                                ui.checkbox(&mut self.export_transparent, "透明背景");
-                            }
+                            // 透明背景仅 PNG 有意义:其余格式**置灰展示**而非
+                            // 静默隐藏 —— 用户能看到选项存在且知道为何不可用
+                            // (上次勾选是否生效不再无感知)
+                            ui.add_enabled(
+                                self.export_format == 0,
+                                egui::Checkbox::new(&mut self.export_transparent, "透明背景"),
+                            )
+                            .on_disabled_hover_text("透明背景仅 PNG 导出支持");
                             ui.label(format!("目标:当前画板({})", self.active_artboard_name()));
                             // U-7:主按钮右下,取消在其左
                             let (primary, cancel) =
@@ -436,10 +441,11 @@ impl VellumApp {
                         // 过滤后的候选(标签/ID 的关键字子串;04-1-3 输入即过滤)
                         let hits = palette_filter(&self.palette_query);
                         if hits.is_empty() {
+                            let muted = vb_ui::theme::Tokens::get(self.theme_dark).text_3;
                             ui.label(
                                 egui::RichText::new("没有匹配的命令")
                                     .size(12.0)
-                                    .color(egui::Color32::GRAY),
+                                    .color(muted),
                             );
                             return;
                         }

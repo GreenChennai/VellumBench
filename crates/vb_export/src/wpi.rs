@@ -87,10 +87,11 @@ pub fn export_via_wpi(
         ));
     }
 
-    // 临时 HTML 目录(07 篇 §八:vsm-export-{pid}-{seq})
+    // 临时 HTML 目录(07 篇 §八:vsm-export-{pid}-{seq});nanos 而非
+    // millis:millis 每秒重复,同进程并发两次导出可碰撞互删临时目录
     let seq = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_millis())
+        .map(|d| d.subsec_nanos())
         .unwrap_or(0);
     let tmp = std::env::temp_dir().join(format!("vsm-export-{}-{seq}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
@@ -102,7 +103,15 @@ pub fn export_via_wpi(
         copy_project_extras(project_dir, &tmp).map_err(|e| format!("项目资产复制失败:{e}"))?;
 
         let mut warnings = Vec::new();
-        let mut cmd = Command::new("python");
+        // Windows 干净环境的 `python` 常命中微软商店 stub(打印"未找到
+        // Python"并以非零退出);优先用 py launcher(launcher 几乎必在),
+        // 探测即退的 --version 确认存在后回退 python。绝不裸跑 `py -3`:
+        // 不带脚本参数会进入 REPL 挂死。
+        let use_py_launcher = Command::new("py").arg("--version").output().is_ok();
+        let mut cmd = Command::new(if use_py_launcher { "py" } else { "python" });
+        if use_py_launcher {
+            cmd.arg("-3");
+        }
         cmd.current_dir(wpi_dir)
             .arg("src/cli.py")
             .arg("--source")

@@ -236,8 +236,11 @@ fn draw_item_shape(id: usize, item: &DrawItem, page_h: f64) -> String {
                     .unwrap_or(label.weight);
                 let bold_attr = if bold >= 600 { " b=\"1\"" } else { "" };
                 let text = xml_escape(part);
+                // per-run typeface 必须落盘:此前不写,PowerPoint 回退到
+                // theme 的 Calibri,与设计字体度量不符 → 行宽错位
+                let typeface = xml_escape(&label.font_family);
                 paras.push_str(&format!(
-                    r#"<a:r><a:rPr lang="zh-CN" sz="{size_hundred}" {bold_attr} dirty="0"><a:solidFill><a:srgbClr val="{color}"/></a:solidFill></a:rPr><a:t>{text}</a:t></a:r>"#
+                    r#"<a:r><a:rPr lang="zh-CN" sz="{size_hundred}" {bold_attr} dirty="0"><a:latin typeface="{typeface}"/><a:ea typeface="{typeface}"/><a:cs typeface="{typeface}"/><a:solidFill><a:srgbClr val="{color}"/></a:solidFill></a:rPr><a:t>{text}</a:t></a:r>"#
                 ));
                 if end <= p0 {
                     break;

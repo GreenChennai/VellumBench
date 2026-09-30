@@ -49,3 +49,6 @@ crates/vb_web/web/example/
 
 # 自动快照目录(自动保存/崩溃恢复)不入库
 .vb-autosave/
+
+# 发行包产物(package.ps1 产出,不入库)
+dist/*.zip

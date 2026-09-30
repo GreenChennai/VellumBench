@@ -172,17 +172,18 @@ pub fn blur(
     box_spec: Option<(u32, u32, u32, u32)>,
 ) -> Result<(), String> {
     let img = open_rgba(input)?;
-    let blurred = image::DynamicImage::ImageRgba8(img).blur(radius.max(0.5));
+    let blurred = image::DynamicImage::ImageRgba8(img.clone()).blur(radius.max(0.5));
     let mut result = blurred.to_rgba8();
     if let Some((l, t, r, b)) = box_spec {
-        // 区域模糊:整图模糊后只把 box 内的像素写回原位
-        let full = open_rgba(input)?;
-        let (iw, ih) = full.dimensions();
+        // 区域模糊:box 外保持原图,box 内写回模糊像素(此前 combined 从
+        // 模糊图克隆,box 内"写回"的也是模糊像素 —— 等于整图模糊,与
+        // 语义相反)
+        let (iw, ih) = img.dimensions();
         let l = l.min(iw);
         let t = t.min(ih);
         let r = r.clamp(l + 1, iw);
         let b = b.clamp(t + 1, ih);
-        let mut combined = result.clone();
+        let mut combined = img.clone();
         for y in t..b {
             for x in l..r {
                 let p = result.get_pixel(x, y);

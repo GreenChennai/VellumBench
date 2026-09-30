@@ -186,7 +186,12 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
                     {
                         let css_path = project_dir.join(href.trim_start_matches("./"));
                         match std::fs::read_to_string(&css_path) {
-                            Ok(t) => css_texts.push(t),
+                            Ok(t) => {
+                                // 剥 UTF-8 BOM:Windows 记事本等编辑器出品
+                                // 的 CSS 常带 BOM,留着会把首条选择器
+                                // (如 `:root`/`.hero`)匹配失败,整表静默降级
+                                css_texts.push(t.strip_prefix('\u{FEFF}').unwrap_or(&t).to_string())
+                            }
                             Err(_) => warnings.push(format!("样式表缺失:{href}(按无该表导入)")),
                         }
                     } else {
@@ -1545,12 +1550,17 @@ impl<'a> NodeImporter<'a> {
     /// 分组定稿:修剪首尾空白(偏移平移),合并相邻同样式段;空文本返回 None。
     fn finalize_group(g: &InlineGroup) -> Option<(String, Vec<TextSeg>)> {
         let raw = &g.text;
-        // 只修剪 ASCII 空白(NBSP 是可见内容)
+        // 只修剪 ASCII 空白(NBSP 是可见内容);lead 也必须用同一口径 ——
+        // `trim_start()` 是 Unicode 语义,NBSP 会被计入 lead 而 text 里却
+        // 保留 NBSP,段区间整体错位到错误的字符上
         let text = raw.trim_matches(|c: char| c.is_ascii_whitespace());
         if text.is_empty() {
             return None;
         }
-        let lead = raw.len() - raw.trim_start().len();
+        let lead = raw.len()
+            - raw
+                .trim_start_matches(|c: char| c.is_ascii_whitespace())
+                .len();
         let end_lim = lead + text.len();
         let mut segs: Vec<TextSeg> = Vec::new();
         for (s, e, st) in &g.segs {

@@ -591,9 +591,13 @@ impl Command {
         Ok(Slot { parent_sid, index })
     }
 
-    /// 段注记区间校验(model.rs 不变量):升序、互不重叠、不越界。
+    /// 段注记区间校验(model.rs 不变量):升序、互不重叠、不越界,
+    /// 且必须是 UTF-8 字符边界 —— 导出侧 `text[pos..s]` 是字节切片,
+    /// 中文等非 ASCII 文本给非边界偏移会在导出时 panic。
     /// apply/redo 双侧把守,坏区间不得落盘。
-    fn validate_segs(segs: &[TextSeg], text_len: usize) -> Result<()> {
+    fn validate_segs(segs: &[TextSeg], text: &str) -> Result<()> {
+        let text_len = text.len();
+        let at_boundary = |i: usize| text.is_char_boundary(i) || i == 0 || i == text_len;
         let mut prev_end = 0usize;
         for s in segs {
             if s.start > s.end {
@@ -611,6 +615,12 @@ impl Command {
             if s.end > text_len {
                 return Err(VbError::Conflict(format!(
                     "段区间越界: {}..{} 超出文本长度 {text_len}",
+                    s.start, s.end
+                )));
+            }
+            if !at_boundary(s.start) || !at_boundary(s.end) {
+                return Err(VbError::Conflict(format!(
+                    "段区间非字符边界: {}..{} 切在多字节字符中间(文本含中文等 UTF-8 多字节字符时,偏移必须落在字符边界)",
                     s.start, s.end
                 )));
             }
@@ -634,6 +644,8 @@ impl Command {
                 }
                 // root 之下只允许画板:非画板节点挂 root 会从导出中
                 // 整体消失(渲染只走画板子树),必须拒绝(B5)
+                // 对称不变量:画板也只能挂 root(同 Move;挂进普通容器
+                // 会被 sync_artboards 除名,从导出中静默消失)
                 {
                     let pid = doc.find_by_sid(parent_sid);
                     let is_root = pid == Some(doc.root);
@@ -641,6 +653,11 @@ impl Command {
                     if is_root && !is_artboard {
                         return Err(VbError::Conflict(
                             "root 下只能挂画板(节点会脱离导出子树)".into(),
+                        ));
+                    }
+                    if !is_root && is_artboard {
+                        return Err(VbError::Conflict(
+                            "画板只能挂在文档根下(移入其他容器会脱离导出子树)".into(),
                         ));
                     }
                 }
@@ -720,6 +737,15 @@ impl Command {
                 {
                     return Err(VbError::Conflict(
                         "root 下只能挂画板(节点会脱离导出子树)".into(),
+                    ));
+                }
+                // 画板只能挂 root(对称不变量):挂进普通容器后 sync_artboards
+                // 不再收录它,整棵画板子树会从导出/渲染中静默消失
+                if np != doc.root
+                    && matches!(doc.nodes.get(id), Some(n) if matches!(n.kind, NodeKind::Artboard))
+                {
+                    return Err(VbError::Conflict(
+                        "画板只能挂在文档根下(移入其他容器会脱离导出子树)".into(),
                     ));
                 }
                 // 环防护:新父级不得是自身或自身后代(否则场景图成环,遍历栈溢出)
@@ -802,7 +828,7 @@ impl Command {
                     });
                 }
                 if let NodeKind::Text { text, segments, .. } = &mut n.kind {
-                    Self::validate_segs(new, text.len())?;
+                    Self::validate_segs(new, text)?;
                     *segments = new.clone();
                 }
                 Ok(ChangeSet {

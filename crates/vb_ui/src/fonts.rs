@@ -101,9 +101,45 @@ impl FontReport {
     }
 }
 
-/// 随包字体目录：`<repo>/assets/fonts/`。
+/// 随包字体目录（按顺序探测，取第一个存在者）：
+///
+/// 1. `VB_FONTS_DIR` 环境变量（用户/分发者显式指定）；
+/// 2. `<exe目录>/assets/fonts/` —— 发行布局（字体与 exe 一起分发）；
+/// 3. `<exe目录>/../assets/fonts/` —— 便携版布局（assets 与 bin 同级）；
+/// 4. `<repo>/assets/fonts/` —— 开发布局（编译期路径，仅开发机存在）。
+///
+/// 不能只用 `CARGO_MANIFEST_DIR`：那是编译期常量，发布到用户机器后指向
+/// 不存在的路径，随包字体会全体静默失效（vb_ui/fonts.rs 发布阻断项）。
+fn bundled_dirs() -> Vec<std::path::PathBuf> {
+    let mut v = Vec::new();
+    if let Some(dir) = std::env::var_os("VB_FONTS_DIR") {
+        v.push(std::path::PathBuf::from(dir));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(root) = exe.parent() {
+            v.push(root.join("assets/fonts"));
+            if let Some(parent) = root.parent() {
+                v.push(parent.join("assets/fonts"));
+            }
+        }
+    }
+    v.push(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/fonts"));
+    v
+}
+
+/// 第一个含任一候选字体文件的目录；都不存在则返回开发布局路径
+/// （让 `read_first_bundled` 照常落空，行为与旧版一致）。
 fn bundled_dir() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/fonts")
+    let candidates = bundled_dirs();
+    for dir in &candidates {
+        if dir.is_dir() {
+            return dir.clone();
+        }
+    }
+    candidates
+        .into_iter()
+        .next_back()
+        .unwrap_or_else(|| std::path::PathBuf::from("assets/fonts"))
 }
 
 /// 某个字重优先找的随包文件名，以及它在界面上的显示名。
@@ -131,16 +167,31 @@ const CJK_FILES: [(&str, &str); 2] = [
     ("MiSans-Regular.otf", "MiSans"),
 ];
 
-/// 系统中文回退候选（Windows 常见路径）。
+/// 系统中文回退候选（相对 `%WINDIR%\Fonts` 解析）。
 ///
 /// 中文**不随包**的原因见 `docs/fonts.md`：微软雅黑已随 Windows 分发，
 /// 直接用它不存在再分发问题，且省 2MB 体积。若用户把 MiSans 放进
 /// `assets/fonts/`，则优先用 MiSans。
-const SYSTEM_CJK: [(&str, &str); 3] = [
-    ("C:\\Windows\\Fonts\\msyh.ttc", "Microsoft YaHei"),
-    ("C:\\Windows\\Fonts\\msyh.ttf", "Microsoft YaHei"),
-    ("C:\\Windows\\Fonts\\simsun.ttc", "SimSun"),
-];
+///
+/// 不硬编码盘符：Windows 可装在任意盘，`%WINDIR%`（缺省 `C:\Windows`）
+/// 才是正确来源；候选含等线/黑体作兜底，避免老系统缺 msyh 时中文全灭。
+fn system_cjk_candidates() -> Vec<(std::path::PathBuf, &'static str)> {
+    let windir = std::env::var_os("WINDIR")
+        .or_else(|| std::env::var_os("SystemRoot"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("C:\\Windows"));
+    let fonts = windir.join("Fonts");
+    let rel = [
+        ("msyh.ttc", "Microsoft YaHei"),
+        ("msyh.ttf", "Microsoft YaHei"),
+        ("Deng.ttf", "DengXian"),
+        ("simhei.ttf", "SimHei"),
+        ("simsun.ttc", "SimSun"),
+    ];
+    rel.into_iter()
+        .map(|(f, label)| (fonts.join(f), label))
+        .collect()
+}
 
 /// 随包等宽候选。
 const MONO_FILES: [(&str, &str); 2] = [
@@ -194,8 +245,8 @@ pub fn install(ctx: &egui::Context) -> FontReport {
         cjk_id = Some("vb-cjk");
     }
     if cjk_id.is_none() {
-        for (path, label) in SYSTEM_CJK {
-            if let Ok(bytes) = std::fs::read(path) {
+        for (path, label) in system_cjk_candidates() {
+            if let Ok(bytes) = std::fs::read(&path) {
                 fonts.font_data.insert(
                     "vb-cjk".into(),
                     Arc::new(FontData::from_owned(bytes).tweak(cjk_tweak())),

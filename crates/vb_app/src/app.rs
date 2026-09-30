@@ -342,6 +342,10 @@ pub struct VellumApp {
     watcher_rx: Option<std::sync::mpsc::Receiver<Vec<std::path::PathBuf>>>,
     /// 抑制自身保存触发的重载
     last_self_write: Option<std::time::Instant>,
+    /// 外部改动去抖(02-2-5):已收未决事件 + 最后事件时刻。编辑器保存
+    /// 常拆成多批写,事件间间隔 >1ms,不去抖会连触发两次完整重载
+    watcher_pending: Vec<std::path::PathBuf>,
+    watcher_last_event: Option<std::time::Instant>,
     /// 阶段 2:外壳协作通道(打开/新建/关闭/主页/主题/最近列表经外壳单点写;
     /// None = 无外壳的旧式独立构造,走就地打开/新建的兜底路径)。
     pub(crate) shell_tx: Option<std::sync::mpsc::Sender<crate::shell::ShellRequest>>,

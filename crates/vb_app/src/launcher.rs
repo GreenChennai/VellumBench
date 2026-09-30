@@ -33,7 +33,7 @@ pub struct LauncherUi {
     pub selected: usize,
     /// 上一帧搜索框是否持有焦点(键盘派发的上下文判定)。
     search_focused: bool,
-    /// 「聚焦搜索框」待办(home.search 命令的落地)。
+    /// 「聚焦搜索框」待办标志(home.search 命令置位,下一帧消费)。
     focus_search: bool,
     /// 能力台账窗口(02-3-6)。
     pub show_caps: bool,
@@ -470,7 +470,20 @@ impl LauncherUi {
             .as_deref()
             .filter(|p| Path::new(p).is_file())
             .unwrap_or("");
-        let ready = match self.thumbs.entry(key.to_string()) {
+        // 缓存键带 mtime:外部替换 thumb.png 后旧缓存即失效
+        // (此前以路径为键且永不失效,须重启才能刷新)
+        let mtime = if key.is_empty() {
+            0
+        } else {
+            std::fs::metadata(key)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        };
+        let cache_key = format!("{key}@{mtime}");
+        let ready = match self.thumbs.entry(cache_key.clone()) {
             std::collections::hash_map::Entry::Occupied(o) => matches!(o.get(), Thumb::Ready(_)),
             std::collections::hash_map::Entry::Vacant(v) => {
                 let loaded = if key.is_empty() {
@@ -481,6 +494,10 @@ impl LauncherUi {
                 match loaded {
                     Some(tex) => {
                         v.insert(Thumb::Ready(tex));
+                        // 旧 mtime 的条目已无人引用,顺手清掉防累积
+                        self.thumbs.retain(|k, _| {
+                            k == &cache_key || k.split_once('@').map(|(p, _)| p) != Some(key)
+                        });
                         true
                     }
                     None => {
@@ -492,7 +509,7 @@ impl LauncherUi {
         };
         let (rect, _) = ui.allocate_exact_size(egui::vec2(TW, TH), egui::Sense::hover());
         if ready {
-            if let Some(Thumb::Ready(tex)) = self.thumbs.get(key) {
+            if let Some(Thumb::Ready(tex)) = self.thumbs.get(&cache_key) {
                 ui.painter().image(
                     tex.id(),
                     rect,

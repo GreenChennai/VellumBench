@@ -263,11 +263,15 @@ fn write_item(out: &mut String, i: usize, item: &DrawItem, scale: f64) {
                     ls as f32,
                     |vi, hard, run, line, byte_base| {
                         let baseline = y + run.ascent as f64 * s + vi as f64 * line_h;
+                        // font-family 必须落盘:此前只有字号/字重,设计字体
+                        // 全部丢成查看器默认字体(度量按原字体整形,换默认
+                        // 字体后行宽错位)
                         let _ = write!(
                             out,
-                            r#"<text x="{x}" y="{baseline}" font-size="{}" font-weight="{}" letter-spacing="{ls}" fill="rgb({br},{bg2},{bb})" fill-opacity="{}"{tf}>"#,
+                            r#"<text x="{x}" y="{baseline}" font-size="{}" font-weight="{}" letter-spacing="{ls}" font-family="{}" fill="rgb({br},{bg2},{bb})" fill-opacity="{}"{tf}>"#,
                             t.font_size * s,
                             t.weight,
+                            escape_xml(&t.font_family),
                             t.color[3] * item.opacity,
                         );
                         for part in vb_render::text::split_line_segments(

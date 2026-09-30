@@ -109,7 +109,11 @@ fn rounded_rect_radius(segs: &[tiny_skia_path::PathSegment]) -> Option<f64> {
     if chords.len() != 4 {
         return None;
     }
-    chords.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    // 退化几何可能出现 NaN:total_cmp 全序排序,不 panic;含 NaN 直接放弃近似
+    if chords.iter().any(|c| c.is_nan()) {
+        return None;
+    }
+    chords.sort_by(f32::total_cmp);
     let mid = (chords[1] + chords[2]) / 2.0;
     // 弦跨角部对角(usvg 圆角矩形构造),换算回半径
     let r = mid / std::f32::consts::SQRT_2;

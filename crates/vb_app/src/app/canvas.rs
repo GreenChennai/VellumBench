@@ -58,7 +58,10 @@ impl VellumApp {
                     // 轮廓模式(Mod+Y):不画实体,只勾勒每个对象的绝对边界
                     self.draw_outline_mode(&painter, rect);
                 } else {
-                    self.render_canvas_gpu(frame, rect);
+                    // 纹理按物理像素渲染:rect 是逻辑点,150%/200% 缩放屏上
+                    // 不乘 pixels_per_point 会把纹理再放大 → 画布发糊
+                    let ppp = ui.ctx().pixels_per_point();
+                    self.render_canvas_gpu(frame, rect, ppp);
                     if let Some(tex_id) = self.tex_id() {
                         painter.image(
                             tex_id,
@@ -117,13 +120,14 @@ impl VellumApp {
             });
     }
 
-    fn render_canvas_gpu(&mut self, frame: &eframe::Frame, rect: Rect) {
+    fn render_canvas_gpu(&mut self, frame: &eframe::Frame, rect: Rect, pixels_per_point: f32) {
         let Some(rs) = frame.wgpu_render_state() else {
             return;
         };
+        let ppp = pixels_per_point.clamp(1.0, 4.0) as f64;
         let size = [
-            (rect.width().max(1.0) as u32).min(4096),
-            (rect.height().max(1.0) as u32).min(4096),
+            ((rect.width().max(1.0) as f32 * pixels_per_point) as u32).min(4096),
+            ((rect.height().max(1.0) as f32 * pixels_per_point) as u32).min(4096),
         ];
 
         // 初始化 vello renderer(一次)
@@ -227,7 +231,9 @@ impl VellumApp {
                 let z = self.camera.zoom;
                 let tx = self.camera.pan_x + n.geom.x * z;
                 let ty = self.camera.pan_y + n.geom.y * z;
-                let tf = vello::kurbo::Affine::translate(vello::kurbo::Vec2::new(tx, ty))
+                // 相机变换产出逻辑点坐标,纹理是物理像素:外乘 ppp 对齐
+                let tf = vello::kurbo::Affine::scale(ppp)
+                    * vello::kurbo::Affine::translate(vello::kurbo::Vec2::new(tx, ty))
                     * vello::kurbo::Affine::scale(z);
                 let mut sub = vello::Scene::new();
                 vb_render::gpu::encode_scene(&mut sub, &list);
@@ -240,10 +246,13 @@ impl VellumApp {
             if let Some(ab) = vb_tools::artboard_of(&self.doc, iso) {
                 if let Some(abn) = self.doc.nodes.get(ab) {
                     let z = self.camera.zoom;
-                    let tf = vello::kurbo::Affine::translate(vello::kurbo::Vec2::new(
-                        self.camera.pan_x + abn.geom.x * z,
-                        self.camera.pan_y + abn.geom.y * z,
-                    )) * vello::kurbo::Affine::scale(z);
+                    // 同上:外乘 ppp 对齐物理像素纹理
+                    let tf = vello::kurbo::Affine::scale(ppp)
+                        * vello::kurbo::Affine::translate(vello::kurbo::Vec2::new(
+                            self.camera.pan_x + abn.geom.x * z,
+                            self.camera.pan_y + abn.geom.y * z,
+                        ))
+                        * vello::kurbo::Affine::scale(z);
                     let c = Tokens::get(self.theme_dark).bg_canvas;
                     let scrim = vello::peniko::Color::from_rgba8(c.r(), c.g(), c.b(), 185);
                     let mut sc = vello::Scene::new();
@@ -288,13 +297,11 @@ impl VellumApp {
         }
         let gpu = self.gpu.as_mut().unwrap();
         if let Some((_, view, s, _)) = &gpu.tex {
+            // 画板外留白随主题:取唯一令牌源 bg_canvas(此前硬编码 hex 与
+            // 令牌各自为政,改主题画布外围不动;与隔离遮罩同源)
+            let bc = Tokens::get(self.theme_dark).bg_canvas;
             let params = vello::RenderParams {
-                // 画板外留白随主题(此前浅色主题下仍是深色纹理)
-                base_color: if self.theme_dark {
-                    vello::peniko::Color::from_rgb8(0x14, 0x14, 0x14)
-                } else {
-                    vello::peniko::Color::from_rgb8(0xE8, 0xE6, 0xE2)
-                },
+                base_color: vello::peniko::Color::from_rgb8(bc.r(), bc.g(), bc.b()),
                 width: s[0],
                 height: s[1],
                 antialiasing_method: vello::AaConfig::Area,

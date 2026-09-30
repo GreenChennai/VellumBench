@@ -62,7 +62,8 @@ enum Cmd {
         /// 保留透明背景(PNG/GIF/SVG/PDF)
         #[arg(long, default_value_t = false)]
         transparent: bool,
-        /// 最大等待秒(浏览器车道 settle 预算;自研车道无外部等待)
+        /// 最大等待秒(保留参数:当前浏览器车道自带 settle 收敛预算,
+        /// 此参数暂不生效;仅为脚本兼容保留)
         #[arg(long, default_value_t = 15.0)]
         max_wait: f32,
         /// 高度锁定(CSS px;0=整页。浏览器车道有效)
@@ -344,13 +345,16 @@ fn run_export(
         match dom_result {
             Ok(out) => {
                 for w in &out.warnings {
-                    eprintln!("{{\"domwarn\":\"{w}\"}}");
+                    eprintln!("{{\"domwarn\":\"{}\"}}", jesc(&w));
                 }
                 if let Some(parent) = output.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
                 if let Err(e) = std::fs::write(&output, &out.bytes) {
-                    eprintln!("{{\"ok\":false,\"error\":\"写文件失败:{e}\"}}");
+                    eprintln!(
+                        "{{\"ok\":false,\"error\":\"写文件失败:{}\"}}",
+                        jesc(&e.to_string())
+                    );
                     return 4;
                 }
                 // 宽高口径与车道 B 一致:光栅 = 画板逻辑尺寸 × scale;矢量 = 逻辑尺寸
@@ -385,11 +389,17 @@ fn run_export(
             }
             Err(e) => {
                 if vector_mode == "dom" {
-                    eprintln!("{{\"ok\":false,\"error\":\"DOM 快照路线失败:{e}\"}}");
+                    eprintln!(
+                        "{{\"ok\":false,\"error\":\"DOM 快照路线失败:{}\"}}",
+                        jesc(&e.to_string())
+                    );
                     return 4;
                 }
                 lane_fallback_native = true;
-                eprintln!("{{\"warn\":\"DOM 快照路线失败,降级 printToPDF:{e}\"}}");
+                eprintln!(
+                    "{{\"warn\":\"DOM 快照路线失败,降级 printToPDF:{}\"}}",
+                    jesc(&e.to_string())
+                );
             }
         }
     }
@@ -407,13 +417,16 @@ fn run_export(
         match anim {
             Ok(out) => {
                 for w in &out.warnings {
-                    eprintln!("{{\"domwarn\":\"{w}\"}}");
+                    eprintln!("{{\"domwarn\":\"{}\"}}", jesc(&w));
                 }
                 if let Some(parent) = output.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
                 if let Err(e) = std::fs::write(&output, &out.bytes) {
-                    eprintln!("{{\"ok\":false,\"error\":\"写文件失败:{e}\"}}");
+                    eprintln!(
+                        "{{\"ok\":false,\"error\":\"写文件失败:{}\"}}",
+                        jesc(&e.to_string())
+                    );
                     return 4;
                 }
                 let anim_cov = out
@@ -442,11 +455,17 @@ fn run_export(
             }
             Err(e) => {
                 if engine_mode == "browser" {
-                    eprintln!("{{\"ok\":false,\"error\":\"动画浏览器路线失败:{e}\"}}");
+                    eprintln!(
+                        "{{\"ok\":false,\"error\":\"动画浏览器路线失败:{}\"}}",
+                        jesc(&e.to_string())
+                    );
                     return 4;
                 }
                 lane_fallback_native = true;
-                eprintln!("{{\"warn\":\"动画浏览器路线不可用,降级自研逐帧:{e}\"}}");
+                eprintln!(
+                    "{{\"warn\":\"动画浏览器路线不可用,降级自研逐帧:{}\"}}",
+                    jesc(&e.to_string())
+                );
             }
         }
     }
@@ -467,11 +486,19 @@ fn run_export(
         };
         match vb_browser::export_source(&source, &req) {
             Ok(outcome) => {
+                // 车道 B 告警逐条留痕:此前只报计数,告警内容被吞,
+                // 违反「降级必须可观测」(ADR-0046)
+                for w in &outcome.warnings {
+                    eprintln!("{{\"domwarn\":\"{}\"}}", jesc(w));
+                }
                 if let Some(parent) = output.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
                 if let Err(e) = std::fs::write(&output, &outcome.bytes) {
-                    eprintln!("{{\"ok\":false,\"error\":\"写文件失败:{e}\"}}");
+                    eprintln!(
+                        "{{\"ok\":false,\"error\":\"写文件失败:{}\"}}",
+                        jesc(&e.to_string())
+                    );
                     return 4;
                 }
                 let json = format!(
@@ -494,11 +521,17 @@ fn run_export(
             }
             Err(e) => {
                 if engine_mode == "browser" {
-                    eprintln!("{{\"ok\":false,\"error\":\"浏览器车道失败:{e}\"}}");
+                    eprintln!(
+                        "{{\"ok\":false,\"error\":\"浏览器车道失败:{}\"}}",
+                        jesc(&e.to_string())
+                    );
                     return 4;
                 }
                 lane_fallback_native = true;
-                eprintln!("{{\"warn\":\"浏览器车道不可用,降级自研引擎:{e}\"}}");
+                eprintln!(
+                    "{{\"warn\":\"浏览器车道不可用,降级自研引擎:{}\"}}",
+                    jesc(&e.to_string())
+                );
             }
         }
     }
@@ -507,7 +540,10 @@ fn run_export(
     let mut imported = match import_project(&import_path) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("{{\"ok\":false,\"error\":\"导入失败:{e}\"}}");
+            eprintln!(
+                "{{\"ok\":false,\"error\":\"导入失败:{}\"}}",
+                jesc(&e.to_string())
+            );
             return 3;
         }
     };
@@ -551,7 +587,7 @@ fn run_export(
     // 结构化标记诚实输出(degraded_artboard),不静默
     let mut degraded_artboard = imported.warnings.iter().any(|w| w.contains("画板标记"));
     for w in &imported.warnings {
-        eprintln!("{{\"warn\":\"{w}\"}}");
+        eprintln!("{{\"warn\":\"{}\"}}", jesc(&w));
     }
     for w in vb_layout::apply_to_doc(&mut imported.doc, ab, Some(&dir), synthetic) {
         // 画板尺寸回填 / 裁剪 / grid 降级 = 合成画板与作者声明可能不一致,
@@ -559,7 +595,7 @@ fn run_export(
         if w.contains("尺寸回填") || w.contains("裁剪") || w.contains("grid") {
             degraded_artboard = true;
         }
-        eprintln!("{{\"warn\":\"{w}\"}}");
+        eprintln!("{{\"warn\":\"{}\"}}", jesc(&w));
     }
 
     let req = ExportRequest {
@@ -575,7 +611,10 @@ fn run_export(
     let (bytes, report) = match vb_kiln::export_artboard(&imported.doc, ab, &req, Some(&dir)) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("{{\"ok\":false,\"error\":\"导出失败:{e}\"}}");
+            eprintln!(
+                "{{\"ok\":false,\"error\":\"导出失败:{}\"}}",
+                jesc(&e.to_string())
+            );
             return 4;
         }
     };
@@ -583,7 +622,10 @@ fn run_export(
         let _ = std::fs::create_dir_all(parent);
     }
     if let Err(e) = std::fs::write(&output, &bytes) {
-        eprintln!("{{\"ok\":false,\"error\":\"写文件失败:{e}\"}}");
+        eprintln!(
+            "{{\"ok\":false,\"error\":\"写文件失败:{}\"}}",
+            jesc(&e.to_string())
+        );
         return 4;
     }
 
@@ -673,7 +715,7 @@ fn run_import(source: PathBuf, output: PathBuf) -> i32 {
                     // (此前 warnings 被静默丢弃,违反「导入不静默降级」)。
                     let warns: Vec<String> = warnings
                         .iter()
-                        .map(|w| format!("\"{}\"", jesc(w)))
+                        .map(|w| format!("\"{}\"", jesc(&w)))
                         .collect();
                     // VB-4:import 结果与 export 同构 —— 强类型告警聚合为
                     // KilnReport,输出 degraded + warnings_by_kind(门禁可判定)。
@@ -692,13 +734,16 @@ fn run_import(source: PathBuf, output: PathBuf) -> i32 {
                     0
                 }
                 Err(e) => {
-                    eprintln!("{{\"ok\":false,\"error\":\"HTML 写出失败:{e}\"}}");
+                    eprintln!(
+                        "{{\"ok\":false,\"error\":\"HTML 写出失败:{}\"}}",
+                        jesc(&e.to_string())
+                    );
                     4
                 }
             }
         }
         Err(e) => {
-            eprintln!("{{\"ok\":false,\"error\":\"{e}\"}}");
+            eprintln!("{{\"ok\":false,\"error\":\"{}\"}}", jesc(&e.to_string()));
             3
         }
     }
@@ -741,12 +786,12 @@ fn run_img(op: ImgOp) -> i32 {
                         0
                     }
                     Err(e) => {
-                        eprintln!("{{\"ok\":false,\"error\":\"{e}\"}}");
+                        eprintln!("{{\"ok\":false,\"error\":\"{}\"}}", jesc(&e.to_string()));
                         1
                     }
                 },
                 (Err(e), _) | (_, Err(e)) => {
-                    eprintln!("{{\"ok\":false,\"error\":\"{e}\"}}");
+                    eprintln!("{{\"ok\":false,\"error\":\"{}\"}}", jesc(&e.to_string()));
                     2
                 }
             }
@@ -762,7 +807,7 @@ fn run_img(op: ImgOp) -> i32 {
             let color = match img::parse_hex_color(&bg) {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("{{\"ok\":false,\"error\":\"{e}\"}}");
+                    eprintln!("{{\"ok\":false,\"error\":\"{}\"}}", jesc(&e.to_string()));
                     return 2;
                 }
             };
@@ -777,7 +822,7 @@ fn run_img(op: ImgOp) -> i32 {
                     0
                 }
                 Err(e) => {
-                    eprintln!("{{\"ok\":false,\"error\":\"{e}\"}}");
+                    eprintln!("{{\"ok\":false,\"error\":\"{}\"}}", jesc(&e.to_string()));
                     1
                 }
             }
@@ -796,12 +841,12 @@ fn run_img(op: ImgOp) -> i32 {
                         0
                     }
                     Err(e) => {
-                        eprintln!("{{\"ok\":false,\"error\":\"{e}\"}}");
+                        eprintln!("{{\"ok\":false,\"error\":\"{}\"}}", jesc(&e.to_string()));
                         1
                     }
                 },
                 Err(e) => {
-                    eprintln!("{{\"ok\":false,\"error\":\"{e}\"}}");
+                    eprintln!("{{\"ok\":false,\"error\":\"{}\"}}", jesc(&e.to_string()));
                     2
                 }
             }
@@ -817,7 +862,7 @@ fn run_img(op: ImgOp) -> i32 {
             let color = match img::parse_hex_color(&bg) {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("{{\"ok\":false,\"error\":\"{e}\"}}");
+                    eprintln!("{{\"ok\":false,\"error\":\"{}\"}}", jesc(&e.to_string()));
                     return 2;
                 }
             };
@@ -827,7 +872,7 @@ fn run_img(op: ImgOp) -> i32 {
                     0
                 }
                 Err(e) => {
-                    eprintln!("{{\"ok\":false,\"error\":\"{e}\"}}");
+                    eprintln!("{{\"ok\":false,\"error\":\"{}\"}}", jesc(&e.to_string()));
                     1
                 }
             }
@@ -838,7 +883,7 @@ fn run_img(op: ImgOp) -> i32 {
                 0
             }
             Err(e) => {
-                eprintln!("{{\"ok\":false,\"error\":\"{e}\"}}");
+                eprintln!("{{\"ok\":false,\"error\":\"{}\"}}", jesc(&e.to_string()));
                 1
             }
         },

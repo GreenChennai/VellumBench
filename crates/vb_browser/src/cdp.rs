@@ -140,6 +140,12 @@ fn truncate(s: &str) -> String {
     if s.len() <= 200 {
         s.to_string()
     } else {
-        format!("{}…", &s[..200])
+        // 回退到字符边界:CDP 消息常含中文(DOM 文本),按字节切在
+        // 多字节字符中间会 panic
+        let mut end = 200;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &s[..end])
     }
 }

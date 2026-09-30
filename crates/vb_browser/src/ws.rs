@@ -123,6 +123,13 @@ impl FrameCodec {
             };
             if self.buf.len() < need + payload_len {
                 if self.buf.capacity() < need + payload_len {
+                    // 帧长上限:对端异常时可能声明 64 位巨帧,无上限的
+                    // reserve 会被撑爆内存。CDP 消息实测不超过几十 MB,
+                    // 256 MiB 之外必是对端疯了。
+                    const MAX_FRAME: usize = 256 * 1024 * 1024;
+                    if payload_len > MAX_FRAME {
+                        return Err("WebSocket 帧长异常(超过 256 MiB 上限)".into());
+                    }
                     self.buf.reserve(need + payload_len - self.buf.len());
                 }
                 return Ok(FrameOutcome::None);
@@ -201,7 +208,12 @@ pub struct WsConn {
 impl WsConn {
     /// 连接 ws://host:port/path 并完成升级握手。
     pub fn connect(host: &str, port: u16, path: &str, timeout: Duration) -> Result<Self, String> {
-        let stream = TcpStream::connect((host, port))
+        // connect 本身也要有 deadline:TCP SYN 重试在 Windows 上可挂数秒,
+        // 与握手 deadline 是两回事。CDP 端点恒为本机回环,直接解析 IPv4。
+        let addr: std::net::SocketAddr = format!("{host}:{port}")
+            .parse()
+            .map_err(|e| format!("WS 地址解析失败 {host}:{port}: {e}"))?;
+        let stream = TcpStream::connect_timeout(&addr, timeout)
             .map_err(|e| format!("WS 连接 {host}:{port} 失败: {e}"))?;
         stream
             .set_read_timeout(Some(Duration::from_millis(100)))

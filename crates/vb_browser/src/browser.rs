@@ -21,6 +21,24 @@ const CHROME_PATHS: &[&str] = &[
     r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
 ];
 
+/// 环境变量派生的候选路径:per-user 安装(`%LOCALAPPDATA%`)与
+/// 自定义 Program Files 盘符。硬编码 C: 盘路径覆盖不了这两种常见形态。
+fn env_browser_paths() -> Vec<PathBuf> {
+    let mut v = Vec::new();
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        let local = PathBuf::from(local);
+        v.push(local.join(r"Google\Chrome\Application\chrome.exe"));
+    }
+    for key in ["PROGRAMFILES", "ProgramFiles(x86)"] {
+        if let Some(pf) = std::env::var_os(key) {
+            let pf = PathBuf::from(pf);
+            v.push(pf.join(r"Google\Chrome\Application\chrome.exe"));
+            v.push(pf.join(r"Microsoft\Edge\Application\msedge.exe"));
+        }
+    }
+    v
+}
+
 /// 发现系统浏览器:显式参数 → 环境变量 → Edge → Chrome。
 pub fn discover_browser(explicit: Option<&str>) -> Option<PathBuf> {
     if let Some(p) = explicit {
@@ -39,6 +57,7 @@ pub fn discover_browser(explicit: Option<&str>) -> Option<PathBuf> {
         .iter()
         .chain(CHROME_PATHS.iter())
         .map(Path::new)
+        .chain(env_browser_paths().iter().map(Path::new))
         .find(|p| p.is_file())
         .map(Path::to_path_buf)
 }
@@ -179,6 +198,9 @@ impl BrowserProcess {
         }
         let Some(resolved) = resolved else {
             let _ = child.kill();
+            let _ = child.wait();
+            // 此时尚未构造 BrowserProcess,Drop 不会执行,须手动清理
+            let _ = std::fs::remove_dir_all(&user_data_dir);
             return Err(format!(
                 "未捕获 DevTools 端点:{} 既未在 stderr 打印 DevTools 行,\
                  也未写出 {}/DevToolsActivePort。可设环境变量 VB_BROWSER_PATH \

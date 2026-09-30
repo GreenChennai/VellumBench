@@ -212,7 +212,17 @@ fn materialize(project: &Path, snap: &Snapshot) -> Result<PathBuf, String> {
     let dir = autosave_dir(project).join(RESTORE_DIR);
     std::fs::create_dir_all(&dir).map_err(|e| format!("创建恢复中转目录失败:{e}"))?;
     for (rel, content) in &snap.files {
-        let p = dir.join(rel);
+        // 路径消毒:快照 JSON 可能被篡改或将来 schema 变化引入 `..`/
+        // 绝对路径 —— 直接 join 会写到项目目录之外
+        let rel_path = std::path::Path::new(rel);
+        if rel_path.is_absolute()
+            || rel_path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(format!("快照文件路径非法(越出项目目录): {rel}"));
+        }
+        let p = dir.join(rel_path);
         if let Some(parent) = p.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("创建快照子目录失败:{e}"))?;
         }

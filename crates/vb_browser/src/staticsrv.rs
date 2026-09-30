@@ -205,12 +205,17 @@ fn handle(mut stream: TcpStream, root: Arc<PathBuf>, not_found: NotFoundLog) {
     let Some(file) = target.filter(|_| safe).filter(|t| t.is_file()) else {
         // VB-1:404 必须留痕(字体/脚本 404 会被浏览器静默降级,下游肉眼
         // 才能发现)。记录请求相对路径,导出结束并入 KilnReport。
+        // favicon.ico 是浏览器自发请求而非文档引用的资源,不计入告警,
+        // 否则所有无 favicon 的项目每次导出都有一条恒定噪声。
         {
-            let mut log = not_found.lock().unwrap_or_else(|e| e.into_inner());
-            if log.len() < NOT_FOUND_CAP {
-                let src = if rel.is_empty() { "/" } else { rel };
-                if !log.iter().any(|s| s == src) {
-                    log.push(src.to_string());
+            let is_favicon = rel == "favicon.ico";
+            if !is_favicon {
+                let mut log = not_found.lock().unwrap_or_else(|e| e.into_inner());
+                if log.len() < NOT_FOUND_CAP {
+                    let src = if rel.is_empty() { "/" } else { rel };
+                    if !log.iter().any(|s| s == src) {
+                        log.push(src.to_string());
+                    }
                 }
             }
         }
@@ -320,6 +325,15 @@ impl StaticServer {
 impl Drop for StaticServer {
     fn drop(&mut self) {
         self.alive.store(0, Ordering::Relaxed);
+        // accept 线程阻塞在 incoming():只置 alive 不够 —— try_clone 的
+        // 监听句柄留在线程里,端口要等下一个连接进来才释放(批量导出时
+        // 端口持续累积)。发一条哑连接把 accept 唤醒,循环头看到 alive=0
+        // 即退出;该连接在处理前就被丢弃。
+        if let Ok(addr) = self.listener.local_addr() {
+            if let Ok(_wake) = std::net::TcpStream::connect(addr) {
+                // 唤醒即达目的;连接随 _wake drop 关闭
+            }
+        }
     }
 }
 

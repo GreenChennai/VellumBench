@@ -418,8 +418,11 @@ fn write_inline_content(node: &HtmlNode, out: &mut String) {
     for c in &node.children {
         match &c.data {
             NodeData::Text(t) => {
-                let leading = t.starts_with(|ch: char| ch.is_whitespace());
-                let trailing = t.ends_with(|ch: char| ch.is_whitespace());
+                // 首尾空白探测与折叠口径一致(is_foldable_ws,不含 NBSP):
+                // NBSP 是可见内容而非可折叠空白 —— 用 Unicode 口径会把
+                // `&nbsp;` 邻接处误判成"源有空白",多插一个可见空格(L0 漂移)。
+                let leading = t.starts_with(is_foldable_ws);
+                let trailing = t.ends_with(is_foldable_ws);
                 let content = collapse_ws(t);
                 if content.is_empty() {
                     pending_ws = pending_ws || !t.is_empty();
@@ -448,8 +451,17 @@ fn write_node(node: &HtmlNode, indent: usize, out: &mut String) {
     match &node.data {
         NodeData::Doctype(_) => {}
         NodeData::Raw(r) => {
-            for line in r.lines() {
+            // 只给首行加缩进:Raw(frozen/script/head_extra)的内部是逐字节
+            // 保留的原文,再导入时内部行不会被剥缩进 —— 若每行都垫 pad,
+            // 每轮保存都会多吸收一层缩进(打穿 L1 字节幂等)。首行的 pad
+            // 落在开标签之前,不进入下次捕获,是安全的。
+            let mut lines = r.lines();
+            if let Some(first) = lines.next() {
                 out.push_str(&pad);
+                out.push_str(first.trim_end());
+                out.push('\n');
+            }
+            for line in lines {
                 out.push_str(line.trim_end());
                 out.push('\n');
             }
@@ -476,8 +488,12 @@ fn write_node(node: &HtmlNode, indent: usize, out: &mut String) {
                 return;
             }
             if e.is_rawtext() {
-                // 内容逐字节保留(verbatim):任何装饰性换行/缩进都会在下次
-                // 解析时进入内容,破坏 L1 幂等 —— 因此闭合标签紧跟内容。
+                // script/style 是真 rawtext:内容不经实体解码,逐字节保留
+                // (verbatim):任何装饰性换行/缩进都会在下次解析时进入内容,
+                // 破坏 L1 幂等 —— 因此闭合标签紧跟内容。
+                // pre/textarea 是 escapable rawtext:实体会被解码,写出时
+                // 必须重新转义 —— 否则源里的 `&lt;` 解码成 `<` 后原样写回,
+                // 下次解析变成真元素(首存与次存字节不同,L0/L1 双破)。
                 // pre 是普通元素可含子元素(如 <pre><code>):有元素子节点时
                 // 退回普通序列化(空白折叠一次后幂等),否则整个元素被吞掉。
                 let has_element_child = node
@@ -485,6 +501,7 @@ fn write_node(node: &HtmlNode, indent: usize, out: &mut String) {
                     .iter()
                     .any(|c| !matches!(&c.data, NodeData::Text(_)));
                 if !has_element_child {
+                    let entity_decoded = matches!(e.name.as_str(), "pre" | "textarea");
                     out.push_str(&pad);
                     out.push('<');
                     out.push_str(&e.name);
@@ -498,7 +515,11 @@ fn write_node(node: &HtmlNode, indent: usize, out: &mut String) {
                             _ => None,
                         })
                         .collect();
-                    out.push_str(&inner);
+                    if entity_decoded {
+                        out.push_str(&escape_text(&inner));
+                    } else {
+                        out.push_str(&inner);
+                    }
                     out.push_str(&format!("</{}>\n", e.name));
                     return;
                 }
@@ -582,6 +603,61 @@ mod tests {
         assert!(out.contains(".a > b { color: red; }"));
         let twice = canonicalize(&out);
         assert_eq!(out, twice);
+    }
+
+    /// 多行 rawtext 不得在保存循环里吸收缩进(L1):内部行逐字节原样,
+    /// 只有首行垫缩进(落在开标签之前,不进入下次捕获)。
+    /// 此前每行垫 pad,script 体每存一轮多一层缩进,无限增长。
+    #[test]
+    fn multiline_rawtext_no_indent_growth() {
+        let src = "<html><body><script>\nif (a) {\n    b();\n}\n</script></body></html>";
+        let once = canonicalize(src);
+        let twice = canonicalize(&once);
+        let thrice = canonicalize(&twice);
+        assert_eq!(once, twice, "首轮序列化后必须字节幂等");
+        assert_eq!(twice, thrice, "循环保存不得继续变化");
+        // 内容本体逐字节保留(未被垫上缩进)
+        assert!(once.contains("\nif (a) {\n    b();\n}\n"));
+    }
+
+    /// pre/textarea 是 escapable rawtext:实体会被解析器解码,写出必须
+    /// 重新转义 —— 否则 `&lt;code&gt;` 首存变真 `<code>` 元素(L0/L1 双破)。
+    /// 对已转义源必须字节稳定;对解码后含 `<` 的文本必须回写转义。
+    #[test]
+    fn pre_entity_reescaping() {
+        let src = "<html><body><pre>&lt;code&gt; &amp; text</pre></body></html>";
+        let once = canonicalize(src);
+        assert!(
+            once.contains("&lt;code&gt;"),
+            "已转义实体必须原样保留: {once}"
+        );
+        let twice = canonicalize(&once);
+        assert_eq!(once, twice, "pre 实体必须字节幂等: {once}");
+        // 真标记字符进入文本(解析为 text 而非元素)时也要转义回写
+        let tricky = "<html><body><pre>a &lt;b</pre></body></html>";
+        let out = canonicalize(tricky);
+        assert!(
+            out.contains("a &lt;b") && !out.contains("<pre>a <b"),
+            "解码出的 < 必须转义回写: {out}"
+        );
+        assert_eq!(out, canonicalize(&out));
+    }
+
+    /// NBSP 是可见内容:行内首尾空白探测不得把它当可折叠空白,
+    /// 否则 `&nbsp;` 邻接处多插一个可见空格(L0 漂移)。
+    #[test]
+    fn nbsp_not_foldable_ws() {
+        let src = "<html><body><p>Hello&nbsp;world</p></body></html>";
+        let once = canonicalize(src);
+        assert!(
+            once.contains("Hello&nbsp;world") || once.contains("Hello\u{a0}world"),
+            "NBSP 必须保留: {once}"
+        );
+        assert!(
+            !once.contains("Hello &nbsp;"),
+            "不得在 NBSP 前多插空格: {once}"
+        );
+        assert_eq!(once, canonicalize(&once));
     }
 
     #[test]

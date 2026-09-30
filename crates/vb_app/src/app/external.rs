@@ -77,23 +77,33 @@ impl VellumApp {
         let Some(rx) = &self.watcher_rx else {
             return;
         };
-        let (mut hit, mut paths) = (false, Vec::new());
+        // 去抖(200ms 窗口):编辑器保存常拆成多批写(临时文件+rename、
+        // HTML/CSS 连写),事件间隔常超 1ms —— 立即处理会连触发两次完整
+        // 重载。先攒进 pending,等最后一次事件后 200ms 无新事件再统一处理。
+        let mut got_any = false;
         while let Ok(ev) = rx.try_recv() {
-            hit = true;
-            paths.extend(ev);
+            got_any = true;
+            self.watcher_pending.extend(ev);
         }
-        if !hit {
+        if got_any {
+            self.watcher_last_event = Some(std::time::Instant::now());
+        }
+        let settled = self
+            .watcher_last_event
+            .map(|t| t.elapsed() >= std::time::Duration::from_millis(200))
+            .unwrap_or(false);
+        if !settled || self.watcher_pending.is_empty() {
             return;
         }
+        let paths = std::mem::take(&mut self.watcher_pending);
+        self.watcher_last_event = None;
         // 阶段 2(02-2-5):应用自己生成的 `.vb-cache/`(缩略图缓存)与
         // `.vb-autosave/`(07-A 自动保存快照)都不是外部修改 —— 自产写盘
         // 不该触发热重载提示
-        if !paths.is_empty()
-            && paths.iter().all(|p| {
-                p.components()
-                    .any(|c| c.as_os_str() == ".vb-cache" || c.as_os_str() == ".vb-autosave")
-            })
-        {
+        if paths.iter().all(|p| {
+            p.components()
+                .any(|c| c.as_os_str() == ".vb-cache" || c.as_os_str() == ".vb-autosave")
+        }) {
             return;
         }
         self.handle_external_event(paths);

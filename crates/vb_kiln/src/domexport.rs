@@ -225,8 +225,12 @@ pub fn resolve_source(source: &Path) -> Result<(PathBuf, PathBuf), String> {
             })
             .collect();
         htmls.sort();
+        // 无 index 时取字母序第一个(与 vb_browser::staticsrv::resolve_index
+        // 同口径):此前 pop() 取最后一个,PNG 车道与 PDF/AI 车道可能
+        // 渲染同一目录的不同 HTML
         htmls
-            .pop()
+            .into_iter()
+            .next()
             .map(|p| (source.to_path_buf(), p))
             .ok_or_else(|| format!("目录中无 HTML: {}", source.display()))
     } else {

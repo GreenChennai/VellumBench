@@ -172,7 +172,9 @@ impl NewProjectSpec {
     }
 }
 
-/// 目录名清洗:去掉文件系统/HTML 双非法字符与首尾空白。
+/// 目录名清洗:去掉文件系统/HTML 双非法字符与首尾空白;
+/// 处理 Windows 保留设备名(CON/PRN/AUX/NUL/COM1-9/LPT1-9)与结尾
+/// `.`/空格 —— 未处理时 `create_dir_all` 以难懂的 OS 错误失败。
 pub fn sanitize_dir_name(name: &str) -> String {
     let cleaned: String = name
         .trim()
@@ -182,7 +184,22 @@ pub fn sanitize_dir_name(name: &str) -> String {
             c => c,
         })
         .collect();
-    cleaned.trim().to_string()
+    // 先去结尾 . / 空格(Windows 会吞掉),再判保留名(大小写不敏感,
+    // 含 "CON.txt" 形态:含扩展名也算保留)
+    let trimmed = cleaned.trim_end_matches(['.', ' ']).to_string();
+    let stem = trimmed.split('.').next().unwrap_or("").to_ascii_uppercase();
+    const RESERVED: [&str; 22] = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    let mut result = trimmed;
+    if RESERVED.contains(&stem.as_str()) {
+        result = format!("_{result}");
+    }
+    if result.is_empty() {
+        result = "未命名项目".to_string();
+    }
+    result
 }
 
 /// 生成最小合法项目(**02-4-2**):`index.html` + `styles/main.css` + `assets/`,
@@ -575,6 +592,20 @@ mod tests {
     fn sanitize_strips_filesystem_hostile_chars() {
         assert_eq!(sanitize_dir_name(" a/b<c>|:*?\" "), "a-b-c------");
         assert_eq!(sanitize_dir_name("正常名"), "正常名");
+    }
+
+    /// Windows 保留设备名与结尾 `.`/空格:create_dir_all 会以难懂的
+    /// OS 错误失败,清洗层必须兜住
+    #[test]
+    fn sanitize_handles_windows_reserved_names() {
+        assert_eq!(sanitize_dir_name("CON"), "_CON");
+        assert_eq!(sanitize_dir_name("con.txt"), "_con.txt");
+        assert_eq!(sanitize_dir_name("NUL"), "_NUL");
+        assert_eq!(sanitize_dir_name("COM1"), "_COM1");
+        assert_eq!(sanitize_dir_name("lpt9"), "_lpt9");
+        assert_eq!(sanitize_dir_name("name."), "name");
+        assert_eq!(sanitize_dir_name("name "), "name");
+        assert_eq!(sanitize_dir_name("正常名. "), "正常名");
     }
 
     #[test]

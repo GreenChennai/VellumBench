@@ -28,17 +28,23 @@ use super::VellumApp;
 
 /// 从文档 `head_extra` 里取 `name="vb-…"` meta 的 content 值。
 /// 容忍单/双引号与属性顺序;找不到返回 None。
+///
+/// 大小写折叠只用 `to_ascii_lowercase`:它不改变字节长度与字符边界,
+/// 在 lower 副本上 find 的偏移可以安全切原串;`to_lowercase()` 会把
+/// `İ` 这类字符变长,偏移错位后 `&raw[p..]` 可能切在 UTF-8 边界中间
+/// 直接 panic(head_extra 是用户 HTML 原样捕获,内容不可控)。
 pub fn meta_get(doc: &Document, name: &str) -> Option<String> {
     let needle = format!("name=\"{name}\"");
     let needle2 = format!("name='{name}'");
     for raw in &doc.head_extra {
-        let lower = raw.to_lowercase();
+        let lower = raw.to_ascii_lowercase();
         let pos = lower.find(&needle).or_else(|| lower.find(&needle2));
         let Some(p) = pos else { continue };
         // 在同一条 meta 里找 content="…"
         let rest = &raw[p..];
+        let rest_lower = rest.to_ascii_lowercase();
         for key in ["content=\"", "content='"] {
-            if let Some(cp) = rest.to_lowercase().find(key) {
+            if let Some(cp) = rest_lower.find(key) {
                 let after = &rest[cp + key.len()..];
                 let quote = &key[key.len() - 1..];
                 if let Some(end) = after.find(quote) {
@@ -55,8 +61,9 @@ pub fn meta_get(doc: &Document, name: &str) -> Option<String> {
 /// 直接改文档(文档级设置无命令变体;调用方负责标脏)。
 pub fn meta_set(doc: &mut Document, name: &str, content: Option<&str>) {
     doc.head_extra.retain(|raw| {
-        !raw.to_lowercase().contains(&format!("name=\"{name}\""))
-            && !raw.to_lowercase().contains(&format!("name='{name}'"))
+        !raw.to_ascii_lowercase()
+            .contains(&format!("name=\"{name}\""))
+            && !raw.to_ascii_lowercase().contains(&format!("name='{name}'"))
     });
     if let Some(c) = content {
         let esc = c.replace('"', "&quot;");

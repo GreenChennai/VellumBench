@@ -138,11 +138,11 @@ impl RecentStore {
     /// LRU 收敛:超过 [`MAX_ITEMS`] 时从最旧的非固定项淘汰(**固定项不淘汰**)。
     pub fn prune_lru(&mut self) {
         while self.items.len() > MAX_ITEMS {
-            let victim = self
-                .items
-                .iter()
-                .rposition(|it| !it.pinned)
-                .unwrap_or(self.items.len() - 1);
+            // 全部固定时无处可淘汰:保住 pinned 承诺,容忍暂时超限
+            // (下一个非固定项加入时再收敛),绝不删固定项
+            let Some(victim) = self.items.iter().rposition(|it| !it.pinned) else {
+                break;
+            };
             self.items.remove(victim);
         }
     }
