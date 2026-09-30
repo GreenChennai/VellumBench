@@ -37,7 +37,9 @@ pub fn print_pdf(
     }
     page.emulate_media_screen()?;
     let mut warnings = page.collect_resource_warnings();
-    let infinite = capture::settle(page)?;
+    let settled = capture::settle(page)?;
+    let infinite = settled.infinite_animations;
+    warnings.extend(settled.warnings);
     if infinite > 0 {
         warnings.push(format!("存在 {infinite} 个无限循环动画,画面可能非终态"));
     }

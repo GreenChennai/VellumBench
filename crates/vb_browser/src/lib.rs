@@ -151,7 +151,7 @@ fn export_with_url(
     page.set_device_metrics(init_w, init_h, req.scale.clamp(1, 8))?;
     page.navigate(url)?;
     page.wait_network_idle(std::time::Duration::from_secs(3));
-    page.sleep(200);
+    page.sleep(200); // networkidle(500ms 静默)后的末次布局窗(经验值)
 
     match req.format {
         LaneFormat::Png => {
