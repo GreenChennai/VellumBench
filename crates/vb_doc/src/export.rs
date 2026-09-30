@@ -108,19 +108,65 @@ fn finalize_classes(doc: &mut Document) {
     }
 }
 
-/// 落盘到项目目录(原子性:v0.1 直接写,断电安全的临时文件方案 v0.2 随自动保存落地)。
+/// 落盘到项目目录(断电安全 · 原子写 v0.2,已落地)。
+///
+/// 纪律(与 `vb_app::autosave` 快照提交同口径的临时文件方案,但覆盖更强):
+/// - **原子覆盖**:每个文件先写**同目录**临时文件 `.tmp-<原文件名>-<pid>`
+///   (同目录保证与目标同盘,`rename` 才是原子的),再 `std::fs::rename`
+///   覆盖目标 —— Windows 的 `fs::rename` 带 REPLACE_EXISTING 语义,可直接
+///   覆盖已存在文件。任何时刻断电/崩溃,目标要么是完整旧文件、要么是完整
+///   新文件;旧实现(v0.1)直接 `fs::write` 目标,保存/导出中途断电会留下
+///   截断的 `index.html`,文档永久损坏。
+/// - **index.html 压轴**:多文件项目(ExternalCss)css/资产先落,
+///   `index.html` 最后写 —— 磁盘上「存在完整 index.html」即是「文档可打开」
+///   的哨兵,把保存中途失败时的可打开概率最大化。
+/// - **失败不留垃圾**:临时文件写失败或 rename 失败都会清理临时文件;
+///   rename 失败的错误信息带目标路径(日志定位用)。
+///
+/// 返回按**落盘序**(css/资产在前,`index.html` 最后)排列的绝对路径。
 pub fn write_project(doc: &Document, dir: &Path) -> Result<Vec<std::path::PathBuf>> {
     let res = render_project(doc);
     let mut written = Vec::new();
-    for (rel, content) in &res.files {
+    // render_project 产物里 index.html 恒在首位 —— 倒序遍历即「资产先落、
+    // index.html 压轴」。
+    for (rel, content) in res.files.iter().rev() {
         let p = dir.join(rel);
-        if let Some(parent) = p.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&p, content)?;
+        atomic_write(&p, content)?;
         written.push(p);
     }
     Ok(written)
+}
+
+/// 单文件原子写:同目录临时文件 `.tmp-<名>-<pid>` → `rename` 原子覆盖目标。
+fn atomic_write(target: &Path, content: &str) -> Result<()> {
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            crate::VbError::Io(std::io::Error::new(
+                e.kind(),
+                format!("创建目录 {} 失败:{e}", parent.display()),
+            ))
+        })?;
+    }
+    let file_name = target
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    // 临时文件与目标同目录(同盘 → rename 原子);带 pid,并发进程互不踩踏。
+    let tmp = target.with_file_name(format!(".tmp-{file_name}-{}", std::process::id()));
+    let result = std::fs::write(&tmp, content).and_then(|()| std::fs::rename(&tmp, target));
+    if let Err(e) = result {
+        // 失败清理:不留 .tmp 残留(清理本身失败不掩盖原始错误)。
+        let _ = std::fs::remove_file(&tmp);
+        return Err(crate::VbError::Io(std::io::Error::new(
+            e.kind(),
+            format!(
+                "原子写 {} 失败(临时文件 {}):{e}",
+                target.display(),
+                tmp.display()
+            ),
+        )));
+    }
+    Ok(())
 }
 
 // ---------- HTML ----------
@@ -640,4 +686,131 @@ fn ordered_source(doc: &Document) -> Vec<NodeId> {
         }
     }
     v
+}
+
+// ─────────────────────── 单测(断电安全原子写) ───────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 独立临时项目目录(测试间互不串扰;与 `vb_app::autosave` 同款)。
+    fn tmp_project(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("vb-export-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// ExternalCss 模式(双文件:index.html + styles/main.css)的最小文档。
+    fn doc_with_title(title: &str) -> Document {
+        let mut doc = Document::new_default();
+        doc.meta.title = title.to_string();
+        doc.meta.output = OutputMode::ExternalCss;
+        doc
+    }
+
+    /// 目录树里全部 `.tmp-` 开头的**文件**(垃圾/残留检测;目录不算 ——
+    /// 注入型故障的障碍物本身可能是目录)。
+    fn tmp_files(dir: &Path) -> Vec<std::path::PathBuf> {
+        fn walk(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    walk(&p, out);
+                } else if p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().starts_with(".tmp-"))
+                    .unwrap_or(false)
+                {
+                    out.push(p);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(dir, &mut out);
+        out
+    }
+
+    /// 成功路径:双文件逐字节完整、index.html 最后落盘、零 `.tmp` 残留。
+    #[test]
+    fn write_project_is_complete_and_leaves_no_tmp_residue() {
+        let dir = tmp_project("happy");
+        let doc = doc_with_title("完整落盘");
+        let expect = render_project(&doc);
+        let written = write_project(&doc, &dir).unwrap();
+
+        assert_eq!(written.len(), 2);
+        // 落盘序契约:css 在前,index.html 恒为最后一个落盘的文件
+        assert!(written.last().unwrap().ends_with("index.html"));
+        for (rel, content) in &expect.files {
+            let on_disk = std::fs::read_to_string(dir.join(rel)).unwrap();
+            assert_eq!(on_disk, *content, "{rel} 必须与 canonical 序列化逐字节一致");
+        }
+        assert!(tmp_files(&dir).is_empty(), "成功写盘不得留 .tmp 残留");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 故障注入:css 的临时文件路径被预占为目录(`fs::write` 必败,
+    /// Windows/Unix 皆然)—— 整个保存必须失败,但磁盘上的 index.html
+    /// 保持**完整旧内容**(index.html 压轴纪律),且不留 `.tmp` 文件残留。
+    #[test]
+    fn css_tmp_failure_keeps_old_index_intact_and_clean() {
+        let dir = tmp_project("fail-css");
+        let old = doc_with_title("旧版完整文档");
+        write_project(&old, &dir).unwrap();
+        let old_index = std::fs::read_to_string(dir.join("index.html")).unwrap();
+
+        // 临时名形如 .tmp-<原名>-<pid>,含本测试进程的 pid,可确定性预言;
+        // 把 styles/main.css 的临时路径预占成目录 → 写临时文件必败。
+        let obstacle = dir
+            .join("styles")
+            .join(format!(".tmp-main.css-{}", std::process::id()));
+        std::fs::create_dir_all(&obstacle).unwrap();
+
+        let new = doc_with_title("新版未落盘文档");
+        let err = write_project(&new, &dir).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("main.css"), "错误信息须带目标路径:{msg}");
+
+        let on_disk = std::fs::read_to_string(dir.join("index.html")).unwrap();
+        assert_eq!(on_disk, old_index, "css 写败后 index.html 必须原封不动");
+        assert!(tmp_files(&dir).is_empty(), "失败不得留 .tmp 文件残留");
+        assert!(obstacle.is_dir(), "残存的是测试预置的障碍目录,而非写盘垃圾");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// rename 目标被占用的近似测试(仅 Windows):目标 main.css 以无
+    /// FILE_SHARE_DELETE 的共享模式打开时,覆盖 rename 必败 —— 错误信息带
+    /// 目标路径、临时文件被清理、旧文件原封未动。Unix 上 rename 对被打开
+    /// 文件恒成功,该场景不存在,测试不编译。
+    #[cfg(windows)]
+    #[test]
+    fn rename_locked_target_reports_path_and_cleans_tmp() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = tmp_project("locked");
+        let old = doc_with_title("被占用前的旧版");
+        write_project(&old, &dir).unwrap();
+        let old_index = std::fs::read_to_string(dir.join("index.html")).unwrap();
+
+        // 独占目标 main.css(仅共享读,无 WRITE/DELETE 共享)→ 覆盖 rename 必败
+        let lock = std::fs::OpenOptions::new()
+            .write(true)
+            .share_mode(1) // FILE_SHARE_READ
+            .open(dir.join("styles/main.css"))
+            .unwrap();
+
+        let new = doc_with_title("占用期间的新版");
+        let err = write_project(&new, &dir).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("main.css"), "错误信息须带目标路径:{msg}");
+
+        // 覆盖失败 = 目标保持旧内容;index.html 压轴,连尝试都不会发生
+        let on_disk = std::fs::read_to_string(dir.join("index.html")).unwrap();
+        assert_eq!(on_disk, old_index, "rename 失败后 index.html 必须原封不动");
+        assert!(tmp_files(&dir).is_empty(), "rename 失败必须清理 .tmp");
+        drop(lock);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
