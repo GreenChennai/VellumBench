@@ -37,14 +37,31 @@ pub struct CaptureOutcome {
 }
 
 // --------------------------------------------------------------- settle
-/// 资源等待(要素 5):fonts.ready + 懒加载转 eager + img.complete。
-pub fn wait_assets(page: &mut PageSession) {
-    let _ = page.evaluate(WAIT_ASSETS_JS, true);
-    page.sleep(200);
+/// settle 视觉收敛总预算(硬上限):assets/滚动/定格/稳定探测全部计入,
+/// 到顶即用当前帧导出并追加可观测 warning —— 慢机上每张全页截图 ~0.5-1s,
+/// 无预算时「多轮截图 + 固定 sleep」可累计到 20s+(P0 实测 27.5s)。
+/// `VB_SETTLE_BUDGET_MS` 可覆盖(测试/诊断钩子,与 VB_NO_SHELL 等同款约定)。
+fn settle_budget() -> Duration {
+    if let Ok(v) = std::env::var("VB_SETTLE_BUDGET_MS") {
+        if let Ok(ms) = v.parse::<u64>() {
+            if ms > 0 {
+                return Duration::from_millis(ms);
+            }
+        }
+    }
+    Duration::from_secs(5)
 }
 
-/// 滚动触发 reveal(要素 6):Python 侧驱动,≤40 步。
-pub fn trigger_scroll_reveals(page: &mut PageSession) {
+/// 资源等待(要素 5):fonts.ready + 懒加载转 eager + img.complete。
+/// 页内脚本自带竞速上限(字体 3s / 图片 5s),不受 settle 预算约束。
+pub fn wait_assets(page: &mut PageSession) {
+    let _ = page.evaluate(WAIT_ASSETS_JS, true);
+    page.sleep(200); // 字体换装后重排/重绘一拍(经验值;观察到的掉字均在此窗口内)
+}
+
+/// 滚动触发 reveal(要素 6):Python 侧驱动,≤40 步;`deadline` 为 settle
+/// 总预算(单步 130ms × 40 = 5.2s, alone 即可击穿预算,必须受检)。
+pub fn trigger_scroll_reveals(page: &mut PageSession, deadline: Instant) {
     let _ = page.evaluate(
         "() => { document.documentElement.style.scrollBehavior='auto'; return true; }",
         false,
@@ -55,15 +72,20 @@ pub fn trigger_scroll_reveals(page: &mut PageSession) {
         return;
     };
     let total = total.1;
+    if total <= vh {
+        // 单屏页(画板/海报/MV 舞台类)没有折叠区,滚动与回滚只会白花
+        // 4 次 evaluate + 2×130ms 往返 —— 直接跳过
+        return;
+    }
     let mut steps = 0u32;
     let mut y = 0u32;
     while y <= total {
         steps += 1;
-        if steps > 40 {
+        if steps > 40 || Instant::now() >= deadline {
             break;
         }
         page.scroll_to(y);
-        page.sleep(130);
+        page.sleep(130); // IntersectionObserver/reveal 过渡触发窗(经验值)
         y += step;
     }
     page.scroll_to(0);
@@ -78,22 +100,53 @@ pub fn freeze_animations(page: &mut PageSession) -> u32 {
         .unwrap_or(0) as u32
 }
 
-/// 128×128 缩略哈希视觉稳定兜底(要素 8;预算 6s)。
-pub fn wait_visual_stability(page: &mut PageSession) -> Result<bool, String> {
-    page.sleep(400);
+/// 页面静止探针:确定性渲染页(SEEK 驱动、无 CSS 动画、无 rAF、资源就绪)
+/// 的页面内容不再变化 —— 判据:无 running 动画、无未完成图片、字体非 loading。
+const QUIESCENCE_JS: &str = r#"(() => {
+    try {
+        if (document.fonts && document.fonts.status === 'loading') return false;
+        if (Array.from(document.images).some(i => !i.complete || i.naturalWidth === 0)) return false;
+        if (typeof document.getAnimations === 'function'
+            && document.getAnimations().some(a => a.playState === 'running')) return false;
+        return true;
+    } catch (e) { return false; }
+})()"#;
+
+/// 有预算上限的 sleep:实际睡 min(ms, 距 deadline 剩余),到点即返回。
+fn sleep_capped(page: &mut PageSession, ms: u64, deadline: Instant) {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return;
+    }
+    page.sleep(ms.min(remaining.as_millis() as u64));
+}
+
+/// 128×128 缩略哈希视觉稳定兜底(要素 8)。确定性页面(静止探针通过)
+/// 只需连续 2 拍一致即收敛(此前固定 4 拍,慢机每拍 ~0.5-1s 白等 3 轮);
+/// 其余维持 3 连拍口径。返回是否收敛;全程受 `deadline` 预算约束。
+pub fn wait_visual_stability(page: &mut PageSession, deadline: Instant) -> Result<bool, String> {
+    let quiescent = page
+        .evaluate(QUIESCENCE_JS, false)
+        .ok()
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let need = if quiescent { 1 } else { 3 };
+    if Instant::now() >= deadline {
+        return Ok(false);
+    }
+    sleep_capped(page, 200, deadline); // 滚动/定格后的末次绘制窗(经验值)
     let Some(mut prev) = fast_hash(page) else {
         return Ok(false);
     };
     let mut stable = 0;
-    let deadline = Instant::now() + Duration::from_secs(6);
     while Instant::now() < deadline {
-        page.sleep(200);
+        sleep_capped(page, 200, deadline); // 相邻比对帧间隔
         page.ensure_alive()?;
         let cur = fast_hash(page);
         match cur {
             Some(h) if h == prev => {
                 stable += 1;
-                if stable >= 3 {
+                if stable >= need {
                     return Ok(true);
                 }
             }
@@ -128,23 +181,55 @@ fn fast_hash(page: &mut PageSession) -> Option<[u8; 32]> {
     Some(digest)
 }
 
-/// 完整 settle(要素 5-8 编排;WPI `settle` 时序)。返回无限动画数。
-pub fn settle(page: &mut PageSession) -> Result<u32, String> {
+/// settle 结果:无限动画数 + 降级告警(预算截断必须可观测,不许静默)。
+pub struct SettleOutcome {
+    pub infinite_animations: u32,
+    pub warnings: Vec<String>,
+}
+
+/// 完整 settle(要素 5-8 编排;WPI `settle` 时序),总预算 [`settle_budget`]。
+pub fn settle(page: &mut PageSession) -> Result<SettleOutcome, String> {
+    let budget = settle_budget();
+    let t0 = Instant::now();
+    let deadline = t0 + budget;
+    let mut warnings = Vec::new();
+    let stage = |t: Instant, name: &str| {
+        if std::env::var("VB_CAPTURE_TIMING").is_ok() {
+            eprintln!(
+                "{{\"capture_timing\":\"{name} {:.0}ms\"}}",
+                t.elapsed().as_millis()
+            );
+        }
+    };
     wait_assets(page);
+    stage(t0, "wait_assets");
     page.ensure_alive()?;
-    trigger_scroll_reveals(page);
+    trigger_scroll_reveals(page, deadline);
+    stage(t0, "scroll_reveals");
     let infinite = freeze_animations(page);
     if infinite > 0 {
-        page.sleep(3000);
-        trigger_scroll_reveals(page);
+        // 无限动画页永不视觉收敛:给有界宽限期让入场过渡走完后取当前帧。
+        // 宽限期受预算截断(原固定 2×3s + 二轮滚动,是 20s+ 的最大单项);
+        // 降级已由调用方的「存在 N 个无限循环动画」告警承载。
+        sleep_capped(page, 3000, deadline);
+        trigger_scroll_reveals(page, deadline);
         freeze_animations(page);
-        page.sleep(3000);
+        sleep_capped(page, 3000, deadline);
     } else {
-        // K5:稳定性探测失败不阻断(settle 兜底),显式丢弃
-        let _ = wait_visual_stability(page);
+        // K5:稳定性探测失败不阻断(settle 兜底),但必须显式留痕
+        if !wait_visual_stability(page, deadline)? {
+            warnings.push(format!(
+                "settle 视觉稳定探测未在预算 {}ms 内收敛,已按当前帧导出",
+                budget.as_millis()
+            ));
+        }
     }
+    stage(t0, "stability");
     page.ensure_alive()?;
-    Ok(infinite)
+    Ok(SettleOutcome {
+        infinite_animations: infinite,
+        warnings,
+    })
 }
 
 // -------------------------------------------------------------- capture
@@ -165,8 +250,14 @@ pub fn capture_png(
     // 要素 1:load + networkidle + 200ms(调用方已 navigate 亦可,这里由 caller 控制时序)
     let (mut sw, sh) = page.content_size()?;
     sw = sw.max(opts.width);
-    let warnings = page.collect_resource_warnings();
-    let infinite = settle(page)?;
+    let mut warnings = page.collect_resource_warnings();
+    let settled = settle(page)?;
+    let infinite = settled.infinite_animations;
+    warnings.extend(settled.warnings);
+    if infinite > 0 {
+        // 降级可观测(与 capture_dom/print 同口径):无限动画页取的是当前帧
+        warnings.push(format!("存在 {infinite} 个无限循环动画,采集为当前帧"));
+    }
 
     // 高度锁定:视口高 = 锁定值,导出顶部 min(lock, contentH)
     let (clip_h, viewport_h) = if let Some(lock) = opts.height_lock {
@@ -414,7 +505,9 @@ pub fn capture_dom(page: &mut PageSession, _url: &str) -> Result<DomCapture, Str
     let mut warnings = Vec::new();
     let (sw, sh) = page.content_size()?;
     let _ = sw;
-    let infinite = settle(page)?;
+    let settled = settle(page)?;
+    let infinite = settled.infinite_animations;
+    warnings.extend(settled.warnings);
     if infinite > 0 {
         warnings.push(format!("存在 {infinite} 个无限循环动画,采集为当前帧"));
     }
