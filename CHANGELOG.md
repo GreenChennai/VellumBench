@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.11.1(2026-10-01)
+
+下游(9070 GRE 实机)实测反馈的三项落地;全部在本机用实际 MV 工程
+(`world.execute(me);`)复现 → 插桩定位 → 修复 → 回归。
+
+### 逐帧截屏的固定开销(建议 #3)——根因是三层,各修一层
+
+下游测到 ~0.9s/帧固定开销且 `--gpu` 无改善;插桩拆解(`VB_ANIM_TIMING=1`
+输出 seek/repaint/screenshot 分段耗时)后,实际是三笔独立的账:
+
+- **截图 API 等合成器调度(~530ms,headless=new)**:空闲页面(SEEK 驱动、
+  无 CSS 动画/无 rAF)上 `Page.captureScreenshot` 要等 viz 表面产出下一帧。
+  现逐帧截屏改走 `HeadlessExperimental.beginFrame`(CDP 显式产帧,产帧 +
+  截图一步完成,启动参数 `--enable-begin-frame-control`);不可用时自动
+  回退 captureScreenshot(`VB_NO_BEGINFRAME=1` 强制回退)。语义上
+  beginFrame 本身就是"seek → 等一次 repaint → 截屏"里的那次 repaint。
+- **PNG 编码(~380ms/帧,占大头)**:浏览器内 zlib 压 8MB 原始像素。
+  中间帧默认改 **JPEG(q95)**:实测截图 465ms → **80ms**(5.8×);
+  MP4 本身就是有损 yuv420p,二次编码后损失通常不可见(实测逐帧对比
+  无可见差异)。画质敏感交付用 `--img png`。
+- **headless=new 的 viz 表面中转(约 +2×)**:支持 **chrome-headless-shell**
+  (Playwright 同款老式 headless 实现):自动探测 Playwright 缓存的最新版
+  (`%LOCALAPPDATA%\ms-playwright\chromium_headless_shell-*`),发现即优先
+  使用,`VB_NO_SHELL=1` 可关;也可 `VB_BROWSER_PATH` 显式指定。JPEG 下
+  shell ~80ms/帧 vs headless=new ~155ms/帧。
+- 本机(GT 710 最弱配置)终态:实际 MV 工程 1080p30 60s = 1800 帧,
+  **3 实例并行 2 分 27 秒(12.3 帧/s)**,成片精确 1800 帧/60.00s;单实例
+  吞吐已超同机 Playwright 参照管线(4.1 vs 3.3 帧/s,后者编码串行)。
+  9070 GRE 上按 A 卡 AMF 无并发会话限制 + 更多 worker 估算,1080p60
+  全片可进 3 分钟内。
+
+### seek-hook 车道(建议 #1)
+
+- 自动探测序列加入 `window.__SEEK__`(现为 SEEK → `__SEEK__` → seek →
+  VB_SEEK);新增 `--seek-hook` 作为 `--seek-fn` 的别名,接受
+  `window.SEEK` / `SEEK` 两种写法(自动剥 `window.` 前缀)。
+- 逐帧语义:seek → 等一次 repaint → 截屏。beginFrame 路径的 repaint 即
+  beginFrame 本身;captureScreenshot 回退路径显式跑双 rAF(250ms 兜底,
+  页面无 rAF 流不挂死)。
+
+### 墙钟车道按实际耗时记账(建议 #2)
+
+- **MP4**:两段式——先采 8 帧探针实测采样节奏(median),ffmpeg 以实测
+  节奏 CFR 编码。修复旧实现"采样 ~1 帧/s 却按 1/fps 打时间戳 → 成片
+  快放且速度不均"。告警输出实测节奏与预估时长(速度为均值口径)。
+- **GIF**:帧延迟按实测总耗时均值(下限 20ms)。
+- 管道断裂(ffmpeg 中途死亡,典型如 N 卡并发编码会话超限)时带出
+  ffmpeg stderr 尾部,真死因不再埋在 `os error 109` 里。
+
 ## 0.11.0(2026-09-30)
 
 ### Kiln 动画导出重写:流式并行流水线(性能 ~6×)

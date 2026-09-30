@@ -99,9 +99,9 @@ enum Cmd {
         /// VB_GPU=1)。默认关:软件光栅跨机逐像素可复现
         #[arg(long, default_value_t = false)]
         gpu: bool,
-        /// 中间帧格式:png=无损管道(交付)|jpeg=直出快档(预览;
-        /// 配 --jpeg-quality,默认 95)
-        #[arg(long, default_value = "png")]
+        /// 中间帧格式:jpeg=默认(快 ~6×,q95 二次编码后损失通常不可见)|
+        /// png=无损管道(画质敏感交付用;每帧截屏成本显著更高)
+        #[arg(long, default_value = "jpeg")]
         img: String,
         /// 中间帧 JPEG 质量 1..=100(--img jpeg 时生效)
         #[arg(long, default_value_t = 95)]
@@ -115,9 +115,14 @@ enum Cmd {
         #[arg(long, default_value_t = false)]
         wall: bool,
         /// JS 帧驱动函数名(页面自带确定性时间轴时;默认自动探测
-        /// window.SEEK / window.seek,确定性渲染工作流的约定接口)
+        /// window.SEEK / window.__SEEK__ / window.seek,确定性渲染
+        /// 工作流的约定接口)。接受 "SEEK" 或 "window.SEEK" 写法
         #[arg(long)]
         seek_fn: Option<String>,
+        /// --seek-fn 的别名(下游约定名):逐帧 seek 到 t=i/fps →
+        /// 等一次 repaint → 截屏
+        #[arg(long)]
+        seek_hook: Option<String>,
     },
     /// 导入外部 PDF/AI/SVG → 规范化 HTML 项目(M4 反向能力)
     Import {
@@ -250,6 +255,7 @@ fn main() {
             encoder,
             wall,
             seek_fn,
+            seek_hook,
         } => run_export(
             sources,
             output,
@@ -272,7 +278,7 @@ fn main() {
             jpeg_q,
             encoder,
             wall,
-            seek_fn,
+            seek_fn.or(seek_hook),
         ),
         Cmd::Import { source, output } => run_import(source, output),
         Cmd::Img { op } => run_img(op),
@@ -478,7 +484,7 @@ fn run_export(
                 encoder: vb_kiln::animlane::EncChoice::parse(&encoder)
                     .unwrap_or(vb_kiln::animlane::EncChoice::Auto),
                 wall_clock: wall,
-                seek_fn,
+                seek_fn: seek_fn.map(|f| f.trim().trim_start_matches("window.").trim().to_string()),
             },
         );
         match anim {

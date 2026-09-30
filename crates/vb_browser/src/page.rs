@@ -421,6 +421,38 @@ impl PageSession {
         b64::decode(data).map_err(|e| format!("截图数据解码失败: {e}"))
     }
 
+    /// HeadlessExperimental.beginFrame:CDP **显式驱动一帧**并顺带截图。
+    ///
+    /// 这是 headless 逐帧截屏的正道:空闲页面(SEEK 驱动的确定性渲染页、
+    /// 无 CSS 动画/无 rAF)上,`Page.captureScreenshot` 要等合成器调度
+    /// 产出下一帧 —— 实测固定 ~530ms/帧(且 --gpu 无改善,瓶颈在调度
+    /// 不在光栅)。beginFrame 由我们发起 BeginFrame,产帧 + 截图一步
+    /// 完成,不再依赖调度节奏。需要启动参数 `--enable-begin-frame-control`。
+    pub fn begin_frame_screenshot(
+        &mut self,
+        format: &str,
+        quality: Option<u8>,
+    ) -> Result<Vec<u8>, String> {
+        let mut shot = json!({ "format": format });
+        if let Some(quality) = quality {
+            shot["quality"] = json!(quality);
+        }
+        let params = json!({ "noDisplayUpdates": false, "screenshot": shot });
+        let res = self
+            .cdp
+            .call(
+                "HeadlessExperimental.beginFrame",
+                params,
+                Duration::from_secs(60),
+            )
+            .map_err(|e| format!("beginFrame 失败(需 --enable-begin-frame-control): {e}"))?;
+        let data = res
+            .get("screenshotData")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "beginFrame 响应缺少 screenshotData".to_string())?;
+        b64::decode(data).map_err(|e| format!("beginFrame 截图解码失败: {e}"))
+    }
+
     /// Page.printToPDF。
     pub fn print_to_pdf(
         &mut self,

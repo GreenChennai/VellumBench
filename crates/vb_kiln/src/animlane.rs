@@ -117,7 +117,7 @@ fn detect_driver(page: &mut vb_browser::page::PageSession, seek_fn: &Option<Stri
         "(() => {{ const names = [{}];          for (const n of names) {{ if (typeof window[n] === 'function') return 'JS:' + n; }}          return String(document.getAnimations({{subtree:true}}).length); }})()",
         match seek_fn {
             Some(f) => format!("'{}'", f.replace(QUOTE, "")),
-            None => "'SEEK','seek','VB_SEEK'".to_string(),
+            None => "'SEEK','__SEEK__','seek','VB_SEEK'".to_string(),
         }
     );
     match page.evaluate(&probe_js, false) {
@@ -135,12 +135,16 @@ fn detect_driver(page: &mut vb_browser::page::PageSession, seek_fn: &Option<Stri
 }
 
 /// 逐帧驱动:JS SEEK 同步绘制;CSS 动画 currentTime 定位;墙钟不动作。
+/// seek 后等一次 repaint(双 rAF,250ms 兜底)再返回 —— SEEK 只改状态
+/// 而绘制发生在下一渲染帧的页面(异步字体/位图/rAF 绘制)也能截到
+/// 正确画面;同步绘制的页面只多花一次 rAF 往返。
 fn drive_frame(page: &mut vb_browser::page::PageSession, driver: &Driver, frame: usize, fps: u32) {
+    let timing = std::env::var("VB_ANIM_TIMING").is_ok();
+    let t0 = std::time::Instant::now();
     let t_ms = (frame as f64 * 1_000.0 / fps as f64).round() as u64;
     match driver {
         Driver::JsSeek(name) => {
-            // 与 Playwright 侧同一约定:`t => window.SEEK(t)`;同步调用,
-            // 返回后画面即为该时刻(SEEK 是纯函数)
+            // 与 Playwright 侧同一约定:`t => window.SEEK(t)`(SEEK 是纯函数)
             let js = format!("({})({})", name, t_ms as f64 / 1000.0);
             let _ = page.evaluate(&js, false);
         }
@@ -150,7 +154,17 @@ fn drive_frame(page: &mut vb_browser::page::PageSession, driver: &Driver, frame:
             );
             let _ = page.evaluate(&js, false);
         }
-        Driver::WallFallback => {}
+        Driver::WallFallback => return,
+    }
+    // 等 repaint(仅 captureScreenshot 路径需要:确保状态已提交到一帧;
+    // beginFrame 路径由 CDP 显式产帧,本身就是"等一次 repaint",
+    // 再跑 rAF 是纯开销)。页面无 rAF 流时 setTimeout 兜底不挂死。
+    if std::env::var("VB_NO_BEGINFRAME").is_ok() {
+        let wait_js = "() => new Promise(res => { let n = 0;                     const tick = () => { if (++n >= 2) return res(true); requestAnimationFrame(tick); };                     requestAnimationFrame(tick);                     setTimeout(() => res(false), 250); })";
+        let _ = page.evaluate(wait_js, true);
+    }
+    if timing {
+        eprintln!("[timing] frame {frame}: drive+repaint {:?}", t0.elapsed());
     }
 }
 
@@ -645,13 +659,47 @@ fn capture_and_encode(
     driver: &Driver,
 ) -> Result<Vec<String>, String> {
     let _ = dsf; // 设备像素比已在页面建立时设定
-    let warnings = Vec::new();
+    let mut warnings = Vec::new();
     // ffmpeg 直通:截图字节 → stdin → 编码(零解码零重编码)
     let (shot_format, shot_quality, in_codec) = match opts.jpeg_quality {
         Some(q) => ("jpeg", Some(q), "mjpeg"),
         None => ("png", None, "png"),
     };
     let interval_us = (1_000_000.0f64 / fps as f64).round() as u64;
+    // 墙钟车道按实际耗时记账(下游实测反馈 #2):旧实现采样只有
+    // ~1 帧/s 仍按 1/fps 打时间戳 → 成片快放且速度不均。两段式:
+    // 先采 PROBE 帧实测节奏(median),ffmpeg 以实测节奏 CFR 编码
+    // (内容零丢失、时长≈真实墙钟;速度为均值口径,抖动不还原)。
+    let mut probe_buf: Vec<Vec<u8>> = Vec::new();
+    let wall_fps = if *driver == Driver::WallFallback {
+        let clip_probe = (0.0, 0.0, vw as f64, vh as f64);
+        let mut stamps: Vec<f64> = Vec::new();
+        let t0 = std::time::Instant::now();
+        for k in 0..8 {
+            if k > 0 {
+                std::thread::sleep(Duration::from_micros(interval_us));
+            }
+            let png = match page.begin_frame_screenshot(shot_format, shot_quality) {
+                Ok(b) => b,
+                Err(_) => page
+                    .screenshot(shot_format, shot_quality, Some(clip_probe), false, false)
+                    .map_err(|e| format!("逐帧截屏失败(探针帧 {k}):{e}"))?,
+            };
+            stamps.push(t0.elapsed().as_secs_f64());
+            probe_buf.push(png);
+        }
+        let mut gaps: Vec<f64> = stamps.windows(2).map(|w| (w[1] - w[0]) * 1000.0).collect();
+        gaps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let pace_ms = gaps[gaps.len() / 2].max(1.0);
+        let measured = 1000.0 / pace_ms;
+        warnings.push(format!(
+            "墙钟车道:实测采样节奏 {pace_ms:.0}ms/帧(≈{measured:.1} 帧/s,请求 {fps});成片按实测节奏记账,时长 ≈ {:.1}s",
+            (b - a) as f64 * pace_ms / 1000.0
+        ));
+        Some((1000.0 / pace_ms).round().clamp(1.0, f64::from(fps)))
+    } else {
+        None
+    };
     let mut cmd = Command::new("ffmpeg");
     cmd.args([
         "-y",
@@ -662,7 +710,9 @@ fn capture_and_encode(
         "-c:v",
         in_codec,
         "-framerate",
-        &fps.to_string(),
+        &wall_fps
+            .map(|f| f.to_string())
+            .unwrap_or_else(|| fps.to_string()),
         "-i",
         "-",
         "-c:v",
@@ -709,22 +759,63 @@ fn capture_and_encode(
         .take()
         .ok_or_else(|| "无法获取 ffmpeg stdin".to_string())?;
 
-    let clip = (0.0, 0.0, vw as f64, vh as f64);
-    for i in a..b {
-        if *driver == Driver::WallFallback {
-            if i > a {
-                // 墙钟节奏:上一帧之后至少间隔 1/fps(截图慢则自适应不等待)
-                std::thread::sleep(Duration::from_micros(interval_us));
-            }
-        } else {
-            drive_frame(page, driver, i, fps);
-        }
-        let png = page
-            .screenshot(shot_format, shot_quality, Some(clip), false, false)
-            .map_err(|e| format!("逐帧截屏失败(帧 {i}):{e}"))?;
+    let _ = (vw, vh); // 视口截图无 clip;vw/vh 仅用于 establish metrics
+    for (k, png) in probe_buf.drain(..).enumerate() {
         stdin
             .write_all(&png)
-            .map_err(|e| format!("写入 ffmpeg 管道失败(帧 {i}):{e}"))?;
+            .map_err(|e| format!("写入 ffmpeg 管道失败(探针帧 {k}):{e}"))?;
+    }
+    for i in a..b {
+        if *driver != Driver::WallFallback {
+            drive_frame(page, driver, i, fps);
+        }
+        let ts = std::time::Instant::now();
+        // 逐帧截屏走 beginFrame(CDP 显式产帧,空闲页面不再等 ~530ms
+        // 合成器调度);beginFrame 不支持 clip —— 视口即画布(dsf 生效),
+        // 静态车道的 settle/capture_png 协议不受影响
+        // 不带 clip:clip 会强制 Chromium 重光栅化裁剪区(实测每帧 +150ms
+        // 以上);视口即画布(dsf 经 set_device_metrics 生效),无需 clip。
+        // VB_NO_BEGINFRAME=1 强制走 captureScreenshot(路径对照/兼容开关)
+        let no_bf = std::env::var("VB_NO_BEGINFRAME").is_ok();
+        let png = if no_bf {
+            page.screenshot(shot_format, shot_quality, None, false, false)
+                .map_err(|e| format!("逐帧截屏失败(帧 {i}):{e}"))?
+        } else {
+            match page.begin_frame_screenshot(shot_format, shot_quality) {
+                Ok(b) => b,
+                Err(e) => {
+                    if i == a {
+                        warnings.push(format!("beginFrame 不可用,退回 captureScreenshot: {e}"));
+                    }
+                    page.screenshot(shot_format, shot_quality, None, false, false)
+                        .map_err(|e| format!("逐帧截屏失败(帧 {i}):{e}"))?
+                }
+            }
+        };
+        if std::env::var("VB_ANIM_TIMING").is_ok() {
+            eprintln!(
+                "[timing] frame {i}: screenshot {:?} ({} KB)",
+                ts.elapsed(),
+                png.len() / 1024
+            );
+        }
+        if let Err(e) = stdin.write_all(&png) {
+            // 管道断裂 = ffmpeg 已死(典型:硬件编码会话超限被驱动拒绝)。
+            // 收尸带出 stderr,别让真死因埋在 os error 109 里
+            let stderr = child
+                .wait_with_output()
+                .ok()
+                .map(|o| {
+                    let t = String::from_utf8_lossy(&o.stderr).to_string();
+                    t.chars()
+                        .skip(t.chars().count().saturating_sub(300))
+                        .collect::<String>()
+                })
+                .unwrap_or_default();
+            return Err(format!(
+                "写入 ffmpeg 管道失败(帧 {i}):{e};ffmpeg 已退出,stderr 尾部: {stderr}"
+            ));
+        }
     }
     drop(stdin); // EOF → ffmpeg 收尾
     let output = child
@@ -798,6 +889,7 @@ fn export_anim_inmemory(
         d
     };
     let mut captures: Vec<Frame> = Vec::with_capacity(n);
+    let wall_t0 = std::time::Instant::now();
     for i in 0..n {
         if driver == Driver::WallFallback {
             if i > 0 {
@@ -840,6 +932,14 @@ fn export_anim_inmemory(
     drop(proc);
     if captures.is_empty() {
         return Err("采样得到 0 帧".into());
+    }
+    // 墙钟记账:帧延迟按实测总耗时均值(速度正确;此前固定 1/fps,
+    // 采样慢于网格时成片快放)
+    if driver == Driver::WallFallback {
+        let real_delay = (wall_t0.elapsed().as_secs_f64() * 1000.0 / n as f64).round() as u32;
+        for f in captures.iter_mut() {
+            f.delay_ms = real_delay.max(20);
+        }
     }
     // 尺寸一致性守卫(ffmpeg 要求恒定帧尺寸;异常帧裁到首帧尺寸)
     let (fw, fh) = (captures[0].width, captures[0].height);

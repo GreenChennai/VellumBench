@@ -62,7 +62,44 @@ fn env_browser_paths() -> Vec<PathBuf> {
     v
 }
 
-/// 发现系统浏览器:显式参数 → 环境变量 → Edge → Chrome。
+/// 在 Playwright 缓存里找最新版 chrome-headless-shell(逐帧截屏比
+/// headless=new 快 ~2×:老式 headless 直连软件通路,无 viz 表面中转)。
+fn discover_headless_shell() -> Option<PathBuf> {
+    if std::env::var("VB_NO_SHELL")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let base = std::env::var_os("LOCALAPPDATA")?;
+    let root = PathBuf::from(base).join("ms-playwright");
+    let mut versions: Vec<PathBuf> = std::fs::read_dir(&root)
+        .ok()?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("chromium_headless_shell-"))
+                .unwrap_or(false)
+        })
+        .collect();
+    // 版本号目录取最大(字典序对同位数版本号即数值序)
+    versions.sort();
+    for dir in versions.iter().rev() {
+        let exe = dir
+            .join("chrome-headless-shell-win64")
+            .join("chrome-headless-shell.exe");
+        if exe.is_file() {
+            return Some(exe);
+        }
+    }
+    None
+}
+
+/// 发现系统浏览器:显式参数 → 环境变量 → headless-shell → Edge → Chrome。
+///
+/// shell 优先的理由:逐帧动画导出是主要负载,shell 每帧截屏 ~80ms vs
+/// headless=new ~155ms(JPEG)/ ~530ms(PNG);`VB_NO_SHELL=1` 可关。
 pub fn discover_browser(explicit: Option<&str>) -> Option<PathBuf> {
     if let Some(p) = explicit {
         let pb = PathBuf::from(p);
@@ -75,6 +112,9 @@ pub fn discover_browser(explicit: Option<&str>) -> Option<PathBuf> {
         if pb.is_file() {
             return Some(pb);
         }
+    }
+    if let Some(shell) = discover_headless_shell() {
+        return Some(shell);
     }
     EDGE_PATHS
         .iter()
@@ -116,12 +156,32 @@ fn port_from_listen_line(line: &str) -> Option<u16> {
         .and_then(|(_, p)| p.parse::<u16>().ok())
 }
 
+/// chrome-headless-shell(Playwright 同款老式 headless 实现)探测:
+/// 截图走直连软件通路,空闲页面每帧 ~300ms;headless=new 的 viz 表面
+/// 要 ~530ms。二进制名含 headless-shell / headless_shell 即认定为 shell。
+fn is_headless_shell(exe: &Path) -> bool {
+    exe.file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| {
+            let l = n.to_ascii_lowercase();
+            l.contains("headless-shell")
+                || l.contains("headless_shell")
+                || l == "chrome-headless-shell.exe"
+        })
+        .unwrap_or(false)
+}
+
 /// 与 playwright headless 对齐的渲染相关默认参数。
-fn launch_args(user_data_dir: &Path, debug_port: u16, gpu: bool) -> Vec<String> {
+fn launch_args(user_data_dir: &Path, debug_port: u16, gpu: bool, shell: bool) -> Vec<String> {
     let mut v = vec![
         format!("--remote-debugging-port={debug_port}"),
         format!("--user-data-dir={}", user_data_dir.display()),
-        "--headless=new".into(),
+    ];
+    // shell 二进制本身就是 headless,不认 --headless=new
+    if !shell {
+        v.push("--headless=new".into());
+    }
+    v.extend([
         "--no-first-run".into(),
         "--no-default-browser-check".into(),
         "--disable-dev-shm-usage".into(),
@@ -133,7 +193,7 @@ fn launch_args(user_data_dir: &Path, debug_port: u16, gpu: bool) -> Vec<String> 
         "--disable-hang-monitor".into(),
         "--disable-ipc-flooding-protection".into(),
         "--force-color-profile=srgb".into(),
-    ];
+    ]);
     if gpu {
         // GPU 光栅化:headless 必须显式走 ANGLE→D3D11,否则仍是软件光栅。
         // 实测渲染器串形如 "ANGLE (AMD, AMD Radeon RX 9070 GRE … D3D11)",
@@ -153,6 +213,15 @@ fn launch_args(user_data_dir: &Path, debug_port: u16, gpu: bool) -> Vec<String> 
         v.push("--disable-gpu".into());
     }
     v.extend([
+        // 逐帧截屏的生命线:headless=new 对"空闲页面"(无 CSS 动画、无 rAF,
+        // 典型如 SEEK 驱动的确定性渲染页)上,Page.captureScreenshot 等合成器
+        // 调度产下一帧,实测固定 ~530ms/帧且 --gpu 无改善。begin-frame-control
+        // 让 CDP 显式发起 BeginFrame(HeadlessExperimental.beginFrame 产帧 +
+        // 截图一步完成),配 frame-rate-limit/vsync 解除把每帧等待压到毫秒级。
+        "--enable-begin-frame-control".into(),
+        "--disable-frame-rate-limit".into(),
+        "--disable-gpu-vsync".into(),
+        "--run-all-compositor-stages-before-draw".into(),
         "--hide-scrollbars".into(),
         "--mute-audio".into(),
         "--password-store=basic".into(),
@@ -196,7 +265,8 @@ impl BrowserProcess {
                 .unwrap_or(0)
         ));
         std::fs::create_dir_all(&user_data_dir).map_err(|e| e.to_string())?;
-        let args = launch_args(&user_data_dir, port, opts.gpu);
+        let shell = is_headless_shell(exe);
+        let args = launch_args(&user_data_dir, port, opts.gpu, shell);
         let mut child = Command::new(exe)
             .args(&args)
             .stdout(Stdio::null())
