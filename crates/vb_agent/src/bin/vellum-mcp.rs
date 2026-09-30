@@ -168,6 +168,17 @@ fn tool_apply_patch(args: &Value) -> Result<Value, String> {
     })
 }
 
+/// 工具产物落盘:先建父目录(客户端给的 out 常带尚未创建的多级目录,
+/// 如 D:\Temp\pc-test\deep\out.png),失败信息带完整路径——MCP 客户端
+/// 只能看到这条字符串,没有它无法定位是哪个文件写不进去。
+fn write_out(out: &Path, bytes: &[u8]) -> Result<(), String> {
+    if let Some(parent) = out.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("建目录失败 {}:{e}", parent.display()))?;
+    }
+    std::fs::write(out, bytes).map_err(|e| format!("写文件失败 {}:{e}", out.display()))
+}
+
 fn tool_export(args: &Value) -> Result<Value, String> {
     with_session(|s: &mut Session| {
         let fmt = args
@@ -191,7 +202,7 @@ fn tool_export(args: &Value) -> Result<Value, String> {
                     transparent,
                     Some(&s.dir),
                 )?;
-                std::fs::write(&out, &png).map_err(|e| e.to_string())?;
+                write_out(&out, &png)?;
                 Ok(
                     json!({"ok": true, "out": out.display().to_string(), "bytes": png.len(), "warnings": warnings}),
                 )
@@ -199,7 +210,7 @@ fn tool_export(args: &Value) -> Result<Value, String> {
             "svg" => {
                 let svg =
                     vb_export::export_artboard_svg(&s.doc, ab, scale, transparent, Some(&s.dir))?;
-                std::fs::write(&out, &svg).map_err(|e| e.to_string())?;
+                write_out(&out, svg.as_bytes())?;
                 Ok(json!({"ok": true, "out": out.display().to_string(), "bytes": svg.len()}))
             }
             "pdf" | "gif" | "mp4" => {
