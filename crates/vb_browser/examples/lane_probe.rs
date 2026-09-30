@@ -1,5 +1,5 @@
 //! 分步探针:定位浏览器车道挂点(临时调试用)。
-//! 用法:cargo run -p vb_browser --example probe [url]
+//! 用法:cargo run -p vb_browser --example lane_probe [url]
 //! 无参 = 内置 data: URL 自检。
 
 use std::time::Duration;

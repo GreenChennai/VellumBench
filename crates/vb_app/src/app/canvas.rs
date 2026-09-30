@@ -126,8 +126,8 @@ impl VellumApp {
         };
         let ppp = pixels_per_point.clamp(1.0, 4.0) as f64;
         let size = [
-            ((rect.width().max(1.0) as f32 * pixels_per_point) as u32).min(4096),
-            ((rect.height().max(1.0) as f32 * pixels_per_point) as u32).min(4096),
+            ((rect.width().max(1.0) * pixels_per_point) as u32).min(4096),
+            ((rect.height().max(1.0) * pixels_per_point) as u32).min(4096),
         ];
 
         // 初始化 vello renderer(一次)

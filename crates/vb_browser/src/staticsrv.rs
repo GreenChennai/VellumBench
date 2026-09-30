@@ -157,6 +157,14 @@ fn resolve_index(dir: &Path) -> Option<PathBuf> {
     htmls.into_iter().next()
 }
 
+/// 8860–8960 段内的伪随机起点(并发实例错开;非安全用途,弱随机足够)。
+fn rand_offset() -> u32 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() % 101)
+        .unwrap_or(0)
+}
+
 fn handle(mut stream: TcpStream, root: Arc<PathBuf>, not_found: NotFoundLog) {
     let peer = stream.try_clone();
     let Ok(peer) = peer else { return };
@@ -253,8 +261,24 @@ impl StaticServer {
         if !root.is_dir() {
             return Err(format!("源目录不存在: {}", root.display()));
         }
-        let listener =
-            TcpListener::bind(("127.0.0.1", 0)).map_err(|e| format!("静态服务绑定失败: {e}"))?;
+        // 优先绑 8860–8960:Chrome 把一批端口列为不安全(ERR_UNSAFE_PORT,
+        // 如 6665-6669),bind(0) 撞上时页面静默打不开。区间全占则回退
+        // 随机端口(并发多实例各自占一段)。
+        let bind = (0..=100)
+            .map(|i| 8860 + (rand_offset() + i as u32) % 101)
+            .chain(std::iter::once(0));
+        let mut listener_err = String::new();
+        let mut listener = None;
+        for port in bind {
+            match TcpListener::bind(("127.0.0.1", port as u16)) {
+                Ok(l) => {
+                    listener = Some(l);
+                    break;
+                }
+                Err(e) => listener_err = e.to_string(),
+            }
+        }
+        let listener = listener.ok_or_else(|| format!("静态服务绑定失败: {listener_err}"))?;
         let srv = StaticServer {
             root: Arc::new(root.to_path_buf()),
             listener,

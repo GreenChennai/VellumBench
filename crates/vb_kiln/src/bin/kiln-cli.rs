@@ -91,6 +91,33 @@ enum Cmd {
         /// MP4 码率 kbps
         #[arg(long, default_value_t = 8000)]
         bitrate: u32,
+        /// MP4 并行分段数(0=自动 CPU/2 上限 4;1=串行)。确定性寻址下
+        /// 各段独立渲染后 concat 拼接,结果与串行一致
+        #[arg(long, default_value_t = 0)]
+        workers: u32,
+        /// GPU 光栅化(ANGLE→D3D11,NVIDIA/AMD/Intel 通用;也可设
+        /// VB_GPU=1)。默认关:软件光栅跨机逐像素可复现
+        #[arg(long, default_value_t = false)]
+        gpu: bool,
+        /// 中间帧格式:png=无损管道(交付)|jpeg=直出快档(预览;
+        /// 配 --jpeg-quality,默认 95)
+        #[arg(long, default_value = "png")]
+        img: String,
+        /// 中间帧 JPEG 质量 1..=100(--img jpeg 时生效)
+        #[arg(long, default_value_t = 95)]
+        jpeg_q: u8,
+        /// H.264 编码器:auto=探测 nvenc→amf→qsv→x264(默认)|
+        /// x264|nvenc(N 卡)|amf(A 卡)|qsv
+        #[arg(long, default_value = "auto")]
+        encoder: String,
+        /// 墙钟实时采样(旧行为)。默认确定性寻址(暂停+逐帧 seek,
+        /// 帧落 1/fps 网格且可并行);JS rAF 驱动的动画才需要 --wall
+        #[arg(long, default_value_t = false)]
+        wall: bool,
+        /// JS 帧驱动函数名(页面自带确定性时间轴时;默认自动探测
+        /// window.SEEK / window.seek,确定性渲染工作流的约定接口)
+        #[arg(long)]
+        seek_fn: Option<String>,
     },
     /// 导入外部 PDF/AI/SVG → 规范化 HTML 项目(M4 反向能力)
     Import {
@@ -216,6 +243,13 @@ fn main() {
             duration,
             r#loop,
             bitrate,
+            workers,
+            gpu,
+            img,
+            jpeg_q,
+            encoder,
+            wall,
+            seek_fn,
         } => run_export(
             sources,
             output,
@@ -232,6 +266,13 @@ fn main() {
             duration,
             r#loop,
             bitrate,
+            workers,
+            gpu,
+            img,
+            jpeg_q,
+            encoder,
+            wall,
+            seek_fn,
         ),
         Cmd::Import { source, output } => run_import(source, output),
         Cmd::Img { op } => run_img(op),
@@ -257,6 +298,13 @@ fn run_export(
     duration: f32,
     r#loop: u16,
     bitrate: u32,
+    workers: u32,
+    gpu: bool,
+    img: String,
+    jpeg_q: u8,
+    encoder: String,
+    wall: bool,
+    seek_fn: Option<String>,
 ) -> i32 {
     let t0 = Instant::now();
     let _ = max_wait; // 浏览器车道自带 settle 预算;自研车道无外部等待
@@ -345,7 +393,7 @@ fn run_export(
         match dom_result {
             Ok(out) => {
                 for w in &out.warnings {
-                    eprintln!("{{\"domwarn\":\"{}\"}}", jesc(&w));
+                    eprintln!("{{\"domwarn\":\"{}\"}}", jesc(w));
                 }
                 if let Some(parent) = output.parent() {
                     let _ = std::fs::create_dir_all(parent);
@@ -411,13 +459,32 @@ fn run_export(
         vb_kiln::writer::Format::Gif | vb_kiln::writer::Format::Mp4
     ) && engine_mode != "native"
     {
-        let anim = vb_kiln::animlane::export_anim(
-            &source, fmt, width, height, fps, duration, scale, bitrate, r#loop,
+        let anim = vb_kiln::animlane::export_anim_pipe(
+            &source,
+            &vb_kiln::animlane::AnimPipeOpts {
+                width,
+                height,
+                fps,
+                duration_s: duration,
+                scale,
+                bitrate_kbps: bitrate,
+                workers,
+                gpu: vb_browser::browser::gpu_requested(Some(gpu)),
+                jpeg_quality: if img.eq_ignore_ascii_case("jpeg") {
+                    Some(jpeg_q.clamp(1, 100))
+                } else {
+                    None
+                },
+                encoder: vb_kiln::animlane::EncChoice::parse(&encoder)
+                    .unwrap_or(vb_kiln::animlane::EncChoice::Auto),
+                wall_clock: wall,
+                seek_fn,
+            },
         );
         match anim {
             Ok(out) => {
                 for w in &out.warnings {
-                    eprintln!("{{\"domwarn\":\"{}\"}}", jesc(&w));
+                    eprintln!("{{\"domwarn\":\"{}\"}}", jesc(w));
                 }
                 if let Some(parent) = output.parent() {
                     let _ = std::fs::create_dir_all(parent);
@@ -587,7 +654,7 @@ fn run_export(
     // 结构化标记诚实输出(degraded_artboard),不静默
     let mut degraded_artboard = imported.warnings.iter().any(|w| w.contains("画板标记"));
     for w in &imported.warnings {
-        eprintln!("{{\"warn\":\"{}\"}}", jesc(&w));
+        eprintln!("{{\"warn\":\"{}\"}}", jesc(w));
     }
     for w in vb_layout::apply_to_doc(&mut imported.doc, ab, Some(&dir), synthetic) {
         // 画板尺寸回填 / 裁剪 / grid 降级 = 合成画板与作者声明可能不一致,
@@ -715,7 +782,7 @@ fn run_import(source: PathBuf, output: PathBuf) -> i32 {
                     // (此前 warnings 被静默丢弃,违反「导入不静默降级」)。
                     let warns: Vec<String> = warnings
                         .iter()
-                        .map(|w| format!("\"{}\"", jesc(&w)))
+                        .map(|w| format!("\"{}\"", jesc(w)))
                         .collect();
                     // VB-4:import 结果与 export 同构 —— 强类型告警聚合为
                     // KilnReport,输出 degraded + warnings_by_kind(门禁可判定)。

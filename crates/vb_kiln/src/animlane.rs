@@ -1,14 +1,43 @@
-//! 车道 B 动画逐帧(WPI 理论,21 篇后续)。
+//! 车道 B 动画逐帧(MP4 流水线版;WPI 理论 + 确定性渲染方法论)。
 //!
-//! 理论(WPI capture_engine.capture_frames):动画在真浏览器里**实时播放**,
-//! 按 1/fps 节奏 CDP 截屏采样(截图耗时超过间隔时自适应不等待),帧序走
-//! 既有 ffmpeg 桥(palettegen GIF / libx264 MP4)。此前 GIF/MP4 走 Lane K
-//! 静态逐帧求值(anim.rs 只支持 opacity/transform/clip-path/filter 四类
-//! 轨道,width/stroke-dashoffset/@property 计数全部静态),用户人工评分
-//! 仅 35% —— 本模块成为 GIF/MP4 的浏览器主路,Lane K 降级为无浏览器兜底。
+//! ## 两条采样路线
+//!
+//! - **确定性寻址(默认)**:加载后 `document.getAnimations()` 全部
+//!   `pause()`,逐帧设 `currentTime = t*1000` —— 任意时刻画面是时间的
+//!   纯函数(SEEK(t)),帧与帧零状态依赖。收益:① 输出帧严格落在
+//!   1/fps 网格上,无墙钟重采样的跳帧/复制帧;② 时间段可独立渲染,
+//!   分段并行成为可能。仅覆盖 CSS/WAAPI 动画(本产品动画模型即
+//!   CSS @keyframes,ADR-0043);JS rAF 驱动的动画不适用,可用
+//!   `--wall` 回退。
+//! - **墙钟实时采样(`--wall`)**:旧行为,浏览器实时播放、按节奏截屏、
+//!   墙钟重采样。截屏慢于帧间隔时输出时间与真实播放一致,但帧序不
+//!   落网格,且单帧耗时直接拖慢全程。
+//!
+//! ## MP4 流水线(内存 O(1))
+//!
+//! 旧实现把全部帧解成 RGBA 驻留内存(1080p 一帧 8.3MB,3 分钟 60fps
+//! ≈ 90GB,靠页面交换硬扛)再整体落盘 PNG。现改为:CDP 截图字节
+//! (PNG 无损 / JPEG 直出)**不经解码**直接写 ffmpeg stdin
+//! (`-f image2pipe`),ffmpeg 边收边编,每段产出独立 mp4,最后 concat
+//! 无缝拼接(`-c copy`,零重编码)。
+//!
+//! ## 分段并行
+//!
+//! 确定性寻址下任意时间段独立渲染 → 总帧数均分 W 段,W 个 headless
+//! 实例各自渲染编码自己的段。W 默认自动(CPU/2,上限 4;每实例
+//! 常驻 1–3GB,内存是第一瓶颈),`--workers` 显式覆盖。
+//!
+//! ## GPU 光栅化
+//!
+//! `--gpu` / `VB_GPU=1` 时浏览器走 ANGLE→D3D11(NVIDIA/AMD/Intel 通用),
+//! 光栅与合成落在显卡;默认软件光栅保持跨机逐像素可复现(ADR-0022),
+//! GPU 路径与软件路径存在固定 AA 微差(MAD ≈ 1/255,肉眼无别,同路径
+//! 自身可复现)。
 
+use std::io::Write;
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use crate::context::{ExportContext, Frame};
 use crate::writer::Format;
@@ -22,6 +51,242 @@ pub struct AnimLaneResult {
     /// 动画覆盖矩阵(VB-3):浏览器车道全量播放,`animated` = 源中声明的
     /// 全部关键帧属性;无动画声明时为 None。
     pub anim_coverage: Option<crate::anim::AnimCoverage>,
+}
+
+/// 动画导出选项(MP4 流水线;GIF 走内存路径忽略其中大部分)。
+#[derive(Debug, Clone)]
+pub struct AnimPipeOpts {
+    pub width: u32,
+    pub height: u32,
+    pub fps: u32,
+    pub duration_s: f32,
+    pub scale: u32,
+    pub bitrate_kbps: u32,
+    /// 并行分段数;0 = 自动(CPU/2,上限 4)。1 = 串行。
+    pub workers: u32,
+    /// GPU 光栅化(`--gpu` / `VB_GPU=1`)。
+    pub gpu: bool,
+    /// 中间帧格式:None = PNG(CDP 直出,无损管道);
+    /// Some(q) = JPEG(q 为质量 1-100,预览提速档,4:2:0 色度损失)。
+    pub jpeg_quality: Option<u8>,
+    /// H.264 编码器选择。
+    pub encoder: EncChoice,
+    /// true = 墙钟实时采样(旧行为);false = 确定性寻址(默认)。
+    pub wall_clock: bool,
+    /// JS 驱动函数名(如 "SEEK"):页面自带确定性时间轴时的逐帧入口
+    /// (`SEEK(t)` 把整片画成一帧,是确定性渲染工作流的约定接口)。
+    /// None = 自动探测 window.SEEK / window.seek;显式指定优先。
+    pub seek_fn: Option<String>,
+}
+
+impl Default for AnimPipeOpts {
+    fn default() -> Self {
+        AnimPipeOpts {
+            width: 0,
+            height: 0,
+            fps: 25,
+            duration_s: 2.0,
+            scale: 1,
+            bitrate_kbps: 8000,
+            workers: 0,
+            gpu: false,
+            jpeg_quality: None,
+            encoder: EncChoice::Auto,
+            wall_clock: false,
+            seek_fn: None,
+        }
+    }
+}
+
+/// 每帧画面驱动方式(加载后探测一次,决定帧循环怎么走)。
+#[derive(Debug, Clone, PartialEq)]
+enum Driver {
+    /// 页面自带 JS 确定性时间轴:逐帧调 `fn(t)`(秒)。
+    JsSeek(String),
+    /// CSS/WAAPI 动画:pause 后逐帧 currentTime 定位(计数仅供参考)。
+    CssAnims(u32),
+    /// 页面无任何可寻址内容:回退墙钟节奏(输出可能为静止画面)。
+    WallFallback,
+}
+
+/// 探测每帧驱动方式:显式 seek_fn > window.SEEK/seek > CSS 动画 > 墙钟。
+fn detect_driver(page: &mut vb_browser::page::PageSession, seek_fn: &Option<String>) -> Driver {
+    const QUOTE: char = '\'';
+    // ① 显式指定 / ② 约定名探测:typeof 判定,名字命中即用
+    let probe_js = format!(
+        "(() => {{ const names = [{}];          for (const n of names) {{ if (typeof window[n] === 'function') return 'JS:' + n; }}          return String(document.getAnimations({{subtree:true}}).length); }})()",
+        match seek_fn {
+            Some(f) => format!("'{}'", f.replace(QUOTE, "")),
+            None => "'SEEK','seek','VB_SEEK'".to_string(),
+        }
+    );
+    match page.evaluate(&probe_js, false) {
+        Ok(v) => match v.as_str() {
+            Some(s) if s.starts_with("JS:") => Driver::JsSeek(s[3..].to_string()),
+            Some(n) => match n.parse::<u32>() {
+                Ok(0) => Driver::WallFallback,
+                Ok(count) => Driver::CssAnims(count),
+                Err(_) => Driver::WallFallback,
+            },
+            _ => Driver::WallFallback,
+        },
+        Err(_) => Driver::WallFallback,
+    }
+}
+
+/// 逐帧驱动:JS SEEK 同步绘制;CSS 动画 currentTime 定位;墙钟不动作。
+fn drive_frame(page: &mut vb_browser::page::PageSession, driver: &Driver, frame: usize, fps: u32) {
+    let t_ms = (frame as f64 * 1_000.0 / fps as f64).round() as u64;
+    match driver {
+        Driver::JsSeek(name) => {
+            // 与 Playwright 侧同一约定:`t => window.SEEK(t)`;同步调用,
+            // 返回后画面即为该时刻(SEEK 是纯函数)
+            let js = format!("({})({})", name, t_ms as f64 / 1000.0);
+            let _ = page.evaluate(&js, false);
+        }
+        Driver::CssAnims(_) => {
+            let js = format!(
+                "(() => {{ const T = {t_ms}; const anims = window.__vbAnims || [];                  for (const an of anims) {{ try {{ an.currentTime = T; }} catch (e) {{}} }}                  return anims.length; }})()"
+            );
+            let _ = page.evaluate(&js, false);
+        }
+        Driver::WallFallback => {}
+    }
+}
+
+/// CSS 动画路线的一次性准备:全部 pause + 缓存清单;无动画返回 0。
+fn pause_all_animations(page: &mut vb_browser::page::PageSession) -> i64 {
+    let pause_js = "(() => { const anims = document.getAnimations({subtree:true});         anims.forEach(a => { try { a.pause(); } catch (e) {} });         window.__vbAnims = anims; return anims.length; })()";
+    page.evaluate(pause_js, false)
+        .ok()
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0)
+}
+
+/// H.264 编码器:Auto 依次探测 nvenc(N 卡)/ amf(A 卡)/ qsv(Intel),
+/// 都缺则 libx264(CPU)。硬件编码把 x264 的编码耗时一并卸到显卡。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EncChoice {
+    Auto,
+    X264,
+    Nvenc,
+    Amf,
+    Qsv,
+}
+
+impl EncChoice {
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s.to_ascii_lowercase().as_str() {
+            "auto" => EncChoice::Auto,
+            "x264" | "cpu" | "libx264" => EncChoice::X264,
+            "nvenc" | "nvidia" => EncChoice::Nvenc,
+            "amf" | "amd" => EncChoice::Amf,
+            "qsv" | "intel" => EncChoice::Qsv,
+            _ => return None,
+        })
+    }
+
+    fn codec_name(self) -> &'static str {
+        match self {
+            EncChoice::X264 => "libx264",
+            EncChoice::Nvenc => "h264_nvenc",
+            EncChoice::Amf => "h264_amf",
+            EncChoice::Qsv => "h264_qsv",
+            EncChoice::Auto => "libx264",
+        }
+    }
+
+    /// Auto → 运行时探针出**全部可用**编码器,按 nvenc→amf→qsv→x264 排成
+    /// 候选表(编译进来 ≠ 有硬件;探针 = 编 2 帧测试片)。渲染段首选失败
+    /// 时沿表回退 —— 消费级 N 卡有并发编码会话数上限(老卡 1–3 个),
+    /// 多分段并行时硬件编码器可能个别段开不出会话,须能落到 x264。
+    /// 显式选择也探针,不可用即 Err —— 宁可失败得清楚,不许半路炸掉
+    /// 已跑了几分钟的渲染。
+    fn resolve(self) -> Result<Vec<Self>, String> {
+        let caps = ffmpeg_caps();
+        let usable = |c: EncChoice| -> bool {
+            let compiled = match c {
+                EncChoice::Nvenc => caps.h264_nvenc,
+                EncChoice::Amf => caps.h264_amf,
+                EncChoice::Qsv => caps.h264_qsv,
+                EncChoice::X264 => caps.libx264,
+                EncChoice::Auto => false,
+            };
+            compiled && probe_encoder(c.codec_name())
+        };
+        match self {
+            EncChoice::Auto => {
+                let all = [
+                    EncChoice::Nvenc,
+                    EncChoice::Amf,
+                    EncChoice::Qsv,
+                    EncChoice::X264,
+                ];
+                let cands: Vec<EncChoice> = all.into_iter().filter(|c| usable(*c)).collect();
+                if cands.is_empty() {
+                    return Err("无可用的 H.264 编码器(ffmpeg 缺 libx264 且硬件编码器均不可用);请安装完整版 ffmpeg 或用 --encoder 显式指定".into());
+                }
+                Ok(cands)
+            }
+            c => {
+                if usable(c) {
+                    Ok(vec![c])
+                } else {
+                    Err(format!(
+                        "编码器 {} 在本机不可用(ffmpeg 未编译或硬件缺失);--encoder auto 可自动回退",
+                        c.codec_name()
+                    ))
+                }
+            }
+        }
+    }
+}
+
+/// 编码器**运行时可用**探针:编 2 帧测试片实测(lavfi 黑帧 → null muxer)。
+fn probe_encoder(codec: &str) -> bool {
+    Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=64x64:r=25:d=0.08",
+            "-frames:v",
+            "2",
+            "-c:v",
+            codec,
+            "-f",
+            "null",
+            "-",
+        ])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// ffmpeg 能力探测(编码器清单;一次探测,全程复用)。
+#[derive(Debug, Default, Clone, Copy)]
+pub struct FfmpegCaps {
+    pub h264_nvenc: bool,
+    pub h264_amf: bool,
+    pub h264_qsv: bool,
+    pub libx264: bool,
+}
+
+pub fn ffmpeg_caps() -> FfmpegCaps {
+    let list = Command::new("ffmpeg")
+        .args(["-hide_banner", "-encoders"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+    FfmpegCaps {
+        h264_nvenc: list.contains("h264_nvenc"),
+        h264_amf: list.contains("h264_amf"),
+        h264_qsv: list.contains("h264_qsv"),
+        libx264: list.contains("libx264"),
+    }
 }
 
 /// 从 HTML 源提取 `<style>` 块内容(anim_coverage 判定用;不入 Document,
@@ -46,7 +311,7 @@ fn style_blocks_of_html(html: &Path) -> Vec<String> {
     out
 }
 
-/// 单源动画导出:浏览器实时采样 → 帧序 → GIF/MP4。
+/// 动画导出入口:GIF 走内存路径(调色板需全帧统计),MP4 走流式并行管道。
 #[allow(clippy::too_many_arguments)]
 pub fn export_anim(
     source: &Path,
@@ -58,6 +323,432 @@ pub fn export_anim(
     scale: u32,
     bitrate_kbps: u32,
     gif_loops: u16,
+) -> Result<AnimLaneResult, String> {
+    let opts = AnimPipeOpts {
+        width,
+        height,
+        fps,
+        duration_s,
+        scale,
+        bitrate_kbps,
+        ..AnimPipeOpts::default()
+    };
+    match format {
+        Format::Mp4 => export_anim_pipe(source, &opts),
+        _ => export_anim_inmemory(source, format, gif_loops, &opts),
+    }
+}
+
+/// 完整选项版入口(kiln-cli `--workers/--gpu/--img/--encoder/--wall`)。
+pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneResult, String> {
+    let t_start = std::time::Instant::now();
+    let (mount_dir, html_path) = crate::domexport::resolve_source(source)?;
+    let srv = vb_browser::staticsrv::StaticServer::start(&mount_dir)?;
+    let url = if source.is_dir() {
+        srv.url_for_dir()?
+    } else {
+        let name = html_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or("源文件名非法")?;
+        format!(
+            "http://127.0.0.1:{}/{}",
+            srv.port(),
+            crate::domexport::url_encode(name)
+        )
+    };
+    let exe = vb_browser::discover_browser(None)
+        .ok_or("未发现系统浏览器(Edge/Chrome);动画浏览器路线不可用")?;
+
+    let fps = opts.fps.clamp(1, 60);
+    let n = ((fps as f32 * opts.duration_s.max(0.1)).ceil().max(1.0)) as usize;
+    let vw = if opts.width > 0 { opts.width } else { 1080 };
+    let vh = if opts.height > 0 { opts.height } else { vw };
+    let dsf = opts.scale.clamp(1, 8);
+
+    // 编码器解析(一次探测);ffmpeg 缺失时整体退 GIF 流(与旧行为一致)
+    if !crate::frames::ffmpeg_available() {
+        let mut r = export_anim_inmemory(source, Format::Gif, 0, opts)?;
+        r.warnings.insert(0, "ffmpeg 缺失,MP4 降级 GIF 流".into());
+        return Ok(r);
+    }
+    let enc_cands = opts.encoder.resolve()?;
+    let mut warnings: Vec<String> = Vec::new();
+    let chain: Vec<String> = enc_cands
+        .iter()
+        .map(|c| {
+            let tag = if *c == EncChoice::X264 {
+                "CPU"
+            } else {
+                "硬件"
+            };
+            format!("{}({})", c.codec_name(), tag)
+        })
+        .collect();
+    warnings.push(format!("编码器候选:{}", chain.join(" → ")));
+    if let Some(q) = opts.jpeg_quality {
+        warnings.push(format!(
+            "中间帧 JPEG(q={q},4:2:0 色度损失;交付建议 --img png)"
+        ));
+    }
+
+    // 分段:总帧数均分;workers 上限 = 帧数(每段至少 1 帧)
+    let cores = std::thread::available_parallelism()
+        .map(|c| c.get())
+        .unwrap_or(4);
+    let w_auto = (cores / 2).clamp(1, 4) as u32;
+    let workers = if opts.workers == 0 {
+        w_auto
+    } else {
+        opts.workers.clamp(1, 16)
+    }
+    .min(n as u32) as usize;
+    warnings.push(format!(
+        "分段并行:{workers} 实例 × {} 帧(确定性={}, GPU={})",
+        n.div_ceil(workers),
+        if opts.wall_clock { "关" } else { "开" },
+        if opts.gpu { "开" } else { "关" },
+    ));
+
+    // 临时工作区:段 mp4 + concat 清单
+    let tmp = std::env::temp_dir().join(format!(
+        "kiln-anim-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("创建动画工作目录失败:{e}"))?;
+
+    // 共享状态进 scope 线程:同一静态服务,W 个独立浏览器实例
+    let seg_results: Vec<Result<(EncChoice, Vec<String>), String>> = std::thread::scope(|scope| {
+        let per = n.div_ceil(workers);
+        let mut handles = Vec::with_capacity(workers);
+        for wi in 0..workers {
+            let a = wi * per;
+            let b = (a + per).min(n);
+            let url = url.clone();
+            let exe = exe.clone();
+            let enc_cands = enc_cands.clone();
+            let seg_path = tmp.join(format!("seg_{wi:04}.mp4"));
+            let srv_ref = &srv;
+            handles.push(scope.spawn(move || {
+                render_segment(
+                    &exe, srv_ref, &url, &seg_path, a, b, fps, vw, vh, dsf, opts, &enc_cands,
+                )
+            }));
+        }
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap_or_else(|_| Err("渲染线程崩溃".into())))
+            .collect()
+    });
+
+    let mut failed = None;
+    for (wi, r) in seg_results.iter().enumerate() {
+        match r {
+            Ok((_enc_used, ws)) => warnings.extend(ws.iter().cloned()),
+            Err(e) => {
+                failed = Some(format!("分段 {wi} 渲染失败:{e}"));
+                break;
+            }
+        }
+    }
+    if let Some(e) = failed {
+        let _ = std::fs::remove_dir_all(&tmp);
+        return Err(e);
+    }
+
+    // concat 无缝拼接(同编码参数 CFR,-c copy 零重编码)
+    let out_path = tmp.join("out.mp4");
+    let concat_result = (|| -> Result<(), String> {
+        if workers == 1 {
+            std::fs::rename(tmp.join("seg_0000.mp4"), &out_path)
+                .map_err(|e| format!("段文件改名失败:{e}"))?;
+            return Ok(());
+        }
+        let list = tmp.join("list.txt");
+        let mut text = String::new();
+        for wi in 0..workers {
+            text.push_str(&format!("file 'seg_{wi:04}.mp4'\n"));
+        }
+        std::fs::write(&list, text).map_err(|e| format!("写 concat 清单失败:{e}"))?;
+        let output = Command::new("ffmpeg")
+            .current_dir(&tmp)
+            .args([
+                "-y",
+                "-loglevel",
+                "error",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                "list.txt",
+                "-c",
+                "copy",
+                "-movflags",
+                "+faststart",
+                "out.mp4",
+            ])
+            .output()
+            .map_err(|e| format!("ffmpeg concat 启动失败:{e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "ffmpeg concat 失败: {}",
+                String::from_utf8_lossy(&output.stderr)
+                    .chars()
+                    .take(300)
+                    .collect::<String>()
+            ));
+        }
+        Ok(())
+    })();
+    if let Err(e) = concat_result {
+        let _ = std::fs::remove_dir_all(&tmp);
+        return Err(e);
+    }
+    let bytes = std::fs::read(&out_path).map_err(|e| format!("读取成片失败:{e}"))?;
+    let _ = std::fs::remove_dir_all(&tmp);
+
+    warnings.push(format!(
+        "动画流水线:{n} 帧 @ {fps}fps,总耗时 {:.1}s({:.1} 帧/s)",
+        t_start.elapsed().as_secs_f32(),
+        n as f32 / t_start.elapsed().as_secs_f32().max(1e-3),
+    ));
+
+    // VB-1:静态资源 404 不许静默;VB-3:覆盖矩阵随结果输出
+    warnings.extend(
+        srv.take_not_found()
+            .iter()
+            .map(|s| vb_browser::staticsrv::asset_not_found_message(s)),
+    );
+    let browser = vb_browser::browser::browser_version(&exe);
+    let anim_coverage = crate::anim::AnimCoverage::from_keyframes(
+        &crate::anim::parse_keyframes(&style_blocks_of_html(&html_path)),
+        "browser",
+    );
+    Ok(AnimLaneResult {
+        bytes,
+        frames: n,
+        browser,
+        warnings,
+        anim_coverage,
+    })
+}
+
+/// 渲染一个帧区间 [a, b) 到独立 mp4:独立浏览器实例 + image2pipe 直通编码。
+/// 编码失败(如 N 卡并发会话超限)沿候选表回退整段重试;确定性寻址下
+/// 重试就是重新 seek,结果与首跑一致。返回(实际用上的编码器,告警)。
+#[allow(clippy::too_many_arguments)]
+fn render_segment(
+    exe: &Path,
+    srv: &vb_browser::staticsrv::StaticServer,
+    url: &str,
+    seg_path: &Path,
+    a: usize,
+    b: usize,
+    fps: u32,
+    vw: u32,
+    vh: u32,
+    dsf: u32,
+    opts: &AnimPipeOpts,
+    enc_cands: &[EncChoice],
+) -> Result<(EncChoice, Vec<String>), String> {
+    let _ = srv; // 静态服务由调用方持有保活;连接经 URL,无需逐段操作
+    let mut warnings = Vec::new();
+    let proc = vb_browser::browser::BrowserProcess::launch_with(
+        exe,
+        vb_browser::browser::LaunchOptions { gpu: opts.gpu },
+    )?;
+    let mut page = vb_browser::page::PageSession::attach(&proc)?;
+    page.set_device_metrics(vw, vh, dsf)?;
+    page.navigate(url)?;
+    page.wait_network_idle(Duration::from_secs(3));
+    vb_browser::capture::wait_assets(&mut page);
+    page.sleep(250); // 首帧稳定(不冻结动画、不仿真 reduced-motion)
+
+    // 帧驱动探测:JS 确定性时间轴(SEEK 约定)> CSS 动画寻址 > 墙钟回退
+    let driver = if opts.wall_clock {
+        Driver::WallFallback
+    } else {
+        let d = detect_driver(&mut page, &opts.seek_fn);
+        match &d {
+            Driver::JsSeek(name) => {
+                warnings.push(format!(
+                    "帧驱动:window.{name}(JS 确定性时间轴,分段并行安全)"
+                ));
+            }
+            Driver::CssAnims(count) => {
+                let paused = pause_all_animations(&mut page);
+                warnings.push(format!(
+                    "帧驱动:CSS/WAAPI 动画寻址({count} 条,已暂停 {paused})"
+                ));
+            }
+            Driver::WallFallback => {
+                warnings.push(
+                    "页面无 window.SEEK 且无 CSS 动画:退回墙钟节奏(页面无自驱动时输出为静止画面)"
+                        .into(),
+                );
+            }
+        }
+        d
+    };
+
+    let mut last_err = String::new();
+    for (ci, &enc) in enc_cands.iter().enumerate() {
+        match capture_and_encode(
+            &mut page, seg_path, a, b, fps, vw, vh, dsf, opts, enc, &driver,
+        ) {
+            Ok(ws) => {
+                warnings.extend(ws);
+                if ci > 0 {
+                    warnings.push(format!(
+                        "段编码回退:{} 不可用,已用 {} 完成",
+                        enc_cands[0].codec_name(),
+                        enc.codec_name()
+                    ));
+                }
+                page.close();
+                drop(proc);
+                return Ok((enc, warnings));
+            }
+            Err(e) => {
+                last_err = e;
+                if ci + 1 < enc_cands.len() {
+                    warnings.push(format!(
+                        "编码器 {} 失败,尝试 {}",
+                        enc.codec_name(),
+                        enc_cands[ci + 1].codec_name()
+                    ));
+                }
+            }
+        }
+    }
+    Err(last_err)
+}
+
+/// 单次"采集 [a,b) + 直通编码"尝试:截图字节 → ffmpeg stdin → mp4。
+#[allow(clippy::too_many_arguments)]
+fn capture_and_encode(
+    page: &mut vb_browser::page::PageSession,
+    seg_path: &Path,
+    a: usize,
+    b: usize,
+    fps: u32,
+    vw: u32,
+    vh: u32,
+    dsf: u32,
+    opts: &AnimPipeOpts,
+    enc: EncChoice,
+    driver: &Driver,
+) -> Result<Vec<String>, String> {
+    let _ = dsf; // 设备像素比已在页面建立时设定
+    let warnings = Vec::new();
+    // ffmpeg 直通:截图字节 → stdin → 编码(零解码零重编码)
+    let (shot_format, shot_quality, in_codec) = match opts.jpeg_quality {
+        Some(q) => ("jpeg", Some(q), "mjpeg"),
+        None => ("png", None, "png"),
+    };
+    let interval_us = (1_000_000.0f64 / fps as f64).round() as u64;
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args([
+        "-y",
+        "-loglevel",
+        "error",
+        "-f",
+        "image2pipe",
+        "-c:v",
+        in_codec,
+        "-framerate",
+        &fps.to_string(),
+        "-i",
+        "-",
+        "-c:v",
+        enc.codec_name(),
+        "-pix_fmt",
+        "yuv420p",
+        "-b:v",
+        &format!("{}k", opts.bitrate_kbps),
+    ]);
+    match enc {
+        EncChoice::X264 => {
+            // 分段并行时按份额限制 x264 线程,避免 W 段互相超订 CPU
+            let cores = std::thread::available_parallelism()
+                .map(|c| c.get())
+                .unwrap_or(4);
+            let workers = opts.workers.max(1) as usize;
+            cmd.arg("-preset")
+                .arg("medium")
+                .arg("-threads")
+                .arg((cores / workers).clamp(1, 16).to_string());
+        }
+        EncChoice::Nvenc => {
+            cmd.arg("-preset").arg("p4");
+        }
+        EncChoice::Amf => {
+            cmd.arg("-quality").arg("balanced");
+        }
+        EncChoice::Qsv => {
+            cmd.arg("-preset").arg("medium");
+        }
+        EncChoice::Auto => {}
+    }
+    cmd.arg("-movflags")
+        .arg("+faststart")
+        .arg(seg_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("ffmpeg 编码进程启动失败:{e}"))?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "无法获取 ffmpeg stdin".to_string())?;
+
+    let clip = (0.0, 0.0, vw as f64, vh as f64);
+    for i in a..b {
+        if *driver == Driver::WallFallback {
+            if i > a {
+                // 墙钟节奏:上一帧之后至少间隔 1/fps(截图慢则自适应不等待)
+                std::thread::sleep(Duration::from_micros(interval_us));
+            }
+        } else {
+            drive_frame(page, driver, i, fps);
+        }
+        let png = page
+            .screenshot(shot_format, shot_quality, Some(clip), false, false)
+            .map_err(|e| format!("逐帧截屏失败(帧 {i}):{e}"))?;
+        stdin
+            .write_all(&png)
+            .map_err(|e| format!("写入 ffmpeg 管道失败(帧 {i}):{e}"))?;
+    }
+    drop(stdin); // EOF → ffmpeg 收尾
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("等待 ffmpeg 失败:{e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "ffmpeg 编码失败: {}",
+            String::from_utf8_lossy(&output.stderr)
+                .chars()
+                .take(300)
+                .collect::<String>()
+        ));
+    }
+    Ok(warnings)
+}
+
+/// GIF / 兼容路径:内存帧序列(调色板需全帧统计;长片内存大,MP4 勿走此路)。
+#[allow(clippy::too_many_arguments)]
+fn export_anim_inmemory(
+    source: &Path,
+    format: Format,
+    gif_loops: u16,
+    opts: &AnimPipeOpts,
 ) -> Result<AnimLaneResult, String> {
     let (mount_dir, html_path) = crate::domexport::resolve_source(source)?;
     let srv = vb_browser::staticsrv::StaticServer::start(&mount_dir)?;
@@ -76,34 +767,44 @@ pub fn export_anim(
     };
     let exe = vb_browser::discover_browser(None)
         .ok_or("未发现系统浏览器(Edge/Chrome);动画浏览器路线不可用")?;
-    let proc = vb_browser::browser::BrowserProcess::launch(&exe)?;
+    let proc = vb_browser::browser::BrowserProcess::launch_with(
+        &exe,
+        vb_browser::browser::LaunchOptions { gpu: opts.gpu },
+    )?;
     let browser = proc.version();
     let mut page = vb_browser::page::PageSession::attach(&proc)?;
-    let vw = if width > 0 { width } else { 1080 };
-    let vh = if height > 0 { height } else { vw };
-    let dsf = scale.clamp(1, 8);
+    let vw = if opts.width > 0 { opts.width } else { 1080 };
+    let vh = if opts.height > 0 { opts.height } else { vw };
+    let dsf = opts.scale.clamp(1, 8);
     page.set_device_metrics(vw, vh, dsf)?;
     page.navigate(&url)?;
     page.wait_network_idle(Duration::from_secs(3));
     vb_browser::capture::wait_assets(&mut page);
-    page.sleep(250); // 首帧稳定(不冻结动画、不仿真 reduced-motion)
+    page.sleep(250);
 
     // 实时采样:首帧立即,其后按 1/fps 节奏;截图慢于间隔则不等待(自适应)。
-    // 精简逐帧路径:直接 CDP 截屏——capture_png 的完整协议(settle 视觉
-    // 稳定等待 + reduced-motion 仿真 + 每帧重设 metrics)在动画页面上
-    // 每帧要等 ~2.5s,且 reduced-motion 会禁掉 CSS 动画,均不可用
-    let fps = fps.clamp(1, 60);
-    let n = ((fps as f32 * duration_s.max(0.1)).ceil().max(1.0)) as usize;
+    // GIF 的调色板需要全帧统计,保持内存路径;确定性驱动同样适用
+    // (JS SEEK / CSS 动画寻址,采样节奏不再影响画面内容)。
+    let fps = opts.fps.clamp(1, 60);
+    let n = ((fps as f32 * opts.duration_s.max(0.1)).ceil().max(1.0)) as usize;
     let interval = 1.0f64 / fps as f64;
-    let t0 = Instant::now();
-    let mut captures: Vec<(f64, Frame)> = Vec::with_capacity(n);
+    let driver = if opts.wall_clock {
+        Driver::WallFallback
+    } else {
+        let d = detect_driver(&mut page, &opts.seek_fn);
+        if let Driver::CssAnims(_) = d {
+            pause_all_animations(&mut page);
+        }
+        d
+    };
+    let mut captures: Vec<Frame> = Vec::with_capacity(n);
     for i in 0..n {
-        if i > 0 {
-            let target = t0 + Duration::from_secs_f64(i as f64 * interval);
-            let now = Instant::now();
-            if target > now {
-                std::thread::sleep(target - now);
+        if driver == Driver::WallFallback {
+            if i > 0 {
+                std::thread::sleep(Duration::from_secs_f64(interval));
             }
+        } else {
+            drive_frame(&mut page, &driver, i, fps);
         }
         let png = page
             .screenshot(
@@ -127,55 +828,23 @@ pub fn export_anim(
                 px[3] = 255;
             }
         }
-        let (w, h) = (img.width(), img.height());
-        // 记录真实采集时刻(WPI:times 供按实际节奏计算播放时长);
-        // 截图慢于间隔时,墙钟时间与帧序号脱钩,必须靠它重采样还原速度
-        let wall = t0
-            .elapsed()
-            .as_secs_f64()
-            .min(duration_s as f64)
-            .max(interval);
-        captures.push((
-            wall,
-            Frame {
-                rgba: img.into_raw(),
-                width: w,
-                height: h,
-                delay_ms: (1000.0 / fps as f64).round() as u32,
-            },
-        ));
-    }
-    // 时间重采样:输出统一 fps 网格,每个输出时刻取墙钟最近的采样帧
-    // (采样快于间隔 → 跳帧;慢于间隔 → 复制帧;播放速度 = 真实时间)
-    captures.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-    let mut frames: Vec<Frame> = Vec::with_capacity(n);
-    let mut ptr = 0usize;
-    for i in 0..n {
-        let t = i as f64 * interval;
-        while ptr + 1 < captures.len()
-            && (captures[ptr + 1].0 - t).abs() <= (captures[ptr].0 - t).abs()
-        {
-            ptr += 1;
-        }
-        let mut f = Frame {
-            rgba: captures[ptr].1.rgba.clone(),
-            width: captures[ptr].1.width,
-            height: captures[ptr].1.height,
-            delay_ms: captures[ptr].1.delay_ms,
-        };
-        // 输出帧延迟恒定 1/fps(CFR;GIF 也用恒定延迟,速度与真实一致)
-        f.delay_ms = (1000.0 / fps as f64).round() as u32;
-        frames.push(f);
+        let (fw_i, fh_i) = (img.width(), img.height());
+        captures.push(Frame {
+            rgba: img.into_raw(),
+            width: fw_i,
+            height: fh_i,
+            delay_ms: (1000.0 / fps as f64).round() as u32,
+        });
     }
     page.close();
     drop(proc);
-    if frames.is_empty() {
+    if captures.is_empty() {
         return Err("采样得到 0 帧".into());
     }
     // 尺寸一致性守卫(ffmpeg 要求恒定帧尺寸;异常帧裁到首帧尺寸)
-    let (fw, fh) = (frames[0].width, frames[0].height);
+    let (fw, fh) = (captures[0].width, captures[0].height);
     let mut warnings: Vec<String> = Vec::new();
-    for f in frames.iter_mut() {
+    for f in captures.iter_mut() {
         if f.width != fw || f.height != fh {
             warnings.push(format!(
                 "帧尺寸漂移 {}x{}→{fw}x{fh},已裁齐",
@@ -210,26 +879,20 @@ pub fn export_anim(
             background: [1.0, 1.0, 1.0, 1.0],
             items: Vec::new(),
         },
-        frames,
+        frames: captures,
         fps,
-        duration_s,
+        duration_s: opts.duration_s,
         gif_loops,
-        mp4_bitrate_kbps: bitrate_kbps,
+        mp4_bitrate_kbps: opts.bitrate_kbps,
         jpeg_quality: 92,
         build_warnings: Vec::new(),
         anim_coverage: None,
         project_dir: None,
     };
     let bytes = match format {
-        Format::Mp4 => {
-            if !crate::frames::ffmpeg_available() {
-                warnings.push("ffmpeg 缺失,MP4 降级 GIF 流".into());
-            }
-            crate::frames::encode_mp4(&ctx).map_err(|e| e.to_string())?
-        }
+        Format::Mp4 => crate::frames::encode_mp4(&ctx).map_err(|e| e.to_string())?,
         _ => crate::frames::encode_gif(&ctx).map_err(|e| e.to_string())?,
     };
-    // VB-1:静态资源 404 不许静默;VB-3:覆盖矩阵随结果输出
     warnings.extend(
         srv.take_not_found()
             .iter()

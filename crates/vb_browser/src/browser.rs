@@ -11,6 +11,29 @@ use crate::httpc;
 
 /// 环境变量覆盖:显式浏览器可执行文件路径。
 pub const ENV_BROWSER_PATH: &str = "VB_BROWSER_PATH";
+/// 环境变量开关:GPU 光栅化(值 1/true/on 生效)。`--gpu` 显式参数优先。
+pub const ENV_GPU: &str = "VB_GPU";
+
+/// 浏览器启动附加选项。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LaunchOptions {
+    /// GPU 光栅化:走 ANGLE→D3D11(NVIDIA/AMD/Intel 通用,驱动各自接手)。
+    /// 关闭(默认)时 `--disable-gpu` 软件光栅 —— 跨机逐像素可复现
+    /// (ADR-0022 口径);打开时光栅/合成落在显卡,MV 级长片提速明显,
+    /// 代价是与软件光栅存在固定 AA 微差(MAD ≈ 1/255,肉眼无别)。
+    pub gpu: bool,
+}
+
+/// GPU 开关判定:显式参数 > 环境变量(1/true/on)> 默认关。
+pub fn gpu_requested(explicit: Option<bool>) -> bool {
+    if let Some(v) = explicit {
+        return v;
+    }
+    matches!(
+        std::env::var(ENV_GPU).map(|v| v.to_ascii_lowercase()),
+        Ok(ref v) if v == "1" || v == "true" || v == "on"
+    )
+}
 
 const EDGE_PATHS: &[&str] = &[
     r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
@@ -94,8 +117,8 @@ fn port_from_listen_line(line: &str) -> Option<u16> {
 }
 
 /// 与 playwright headless 对齐的渲染相关默认参数。
-fn launch_args(user_data_dir: &Path, debug_port: u16) -> Vec<String> {
-    vec![
+fn launch_args(user_data_dir: &Path, debug_port: u16, gpu: bool) -> Vec<String> {
+    let mut v = vec![
         format!("--remote-debugging-port={debug_port}"),
         format!("--user-data-dir={}", user_data_dir.display()),
         "--headless=new".into(),
@@ -110,14 +133,33 @@ fn launch_args(user_data_dir: &Path, debug_port: u16) -> Vec<String> {
         "--disable-hang-monitor".into(),
         "--disable-ipc-flooding-protection".into(),
         "--force-color-profile=srgb".into(),
+    ];
+    if gpu {
+        // GPU 光栅化:headless 必须显式走 ANGLE→D3D11,否则仍是软件光栅。
+        // 实测渲染器串形如 "ANGLE (AMD, AMD Radeon RX 9070 GRE … D3D11)",
+        // NVIDIA/AMD/Intel 均由各自驱动接手;CanvasOopRasterization 让
+        // canvas2d 位图光栅化也进 GPU 进程。
+        v.extend([
+            "--use-gl=angle".into(),
+            "--use-angle=d3d11".into(),
+            "--enable-gpu-rasterization".into(),
+            "--ignore-gpu-blocklist".into(),
+            "--enable-zero-copy".into(),
+            "--disable-gpu-vsync".into(),
+            "--enable-features=CanvasOopRasterization".into(),
+        ]);
+    } else {
         // 软件光栅:规避本机 GPU 驱动差异与崩溃(R4),跨机结果可复现
-        "--disable-gpu".into(),
+        v.push("--disable-gpu".into());
+    }
+    v.extend([
         "--hide-scrollbars".into(),
         "--mute-audio".into(),
         "--password-store=basic".into(),
         "--use-mock-keychain".into(),
         "--no-service-autorun".into(),
-    ]
+    ]);
+    v
 }
 
 /// 托管一个 headless 浏览器进程,提供打开新页面的能力。
@@ -129,15 +171,24 @@ pub struct BrowserProcess {
 }
 
 impl BrowserProcess {
-    /// 启动浏览器并解析 DevTools 端点。
+    /// 启动浏览器并解析 DevTools 端点(软件光栅,默认口径)。
+    pub fn launch(exe: &Path) -> Result<Self, String> {
+        Self::launch_with(exe, LaunchOptions::default())
+    }
+
+    /// 按选项启动浏览器并解析 DevTools 端点。
     ///
     /// 双路取端口:① stderr 的 `DevTools listening on ws://…`(Chrome 打印);
     /// ② `<user-data-dir>/DevToolsActivePort` 文件(msedge headless 在 Windows
     /// 上只写文件不打印,只认 ① 的实现会整体失败)。
-    pub fn launch(exe: &Path) -> Result<Self, String> {
+    pub fn launch_with(exe: &Path, opts: LaunchOptions) -> Result<Self, String> {
         let port = 0; // 由内核自选,stderr 回报
+                      // 并发多实例(动画分段并行渲染)同 pid 同瞬间启动,nanos 会撞名;
+                      // 进程级原子计数保证唯一
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let user_data_dir = std::env::temp_dir().join(format!(
-            "kiln-browser-{}-{}",
+            "kiln-browser-{}-{}-{seq}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -145,7 +196,7 @@ impl BrowserProcess {
                 .unwrap_or(0)
         ));
         std::fs::create_dir_all(&user_data_dir).map_err(|e| e.to_string())?;
-        let args = launch_args(&user_data_dir, port);
+        let args = launch_args(&user_data_dir, port, opts.gpu);
         let mut child = Command::new(exe)
             .args(&args)
             .stdout(Stdio::null())
