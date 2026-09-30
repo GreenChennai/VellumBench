@@ -437,7 +437,13 @@ impl PageSession {
         if let Some(quality) = quality {
             shot["quality"] = json!(quality);
         }
-        let params = json!({ "noDisplayUpdates": false, "screenshot": shot });
+        // noDisplayUpdates=true:不把该帧提交到显示表面,只产出截图。
+        // 逐帧导出场景没有"观看者",跳过显示提交省一遍合成;
+        // VB_BF_DISPLAY=1 可回退(若某内核 true 下内容异常)
+        let no_display = !std::env::var("VB_BF_DISPLAY")
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        let params = json!({ "noDisplayUpdates": no_display, "screenshot": shot });
         let res = self
             .cdp
             .call(

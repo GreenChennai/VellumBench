@@ -193,6 +193,9 @@ fn launch_args(user_data_dir: &Path, debug_port: u16, gpu: bool, shell: bool) ->
         "--disable-hang-monitor".into(),
         "--disable-ipc-flooding-protection".into(),
         "--force-color-profile=srgb".into(),
+        // Playwright 同款:禁 LCD 次像素文本 AA,省一遍文本光栅滤波
+        // (文本密集页可感知),也与无障碍/截图口径对齐
+        "--disable-lcd-text".into(),
     ]);
     if gpu {
         // GPU 光栅化:headless 必须显式走 ANGLE→D3D11,否则仍是软件光栅。

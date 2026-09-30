@@ -280,6 +280,69 @@ fn probe_encoder(codec: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// 硬件编码器**并发会话数**实测:同时起 `want` 路探针,数成功的。
+/// 消费级 N 卡有驱动级会话上限(老卡 1-3,新卡 5-8),A 卡通常不限;
+/// 超限的会话当场被驱动拒绝 —— 与其渲染几分钟后整段暴毙,不如开局
+/// 30 秒内量出来。一次探测,全程复用。
+fn probe_hw_sessions(codec: &str, want: usize) -> usize {
+    let codec = codec.to_string();
+    let mut handles = Vec::with_capacity(want);
+    for _ in 0..want {
+        let codec = codec.clone();
+        handles.push(std::thread::spawn(move || probe_encoder(&codec)));
+    }
+    handles
+        .into_iter()
+        .map(|h| h.join().unwrap_or(false))
+        .filter(|ok| *ok)
+        .count()
+        .max(1)
+}
+
+/// 空闲物理内存 GB(windows:kernel32 GlobalMemoryStatusEx,零依赖手写
+/// FFI,与 vb_browser 手写 ws 同一节俭口径;非 windows 返回 None 跳过预算)。
+#[cfg(windows)]
+fn free_physical_gb() -> Option<f64> {
+    #[repr(C)]
+    struct MemoryStatusEx {
+        dw_length: u32,
+        dw_memory_load: u32,
+        ull_total_phys: u64,
+        ull_avail_phys: u64,
+        ull_total_page_file: u64,
+        ull_avail_page_file: u64,
+        ull_total_virtual: u64,
+        ull_avail_virtual: u64,
+        ull_avail_extended_virtual: u64,
+    }
+    extern "system" {
+        fn GlobalMemoryStatusEx(lp_buffer: *mut MemoryStatusEx) -> i32;
+    }
+    let mut ms = MemoryStatusEx {
+        dw_length: std::mem::size_of::<MemoryStatusEx>() as u32,
+        dw_memory_load: 0,
+        ull_total_phys: 0,
+        ull_avail_phys: 0,
+        ull_total_page_file: 0,
+        ull_avail_page_file: 0,
+        ull_total_virtual: 0,
+        ull_avail_virtual: 0,
+        ull_avail_extended_virtual: 0,
+    };
+    // SAFETY: 结构体自描述长度,全局函数,无指针别名
+    unsafe {
+        if GlobalMemoryStatusEx(&mut ms) != 0 {
+            return Some(ms.ull_avail_phys as f64 / 1024.0 / 1024.0 / 1024.0);
+        }
+    }
+    None
+}
+
+#[cfg(not(windows))]
+fn free_physical_gb() -> Option<f64> {
+    None
+}
+
 /// ffmpeg 能力探测(编码器清单;一次探测,全程复用)。
 #[derive(Debug, Default, Clone, Copy)]
 pub struct FfmpegCaps {
@@ -406,11 +469,32 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
         ));
     }
 
-    // 分段:总帧数均分;workers 上限 = 帧数(每段至少 1 帧)
+    // 分段:总帧数均分;workers 上限 = 帧数(每段至少 1 帧)。
+    // 自动档由三个上限取最小:CPU/2、空闲内存预算、硬件编码器并发会话数
+    //(实测探针;GT 710 这类老卡 NVENC 只有 1-3 会话,开超了整段必死)。
+    // 显式 --workers 尊重用户(超限时段级候选回退兜底)。
     let cores = std::thread::available_parallelism()
         .map(|c| c.get())
         .unwrap_or(4);
-    let w_auto = (cores / 2).clamp(1, 4) as u32;
+    let out_px = (vw as u64) * (vh as u64) * (dsf as u64);
+    let per_worker_gb = if out_px >= 2560 * 1440 { 2.5 } else { 1.2 };
+    let free_gb = free_physical_gb().unwrap_or(8.0);
+    let mem_cap = ((free_gb / per_worker_gb) as usize).clamp(1, 8);
+    let mut w_auto = ((cores / 2).clamp(1, 4).min(mem_cap)) as u32;
+    let is_hw_primary = matches!(
+        enc_cands.first(),
+        Some(EncChoice::Nvenc | EncChoice::Amf | EncChoice::Qsv)
+    );
+    if opts.workers == 0 && is_hw_primary {
+        let want = w_auto.clamp(4, 8) as usize;
+        let sessions = probe_hw_sessions(enc_cands[0].codec_name(), want);
+        if sessions < want {
+            warnings.push(format!(
+                "硬件编码器并发会话实测 {sessions}/{want}:自动 workers 随之下调"
+            ));
+        }
+        w_auto = w_auto.min(sessions as u32).max(1);
+    }
     let workers = if opts.workers == 0 {
         w_auto
     } else {
@@ -418,7 +502,7 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
     }
     .min(n as u32) as usize;
     warnings.push(format!(
-        "分段并行:{workers} 实例 × {} 帧(确定性={}, GPU={})",
+        "分段并行:{workers} 实例 × {} 帧(确定性={}, GPU={}, 内存预算 {mem_cap} 实例)",
         n.div_ceil(workers),
         if opts.wall_clock { "关" } else { "开" },
         if opts.gpu { "开" } else { "关" },
