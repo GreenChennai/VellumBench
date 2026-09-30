@@ -200,7 +200,7 @@ impl EncChoice {
         })
     }
 
-    fn codec_name(self) -> &'static str {
+    pub(crate) fn codec_name(self) -> &'static str {
         match self {
             EncChoice::X264 => "libx264",
             EncChoice::Nvenc => "h264_nvenc",
@@ -278,6 +278,38 @@ fn probe_encoder(codec: &str) -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+/// 可用编码器候选链(编译探测 + 运行时探针;Auto 语义)。供 frames.rs 的
+/// native MP4 路径复用 —— 此前该路径硬编码 libx264,裁剪版 ffmpeg(剪映等
+/// 常见发行)上 MP4 直接报废。
+pub fn usable_encoder_chain() -> Vec<EncChoice> {
+    EncChoice::Auto.resolve().unwrap_or_default()
+}
+
+/// 给 ffmpeg 命令挂编码器参数(与 render_segment 同一份口径)。
+pub(crate) fn apply_encoder_args(cmd: &mut Command, enc: EncChoice, workers: usize) {
+    match enc {
+        EncChoice::X264 => {
+            let cores = std::thread::available_parallelism()
+                .map(|c| c.get())
+                .unwrap_or(4);
+            cmd.arg("-preset")
+                .arg("medium")
+                .arg("-threads")
+                .arg((cores / workers.max(1)).clamp(1, 16).to_string());
+        }
+        EncChoice::Nvenc => {
+            cmd.arg("-preset").arg("p4");
+        }
+        EncChoice::Amf => {
+            cmd.arg("-quality").arg("balanced");
+        }
+        EncChoice::Qsv => {
+            cmd.arg("-preset").arg("medium");
+        }
+        EncChoice::Auto => {}
+    }
 }
 
 /// 硬件编码器**并发会话数**实测:同时起 `want` 路探针,数成功的。

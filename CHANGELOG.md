@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.12.0(2026-10-01)
+
+生产化迭代批次(`docs/production-iteration-2026-10-01.md`):主 Agent 拆包
+派发、三个子 Agent 于独立 worktree 并行实现、主 Agent 验收合并;全量门禁
+729 测试零失败。
+
+### PA · 断电安全写盘(vb_doc)
+
+- `write_project` 全部落盘改原子写:同目录临时文件(`.tmp-<名>-<pid>`)→
+  `fs::rename` 原子覆盖(Windows rename 带 REPLACE_EXISTING);写失败/
+  rename 失败清理临时文件,错误信息带路径。此前直接 `fs::write`,保存中途
+  断电/崩溃会留下截断的 `index.html`(用户文档永久损坏,v0.2 延期项就此
+  落地)。
+- 多文件项目 index.html **最后落盘**:存在 index.html 即完整文档,断电窗口
+  内"可打开概率"最大化。
+- 新增 3 个单测:失败注入(css 临时路径预占为目录)下旧 index.html 完整
+  保持、无临时残留;rename 目标被占用(Windows 独占句柄)错误带路径且
+  原文件未动;完整性与残留检查。
+
+### PB · 静态 PNG 车道 settle 收敛(vb_browser/vb_kiln)
+
+- 根因(下游实测单帧 27.5s):settle 协议**结构性固定成本 + 无总预算**——
+  判稳固定 4 连拍(每拍在慢机 ~0.5-1s)+ 400ms 头 sleep + 3×200ms 间隔 +
+  无限动画页 2×3s 宽限 + 滚动 reveal ≤40×130ms,叠加即 20s+。
+- 修复:
+  - 页内静止探针(无 running 动画/无待加载图/字体就绪)→ 确定性页面
+    2 拍即收敛(原 4 拍);非静止页维持原口径;
+  - **settle 总预算硬上限 5s**(`VB_SETTLE_BUDGET_MS` 可覆盖),assets/
+    滚动/定格/稳定全部计入,到顶即用当前帧导出并追加 warning(降级可
+    观测,不许静默吃预算);
+  - 单屏页跳过滚动 reveal;所有 >130ms 的 sleep 逐一注释理由。
+- 实测:MV 工程单帧 PNG 27.5s(下游慢机)/ 5.2-8.7s(本机)→ **2.4s**
+  (本机主 Agent 复核);静态示例输出与修复前**逐字节一致**(含 Edge
+  headless=new 路径);无限动画夹具按预算截断且告警可见。
+
+### PD · native MP4 编码器候选链(vb_kiln)
+
+- `frames::encode_mp4` 不再硬编码 libx264:复用 animlane 的候选链
+  (nvenc→amf→qsv→x264,运行时探针)逐个尝试;候选全败降级 GIF 流
+  (与"无 ffmpeg"语义一致)。此前在裁剪版 ffmpeg(剪映等常见发行,无
+  libx264)上 MP4 必废且无降级,`selfcheck` ok:false —— 现九格式自检
+  全绿。
+
+### PC · CLI 错误一致性(kiln / vellum-mcp)
+
+- `kiln` 入口消灭全部 `expect/panic` 错误出口(此前 exit 101 + backtrace
+  噪音):错误改 stderr 单行 JSON `{"ok":false,"error":"…"}`(内置 jesc
+  转义),退出码对齐 0/2/3/4(成功/用法/输入/IO),`--help`/`--version`
+  退 0 —— 与 kiln-cli 完全同口径,上游脚本可稳定解析。
+- `vellum-mcp` 写输出文件前自动建父目录,失败信息带完整路径(此前客户端
+  给不存在的目录即失败且无路径上下文);冒烟验证深层目录自动创建。
+
 ## 0.11.2(2026-10-01)
 
 ### Kiln 提速迭代(单实例 +20%;并发安全自调优)

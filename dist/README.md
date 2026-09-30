@@ -28,13 +28,23 @@ Kiln-noGUI-CLI.exe export --source <html|dir> --output <file> [--format PNG|JPG|
                           [--width N] [--scale 1|2|4|8] [--transparent] [--max-wait S]
                           [--height N] [--engine auto|browser|native] [--vector auto|dom|chrome]
                           [--jpeg-quality 92] [--fps 25] [--duration 2] [--loop 0] [--bitrate 8000]
+                          [--workers N] [--gpu] [--img png|jpeg] [--jpeg-quality N]
+                          [--encoder auto|x264|nvenc|amf|qsv] [--wall] [--seek-fn NAME|--seek-hook NAME]
 ```
 
-环境变量:`VB_BROWSER_PATH` 指定 Chrome/Edge 可执行文件(优先于自动探测);
-`PDFIUM_DLL` 指定 pdfium.dll(import 子命令读 PDF/AI 时用)。
+动画导出(MP4)自 0.11 起为**流式并行流水线**:确定性寻址(JS SEEK 约定 /
+CSS 动画)→ 分段多实例渲染 → concat 拼接。参考量级(1080p30,3 分钟 MV):
+旧实现 ~30 分钟 → 现数十秒~数分钟(视机器/worker 数)。逐帧分段耗时自证:
+设 `VB_ANIM_TIMING=1`。
+
+环境变量:`VB_BROWSER_PATH` 指定 Chrome/Edge/chrome-headless-shell(优先于
+自动探测;shell 自动从 Playwright 缓存发现且逐帧截屏更快,`VB_NO_SHELL=1`
+关);`VB_GPU=1` 等价 `--gpu`;`PDFIUM_DLL` 指定 pdfium.dll(import 子命令
+读 PDF/AI 时用);`VB_SEEK_FN`/`VB_SETTLE_BUDGET_MS` 见 `--help`。
 
 输出:单行 JSON `{"ok":true,"format":"PNG","path":"...","width":2560,"height":1600,...,"engine":"kiln"}`
-错误:stderr 单行 JSON `{"ok":false,"error":"..."}`,退出码非 0。
+错误:stderr 单行 JSON `{"ok":false,"error":"..."}`,退出码:0 成功 /
+2 用法错 / 3 输入错 / 4 IO·内部错(`kiln` 与 `kiln-cli` 口径一致)。
 
 ## 自检
 

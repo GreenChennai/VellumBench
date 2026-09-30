@@ -119,7 +119,11 @@ fn encode_gif_image(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
     Ok(out)
 }
 
-/// RGBA 帧序列 → MP4(libx264 yuv420p;帧 PNG 落临时目录 → ffmpeg 编码)。
+/// RGBA 帧序列 → MP4(编码器候选链 yuv420p;帧 PNG 落临时目录 → ffmpeg 编码)。
+///
+/// 编码器不再硬编码 libx264:走 [`crate::animlane::usable_encoder_chain`]
+/// (nvenc→amf→qsv→x264,含运行时探针)逐个尝试;ffmpeg 缺失或候选全败
+/// 时降级 GIF 流(与既有语义一致,告警由调用方补)。
 pub fn encode_mp4(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
     if !ffmpeg_available() {
         // 降级:GIF 流(播放器大多兼容);告警由 Mp4Writer 补
@@ -140,8 +144,10 @@ pub fn encode_mp4(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
                 .map_err(|e| KilnError::Encode(format!("帧落盘失败:{e}")))?;
         }
         let mp4_path = tmp.join("out.mp4");
-        let output = Command::new("ffmpeg")
-            .args([
+        let mut last_err: Option<KilnError> = None;
+        for enc in crate::animlane::usable_encoder_chain() {
+            let mut cmd = Command::new("ffmpeg");
+            cmd.args([
                 "-y",
                 "-loglevel",
                 "error",
@@ -150,22 +156,24 @@ pub fn encode_mp4(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
                 "-i",
                 tmp.join("f%05d.png").to_str().unwrap_or("f%05d.png"),
                 "-c:v",
-                "libx264",
+                enc.codec_name(),
                 "-pix_fmt",
                 "yuv420p",
                 "-b:v",
                 &format!("{}k", ctx.mp4_bitrate_kbps),
                 "-movflags",
                 "+faststart",
-                mp4_path.to_str().unwrap_or("out.mp4"),
-            ])
-            .output()
-            .map_err(|e| KilnError::FfmpegFailed {
+            ]);
+            crate::animlane::apply_encoder_args(&mut cmd, enc, 1);
+            cmd.arg(mp4_path.to_str().unwrap_or("out.mp4"));
+            let output = cmd.output().map_err(|e| KilnError::FfmpegFailed {
                 code: None,
                 stderr: e.to_string(),
             })?;
-        if !output.status.success() {
-            return Err(KilnError::FfmpegFailed {
+            if output.status.success() {
+                return std::fs::read(&mp4_path).map_err(KilnError::Io);
+            }
+            last_err = Some(KilnError::FfmpegFailed {
                 code: output.status.code(),
                 stderr: String::from_utf8_lossy(&output.stderr)
                     .chars()
@@ -173,7 +181,11 @@ pub fn encode_mp4(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
                     .collect(),
             });
         }
-        std::fs::read(&mp4_path).map_err(KilnError::Io)
+        // 候选全败(含"无可用编码器"):降级 GIF 流,语义与"无 ffmpeg"一致
+        if let Some(e) = last_err {
+            eprintln!("kiln: MP4 编码失败({e}),降级 GIF 流");
+        }
+        encode_gif(ctx)
     })();
 
     let _ = std::fs::remove_dir_all(&tmp);
