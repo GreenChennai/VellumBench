@@ -287,6 +287,24 @@ pub fn usable_encoder_chain() -> Vec<EncChoice> {
     EncChoice::Auto.resolve().unwrap_or_default()
 }
 
+/// 输出色彩口径:NLE/拼接安全(下游实测反馈 #3)。
+/// 源是 RGB(全程 0-255),swscale 显式压到 limited(MPEG)色程并打全
+/// bt709 标记 —— 此前输出 yuvj420p + color_range=pc + transfer/primaries
+/// unknown,与电视范围素材(典型 YMIN/YMAX≈16/235)拼接或进 NLE 会
+/// 电平不匹配。
+pub(crate) fn push_color_args(cmd: &mut Command) {
+    cmd.arg("-vf")
+        .arg("scale=in_range=full:out_range=mpeg:out_color_matrix=bt709")
+        .arg("-color_range")
+        .arg("tv")
+        .arg("-colorspace")
+        .arg("bt709")
+        .arg("-color_primaries")
+        .arg("bt709")
+        .arg("-color_trc")
+        .arg("bt709");
+}
+
 /// 给 ffmpeg 命令挂编码器参数(与 render_segment 同一份口径)。
 pub(crate) fn apply_encoder_args(cmd: &mut Command, enc: EncChoice, workers: usize) {
     match enc {
@@ -310,6 +328,51 @@ pub(crate) fn apply_encoder_args(cmd: &mut Command, enc: EncChoice, workers: usi
         }
         EncChoice::Auto => {}
     }
+}
+
+/// 冷启动测速:单实例加载页面,确定性驱动下采 3 帧,返回平均单帧毫秒。
+/// 重页面(软件光栅 + 大 canvas)上这是决定并发是否为负收益的唯一诚实
+/// 口径 —— CPU 核数和内存都看不出"每帧要画多少东西"。
+fn probe_page_pace(
+    exe: &Path,
+    url: &str,
+    vw: u32,
+    vh: u32,
+    dsf: u32,
+    opts: &AnimPipeOpts,
+) -> Option<f64> {
+    let proc = vb_browser::browser::BrowserProcess::launch_with(
+        exe,
+        vb_browser::browser::LaunchOptions { gpu: opts.gpu },
+    )
+    .ok()?;
+    let result = (|| -> Option<f64> {
+        let mut page = vb_browser::page::PageSession::attach(&proc).ok()?;
+        page.set_device_metrics(vw, vh, dsf).ok()?;
+        page.navigate(url).ok()?;
+        page.wait_network_idle(Duration::from_secs(3));
+        vb_browser::capture::wait_assets(&mut page);
+        page.sleep(250);
+        let driver = detect_driver(&mut page, &opts.seek_fn);
+        if let Driver::CssAnims(_) = driver {
+            pause_all_animations(&mut page);
+        }
+        let t0 = std::time::Instant::now();
+        const PROBE: u32 = 3;
+        for i in 0..PROBE {
+            drive_frame(&mut page, &driver, i as usize, opts.fps.clamp(1, 60));
+            let (fmt, q) = match opts.jpeg_quality {
+                Some(q) => ("jpeg", Some(q)),
+                None => ("png", None),
+            };
+            page.begin_frame_screenshot(fmt, q)
+                .or_else(|_| page.screenshot(fmt, q, None, false, false))
+                .ok()?;
+        }
+        Some(t0.elapsed().as_secs_f64() * 1000.0 / f64::from(PROBE))
+    })();
+    // proc 在此 Drop → 杀整棵浏览器树
+    result
 }
 
 /// 硬件编码器**并发会话数**实测:同时起 `want` 路探针,数成功的。
@@ -527,6 +590,34 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
         }
         w_auto = w_auto.min(sessions as u32).max(1);
     }
+    // 冷启动测速封顶(下游实测教训):重页面(软件光栅 + 大 canvas)在
+    // 多实例下是**负收益**——每实例都在抢 CPU,且每段要整页冷启动一遍,
+    // 单实例 2.3 帧/s 可以在 3 实例时跌到 0.26。自动档先跑一个 3 帧
+    // 探针测单帧节奏:≥800ms/帧 → 锁 1 实例;≥300ms → 2 实例;其余
+    // 维持上面三个上限的最小值。显式 --workers 仍完全尊重用户。
+    if opts.workers == 0 && w_auto > 1 && !opts.wall_clock {
+        match probe_page_pace(&exe, &url, vw, vh, dsf, opts) {
+            Some(pace_ms) => {
+                // 阈值口径偏保守(宁慢勿废):下游实测单实例 435ms/帧的
+                // 页面,2/3 实例并发是超线性负收益(0.9/0.26 帧/s 总),
+                // 所以 400ms 以上直接锁单实例
+                let capped = if pace_ms >= 400.0 {
+                    1
+                } else if pace_ms >= 200.0 {
+                    2
+                } else {
+                    w_auto as usize
+                };
+                if capped < w_auto as usize {
+                    warnings.push(format!(
+                        "冷启动测速 {pace_ms:.0}ms/帧(重页面):并发是负收益,自动 workers 降为 {capped}"
+                    ));
+                }
+                w_auto = capped as u32;
+            }
+            None => warnings.push("冷启动测速失败,按 CPU/内存口径定 workers".into()),
+        }
+    }
     let workers = if opts.workers == 0 {
         w_auto
     } else {
@@ -556,6 +647,11 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
         let per = n.div_ceil(workers);
         let mut handles = Vec::with_capacity(workers);
         for wi in 0..workers {
+            // 错峰启动:并发冷启动(多浏览器同时拉起 + 抢 CPU)是下游实测
+            // 的失败源之一,逐个间隔 600ms
+            if wi > 0 {
+                std::thread::sleep(Duration::from_millis(600));
+            }
             let a = wi * per;
             let b = (a + per).min(n);
             let url = url.clone();
@@ -838,6 +934,7 @@ fn capture_and_encode(
         "-b:v",
         &format!("{}k", opts.bitrate_kbps),
     ]);
+    push_color_args(&mut cmd);
     match enc {
         EncChoice::X264 => {
             // 分段并行时按份额限制 x264 线程,避免 W 段互相超订 CPU

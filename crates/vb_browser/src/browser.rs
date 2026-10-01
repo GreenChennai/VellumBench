@@ -96,10 +96,14 @@ fn discover_headless_shell() -> Option<PathBuf> {
     None
 }
 
-/// 发现系统浏览器:显式参数 → 环境变量 → headless-shell → Edge → Chrome。
+/// 发现系统浏览器:显式参数 → `VB_BROWSER_PATH` → **系统 Edge → Chrome** →
+/// chrome-headless-shell(仅 `VB_PREFER_SHELL=1` 或系统里一个浏览器都没有)。
 ///
-/// shell 优先的理由:逐帧动画导出是主要负载,shell 每帧截屏 ~80ms vs
-/// headless=new ~155ms(JPEG)/ ~530ms(PNG);`VB_NO_SHELL=1` 可关。
+/// 系统浏览器优先的理由(下游实测教训):环境里来路不明的旧版
+/// headless-shell(如 Playwright 缓存的 HeadlessChrome/153)会让
+/// captureScreenshot 帧级挂死,整条浏览器车道静默降级——正确性优先于
+/// shell 的 ~2× 截屏速度;确认自己缓存的 shell 可用后设
+/// `VB_PREFER_SHELL=1` 可拿回速度。
 pub fn discover_browser(explicit: Option<&str>) -> Option<PathBuf> {
     if let Some(p) = explicit {
         let pb = PathBuf::from(p);
@@ -113,16 +117,28 @@ pub fn discover_browser(explicit: Option<&str>) -> Option<PathBuf> {
             return Some(pb);
         }
     }
-    if let Some(shell) = discover_headless_shell() {
-        return Some(shell);
-    }
-    EDGE_PATHS
+    let system = EDGE_PATHS
         .iter()
         .chain(CHROME_PATHS.iter())
         .map(Path::new)
         .chain(env_browser_paths().iter().map(Path::new))
         .find(|p| p.is_file())
-        .map(Path::to_path_buf)
+        .map(Path::to_path_buf);
+    let prefer_shell = std::env::var("VB_PREFER_SHELL")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if prefer_shell {
+        if let Some(shell) = discover_headless_shell() {
+            return Some(shell);
+        }
+    }
+    system.or_else(|| {
+        if prefer_shell {
+            None
+        } else {
+            discover_headless_shell()
+        }
+    })
 }
 
 /// 浏览器版本号(报告环境指纹用)。

@@ -164,6 +164,7 @@ pub fn encode_mp4(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
                 "-movflags",
                 "+faststart",
             ]);
+            crate::animlane::push_color_args(&mut cmd);
             crate::animlane::apply_encoder_args(&mut cmd, enc, 1);
             cmd.arg(mp4_path.to_str().unwrap_or("out.mp4"));
             let output = cmd.output().map_err(|e| KilnError::FfmpegFailed {

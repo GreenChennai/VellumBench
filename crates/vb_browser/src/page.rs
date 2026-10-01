@@ -174,7 +174,7 @@ impl PageSession {
             "127.0.0.1",
             browser.port,
             &ws_path,
-            Duration::from_secs(10),
+            Duration::from_secs(30),
         )?;
         let mut page = PageSession {
             cdp: Cdp::new(ws),
@@ -183,12 +183,17 @@ impl PageSession {
             net_event_count: 0,
             crashed: false,
         };
-        page.cdp
-            .call("Page.enable", json!({}), Duration::from_secs(5))?;
-        page.cdp
-            .call("Network.enable", json!({}), Duration::from_secs(5))?;
-        page.cdp
-            .call("Runtime.enable", json!({}), Duration::from_secs(5))?;
+        // 多实例并发冷启动时系统负载高,enable 类调用显著变慢(下游实测
+        // 4 实例并发时 5s 超时直接 attach 失败):放宽到 30s 并带一次重试。
+        for method in ["Page.enable", "Network.enable", "Runtime.enable"] {
+            match page.cdp.call(method, json!({}), Duration::from_secs(30)) {
+                Ok(_) => {}
+                Err(first) => match page.cdp.call(method, json!({}), Duration::from_secs(30)) {
+                    Ok(_) => eprintln!("kiln: {method} 首次超时({first}),重试成功"),
+                    Err(e) => return Err(format!("{method}: {e}")),
+                },
+            }
+        }
         Ok(page)
     }
 

@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.12.1(2026-10-01)
+
+下游实测三连报修复(浏览器选错静默降级 / 并发负收益 / 色彩口径)。
+
+### Fixed(浏览器探测与降级语义,#1,最要紧)
+
+- **探测顺序改回系统浏览器优先**:0.11.1 起自动优先 Playwright 缓存的
+  chrome-headless-shell,下游环境里来路不明的旧版 shell
+  (HeadlessChrome/153.0.8010.12)captureScreenshot 帧级挂死(单帧 180s
+  超时)→ 整条浏览器车道静默降级,产物变 1 帧、尺寸瞎猜。现顺序:
+  `VB_BROWSER_PATH` → 系统 Edge → Chrome(含 %LOCALAPPDATA%/%PROGRAMFILES%
+  派生)→ shell 仅在 `VB_PREFER_SHELL=1` 或系统无浏览器时参与。
+  shell 的 ~2× 截屏速度仍在,确认自己缓存的 shell 可用后设环境变量取回。
+- **动画车道不再静默降级出废片**:自研逐帧(Lane K)只覆盖 4 类动画轨道,
+  浏览器车道失败时降级产物是"1 帧 + 尺寸瞎猜"。现 auto 模式下动画车道
+  失败即显式失败(stderr JSON 带原因 + 修复指引),确要降级产物显式
+  `--engine native`。静态 PNG 车道的降级仍有意义,保留,且结果 JSON 已带
+  `engine_fallback`/`degraded` 标记。
+
+### Fixed(并发负收益,#2)
+
+- **冷启动测速封顶**:自动 workers 在派发前先单实例采 3 帧测节奏——
+  ≥400ms/帧锁 1 实例、≥200ms 限 2(下游重页面单实例 435ms,2/3 实例
+  并发是超线性负收益:2.3 → 0.9 → 0.26 帧/s);阈值口径宁慢勿废。
+  显式 `--workers` 不受影响。本机验证:1080p 不触发(auto 3),2K 触发
+  (201ms → 限 2)。
+- **错峰启动**:多实例浏览器逐个间隔 600ms 拉起,不再同瞬间冷启动互踩。
+- **attach 超时放宽**:ws 连接 10s→30s,Page/Network/Runtime.enable
+  5s→30s 且带一次自动重试(下游 4 实例并发时 5s 超时直接 attach 失败)。
+
+### Fixed(色彩口径,#3)
+
+- MP4 输出固定 **yuv420p + tv 色程 + bt709 全标记**
+  (`scale=out_range=mpeg:out_color_matrix=bt709` + `-color_range tv
+  -colorspace/-color_primaries/-color_trc bt709`),动画流水线与 native
+  帧序列两条路径同改。此前输出 yuvj420p + color_range=pc + transfer/
+  primaries unknown(Y 全程 0-255),与电视范围素材(NLE/拼接,典型
+  16-235)电平不匹配。实测:ffprobe 报 `yuv420p(tv, bt709)`,
+  YMIN/YMAX=9/211(内容为暗色调 MV,未顶满 235 属内容决定)。
+
 ## 0.12.0(2026-10-01)
 
 生产化迭代批次(`docs/production-iteration-2026-10-01.md`):主 Agent 拆包

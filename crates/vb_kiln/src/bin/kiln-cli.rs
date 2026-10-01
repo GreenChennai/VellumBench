@@ -534,11 +534,15 @@ fn run_export(
                     );
                     return 4;
                 }
-                lane_fallback_native = true;
+                // 自研逐帧(Lane K)只覆盖 4 类动画轨道,对真实动画页面
+                // 的产物是"1 帧 + 尺寸瞎猜"的废片(下游实测教训)——
+                // 宁可显式失败并给原因,不做静默降级。确要 Lane K 的
+                // 场景请显式 --engine native。
                 eprintln!(
-                    "{{\"warn\":\"动画浏览器路线不可用,降级自研逐帧:{}\"}}",
+                    "{{\"ok\":false,\"error\":\"动画浏览器路线失败:{};自研引擎只覆盖 4 类轨道,不再静默降级出废片。可设 VB_BROWSER_PATH 指定浏览器后重试,或显式 --engine native 接受降级产物\"}}",
                     jesc(&e.to_string())
                 );
+                return 4;
             }
         }
     }

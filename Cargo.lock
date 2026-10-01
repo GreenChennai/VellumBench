@@ -4968,7 +4968,7 @@ dependencies = [
 
 [[package]]
 name = "vb_agent"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -4988,7 +4988,7 @@ dependencies = [
 
 [[package]]
 name = "vb_app"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "anyhow",
  "eframe",
@@ -5018,7 +5018,7 @@ dependencies = [
 
 [[package]]
 name = "vb_browser"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "image",
  "serde_json",
@@ -5027,7 +5027,7 @@ dependencies = [
 
 [[package]]
 name = "vb_common"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "kurbo 0.13.1",
  "serde",
@@ -5035,7 +5035,7 @@ dependencies = [
 
 [[package]]
 name = "vb_css"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "vb_common",
  "vb_doc",
@@ -5043,7 +5043,7 @@ dependencies = [
 
 [[package]]
 name = "vb_doc"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "kurbo 0.13.1",
  "log",
@@ -5058,7 +5058,7 @@ dependencies = [
 
 [[package]]
 name = "vb_export"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "base64 0.23.1",
  "image",
@@ -5073,7 +5073,7 @@ dependencies = [
 
 [[package]]
 name = "vb_html"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "html5ever",
  "markup5ever_rcdom",
@@ -5081,7 +5081,7 @@ dependencies = [
 
 [[package]]
 name = "vb_kiln"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "clap",
  "flate2",
@@ -5106,7 +5106,7 @@ dependencies = [
 
 [[package]]
 name = "vb_layout"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "image",
  "taffy",
@@ -5118,11 +5118,11 @@ dependencies = [
 
 [[package]]
 name = "vb_platform"
-version = "0.12.0"
+version = "0.12.1"
 
 [[package]]
 name = "vb_plugin"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "log",
  "serde",
@@ -5133,7 +5133,7 @@ dependencies = [
 
 [[package]]
 name = "vb_render"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "fontique",
  "image",
@@ -5148,7 +5148,7 @@ dependencies = [
 
 [[package]]
 name = "vb_tools"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "flo_curves",
  "vb_common",
@@ -5158,7 +5158,7 @@ dependencies = [
 
 [[package]]
 name = "vb_ui"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "egui",
  "iconflow",
@@ -5169,7 +5169,7 @@ dependencies = [
 
 [[package]]
 name = "vb_web"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "serde_json",
  "vb_common",
