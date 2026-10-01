@@ -47,6 +47,8 @@ pub struct AnimLaneResult {
     pub bytes: Vec<u8>,
     pub frames: usize,
     pub browser: String,
+    /// 实际用于段编码的 H.264 编码器(nvenc/amf/qsv/libx264)。
+    pub encoder_used: Option<String>,
     pub warnings: Vec<String>,
     /// 动画覆盖矩阵(VB-3):浏览器车道全量播放,`animated` = 源中声明的
     /// 全部关键帧属性;无动画声明时为 None。
@@ -89,9 +91,13 @@ impl Default for AnimPipeOpts {
             scale: 1,
             bitrate_kbps: 8000,
             workers: 0,
-            gpu: false,
             jpeg_quality: None,
             encoder: EncChoice::Auto,
+            // 动画车道默认 GPU 光栅:逐帧导出没有跨机逐像素复现的诉求,
+            // 而"CPU 99% / GPU 7%"的实测(下游 9070 GRE)说明软件光栅把
+            // 渲染器全压在 CPU 上。AA 微差 MAD ≈ 1/255(与 Playwright
+            // 实测一致);要旧口径用 --no-gpu。
+            gpu: true,
             wall_clock: false,
             seek_fn: None,
         }
@@ -200,7 +206,7 @@ impl EncChoice {
         })
     }
 
-    pub(crate) fn codec_name(self) -> &'static str {
+    pub fn codec_name(self) -> &'static str {
         match self {
             EncChoice::X264 => "libx264",
             EncChoice::Nvenc => "h264_nvenc",
@@ -672,9 +678,15 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
     });
 
     let mut failed = None;
+    let mut encoder_used: Option<String> = None;
     for (wi, r) in seg_results.iter().enumerate() {
         match r {
-            Ok((_enc_used, ws)) => warnings.extend(ws.iter().cloned()),
+            Ok((enc_used, ws)) => {
+                if encoder_used.is_none() {
+                    encoder_used = Some(enc_used.codec_name().to_string());
+                }
+                warnings.extend(ws.iter().cloned());
+            }
             Err(e) => {
                 failed = Some(format!("分段 {wi} 渲染失败:{e}"));
                 break;
@@ -759,6 +771,7 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
         bytes,
         frames: n,
         browser,
+        encoder_used,
         warnings,
         anim_coverage,
     })
@@ -1219,6 +1232,7 @@ fn export_anim_inmemory(
         bytes,
         frames: n,
         browser,
+        encoder_used: None,
         warnings,
         anim_coverage,
     })

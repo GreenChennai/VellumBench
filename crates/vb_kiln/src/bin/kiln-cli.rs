@@ -95,10 +95,13 @@ enum Cmd {
         /// 各段独立渲染后 concat 拼接,结果与串行一致
         #[arg(long, default_value_t = 0)]
         workers: u32,
-        /// GPU 光栅化(ANGLE→D3D11,NVIDIA/AMD/Intel 通用;也可设
-        /// VB_GPU=1)。默认关:软件光栅跨机逐像素可复现
+        /// GPU 光栅化(动画车道 0.12.2 起默认开;VB_GPU=1 等价)。
+        /// 软件光栅的旧口径用 --no-gpu
         #[arg(long, default_value_t = false)]
         gpu: bool,
+        /// 关闭 GPU 光栅化,回到软件光栅(跨机逐像素可复现口径)
+        #[arg(long, default_value_t = false)]
+        no_gpu: bool,
         /// 中间帧格式:jpeg=默认(快 ~6×,q95 二次编码后损失通常不可见)|
         /// png=无损管道(画质敏感交付用;每帧截屏成本显著更高)
         #[arg(long, default_value = "jpeg")]
@@ -256,6 +259,7 @@ fn main() {
             wall,
             seek_fn,
             seek_hook,
+            no_gpu,
         } => run_export(
             sources,
             output,
@@ -279,6 +283,7 @@ fn main() {
             encoder,
             wall,
             seek_fn.or(seek_hook),
+            no_gpu,
         ),
         Cmd::Import { source, output } => run_import(source, output),
         Cmd::Img { op } => run_img(op),
@@ -311,6 +316,7 @@ fn run_export(
     encoder: String,
     wall: bool,
     seek_fn: Option<String>,
+    no_gpu: bool,
 ) -> i32 {
     let t0 = Instant::now();
     let _ = max_wait; // 浏览器车道自带 settle 预算;自研车道无外部等待
@@ -465,6 +471,17 @@ fn run_export(
         vb_kiln::writer::Format::Gif | vb_kiln::writer::Format::Mp4
     ) && engine_mode != "native"
     {
+        // 0.12.2 起动画车道默认 GPU 光栅;--no-gpu / VB_GPU=0 显式关闭
+        let out_gpu = !no_gpu
+            && if gpu {
+                true
+            } else {
+                !std::env::var("VB_GPU")
+                    .ok()
+                    .is_some_and(|v| {
+                        matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "off")
+                    })
+            };
         let anim = vb_kiln::animlane::export_anim_pipe(
             &source,
             &vb_kiln::animlane::AnimPipeOpts {
@@ -475,7 +492,7 @@ fn run_export(
                 scale,
                 bitrate_kbps: bitrate,
                 workers,
-                gpu: vb_browser::browser::gpu_requested(Some(gpu)),
+                gpu: out_gpu,
                 jpeg_quality: if img.eq_ignore_ascii_case("jpeg") {
                     Some(jpeg_q.clamp(1, 100))
                 } else {
@@ -508,7 +525,7 @@ fn run_export(
                     .map(|c| c.to_json().to_string())
                     .unwrap_or_else(|| "null".into());
                 let json = format!(
-                    "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':{},'degraded':false,'degraded_artboard':false,'anim_coverage':{},'bytes':{},'encode_ms':{},'engine':'browser-anim','browser':'{}'}}",
+                    "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':{},'degraded':false,'degraded_artboard':false,'anim_coverage':{},'bytes':{},'encode_ms':{},'engine':'browser-anim','browser':'{}','encoder':'{}','gpu':{}}}",
                     fmt_str.to_uppercase(),
                     jesc(&output.display().to_string()),
                     width,
@@ -521,6 +538,8 @@ fn run_export(
                     out.bytes.len(),
                     t0.elapsed().as_millis(),
                     jesc(&out.browser),
+                    jesc(out.encoder_used.as_deref().unwrap_or("unknown")),
+                    out_gpu,
                 )
                 .replace('\'', "\"");
                 println!("{json}");
@@ -1023,11 +1042,18 @@ fn run_selfcheck() -> i32 {
         },
         None => serde_json::Value::String("missing(安装 Edge/Chrome 或设 VB_BROWSER_PATH)".into()),
     };
+    // 编码器lane报告(诊断"GPU 没用上"类问题:硬件编码是否真的可用)
+    let encoders =
+        serde_json::Value::String(match vb_kiln::animlane::usable_encoder_chain().first() {
+            Some(c) => format!("{}(硬件编码可用)", c.codec_name()),
+            None => "none(仅软编不可用;MP4 将降级 GIF;建议装完整版 ffmpeg)".to_string(),
+        });
     let json = format!(
-        "{{'ok':{},'engine':'kiln','formats':9,'ms':{},'browser_lane':{}}}",
+        "{{'ok':{},'engine':'kiln','formats':9,'ms':{},'browser_lane':{},'encoder_lane':{}}}",
         passed,
         t0.elapsed().as_millis(),
-        browser_lane
+        browser_lane,
+        encoders
     )
     .replace('\'', "\"");
     println!("{json}");

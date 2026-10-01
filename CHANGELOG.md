@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.12.2(2026-10-01)
+
+### Changed(动画车道 GPU 光栅默认开)
+
+下游 9070 GRE 实测"GPU 占用 7% / CPU 99%":根因是流水线形态——SEEK 的
+JS 绘制、截图 JPEG 编码默认还在 CPU,浏览器光栅默认软件(--disable-gpu)。
+本轮把能上 GPU 的都默认上:
+
+- **动画车道(MP4/GIF)GPU 光栅默认开**(ANGLE→D3D11,渲染与合成落
+  显卡;CanvasOopRasterization 让 canvas 位图光栅化也进 GPU 进程)。
+  `--no-gpu` / `VB_GPU=0` 显式回到软件光栅(跨机逐像素可复现口径);
+  静态 PNG/PDF 车道维持软件光栅不变。AA 微差 MAD ≈ 1/255(与 Playwright
+  GPU 改造实测一致,同路径自身可复现)。
+- **编码器透明化**:结果 JSON 新增 `encoder`(实际使用的 h264_nvenc/
+  h264_amf/h264_qsv/libx264)与 `gpu`(光栅是否走 GPU)字段——"GPU 有没有
+  用上"从此看 JSON 即可,不用读 stderr、不用猜。`selfcheck` 新增
+  `encoder_lane` 字段报告可用硬件编码器(如 `h264_nvenc(硬件编码可用)`),
+  ffmpeg 缺硬编时给出明确提示。
+
+### 使用者怎么验证 GPU 真的用上了
+
+1. `selfcheck` → `encoder_lane` 是否为硬件编码器(9070 GRE 应为
+   `h264_amf`;若报 none 或 x264,说明 ffmpeg 缺 AMF 运行时,换完整版
+   ffmpeg 构建即可,视频编码那一份 CPU 就省下来了);
+2. 导出结果 JSON → `"gpu":true` + `"encoder":"h264_amf"`;
+3. 任务管理器 GPU 页签:**光栅/合成走"3D"图表,AMF 走"Video Encode"
+   图表** —— 只看总 GPU% 会低估(VCN 编码块不占 3D)。
+
 ## 0.12.1(2026-10-01)
 
 下游实测三连报修复(浏览器选错静默降级 / 并发负收益 / 色彩口径)。
