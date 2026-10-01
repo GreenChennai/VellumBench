@@ -476,11 +476,9 @@ fn run_export(
             && if gpu {
                 true
             } else {
-                !std::env::var("VB_GPU")
-                    .ok()
-                    .is_some_and(|v| {
-                        matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "off")
-                    })
+                !std::env::var("VB_GPU").ok().is_some_and(|v| {
+                    matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "off")
+                })
             };
         let anim = vb_kiln::animlane::export_anim_pipe(
             &source,
