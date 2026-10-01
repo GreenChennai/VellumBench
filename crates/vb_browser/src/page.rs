@@ -270,11 +270,23 @@ impl PageSession {
 
     /// 导航并等待 load(要素 1 前半;30s 上限)。
     pub fn navigate(&mut self, url: &str) -> Result<(), String> {
-        self.cdp.call(
+        // 多实例并发冷启动时 CDP 响应可能远慢于单实例(下游 w4 实测
+        // "Page.navigate 等待响应超时"):35s + 一次重试
+        match self.cdp.call(
             "Page.navigate",
             json!({ "url": url }),
             Duration::from_secs(35),
-        )?;
+        ) {
+            Ok(_) => {}
+            Err(first) => {
+                eprintln!("kiln: Page.navigate 首次超时({first}),重试一次");
+                self.cdp.call(
+                    "Page.navigate",
+                    json!({ "url": url }),
+                    Duration::from_secs(35),
+                )?;
+            }
+        }
         let deadline = Instant::now() + Duration::from_secs(30);
         while !self.load_fired {
             let remaining = deadline.saturating_duration_since(Instant::now());
@@ -416,6 +428,24 @@ impl PageSession {
         if let Some((x, y, w, h)) = clip {
             params["clip"] = json!({ "x": x, "y": y, "width": w, "height": h, "scale": 1 });
         }
+        let res = self
+            .cdp
+            .call("Page.captureScreenshot", params, Duration::from_secs(180))?;
+        let data = res
+            .get("data")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "截图响应缺少 data".to_string())?;
+        b64::decode(data).map_err(|e| format!("截图数据解码失败: {e}"))
+    }
+
+    /// Page.captureScreenshot(PNG 快档:`optimizeForSpeed` 为 Chrome 125+
+    /// 参数,用更轻的压缩换取更快编码 —— 4:2:0 无损焦虑的正解,文件略大)。
+    pub fn screenshot_fast_png(&mut self) -> Result<Vec<u8>, String> {
+        let params = json!({
+            "format": "png",
+            "optimizeForSpeed": true,
+            "captureBeyondViewport": false,
+        });
         let res = self
             .cdp
             .call("Page.captureScreenshot", params, Duration::from_secs(180))?;

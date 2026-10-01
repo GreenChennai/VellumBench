@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.13.1(2026-10-01)
+
+下游第三轮实测三连报修复。
+
+### Fixed(多实例负收益与 w4 必败,#1)
+
+- **w4 失败链的下一环**:`Page.navigate` 35s + 一次自动重试(前一轮修的
+  `/json/new`、`/json/version` 之后,并发冷启动压垮的下一个 CDP 调用就是
+  它)。
+- **首帧门控派生**替代盲等 600ms:worker i+1 等 worker i **抓到首帧**
+  (页面就绪)才拉起——冷启动彻底串行化,渲染在各自就绪后并行。
+  本机复测重页面:w1 23.1 / w2 24.5 帧/s,w2 无退化。
+- **每实例统计入 warnings**:`实例 N 统计:X 帧 / Ys = Z 帧/s(平均 Mms/帧)`
+  —— 串行点定位的自证数据,下次报告直接引用该行。
+- w4 失败根因仍未终判(无下游机器的复现环境),但 navigate 重试 + 就绪
+  门控后,4 实例的冷启动不再瞬时叠峰;仍失败时错误信息会精确指出是
+  哪个 CDP 调用。
+
+### Fixed(beginFrame 在 Edge 上,#2)
+
+- Edge 的 headless 不实现 `HeadlessExperimental` 域(与 flag 无关,能力
+  缺失),beginFrame 在 Edge 上永远不会可用。现**按浏览器识别跳过**
+  (exe 名含 msedge 即直走 captureScreenshot,连首次尝试都不发),警告
+  每实例一条,并注明 Chrome / chrome-headless-shell 支持该通道。
+
+### Fixed(PNG 交付 4:2:0 折衷,#3)
+
+- 截图车道 PNG 走 `optimizeForSpeed`(Chrome 125+):轻压缩换快编码,
+  **无损**。本机实测重页面:PNG 快档 4.5 帧/s vs JPEG 2.6 帧/s(+73%),
+  文件大小几乎相同(3.69MB vs 3.65MB)——下游"png 整片 28 分钟"的估算
+  按此口径显著缩短,且无色度损失。beginFrame 不可用时同享(该参数
+  Chrome 对 captureScreenshot 生效)。
+- `degraded_artboard:true`(无 artboard 声明)为诚实的结构化降级标记,
+  保持不动。
+
 ## 0.13.0(2026-10-01)
 
 ### Added(WebCodecs 车道:canvas+SEEK 页全 GPU,MVP)

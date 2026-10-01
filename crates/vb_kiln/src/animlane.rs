@@ -501,15 +501,19 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
     ));
     std::fs::create_dir_all(&tmp).map_err(|e| format!("创建动画工作目录失败:{e}"))?;
 
-    // 共享状态进 scope 线程:同一静态服务,W 个独立浏览器实例
+    // 共享状态进 scope 线程:同一静态服务,W 个独立浏览器实例。
+    // **首帧门控派生**:worker i+1 等 worker i 抓到首帧(页面就绪)才拉起
+    // —— 冷启动彻底串行化,渲染在各自就绪后并行。盲等 600ms 挡不住
+    // 弱机上的并发冷启动雪崩(下游 w4 Page.navigate 超时)。
     let seg_results: Vec<Result<(EncChoice, Vec<String>), String>> = std::thread::scope(|scope| {
         let per = n.div_ceil(workers);
         let mut handles = Vec::with_capacity(workers);
+        // 全部 tx 克隆共用一条就绪通道;主循环顺序收 N-1 个信号
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
         for wi in 0..workers {
-            // 错峰启动:并发冷启动(多浏览器同时拉起 + 抢 CPU)是下游实测
-            // 的失败源之一,逐个间隔 600ms
+            // 门控:i>0 等前一个实例就绪(30s 兜底,防前实例挂死拖垮全队)
             if wi > 0 {
-                std::thread::sleep(Duration::from_millis(600));
+                let _ = ready_rx.recv_timeout(Duration::from_secs(30));
             }
             let a = wi * per;
             let b = (a + per).min(n);
@@ -517,10 +521,21 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
             let exe = exe.clone();
             let enc_cands = enc_cands.clone();
             let seg_path = tmp.join(format!("seg_{wi:04}.mp4"));
+            let ready_tx = if wi + 1 < workers {
+                Some(ready_tx.clone())
+            } else {
+                None
+            };
             let srv_ref = &srv;
+            let is_edge = exe
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.to_ascii_lowercase().contains("msedge"))
+                .unwrap_or(false);
             handles.push(scope.spawn(move || {
                 render_segment(
-                    &exe, srv_ref, &url, &seg_path, a, b, fps, vw, vh, dsf, opts, &enc_cands,
+                    &exe, srv_ref, &url, &seg_path, a, b, fps, vw, vh, dsf, opts, &enc_cands, wi,
+                    ready_tx, is_edge,
                 )
             }));
         }
@@ -647,9 +662,28 @@ fn render_segment(
     dsf: u32,
     opts: &AnimPipeOpts,
     enc_cands: &[EncChoice],
+    wi: usize,
+    ready_tx: Option<std::sync::mpsc::Sender<()>>,
+    is_edge: bool,
 ) -> Result<(EncChoice, Vec<String>), String> {
     let _ = srv; // 静态服务由调用方持有保活;连接经 URL,无需逐段操作
     let mut warnings = Vec::new();
+    // Edge 没有 HeadlessExperimental 域(0.12.3 起 beginFrame 首败缓存;
+    // 这里直接按浏览器识别跳过,连第一次尝试都不必浪费)
+    if is_edge && wi == 0 {
+        warnings.push(
+            "Edge 不支持 beginFrame,逐帧走 captureScreenshot(需要该通道可用 Chrome/chrome-headless-shell)"
+                .into(),
+        );
+    }
+    warnings.push(format!(
+        "实例 {wi}:区间 {a}..{b},驱动 {}",
+        if opts.wall_clock {
+            "墙钟"
+        } else {
+            "确定性"
+        }
+    ));
     let proc = vb_browser::browser::BrowserProcess::launch_with(
         exe,
         vb_browser::browser::LaunchOptions { gpu: opts.gpu },
@@ -660,6 +694,10 @@ fn render_segment(
     page.wait_network_idle(Duration::from_secs(3));
     vb_browser::capture::wait_assets(&mut page);
     page.sleep(250); // 首帧稳定(不冻结动画、不仿真 reduced-motion)
+                     // 首帧门控:本实例页面就绪,放行下一个实例拉起(彻底串行化冷启动)
+    if let Some(tx) = &ready_tx {
+        let _ = tx.send(());
+    }
 
     // 帧驱动探测:JS 确定性时间轴(SEEK 约定)> CSS 动画寻址 > 墙钟回退
     let driver = if opts.wall_clock {
@@ -690,9 +728,9 @@ fn render_segment(
 
     let mut last_err = String::new();
     for (ci, &enc) in enc_cands.iter().enumerate() {
-        let bf_broken = std::cell::Cell::new(false);
+        let bf_broken = std::cell::Cell::new(is_edge);
         match capture_and_encode(
-            &mut page, seg_path, a, b, fps, vw, vh, dsf, opts, enc, &driver, &bf_broken,
+            &mut page, seg_path, a, b, fps, vw, vh, dsf, opts, enc, &driver, &bf_broken, wi,
         ) {
             Ok(ws) => {
                 warnings.extend(ws);
@@ -737,7 +775,12 @@ fn capture_and_encode(
     enc: EncChoice,
     driver: &Driver,
     bf_broken: &std::cell::Cell<bool>,
+    wi: usize,
 ) -> Result<Vec<String>, String> {
+    // 每实例帧间隔统计(串行点自证:多实例下单实例节奏显著劣化会直接
+    // 反映在这行数据里)
+    let stats_t0 = std::time::Instant::now();
+    let mut stats_frames: usize = 0;
     let _ = dsf; // 设备像素比已在页面建立时设定
     let mut warnings = Vec::new();
     // ffmpeg 直通:截图字节 → stdin → 编码(零解码零重编码)
@@ -847,6 +890,7 @@ fn capture_and_encode(
             .map_err(|e| format!("写入 ffmpeg 管道失败(探针帧 {k}):{e}"))?;
     }
     for i in a..b {
+        stats_frames += 1;
         if *driver != Driver::WallFallback {
             drive_frame(page, driver, i, fps);
         }
@@ -862,8 +906,17 @@ fn capture_and_encode(
         // 多付一次死往返。
         let no_bf = std::env::var("VB_NO_BEGINFRAME").is_ok();
         let png = if no_bf || bf_broken.get() {
-            page.screenshot(shot_format, shot_quality, None, false, false)
-                .map_err(|e| format!("逐帧截屏失败(帧 {i}):{e}"))?
+            // PNG 快档:optimizeForSpeed(Chrome 125+)轻压缩换快编码,
+            // 无 JPEG 的 4:2:0 色度损失 —— 文字密集页交付的正解
+            if shot_format == "png" {
+                page.screenshot_fast_png().or_else(|_| {
+                    page.screenshot(shot_format, shot_quality, None, false, false)
+                        .map_err(|e| format!("逐帧截屏失败(帧 {i}):{e}"))
+                })?
+            } else {
+                page.screenshot(shot_format, shot_quality, None, false, false)
+                    .map_err(|e| format!("逐帧截屏失败(帧 {i}):{e}"))?
+            }
         } else {
             match page.begin_frame_screenshot(shot_format, shot_quality) {
                 Ok(b) => b,
@@ -872,8 +925,15 @@ fn capture_and_encode(
                     if i == a {
                         warnings.push(format!("beginFrame 不可用,本段退回 captureScreenshot: {e}"));
                     }
-                    page.screenshot(shot_format, shot_quality, None, false, false)
-                        .map_err(|e| format!("逐帧截屏失败(帧 {i}):{e}"))?
+                    if shot_format == "png" {
+                        page.screenshot_fast_png().or_else(|_| {
+                            page.screenshot(shot_format, shot_quality, None, false, false)
+                                .map_err(|e| format!("逐帧截屏失败(帧 {i}):{e}"))
+                        })?
+                    } else {
+                        page.screenshot(shot_format, shot_quality, None, false, false)
+                            .map_err(|e| format!("逐帧截屏失败(帧 {i}):{e}"))?
+                    }
                 }
             }
         };
@@ -903,6 +963,12 @@ fn capture_and_encode(
         }
     }
     drop(stdin); // EOF → ffmpeg 收尾
+    let elapsed = stats_t0.elapsed().as_secs_f64();
+    warnings.push(format!(
+        "实例 {wi} 统计:{stats_frames} 帧 / {elapsed:.1}s = {:.1} 帧/s(平均 {:.0}ms/帧)",
+        stats_frames as f64 / elapsed.max(1e-3),
+        elapsed * 1000.0 / stats_frames.max(1) as f64,
+    ));
     let output = child
         .wait_with_output()
         .map_err(|e| format!("等待 ffmpeg 失败:{e}"))?;
