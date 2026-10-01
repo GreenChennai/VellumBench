@@ -28,7 +28,10 @@ fn main() {
     let (mount_dir, html) = if path.is_dir() {
         (path.to_path_buf(), None)
     } else {
-        (path.parent().unwrap().to_path_buf(), Some(path.clone()))
+        (
+            path.parent().unwrap().to_path_buf(),
+            Some(path.to_path_buf()),
+        )
     };
     let srv = vb_browser::staticsrv::StaticServer::start(&mount_dir).expect("静态服务失败");
     let page_url = match &html {

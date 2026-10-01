@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.12.3(2026-10-01)
+
+下游第二轮实测四连报修复。
+
+### Fixed(并发负收益与 w4 必败,#1)
+
+- **默认 workers 改 1**:两轮下游实测多实例都是负收益——轻量最小页面
+  也随段数变慢(w1 10.6 → w2 5.9 → w3 1.8 帧/s),现象是跨实例串行点
+  而非 CPU 不足,在定位清楚前不再按 CPU/2 猜。并发是显式 opt-in
+  (`--workers 2..16`,超限时段级候选回退兜底);相关自动档探针
+  (冷启动测速/内存预算/会话探针)随默认 1 退役。
+- **DevTools HTTP 超时放宽带重试**:`/json/new`(开标签页)5s→30s、
+  `/json/version` 5s→15s+一次重试——多实例并发冷启动时浏览器自带
+  DevTools HTTP 服务显著变慢,对应下游"w4 分段渲染失败:HTTP 读取
+  超时"。
+
+### Fixed(beginFrame 在 Edge 上不存在,#2)
+
+- Edge 没有 `HeadlessExperimental` 域,此前每帧都重试一次必然失败的
+  beginFrame 再退回 captureScreenshot——每帧多付一次死往返。现**首帧
+  失败即缓存结论**,本段直接走 captureScreenshot(告警只出一条)。
+  Edge 实测:告警恰 1 条、导出成功。
+
+### Fixed(色彩 VUI 补全,#3)
+
+- 硬件编码器(nvenc/amf/qsv)不一定回填 transfer/primaries(下游实测
+  color_space=bt709 但 transfer/primaries=unknown)。MP4 输出统一追加
+  `h264_metadata` bsf 直接改写 SPS VUI。实测(trace_headers):
+  `colour_primaries=1 / transfer_characteristics=1 / matrix_coefficients=1`
+  (全 BT.709),`video_full_range_flag=0`(tv)。
+
+### Fixed(%TEMP%\kiln-* 残留,#4)
+
+- 浏览器首次启动时清扫 %TEMP% 下陈旧的 `kiln-browser-*`/`kiln-anim-*`/
+  `kiln-mp4-*`/`kiln-gif-*` 工作目录(进程崩溃/强杀时 Drop 不执行,
+  下游机器上按几十个计);只动 mtime 超 6 小时的目录,并发运行中的
+  新目录绝不误删,best-effort 静默。
+
 ## 0.12.2(2026-10-01)
 
 ### Changed(动画车道 GPU 光栅默认开)

@@ -309,6 +309,11 @@ pub(crate) fn push_color_args(cmd: &mut Command) {
         .arg("bt709")
         .arg("-color_trc")
         .arg("bt709");
+    // VUI 兜底:硬件编码器(nvenc/amf/qsv)不一定回填 transfer/primaries
+    // (下游实测 color_space=bt709 但 transfer/primaries=unknown)。bsf 直接
+    // 改写 H.264 SPS 的 VUI,与编码器无关。1 = BT.709(数值见 ITU-T H.264 表 E-1)
+    cmd.arg("-bsf:v")
+        .arg("h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1");
 }
 
 /// 给 ffmpeg 命令挂编码器参数(与 render_segment 同一份口径)。
@@ -334,114 +339,6 @@ pub(crate) fn apply_encoder_args(cmd: &mut Command, enc: EncChoice, workers: usi
         }
         EncChoice::Auto => {}
     }
-}
-
-/// 冷启动测速:单实例加载页面,确定性驱动下采 3 帧,返回平均单帧毫秒。
-/// 重页面(软件光栅 + 大 canvas)上这是决定并发是否为负收益的唯一诚实
-/// 口径 —— CPU 核数和内存都看不出"每帧要画多少东西"。
-fn probe_page_pace(
-    exe: &Path,
-    url: &str,
-    vw: u32,
-    vh: u32,
-    dsf: u32,
-    opts: &AnimPipeOpts,
-) -> Option<f64> {
-    let proc = vb_browser::browser::BrowserProcess::launch_with(
-        exe,
-        vb_browser::browser::LaunchOptions { gpu: opts.gpu },
-    )
-    .ok()?;
-    let result = (|| -> Option<f64> {
-        let mut page = vb_browser::page::PageSession::attach(&proc).ok()?;
-        page.set_device_metrics(vw, vh, dsf).ok()?;
-        page.navigate(url).ok()?;
-        page.wait_network_idle(Duration::from_secs(3));
-        vb_browser::capture::wait_assets(&mut page);
-        page.sleep(250);
-        let driver = detect_driver(&mut page, &opts.seek_fn);
-        if let Driver::CssAnims(_) = driver {
-            pause_all_animations(&mut page);
-        }
-        let t0 = std::time::Instant::now();
-        const PROBE: u32 = 3;
-        for i in 0..PROBE {
-            drive_frame(&mut page, &driver, i as usize, opts.fps.clamp(1, 60));
-            let (fmt, q) = match opts.jpeg_quality {
-                Some(q) => ("jpeg", Some(q)),
-                None => ("png", None),
-            };
-            page.begin_frame_screenshot(fmt, q)
-                .or_else(|_| page.screenshot(fmt, q, None, false, false))
-                .ok()?;
-        }
-        Some(t0.elapsed().as_secs_f64() * 1000.0 / f64::from(PROBE))
-    })();
-    // proc 在此 Drop → 杀整棵浏览器树
-    result
-}
-
-/// 硬件编码器**并发会话数**实测:同时起 `want` 路探针,数成功的。
-/// 消费级 N 卡有驱动级会话上限(老卡 1-3,新卡 5-8),A 卡通常不限;
-/// 超限的会话当场被驱动拒绝 —— 与其渲染几分钟后整段暴毙,不如开局
-/// 30 秒内量出来。一次探测,全程复用。
-fn probe_hw_sessions(codec: &str, want: usize) -> usize {
-    let codec = codec.to_string();
-    let mut handles = Vec::with_capacity(want);
-    for _ in 0..want {
-        let codec = codec.clone();
-        handles.push(std::thread::spawn(move || probe_encoder(&codec)));
-    }
-    handles
-        .into_iter()
-        .map(|h| h.join().unwrap_or(false))
-        .filter(|ok| *ok)
-        .count()
-        .max(1)
-}
-
-/// 空闲物理内存 GB(windows:kernel32 GlobalMemoryStatusEx,零依赖手写
-/// FFI,与 vb_browser 手写 ws 同一节俭口径;非 windows 返回 None 跳过预算)。
-#[cfg(windows)]
-fn free_physical_gb() -> Option<f64> {
-    #[repr(C)]
-    struct MemoryStatusEx {
-        dw_length: u32,
-        dw_memory_load: u32,
-        ull_total_phys: u64,
-        ull_avail_phys: u64,
-        ull_total_page_file: u64,
-        ull_avail_page_file: u64,
-        ull_total_virtual: u64,
-        ull_avail_virtual: u64,
-        ull_avail_extended_virtual: u64,
-    }
-    extern "system" {
-        fn GlobalMemoryStatusEx(lp_buffer: *mut MemoryStatusEx) -> i32;
-    }
-    let mut ms = MemoryStatusEx {
-        dw_length: std::mem::size_of::<MemoryStatusEx>() as u32,
-        dw_memory_load: 0,
-        ull_total_phys: 0,
-        ull_avail_phys: 0,
-        ull_total_page_file: 0,
-        ull_avail_page_file: 0,
-        ull_total_virtual: 0,
-        ull_avail_virtual: 0,
-        ull_avail_extended_virtual: 0,
-    };
-    // SAFETY: 结构体自描述长度,全局函数,无指针别名
-    unsafe {
-        if GlobalMemoryStatusEx(&mut ms) != 0 {
-            return Some(ms.ull_avail_phys as f64 / 1024.0 / 1024.0 / 1024.0);
-        }
-    }
-    None
-}
-
-#[cfg(not(windows))]
-fn free_physical_gb() -> Option<f64> {
-    None
 }
 
 /// ffmpeg 能力探测(编码器清单;一次探测,全程复用)。
@@ -571,59 +468,15 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
     }
 
     // 分段:总帧数均分;workers 上限 = 帧数(每段至少 1 帧)。
-    // 自动档由三个上限取最小:CPU/2、空闲内存预算、硬件编码器并发会话数
-    //(实测探针;GT 710 这类老卡 NVENC 只有 1-3 会话,开超了整段必死)。
-    // 显式 --workers 尊重用户(超限时段级候选回退兜底)。
+    // **默认 1**:两轮下游实测(9070 GRE)多实例都是负收益——轻量页面
+    // 也随段数变慢(w1 10.6 → w2 5.9 → w3 1.8 帧/s),且 ≥4 段 HTTP 读
+    // 超时;现象是跨实例串行点而非 CPU 不足,在定位清楚前不再按 CPU/2
+    // 猜。并发是显式 opt-in:`--workers 2..16`(超限时段级候选回退兜底)。
     let cores = std::thread::available_parallelism()
         .map(|c| c.get())
         .unwrap_or(4);
-    let out_px = (vw as u64) * (vh as u64) * (dsf as u64);
-    let per_worker_gb = if out_px >= 2560 * 1440 { 2.5 } else { 1.2 };
-    let free_gb = free_physical_gb().unwrap_or(8.0);
-    let mem_cap = ((free_gb / per_worker_gb) as usize).clamp(1, 8);
-    let mut w_auto = ((cores / 2).clamp(1, 4).min(mem_cap)) as u32;
-    let is_hw_primary = matches!(
-        enc_cands.first(),
-        Some(EncChoice::Nvenc | EncChoice::Amf | EncChoice::Qsv)
-    );
-    if opts.workers == 0 && is_hw_primary {
-        let want = w_auto.clamp(4, 8) as usize;
-        let sessions = probe_hw_sessions(enc_cands[0].codec_name(), want);
-        if sessions < want {
-            warnings.push(format!(
-                "硬件编码器并发会话实测 {sessions}/{want}:自动 workers 随之下调"
-            ));
-        }
-        w_auto = w_auto.min(sessions as u32).max(1);
-    }
-    // 冷启动测速封顶(下游实测教训):重页面(软件光栅 + 大 canvas)在
-    // 多实例下是**负收益**——每实例都在抢 CPU,且每段要整页冷启动一遍,
-    // 单实例 2.3 帧/s 可以在 3 实例时跌到 0.26。自动档先跑一个 3 帧
-    // 探针测单帧节奏:≥800ms/帧 → 锁 1 实例;≥300ms → 2 实例;其余
-    // 维持上面三个上限的最小值。显式 --workers 仍完全尊重用户。
-    if opts.workers == 0 && w_auto > 1 && !opts.wall_clock {
-        match probe_page_pace(&exe, &url, vw, vh, dsf, opts) {
-            Some(pace_ms) => {
-                // 阈值口径偏保守(宁慢勿废):下游实测单实例 435ms/帧的
-                // 页面,2/3 实例并发是超线性负收益(0.9/0.26 帧/s 总),
-                // 所以 400ms 以上直接锁单实例
-                let capped = if pace_ms >= 400.0 {
-                    1
-                } else if pace_ms >= 200.0 {
-                    2
-                } else {
-                    w_auto as usize
-                };
-                if capped < w_auto as usize {
-                    warnings.push(format!(
-                        "冷启动测速 {pace_ms:.0}ms/帧(重页面):并发是负收益,自动 workers 降为 {capped}"
-                    ));
-                }
-                w_auto = capped as u32;
-            }
-            None => warnings.push("冷启动测速失败,按 CPU/内存口径定 workers".into()),
-        }
-    }
+    let _ = cores;
+    let w_auto: u32 = 1;
     let workers = if opts.workers == 0 {
         w_auto
     } else {
@@ -631,7 +484,7 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
     }
     .min(n as u32) as usize;
     warnings.push(format!(
-        "分段并行:{workers} 实例 × {} 帧(确定性={}, GPU={}, 内存预算 {mem_cap} 实例)",
+        "分段并行:{workers} 实例 × {} 帧(确定性={}, GPU={};默认 1,并发经 --workers 显式开启)",
         n.div_ceil(workers),
         if opts.wall_clock { "关" } else { "开" },
         if opts.gpu { "开" } else { "关" },
@@ -837,8 +690,9 @@ fn render_segment(
 
     let mut last_err = String::new();
     for (ci, &enc) in enc_cands.iter().enumerate() {
+        let bf_broken = std::cell::Cell::new(false);
         match capture_and_encode(
-            &mut page, seg_path, a, b, fps, vw, vh, dsf, opts, enc, &driver,
+            &mut page, seg_path, a, b, fps, vw, vh, dsf, opts, enc, &driver, &bf_broken,
         ) {
             Ok(ws) => {
                 warnings.extend(ws);
@@ -882,6 +736,7 @@ fn capture_and_encode(
     opts: &AnimPipeOpts,
     enc: EncChoice,
     driver: &Driver,
+    bf_broken: &std::cell::Cell<bool>,
 ) -> Result<Vec<String>, String> {
     let _ = dsf; // 设备像素比已在页面建立时设定
     let mut warnings = Vec::new();
@@ -1001,17 +856,21 @@ fn capture_and_encode(
         // 静态车道的 settle/capture_png 协议不受影响
         // 不带 clip:clip 会强制 Chromium 重光栅化裁剪区(实测每帧 +150ms
         // 以上);视口即画布(dsf 经 set_device_metrics 生效),无需 clip。
-        // VB_NO_BEGINFRAME=1 强制走 captureScreenshot(路径对照/兼容开关)
+        // VB_NO_BEGINFRAME=1 强制走 captureScreenshot(路径对照/兼容开关)。
+        // beginFrame 失败(Edge 无 HeadlessExperimental 域,下游实测)后
+        // **缓存结论**:此前每帧都重试一次必然失败的调用再退回,等于每帧
+        // 多付一次死往返。
         let no_bf = std::env::var("VB_NO_BEGINFRAME").is_ok();
-        let png = if no_bf {
+        let png = if no_bf || bf_broken.get() {
             page.screenshot(shot_format, shot_quality, None, false, false)
                 .map_err(|e| format!("逐帧截屏失败(帧 {i}):{e}"))?
         } else {
             match page.begin_frame_screenshot(shot_format, shot_quality) {
                 Ok(b) => b,
                 Err(e) => {
+                    bf_broken.set(true);
                     if i == a {
-                        warnings.push(format!("beginFrame 不可用,退回 captureScreenshot: {e}"));
+                        warnings.push(format!("beginFrame 不可用,本段退回 captureScreenshot: {e}"));
                     }
                     page.screenshot(shot_format, shot_quality, None, false, false)
                         .map_err(|e| format!("逐帧截屏失败(帧 {i}):{e}"))?

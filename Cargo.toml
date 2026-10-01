@@ -22,7 +22,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.12.2"
+version = "0.12.3"
 edition = "2021"
 # ACL-1.0 是自定义协议(非 SPDX 标准标识符),故用 license-file 指向根 LICENSE
 license-file = "LICENSE"

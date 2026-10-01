@@ -250,6 +250,39 @@ fn launch_args(user_data_dir: &Path, debug_port: u16, gpu: bool, shell: bool) ->
     v
 }
 
+/// 清扫 %TEMP% 里陈旧的 kiln-* 工作目录(浏览器 user-data-dir / 段视频 /
+/// GIF·MP4 中转):进程崩溃、断电、watchdog 强杀时 Drop 不会执行,残留在
+/// 下游机器上按几十个计。每进程首个浏览器启动时清扫一次;只动 mtime 超
+/// 6 小时的目录(并发运行中的新目录绝不误删),失败静默(best-effort)。
+fn sweep_stale_temp_dirs() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+            return;
+        };
+        let cutoff = std::time::SystemTime::now() - Duration::from_secs(6 * 3600);
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if !(name.starts_with("kiln-browser-")
+                || name.starts_with("kiln-anim-")
+                || name.starts_with("kiln-mp4-")
+                || name.starts_with("kiln-gif-"))
+            {
+                continue;
+            }
+            let fresh = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .map(|t| t > cutoff)
+                .unwrap_or(true); // 拿不到时间 = 当它是新的,宁留勿删
+            if !fresh {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
+    });
+}
+
 /// 托管一个 headless 浏览器进程,提供打开新页面的能力。
 pub struct BrowserProcess {
     pub exe: PathBuf,
@@ -270,6 +303,7 @@ impl BrowserProcess {
     /// ② `<user-data-dir>/DevToolsActivePort` 文件(msedge headless 在 Windows
     /// 上只写文件不打印,只认 ① 的实现会整体失败)。
     pub fn launch_with(exe: &Path, opts: LaunchOptions) -> Result<Self, String> {
+        sweep_stale_temp_dirs();
         let port = 0; // 由内核自选,stderr 回报
                       // 并发多实例(动画分段并行渲染)同 pid 同瞬间启动,nanos 会撞名;
                       // 进程级原子计数保证唯一
@@ -359,13 +393,18 @@ impl BrowserProcess {
 
     /// 浏览器版本(DevTools /json/version 的 Browser 字段,如 "Edg/131.0.2903.86")。
     pub fn version(&self) -> String {
-        match httpc::request(
-            "127.0.0.1",
-            self.port,
-            "GET",
-            "/json/version",
-            Duration::from_secs(5),
-        ) {
+        // 多实例并发冷启动时 DevTools HTTP 响应显著变慢(下游实测 w4
+        // "HTTP 读取超时"):5s → 15s + 一次重试
+        let req = || {
+            httpc::request(
+                "127.0.0.1",
+                self.port,
+                "GET",
+                "/json/version",
+                Duration::from_secs(15),
+            )
+        };
+        match req().or_else(|_| req()) {
             Ok((200, body)) => serde_json::from_slice::<Value>(&body)
                 .ok()
                 .and_then(|v| {
@@ -388,7 +427,8 @@ impl BrowserProcess {
                 self.port,
                 method,
                 &target,
-                Duration::from_secs(5),
+                // 并发冷启动时 /json/new 可慢到秒级×多:30s 防误杀
+                Duration::from_secs(30),
             ) {
                 Ok((200, body)) => {
                     let v: Value = serde_json::from_slice(&body)
