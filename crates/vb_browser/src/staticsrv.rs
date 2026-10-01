@@ -6,7 +6,7 @@
 //! 允许根集合内。不解析联接的词法判定使「项目内声明的目录联接」
 //! (`src/fonts` → 技能字体库等减重影子)不再被误判 404(VB-1)。
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -165,7 +165,12 @@ fn rand_offset() -> u32 {
         .unwrap_or(0)
 }
 
-fn handle(mut stream: TcpStream, root: Arc<PathBuf>, not_found: NotFoundLog) {
+fn handle(
+    mut stream: TcpStream,
+    root: Arc<PathBuf>,
+    not_found: NotFoundLog,
+    upload_sink: Option<Arc<Mutex<Option<PathBuf>>>>,
+) {
     let peer = stream.try_clone();
     let Ok(peer) = peer else { return };
     let mut reader = BufReader::new(peer);
@@ -176,15 +181,64 @@ fn handle(mut stream: TcpStream, root: Arc<PathBuf>, not_found: NotFoundLog) {
     let mut parts = line.split_whitespace();
     let method = parts.next().unwrap_or("");
     let path = parts.next().unwrap_or("/");
-    // 消费剩余请求头(读到空行)
+    // 消费剩余请求头(读到空行);顺带记 Content-Length(POST 上传用)
+    let mut content_length: u64 = 0;
     loop {
         let mut h = String::new();
         match reader.read_line(&mut h) {
             Ok(0) => break,
             Ok(_) if h == "\r\n" || h == "\n" => break,
-            Ok(_) => {}
+            Ok(_) => {
+                if let Some((k, v)) = h.split_once(':') {
+                    if k.eq_ignore_ascii_case("content-length") {
+                        content_length = v.trim().parse().unwrap_or(0);
+                    }
+                }
+            }
             Err(_) => return,
         }
+    }
+    // WebCodecs 车道的产物上传:POST /__kiln-upload 按 Content-Length 把
+    // 字节流写进 sink 文件(本地回环,页内硬编产物出页面的唯一通道)。
+    // 仅此一个路径接受 POST,其余仍 405。
+    if method == "POST" {
+        if path != "/__kiln-upload" {
+            let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+            return;
+        }
+        let sink_path = upload_sink
+            .as_ref()
+            .and_then(|a| a.lock().unwrap_or_else(|e| e.into_inner()).clone());
+        let Some(sink_path) = sink_path else {
+            let _ =
+                stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n");
+            return;
+        };
+        // 请求头已在函数顶部消费(content_length 已就位),此处直接读体
+        let resp = (|| -> std::io::Result<()> {
+            let mut out = std::fs::File::create(&sink_path)?;
+            std::io::copy(&mut reader.by_ref().take(content_length), &mut out).map(|_| ())
+        })();
+        let ok = resp.is_ok();
+        let body = match resp {
+            Ok(()) => format!("{{\"received\":{content_length}}}"),
+            Err(e) => format!("{{\"error\":\"{e}\"}}"),
+        };
+        let status = if ok {
+            "200 OK"
+        } else {
+            "500 Internal Server Error"
+        };
+        let _ = stream.write_all(
+            format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .as_bytes(),
+        );
+        let _ = stream.write_all(body.as_bytes());
+        let _ = stream.flush();
+        return;
     }
     if method != "GET" && method != "HEAD" {
         let _ = stream.write_all(b"HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n");
@@ -254,10 +308,26 @@ pub struct StaticServer {
     alive: Arc<AtomicUsize>,
     /// 404 收集器(VB-1):`take_not_found` 在导出结束时取走。
     not_found: NotFoundLog,
+    /// WebCodecs 车道的页内编码产物上传落点(`POST /__kiln-upload` 写入;
+    /// None = 不接受上传)。
+    upload_sink: Option<Arc<Mutex<Option<PathBuf>>>>,
 }
 
 impl StaticServer {
     pub fn start(root: &Path) -> Result<Self, String> {
+        Self::start_inner(root, None)
+    }
+
+    /// 带 WebCodecs 产物上传落点的变体:页内编码完成后
+    /// `fetch('/__kiln-upload', {method:'POST', body})` 把字节流写进 `sink`。
+    pub fn start_with_upload(root: &Path, sink: PathBuf) -> Result<Self, String> {
+        Self::start_inner(root, Some(Arc::new(Mutex::new(Some(sink)))))
+    }
+
+    fn start_inner(
+        root: &Path,
+        upload_sink: Option<Arc<Mutex<Option<PathBuf>>>>,
+    ) -> Result<Self, String> {
         if !root.is_dir() {
             return Err(format!("源目录不存在: {}", root.display()));
         }
@@ -284,11 +354,13 @@ impl StaticServer {
             listener,
             alive: Arc::new(AtomicUsize::new(1)),
             not_found: Arc::new(Mutex::new(Vec::new())),
+            upload_sink,
         };
         let listener2 = srv.listener.try_clone().map_err(|e| e.to_string())?;
         let root2 = Arc::clone(&srv.root);
         let alive = Arc::clone(&srv.alive);
         let not_found2 = Arc::clone(&srv.not_found);
+        let sink2 = srv.upload_sink.clone();
         std::thread::spawn(move || {
             for conn in listener2.incoming() {
                 if alive.load(Ordering::Relaxed) == 0 {
@@ -298,7 +370,8 @@ impl StaticServer {
                     Ok(s) => {
                         let root3 = Arc::clone(&root2);
                         let nf3 = Arc::clone(&not_found2);
-                        std::thread::spawn(move || handle(s, root3, nf3));
+                        let sink3 = sink2.clone();
+                        std::thread::spawn(move || handle(s, root3, nf3, sink3));
                     }
                     Err(_) => break,
                 }
@@ -363,6 +436,44 @@ impl Drop for StaticServer {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn upload_endpoint_writes_sink() {
+        use std::io::{Read as _, Write as _};
+        let dir = std::env::temp_dir().join(format!("kiln-upload-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sink = dir.join("sink.h264");
+        let srv = crate::staticsrv::StaticServer::start_with_upload(&dir, sink.clone()).unwrap();
+        // 端口已知:start 内部绑定;用 local_addr 拿不到(私有),试探连接
+        let port = {
+            // StaticServer 持有 listener;这里通过接收端口探测不可行,
+            // 改用公开 API:重新绑定相同端口不可靠 —— 改为直接暴露端口
+            srv.port()
+        };
+        let payload: Vec<u8> = (0..=255u8).cycle().take(300_000).collect();
+        let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let head = format!(
+            "POST /__kiln-upload HTTP/1.1
+Host: x
+Content-Length: {}
+
+",
+            payload.len()
+        );
+        stream.write_all(head.as_bytes()).unwrap();
+        stream.write_all(&payload).unwrap();
+        let mut resp = String::new();
+        let _ = std::net::TcpStream::connect(("127.0.0.1", port)).is_err(); // noop
+        let mut buf = [0u8; 512];
+        let n = stream.read(&mut buf).unwrap();
+        resp.push_str(&String::from_utf8_lossy(&buf[..n]));
+        assert!(resp.contains("200 OK"), "响应: {resp}");
+        let got = std::fs::read(&sink).unwrap();
+        assert_eq!(got.len(), payload.len());
+        assert_eq!(got, payload);
+        drop(srv);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
 
     #[test]

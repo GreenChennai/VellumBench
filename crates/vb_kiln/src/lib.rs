@@ -21,6 +21,7 @@ pub mod error;
 pub mod formats;
 pub mod frames;
 pub mod img;
+pub mod webcodecs_lane;
 // K2 Web(05-11-2,台账 09-K):pdfium 的 `bind_to_library` /
 // `load_pdf_from_file` 只有原生动态绑定,wasm32 目标下这些 API 编译不存在。
 // PDF/AI 导入是桌面原生能力,Web 端不承诺(能力边界见 docs/k2-web-capability.md);

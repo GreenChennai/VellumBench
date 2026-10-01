@@ -366,7 +366,7 @@ pub fn ffmpeg_caps() -> FfmpegCaps {
 
 /// 从 HTML 源提取 `<style>` 块内容(anim_coverage 判定用;不入 Document,
 /// 只读文本,与浏览器实际播放的声明同源——内联 style 块)。
-fn style_blocks_of_html(html: &Path) -> Vec<String> {
+pub(crate) fn style_blocks_of_html(html: &Path) -> Vec<String> {
     let mut out = Vec::new();
     let Ok(text) = std::fs::read_to_string(html) else {
         return out;

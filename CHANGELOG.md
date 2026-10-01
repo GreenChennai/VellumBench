@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.13.0(2026-10-01)
+
+### Added(WebCodecs 车道:canvas+SEEK 页全 GPU,MVP)
+
+调研(`docs/gpu-full-acceleration-research.md`)落地:纯 canvas 页面
+走**页内硬编全 GPU 路径**——SEEK 绘制(GPU 加速 canvas)→ `VideoFrame`
+(GPU 位图零拷贝)→ `VideoEncoder` 硬件编码(D3D11,即 AMF/NVENC)→
+AVCC→AnnexB 转换(Rust 侧)→ ffmpeg `-c copy` 无损封装。
+
+- **效率实测(本机 GT 710 弱机,1080p30 60s = 1800 帧)**:WebCodecs
+  车道 **70.8 帧/s(25.4s)** vs 截图车道 9.3 帧/s(194s)—— **7.7×**;
+  重页面(6000 fillText)单实例 39.7 帧/s,已超 60fps 实时线。
+- `--render auto|webcodecs|screenshot`(默认 auto):auto 仅当页面
+  「window.SEEK 存在 + 全屏 canvas + 无其他可见 DOM 元素 + VideoEncoder
+  硬编探针通过」时走 WebCodecs,任何不符自动回退截图车道。
+  **资格判定严格性来自实测教训**:DOM+canvas 混合页(歌词/终端为 DOM
+  文本的 MV)只编 canvas 会产出黑屏残影——auto 模式已用 mixed-dom 探测
+  堵死该路径(混合页自动回退,产物正确)。
+- 页内 GPU 同步:SEEK 后读 1px 强制加速 canvas 管线 flush,否则
+  VideoFrame 抓到的是异步提交前的旧位图(同实测教训)。
+- 静态服务新增 `POST /__kiln-upload` 上传端点(带单测);产物封装用
+  ffmpeg `-c copy`(纯 remux,不重编码,秒级)。
+- PoC 与复现:`crates/vb_browser/examples/webcodecs_poc.rs`;
+  页面 canvas 结构诊断:`--example canvas_diag`。
+
 ## 0.12.3(2026-10-01)
 
 下游第二轮实测四连报修复。

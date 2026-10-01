@@ -122,6 +122,11 @@ enum Cmd {
         /// 工作流的约定接口)。接受 "SEEK" 或 "window.SEEK" 写法
         #[arg(long)]
         seek_fn: Option<String>,
+        /// 逐帧渲染车道:auto=canvas+SEEK 页优先 WebCodecs 页内硬编
+        /// (GPU,探针/编码失败自动回退截图车道)|webcodecs=强制|
+        /// screenshot=强制截图车道
+        #[arg(long, default_value = "auto")]
+        render: String,
         /// --seek-fn 的别名(下游约定名):逐帧 seek 到 t=i/fps →
         /// 等一次 repaint → 截屏
         #[arg(long)]
@@ -260,6 +265,7 @@ fn main() {
             seek_fn,
             seek_hook,
             no_gpu,
+            render,
         } => run_export(
             sources,
             output,
@@ -284,6 +290,7 @@ fn main() {
             wall,
             seek_fn.or(seek_hook),
             no_gpu,
+            render,
         ),
         Cmd::Import { source, output } => run_import(source, output),
         Cmd::Img { op } => run_img(op),
@@ -317,6 +324,7 @@ fn run_export(
     wall: bool,
     seek_fn: Option<String>,
     no_gpu: bool,
+    render: String,
 ) -> i32 {
     let t0 = Instant::now();
     let _ = max_wait; // 浏览器车道自带 settle 预算;自研车道无外部等待
@@ -480,28 +488,88 @@ fn run_export(
                     matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "off")
                 })
             };
-        let anim = vb_kiln::animlane::export_anim_pipe(
-            &source,
-            &vb_kiln::animlane::AnimPipeOpts {
-                width,
-                height,
-                fps,
-                duration_s: duration,
-                scale,
-                bitrate_kbps: bitrate,
-                workers,
-                gpu: out_gpu,
-                jpeg_quality: if img.eq_ignore_ascii_case("jpeg") {
-                    Some(jpeg_q.clamp(1, 100))
-                } else {
-                    None
-                },
-                encoder: vb_kiln::animlane::EncChoice::parse(&encoder)
-                    .unwrap_or(vb_kiln::animlane::EncChoice::Auto),
-                wall_clock: wall,
-                seek_fn: seek_fn.map(|f| f.trim().trim_start_matches("window.").trim().to_string()),
+        let render_mode = render.to_ascii_lowercase();
+        if !matches!(render_mode.as_str(), "auto" | "webcodecs" | "screenshot") {
+            eprintln!("{{\"ok\":false,\"error\":\"--render 取值须为 auto|webcodecs|screenshot\"}}");
+            return 2;
+        }
+        let seek_norm = seek_fn.map(|f| f.trim().trim_start_matches("window.").trim().to_string());
+        let anim_opts = vb_kiln::animlane::AnimPipeOpts {
+            width,
+            height,
+            fps,
+            duration_s: duration,
+            scale,
+            bitrate_kbps: bitrate,
+            workers,
+            gpu: out_gpu,
+            jpeg_quality: if img.eq_ignore_ascii_case("jpeg") {
+                Some(jpeg_q.clamp(1, 100))
+            } else {
+                None
             },
-        );
+            encoder: vb_kiln::animlane::EncChoice::parse(&encoder)
+                .unwrap_or(vb_kiln::animlane::EncChoice::Auto),
+            wall_clock: wall,
+            seek_fn: seek_norm.clone(),
+        };
+        // WebCodecs 车道(0.13):canvas+SEEK 页全 GPU —— 页内硬编 +
+        // AnnexB 上传 + ffmpeg -c copy 封装。auto 探针/编码失败自动回退
+        // 截图车道;仅 MP4(GIF 调色板需全帧统计,仍走截图车道)。
+        if matches!(fmt, vb_kiln::writer::Format::Mp4)
+            && matches!(render_mode.as_str(), "auto" | "webcodecs")
+        {
+            match vb_kiln::webcodecs_lane::export_anim_webcodecs(&source, &anim_opts) {
+                Ok(out) => {
+                    for w in &out.warnings {
+                        eprintln!("{{\"domwarn\":\"{}\"}}", jesc(w));
+                    }
+                    if let Some(parent) = output.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    if let Err(e) = std::fs::write(&output, &out.bytes) {
+                        eprintln!(
+                            "{{\"ok\":false,\"error\":\"写文件失败:{}\"}}",
+                            jesc(&e.to_string())
+                        );
+                        return 4;
+                    }
+                    let anim_cov = out
+                        .anim_coverage
+                        .as_ref()
+                        .map(|c| c.to_json().to_string())
+                        .unwrap_or_else(|| "null".into());
+                    let json = format!(
+                        "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':{},'degraded':false,'degraded_artboard':false,'anim_coverage':{},'bytes':{},'encode_ms':{},'engine':'browser-anim-webcodecs','browser':'{}','encoder':'{}','gpu':{}}}",
+                        fmt_str.to_uppercase(),
+                        jesc(&output.display().to_string()),
+                        width,
+                        height,
+                        scale.clamp(1, 8),
+                        transparent,
+                        out.warnings.len(),
+                        out.frames,
+                        anim_cov,
+                        out.bytes.len(),
+                        t0.elapsed().as_millis(),
+                        jesc(&out.browser),
+                        jesc(out.encoder_used.as_deref().unwrap_or("h264")),
+                        out_gpu,
+                    )
+                    .replace('\'', "\"");
+                    println!("{json}");
+                    return 0;
+                }
+                Err(e) => {
+                    if render_mode == "webcodecs" {
+                        eprintln!("{{\"ok\":false,\"error\":\"WebCodecs 车道失败:{e}\"}}");
+                        return 4;
+                    }
+                    eprintln!("{{\"warn\":\"WebCodecs 车道不可用({e}),回退截图车道\"}}");
+                }
+            }
+        }
+        let anim = vb_kiln::animlane::export_anim_pipe(&source, &anim_opts);
         match anim {
             Ok(out) => {
                 for w in &out.warnings {
