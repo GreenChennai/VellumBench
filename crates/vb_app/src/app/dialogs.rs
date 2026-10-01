@@ -9,6 +9,14 @@ use crate::shortcuts;
 
 use super::VellumApp;
 
+/// 后台导出任务句柄(0.13.2):工作线程持有文档快照跑 Kiln/WPI,
+/// 结果经 channel 回 UI 线程;无取消接口,关闭对话框 = 后台继续。
+pub(crate) struct ExportJob {
+    pub out: std::path::PathBuf,
+    pub started: std::time::Instant,
+    pub rx: std::sync::mpsc::Receiver<Result<String, String>>,
+}
+
 impl VellumApp {
     // ───────────────── H-6:Esc 回退链的第 1 层 —— 对话框 ─────────────────
     //
@@ -314,10 +322,18 @@ impl VellumApp {
                                 "PPTX(Kiln)",
                             ];
                             ui.horizontal(|ui| {
+                                // 九格式下拉(U-2:此前是 Slider,拖到
+                                // "PDF" 要数刻度;状态栏断点切换器同款控件)
                                 ui.label("格式");
                                 let mut f = self.export_format;
-                                let label = FORMATS[f].to_string();
-                                ui.add(egui::Slider::new(&mut f, 0..=8).text(label));
+                                egui::ComboBox::from_id_salt("vb-export-format")
+                                    .selected_text(FORMATS[f])
+                                    .width(160.0)
+                                    .show_ui(ui, |ui| {
+                                        for (i, label) in FORMATS.iter().enumerate() {
+                                            ui.selectable_value(&mut f, i, *label);
+                                        }
+                                    });
                                 self.export_format = f;
                             });
                             if self.export_format == 0 || self.export_format == 1 {
@@ -498,8 +514,17 @@ impl VellumApp {
         self.palette_open = open;
     }
 
-    /// 导出对话框执行(v0.5 双引擎)。
+    /// 导出对话框执行(0.13.2 起后台线程执行)。
+    ///
+    /// GIF/MP4/WPI 路线动辄几十秒,此前在 UI 线程同步跑,整窗冻结且无
+    /// 进度;现在文档快照进工作线程,结果经 channel 每帧由 `poll_export_job`
+    /// 收割。Kiln 尚无中途取消接口,"取消"= 关对话框后台继续(线程跑完
+    /// 自然回收,状态栏有耗时)。
     fn run_export_dialog(&mut self) {
+        if self.export_job.is_some() {
+            self.toast_warn("已有导出任务在后台进行,完成后再试");
+            return;
+        }
         let Some(dir) = self.project_dir.clone() else {
             self.toast_warn("先保存项目(选一个目录)再导出");
             self.save_project();
@@ -510,6 +535,7 @@ impl VellumApp {
         };
         let name = self.doc.nodes.get(ab).unwrap().name.clone();
         let scale = self.export_scale;
+        let transparent = self.export_transparent;
         let fmt = self.export_format;
         let kiln_format = match fmt {
             0 => vb_kiln::Format::Png,
@@ -545,65 +571,120 @@ impl VellumApp {
                 vb_kiln::Format::Pdf | vb_kiln::Format::Gif | vb_kiln::Format::Mp4
             );
 
-        if use_wpi_fallback {
-            let Some(wpi_dir) = vb_export::wpi::resolve_wpi_dir() else {
-                self.toast_error("WPI 回退不可用:请设置 VB_WPI_DIR 指向 WPI 仓库");
-                return;
-            };
-            let wpi_fmt = match kiln_format {
-                vb_kiln::Format::Pdf => vb_export::wpi::WpiFormat::Pdf,
-                vb_kiln::Format::Gif => vb_export::wpi::WpiFormat::Gif,
-                _ => vb_export::wpi::WpiFormat::Mp4,
-            };
-            let req = vb_export::wpi::WpiExportRequest {
-                format: wpi_fmt,
-                scale: if scale >= 4 {
-                    4
-                } else if scale >= 2 {
-                    2
-                } else {
-                    1
-                },
-                width: 1920,
-                transparent: self.export_transparent,
-                out,
-                max_wait: 20.0,
-            };
-            match vb_export::wpi::export_via_wpi(&self.doc, &dir, &req, &wpi_dir) {
-                Ok(res) => {
-                    self.status = format!(
-                        "WPI 回退导出 {}({} KB)",
-                        res.out.display(),
-                        std::fs::metadata(&res.out)
-                            .map(|m| m.len() / 1024)
-                            .unwrap_or(0),
-                    );
+        let doc = self.doc.clone();
+        let out_for_job = out.clone();
+        let (tx, rx) = std::sync::mpsc::channel::<Result<String, String>>();
+        let spawn_result = std::thread::Builder::new()
+            .name("vb-export".into())
+            .spawn(move || {
+                if use_wpi_fallback {
+                    let Some(wpi_dir) = vb_export::wpi::resolve_wpi_dir() else {
+                        let _ =
+                            tx.send(Err("WPI 回退不可用:请设置 VB_WPI_DIR 指向 WPI 仓库".into()));
+                        return;
+                    };
+                    let wpi_fmt = match kiln_format {
+                        vb_kiln::Format::Pdf => vb_export::wpi::WpiFormat::Pdf,
+                        vb_kiln::Format::Gif => vb_export::wpi::WpiFormat::Gif,
+                        _ => vb_export::wpi::WpiFormat::Mp4,
+                    };
+                    let req = vb_export::wpi::WpiExportRequest {
+                        format: wpi_fmt,
+                        scale: if scale >= 4 {
+                            4
+                        } else if scale >= 2 {
+                            2
+                        } else {
+                            1
+                        },
+                        width: 1920,
+                        transparent,
+                        out: out.clone(),
+                        max_wait: 20.0,
+                    };
+                    match vb_export::wpi::export_via_wpi(&doc, &dir, &req, &wpi_dir) {
+                        Ok(res) => {
+                            let _ = tx.send(Ok(format!(
+                                "WPI 回退导出 {}({} KB)",
+                                res.out.display(),
+                                std::fs::metadata(&res.out)
+                                    .map(|m| m.len() / 1024)
+                                    .unwrap_or(0),
+                            )));
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Err(format!("WPI 回退导出失败:{e}")));
+                        }
+                    }
+                    return;
                 }
-                Err(e) => self.toast_error(format!("WPI 回退导出失败:{e}")),
+                // Kiln 默认路径(九格式统一)
+                let req = vb_kiln::ExportRequest {
+                    format: kiln_format,
+                    scale,
+                    transparent,
+                    ..Default::default()
+                };
+                match vb_kiln::export_artboard(&doc, ab, &req, Some(&dir)) {
+                    Ok((bytes, report)) => match vb_kiln::write_atomic(&out, &bytes) {
+                        Ok(()) => {
+                            let _ = tx.send(Ok(format!(
+                                "Kiln 导出 {} @{}x({})",
+                                out.display(),
+                                scale,
+                                report.summary()
+                            )));
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Err(format!("写文件失败:{e}")));
+                        }
+                    },
+                    Err(e) => {
+                        let _ = tx.send(Err(format!("Kiln 导出失败:{e}")));
+                    }
+                }
+            });
+        match spawn_result {
+            Ok(_handle) => {
+                // handle 有意 detach:完成与否由 rx 收割;线程 panic 时
+                // channel 断连,poll_export_job 会如实上报
+                self.export_job = Some(ExportJob {
+                    out: out_for_job,
+                    started: std::time::Instant::now(),
+                    rx,
+                });
+                self.status = "导出中…(后台执行,完成见状态栏)".into();
             }
-            return;
+            Err(e) => self.toast_error(format!("导出线程启动失败:{e}")),
         }
+    }
 
-        // Kiln 默认路径(九格式统一)
-        let req = vb_kiln::ExportRequest {
-            format: kiln_format,
-            scale,
-            transparent: self.export_transparent,
-            ..Default::default()
+    /// 每帧收割后台导出结果(frame.rs::ui 调用):完成 → 状态栏/toast;
+    /// 进行中 → 状态栏显示耗时。channel 断连 = 线程 panic,如实上报。
+    pub(crate) fn poll_export_job(&mut self) {
+        let Some(job) = &mut self.export_job else {
+            return;
         };
-        match vb_kiln::export_artboard(&self.doc, ab, &req, Some(&dir)) {
-            Ok((bytes, report)) => match std::fs::write(&out, &bytes) {
-                Ok(()) => {
-                    self.status = format!(
-                        "Kiln 导出 {} @{}x({})",
-                        out.display(),
-                        scale,
-                        report.summary()
-                    );
-                }
-                Err(e) => self.toast_error(format!("写文件失败:{e}")),
-            },
-            Err(e) => self.toast_error(format!("Kiln 导出失败:{e}")),
+        match job.rx.try_recv() {
+            Ok(Ok(status)) => {
+                self.status = status;
+                self.export_job = None;
+            }
+            Ok(Err(e)) => {
+                self.toast_error(e);
+                self.export_job = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                self.status = format!(
+                    "导出中:{}({:.0}s)…",
+                    job.out.display(),
+                    job.started.elapsed().as_secs_f32()
+                );
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.toast_error("导出线程异常退出(panic),见终端日志");
+                self.export_job = None;
+            }
         }
     }
 }

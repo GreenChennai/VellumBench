@@ -148,7 +148,11 @@ impl VellumApp {
                     })
                 }
                 Err(e) => {
+                    // 绝不静默:画布白屏但没有解释等于应用"坏了"。toast 一次
+                    // (failed 标记防每帧刷屏),画布区由调用方画降级占位
                     eprintln!("Vello 初始化失败(画布将无内容):{e}");
+                    self.toast_error(format!("GPU 画布初始化失败,画布区空白:{e}"));
+                    self.gpu_init_failed = true;
                     return;
                 }
             }

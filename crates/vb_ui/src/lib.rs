@@ -5,7 +5,7 @@
 //! - [`fonts`]：Inter → MiSans → 系统 CJK 五族字体 fallback 链
 //! - [`icons`]：Lucide 图标语义名映射（iconflow，pack-lucide）
 //! - [`components`]：ToolButton / NumField / ColorField / SectionHeader /
-//!   PanelTabs / LayerRow 组件 + 文本助手(S1-b:NumField scrubby+表达式、
+//!   PanelTabs 组件 + 文本助手(S1-b:NumField scrubby+表达式、
 //!   ColorField 取色器浮窗)
 //! - [`expr`]：数值框数学表达式解析器(纯函数,02-6-1)
 //! - [`dock`]：面板坞折叠规则与宽度钳制(纯函数,02-1)
@@ -30,8 +30,8 @@ pub mod toast;
 
 pub use components::{
     caption, dialog_footer, dialog_footer_btn3, icon_button, key_badge_text, label, mono, strong,
-    ColorField, ColorFieldResponse, LayerRow, LayerRowResponse, NumField, NumFieldResponse,
-    PanelTabs, SectionHeader, TabsResponse, ToolButton,
+    ColorField, ColorFieldResponse, NumField, NumFieldResponse, PanelTabs, SectionHeader,
+    TabsResponse, ToolButton,
 };
 pub use gradient::{gradient_bar, GradKind, Gradient, GradientBarResponse, Stop};
 pub use toast::{Toast, ToastHost, ToastKind};

@@ -67,7 +67,9 @@ impl Tokens {
             border_strong: Color32::from_rgb(0x54, 0x54, 0x57),
             text: Color32::from_rgb(0xFF, 0xFF, 0xFF),
             text_2: Color32::from_rgb(0xB8, 0xB8, 0xBD),
-            text_3: Color32::from_rgb(0x7A, 0x7A, 0x80),
+            // U-6(深色侧补走查,2026-10):#7A7A80 对 bg_panel #2C2C2E 只有
+            // 3.3:1,禁用/提示文字不达 AA;提亮到 #96969B(≈4.6:1)
+            text_3: Color32::from_rgb(0x96, 0x96, 0x9B),
             accent: Color32::from_rgb(0x0D, 0x99, 0xFF),
             accent_hover: Color32::from_rgb(0x3A, 0xAE, 0xFF),
             accent_dim: Color32::from_rgba_unmultiplied(0x0D, 0x99, 0xFF, 41),

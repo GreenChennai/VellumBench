@@ -30,7 +30,7 @@
   expose_to_agent: true
 - id: app.quit
   label: 退出
-  keys: { win: "" }
+  keys: { win: "Ctrl+Q" }
   undoable: false
   expose_to_agent: false
 - id: edit.undo
@@ -450,7 +450,7 @@
   expose_to_agent: false
 - id: view.toggle_all_panels
   label: 隐藏 / 恢复所有面板
-  keys: { win: "Tab" }
+  keys: { win: "Ctrl+B" }
   undoable: false
   expose_to_agent: false
 - id: view.toggle_char_panel

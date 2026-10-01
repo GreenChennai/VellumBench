@@ -609,8 +609,10 @@ pub const SHORTCUTS: &[Shortcut] = &[
         ctx: CTX_NO_TEXT,
     },
     // ── S1-b 面板显隐(design/02 §四-面板显隐 / design/03 §五) ──
-    // F7 = 图层面板(我们的面板坞里切到图层 Tab / 折叠);Tab = 隐藏/恢复所有面板。
-    // 两条键位此前均未占用(commands.yaml 无 Tab/F7 绑定),文本编辑态不触发。
+    // F7 = 图层面板(面板坞切到图层 Tab / 折叠);Ctrl+B = 隐藏/恢复所有面板
+    // (VS Code 侧栏肌肉记忆)。0.13.2 前这绑在裸 Tab 上:与 egui 内建焦点
+    // 遍历双头消费(文本框外按下既切面板又移焦点,行为不定),且自绘控件
+    // 补键盘可达性后 Tab 必须留给焦点遍历——让位。
     Shortcut {
         id: "view.toggle_layers_panel",
         key: Key::F7,
@@ -621,8 +623,17 @@ pub const SHORTCUTS: &[Shortcut] = &[
     },
     Shortcut {
         id: "view.toggle_all_panels",
-        key: Key::Tab,
-        ctrl: ModMatch::Off,
+        key: Key::B,
+        ctrl: ModMatch::On,
+        shift: ModMatch::Off,
+        alt: ModMatch::Any,
+        ctx: CTX_NO_TEXT,
+    },
+    // app.quit 此前已注册但无键位(Alt+F4 由系统兜底,Ctrl+Q 是 Windows 惯例)
+    Shortcut {
+        id: "app.quit",
+        key: Key::Q,
+        ctrl: ModMatch::On,
         shift: ModMatch::Off,
         alt: ModMatch::Any,
         ctx: CTX_NO_TEXT,

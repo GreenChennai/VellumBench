@@ -136,6 +136,8 @@ impl eframe::App for VellumApp {
         self.show_capabilities_window(ui);
         self.show_text_edit_window(ui);
         self.show_export_window(ui);
+        // 后台导出收割(0.13.2):无论对话框开没开都要轮询,跑完写状态栏/toast
+        self.poll_export_job();
         self.show_command_palette(ui);
         // 阶段 2:「新建项目 / 从模板新建」对话框(02-4-1;确认后外壳开新窗口)
         self.show_new_project_window(ui);

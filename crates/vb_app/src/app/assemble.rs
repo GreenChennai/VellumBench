@@ -177,6 +177,8 @@ impl VellumApp {
             last_move_delta: None,
             canvas_rect: None,
             gpu: None,
+            gpu_init_failed: false,
+            export_job: None,
             frame_times: std::collections::VecDeque::new(),
             // 06-3:VB_FPS_LOG=1 冒烟钩子(idle 帧率取证 / bench.ps1 -Boot 冷启动
             // 计时用;未设置时零开销,不进 UI 面)

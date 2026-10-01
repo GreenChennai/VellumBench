@@ -19,7 +19,7 @@
       "border-strong":    { "value": "#545457", "desc": "焦点环/面板边界",           "egui": "visuals.widgets.hovered.bg_stroke" },
       "text":             { "value": "#FFFFFF", "desc": "主文字",                    "egui": "visuals.override_text_color" },
       "text-2":           { "value": "#B8B8BD", "desc": "次文字/标签",               "egui": "visuals.weak_text_color" },
-      "text-3":           { "value": "#7A7A80", "desc": "占位/无/禁用",              "egui": "visuals.weak_text_alpha 派生" },
+      "text-3":           { "value": "#96969B", "desc": "占位/无/禁用(U-6 深色侧走查:#7A7A80 对 bg-panel 3.3:1 不达 AA,提亮至 ≈4.6:1)", "egui": "visuals.weak_text_alpha 派生" },
       "accent":           { "value": "#0D99FF", "desc": "选中/激活/焦点",            "egui": "visuals.selection.bg_fill" },
       "accent-hover":     { "value": "#3AAEFF", "desc": "accent 悬停",               "egui": "—" },
       "accent-dim":       { "value": "rgba(13,153,255,0.16)", "desc": "选中行底/Tab 选中底", "egui": "—" },

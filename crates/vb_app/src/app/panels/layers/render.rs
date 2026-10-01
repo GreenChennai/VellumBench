@@ -328,7 +328,12 @@ impl VellumApp {
                 .new_child(egui::UiBuilder::new().max_rect(name_rect))
                 .add(egui::TextEdit::singleline(&mut buf).desired_width(name_rect.width()));
             let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-            if edit.lost_focus() || enter {
+            // Esc = 取消改名(否则 TextEdit 因 Esc 失焦即"提交",与文本
+            // 编辑窗的 Esc-Esc 丢弃语义相反);Enter 显式提交
+            let escaped = ui.input(|i| i.key_pressed(egui::Key::Escape));
+            if escaped {
+                self.editing_layer = None;
+            } else if edit.lost_focus() || enter {
                 self.editing_layer = None;
                 let trimmed = buf.trim().to_string();
                 if !trimmed.is_empty() && trimmed != r.name {
@@ -419,11 +424,14 @@ impl VellumApp {
             });
         }
 
-        // 行交互:点击选中 / 双击改名 / 拖拽起手 / 右键菜单
+        // 行交互:点击选中 / 双击或 F2 改名(键盘可达)/ 拖拽起手 / 右键菜单
         if resp.clicked() {
             self.selection = vec![r.sid.clone()];
         }
-        if resp.double_clicked() {
+        let f2 = self.selection.len() == 1
+            && self.selection[0] == r.sid
+            && ui.input(|i| i.key_pressed(egui::Key::F2));
+        if resp.double_clicked() || f2 {
             self.editing_layer = Some(r.sid.clone());
         }
         if resp.drag_started() {

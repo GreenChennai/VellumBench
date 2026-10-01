@@ -317,6 +317,10 @@ pub struct VellumApp {
     pub(crate) canvas_rect: Option<Rect>,
     /// pub(crate):03-3 canvas_shot 读回画布 GPU 纹理用
     pub(crate) gpu: Option<GpuCanvas>,
+    /// Vello 初始化失败标记(toast 一次,防每帧刷屏;画布区画降级占位)
+    pub(crate) gpu_init_failed: bool,
+    /// 后台导出任务(0.13.2:导出/打印不再冻结 UI 线程,详见 dialogs.rs)
+    pub(crate) export_job: Option<crate::app::dialogs::ExportJob>,
     frame_times: std::collections::VecDeque<f32>,
     /// 06-3:idle 帧率实测钩子的窗口起点(VB_FPS_LOG=1 启用;None = 关)。
     fps_log_at: Option<std::time::Instant>,

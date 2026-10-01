@@ -1,6 +1,9 @@
 //! Undo/Redo 栈:合并策略 + 无限深度(设计文档 02 篇 §六:无限撤销,命令模式)。
 //!
-//! v0.1 内存栈,无溢出写盘(200MB 上限 + `.vbdoc/history/` 溢出为 v0.2 项,ADR-0018)。
+//! 内存上限:**200MB 软上限**(`MAX_UNDO_BYTES`,按 [`command_bytes`] 估算记账,
+//! 超限从栈底丢弃最旧条目 —— 大文档长会话不再无界吃内存)。ADR-0018 的
+//! 溢出**写盘**(`.vbdoc/history/`)仍是 v0.2 项;丢弃语义 = 超出部分的
+//! 历史不可再撤销,与主流设计工具一致。
 
 use std::time::{Duration, Instant};
 
@@ -10,6 +13,9 @@ use crate::Result;
 
 /// 合并窗口:同 kind + 同 target 且间隔 ≤500ms → 合并(不新增 undo 条目)。
 const MERGE_WINDOW: Duration = Duration::from_millis(500);
+
+/// undo 栈内存软上限(字节)。超过即从栈底丢弃,保证新操作永远可撤销。
+pub const MAX_UNDO_BYTES: usize = 200 * 1024 * 1024;
 
 #[derive(Default)]
 pub struct UndoStack {
@@ -60,6 +66,7 @@ impl UndoStack {
         } else {
             let cs = cmd.apply(doc)?;
             self.undo.push(cmd);
+            self.enforce_memory_cap();
             self.last_merge = key.clone().map(|(k, t)| (k, t, Instant::now()));
             cs
         };
@@ -204,6 +211,123 @@ impl UndoStack {
     pub fn session_active(&self) -> bool {
         self.session_merge
     }
+
+    /// undo 栈估算字节(历史面板/诊断展示用)。
+    pub fn bytes_estimated(&self) -> usize {
+        self.undo.iter().map(command_bytes).sum()
+    }
+
+    /// 内存上限执行:超 [`MAX_UNDO_BYTES`] 时从栈底(最旧)丢弃。
+    /// 只丢 undo 不动 redo——新操作压栈必然清 redo,redo 的存量在下次
+    /// push 前仍可重做,属活跃数据;丢弃不计通知(历史面板自然变短)。
+    fn enforce_memory_cap(&mut self) {
+        let mut total: usize = self.undo.iter().map(command_bytes).sum();
+        if total <= MAX_UNDO_BYTES {
+            return;
+        }
+        let mut drop_from = 0usize;
+        for (i, cmd) in self.undo.iter().enumerate() {
+            drop_from = i + 1; // 至少保留当前条目之后的新历史
+            total -= command_bytes(cmd);
+            if total <= MAX_UNDO_BYTES {
+                break;
+            }
+        }
+        self.undo.drain(..drop_from);
+    }
+}
+
+/// 单条命令的内存占用估算(字节)。记账口径:结构体按 `size_of` 底价,
+/// 堆载体(String/Vec/BezPath)按当前长度计 —— 不求精确,求不漏大件。
+fn command_bytes(cmd: &Command) -> usize {
+    use Command::*;
+    std::mem::size_of::<Command>()
+        + match cmd {
+            Insert {
+                parent_sid, tree, ..
+            } => parent_sid.len() + tree_bytes(tree),
+            Delete { captured, .. } => captured
+                .as_ref()
+                .map(|c| {
+                    tree_bytes(&c.tree) + c.anim_blocks.iter().map(|(_, s)| s.len()).sum::<usize>()
+                })
+                .unwrap_or(0),
+            Move { new_parent_sid, .. } => new_parent_sid.len(),
+            SetGeom { .. } | SetFlags { .. } | SetTextMode { .. } => 0,
+            SetStyle { new, old, .. } => {
+                decls_bytes(new) + old.as_ref().map(|o| decls_bytes(o)).unwrap_or(0)
+            }
+            SetAttrs { new, old, .. } => {
+                attrs_bytes(new) + old.as_ref().map(|o| attrs_bytes(o)).unwrap_or(0)
+            }
+            SetText { new, old, .. } => {
+                new.len()
+                    + old
+                        .as_ref()
+                        .map(|s| s.text.len() + s.segs.len() * 64)
+                        .unwrap_or(0)
+            }
+            SetSegs { new, old, .. } => (new.len() + old.as_ref().map(Vec::len).unwrap_or(0)) * 64,
+            Rename { new, old, .. } => new.len() + old.as_ref().map(String::len).unwrap_or(0),
+            SetTag { new, old, .. } => new.len() + old.as_ref().map(String::len).unwrap_or(0),
+            SetVector { new, old, .. } => {
+                // BezPath 元素按 32B/段保守计
+                (new.elements().len() + old.as_ref().map(|p| p.elements().len()).unwrap_or(0)) * 32
+            }
+            Group {
+                member_sids, name, ..
+            } => name.len() + member_sids.iter().map(String::len).sum::<usize>(),
+            Ungroup { captured, .. } => captured.as_ref().map(|(_, t)| tree_bytes(t)).unwrap_or(0),
+            Compound { cmds } => cmds.iter().map(command_bytes).sum(),
+            SetToken { name, new, old, .. } => {
+                name.len()
+                    + new.len()
+                    + old
+                        .as_ref()
+                        .map(|o| o.as_ref().map(|(_, s)| s.len()).unwrap_or(0))
+                        .unwrap_or(0)
+            }
+            SetNodeAnimation { .. } => 256, // 关键帧/声明快照,量级小,常数计
+            PathBoolean {
+                new_path, captured, ..
+            } => {
+                new_path.elements().len() * 32
+                    + captured
+                        .as_ref()
+                        .map(|(lhs, _, _, tree)| {
+                            lhs.as_ref().map(|p| p.elements().len() * 32).unwrap_or(0)
+                                + tree_bytes(tree)
+                        })
+                        .unwrap_or(0)
+            }
+            // 兜底:其余变体新增时默认零堆载体,审查点在 PR
+            _ => 0,
+        }
+}
+
+/// NodeTree 快照字节(递归;节点文本/attrs 按长度,树骨架按节点数 × 96B)。
+fn tree_bytes(tree: &crate::model::NodeTree) -> usize {
+    fn rec(t: &crate::model::NodeTree, acc: &mut usize) {
+        *acc += std::mem::size_of::<crate::model::NodeTree>() + 96;
+        *acc += t.node.name.len() + t.node.text().map(str::len).unwrap_or(0);
+        for c in &t.children {
+            rec(c, acc);
+        }
+    }
+    let mut acc = 0;
+    rec(tree, &mut acc);
+    acc
+}
+
+fn decls_bytes(decls: &[vb_css::Decl]) -> usize {
+    decls
+        .iter()
+        .map(|d| d.prop.len() + d.value.len() + 48)
+        .sum()
+}
+
+fn attrs_bytes(attrs: &[(String, String)]) -> usize {
+    attrs.iter().map(|(k, v)| k.len() + v.len() + 48).sum()
 }
 
 /// 用 `src` 的 new 值覆盖 `top` 的 new 值(合并时保持最初 old)。
@@ -272,5 +396,67 @@ fn replace_new(top: &mut Command, src: &Command) {
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod memory_cap_tests {
+    use super::*;
+    use crate::commands::Command;
+    use crate::model::Document;
+
+    /// 大载荷命令:SetToken 携带 n 字节的 new 值,直接应用到 tokens 表,
+    /// 不需要节点配合。
+    fn big_cmd(n: usize, tag: &str) -> Command {
+        Command::SetToken {
+            name: format!("tk-{tag}"),
+            new: "x".repeat(n),
+            old: None,
+        }
+    }
+
+    #[test]
+    fn cap_drops_oldest_keeps_recent_undoable() {
+        let mut doc = Document::new_default();
+        let mut st = UndoStack::new();
+        // 20 条 16MB ≈ 320MB > 200MB 上限 → 栈底被丢
+        for i in 0..20 {
+            let r = st.push(&mut doc, big_cmd(16 * 1024 * 1024, &i.to_string()));
+            assert!(r.is_ok(), "push {i} 失败:{r:?}");
+        }
+        assert!(
+            st.bytes_estimated() <= MAX_UNDO_BYTES,
+            "超限未回收:{}",
+            st.bytes_estimated()
+        );
+        // 近期历史仍可撤销:连续 undo 到栈空,不应有失败
+        let mut undos = 0;
+        while st.can_undo() {
+            assert!(st.undo(&mut doc).is_ok());
+            undos += 1;
+        }
+        assert!(undos > 0, "上限回收后一条都撤不了");
+        assert!(undos < 20, "上限未生效(全部 20 条都在)");
+    }
+
+    #[test]
+    fn under_cap_nothing_dropped() {
+        let mut doc = Document::new_default();
+        let mut st = UndoStack::new();
+        for i in 0..8 {
+            let _ = st.push(&mut doc, big_cmd(1024, &i.to_string()));
+        }
+        assert_eq!(st.undo_len(), 8);
+        assert!(st.bytes_estimated() < MAX_UNDO_BYTES);
+    }
+
+    #[test]
+    fn estimator_counts_heap_carriers() {
+        let cmd = big_cmd(10_000, "est");
+        assert!(
+            command_bytes(&cmd) > 10_000,
+            "估算必须计入 String 堆载体:{}",
+            command_bytes(&cmd)
+        );
     }
 }
