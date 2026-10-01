@@ -66,6 +66,21 @@ pub fn export_artboard(
     Ok((out, report))
 }
 
+/// 原子落盘:同目录 `.tmp-<名>-<pid>` 写完 → rename 覆盖。导出产物可达
+/// 数百 MB,进程被杀/断电时直写会留半截文件被下游当真;同盘 rename 原子。
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_file_name(format!(
+        ".tmp-{}-{}",
+        path.file_name().and_then(|n| n.to_str()).unwrap_or("out"),
+        std::process::id()
+    ));
+    let result = std::fs::write(&tmp, bytes).and_then(|()| std::fs::rename(&tmp, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
 /// 便捷:导出并直接落盘。
 pub fn export_artboard_to_file(
     doc: &Document,
@@ -75,7 +90,7 @@ pub fn export_artboard_to_file(
     out_path: &Path,
 ) -> KilnResult<KilnReport> {
     let (bytes, report) = export_artboard(doc, artboard, req, project_dir)?;
-    std::fs::write(out_path, &bytes).map_err(KilnError::Io)?;
+    write_atomic(out_path, &bytes).map_err(KilnError::Io)?;
     Ok(report)
 }
 

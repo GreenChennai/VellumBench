@@ -107,6 +107,17 @@ impl ExportContext {
                 req.duration_s
             )));
         }
+        // native 车道全部帧 RGBA 常驻内存(fps×duration 上限 216,000 帧,
+        // 每帧至多 1GB → 必然 OOM)。浏览器车道流式编码不受此限,只有
+        // native 走这里;总量给 20,000 帧(≈13 分钟 @25fps)封顶。
+        if matches!(req.format, Format::Gif | Format::Mp4) {
+            let total = (fps as f32 * req.duration_s).ceil() as u64;
+            if total > 20_000 {
+                return Err(KilnError::BadAnimation(format!(
+                    "总帧数 {total}(fps×duration)超 native 车道上限 20000;长片请走浏览器车道(kiln-cli export)或压缩 fps×duration"
+                )));
+            }
+        }
 
         // DrawList 编码(矢量源)
         let mut list = encode_artboard_opts(doc, artboard, req.transparent)

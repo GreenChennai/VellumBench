@@ -78,6 +78,8 @@ pub struct AnimPipeOpts {
     /// JS 驱动函数名(如 "SEEK"):页面自带确定性时间轴时的逐帧入口
     /// (`SEEK(t)` 把整片画成一帧,是确定性渲染工作流的约定接口)。
     /// None = 自动探测 window.SEEK / window.seek;显式指定优先。
+    /// MP4 无 ffmpeg 降级 GIF 流时的循环次数(CLI `--loop` 透传)。
+    pub gif_fallback_loops: u16,
     pub seek_fn: Option<String>,
 }
 
@@ -91,6 +93,7 @@ impl Default for AnimPipeOpts {
             scale: 1,
             bitrate_kbps: 8000,
             workers: 0,
+            gif_fallback_loops: 0,
             jpeg_quality: None,
             encoder: EncChoice::Auto,
             // 动画车道默认 GPU 光栅:逐帧导出没有跨机逐像素复现的诉求,
@@ -406,6 +409,7 @@ pub fn export_anim(
         duration_s,
         scale,
         bitrate_kbps,
+        gif_fallback_loops: gif_loops,
         ..AnimPipeOpts::default()
     };
     match format {
@@ -443,7 +447,7 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
 
     // 编码器解析(一次探测);ffmpeg 缺失时整体退 GIF 流(与旧行为一致)
     if !crate::frames::ffmpeg_available() {
-        let mut r = export_anim_inmemory(source, Format::Gif, 0, opts)?;
+        let mut r = export_anim_inmemory(source, Format::Gif, opts.gif_fallback_loops, opts)?;
         r.warnings.insert(0, "ffmpeg 缺失,MP4 降级 GIF 流".into());
         return Ok(r);
     }
@@ -505,8 +509,7 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
     // **首帧门控派生**:worker i+1 等 worker i 抓到首帧(页面就绪)才拉起
     // —— 冷启动彻底串行化,渲染在各自就绪后并行。盲等 600ms 挡不住
     // 弱机上的并发冷启动雪崩(下游 w4 Page.navigate 超时)。
-    let seg_results: Vec<Result<(EncChoice, Vec<String>), String>> = std::thread::scope(|scope| {
-        let per = n.div_ceil(workers);
+    let seg_results: Vec<SegResult> = std::thread::scope(|scope| {
         let mut handles = Vec::with_capacity(workers);
         // 全部 tx 克隆共用一条就绪通道;主循环顺序收 N-1 个信号
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
@@ -515,8 +518,12 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
             if wi > 0 {
                 let _ = ready_rx.recv_timeout(Duration::from_secs(30));
             }
-            let a = wi * per;
-            let b = (a + per).min(n);
+            // 均分取整:逐帧边界落在 wi*n/workers 网格上。此前 div_ceil 会让
+            // 尾段 worker 拿到 a>=n 的空区间(n=5/w=4 → per=2 → 6..5):
+            // 确定性寻址下空段喂 ffmpeg 直接 "Output file is empty" 全链失败;
+            // 墙钟下更糟——空段塞 8 个探针帧进成片(内容污染)。
+            let a = wi * n / workers;
+            let b = (wi + 1) * n / workers;
             let url = url.clone();
             let exe = exe.clone();
             let enc_cands = enc_cands.clone();
@@ -547,9 +554,13 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
 
     let mut failed = None;
     let mut encoder_used: Option<String> = None;
+    let mut browser_real: Option<String> = None;
     for (wi, r) in seg_results.iter().enumerate() {
         match r {
-            Ok((enc_used, ws)) => {
+            Ok((enc_used, ws, ver)) => {
+                if browser_real.is_none() && !ver.is_empty() {
+                    browser_real = Some(ver.clone());
+                }
                 if encoder_used.is_none() {
                     encoder_used = Some(enc_used.codec_name().to_string());
                 }
@@ -615,8 +626,9 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
         let _ = std::fs::remove_dir_all(&tmp);
         return Err(e);
     }
-    let bytes = std::fs::read(&out_path).map_err(|e| format!("读取成片失败:{e}"))?;
+    let read_result = std::fs::read(&out_path);
     let _ = std::fs::remove_dir_all(&tmp);
+    let bytes = read_result.map_err(|e| format!("读取成片失败:{e}"))?;
 
     warnings.push(format!(
         "动画流水线:{n} 帧 @ {fps}fps,总耗时 {:.1}s({:.1} 帧/s)",
@@ -630,6 +642,8 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
             .iter()
             .map(|s| vb_browser::staticsrv::asset_not_found_message(s)),
     );
+    // 报告用真实内核版本(/json/version,由 worker 0 带回);拿不到时
+    // 退回 exe 路径(0.12.x 口径——`msedge --version` 会挂起,不能子进程探测)
     let browser = vb_browser::browser::browser_version(&exe);
     let anim_coverage = crate::anim::AnimCoverage::from_keyframes(
         &crate::anim::parse_keyframes(&style_blocks_of_html(&html_path)),
@@ -638,12 +652,15 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
     Ok(AnimLaneResult {
         bytes,
         frames: n,
-        browser,
+        browser: browser_real.unwrap_or(browser),
         encoder_used,
         warnings,
         anim_coverage,
     })
 }
+
+/// 单段渲染结果:(实际用上的编码器, 段告警, 浏览器内核版本)。
+type SegResult = Result<(EncChoice, Vec<String>, String), String>;
 
 /// 渲染一个帧区间 [a, b) 到独立 mp4:独立浏览器实例 + image2pipe 直通编码。
 /// 编码失败(如 N 卡并发会话超限)沿候选表回退整段重试;确定性寻址下
@@ -665,7 +682,7 @@ fn render_segment(
     wi: usize,
     ready_tx: Option<std::sync::mpsc::Sender<()>>,
     is_edge: bool,
-) -> Result<(EncChoice, Vec<String>), String> {
+) -> Result<(EncChoice, Vec<String>, String), String> {
     let _ = srv; // 静态服务由调用方持有保活;连接经 URL,无需逐段操作
     let mut warnings = Vec::new();
     // Edge 没有 HeadlessExperimental 域(0.12.3 起 beginFrame 首败缓存;
@@ -684,20 +701,43 @@ fn render_segment(
             "确定性"
         }
     ));
-    let proc = vb_browser::browser::BrowserProcess::launch_with(
+    // 启动/attach/navigate 任一步失败也要放行门控信号:否则后继 worker
+    // 各空烧 30s(0.13.1 前快速失败的前实例会把整队串行拖 30s×N)
+    let signal_ready = || {
+        if let Some(tx) = &ready_tx {
+            let _ = tx.send(());
+        }
+    };
+    let proc = match vb_browser::browser::BrowserProcess::launch_with(
         exe,
         vb_browser::browser::LaunchOptions { gpu: opts.gpu },
-    )?;
-    let mut page = vb_browser::page::PageSession::attach(&proc)?;
-    page.set_device_metrics(vw, vh, dsf)?;
-    page.navigate(url)?;
+    ) {
+        Ok(p) => p,
+        Err(e) => {
+            signal_ready();
+            return Err(e);
+        }
+    };
+    let browser_version = proc.version();
+    let mut page = match vb_browser::page::PageSession::attach(&proc) {
+        Ok(p) => p,
+        Err(e) => {
+            signal_ready();
+            return Err(e);
+        }
+    };
+    if let Err(e) = page
+        .set_device_metrics(vw, vh, dsf)
+        .and_then(|()| page.navigate(url))
+    {
+        signal_ready();
+        return Err(e);
+    }
     page.wait_network_idle(Duration::from_secs(3));
     vb_browser::capture::wait_assets(&mut page);
     page.sleep(250); // 首帧稳定(不冻结动画、不仿真 reduced-motion)
                      // 首帧门控:本实例页面就绪,放行下一个实例拉起(彻底串行化冷启动)
-    if let Some(tx) = &ready_tx {
-        let _ = tx.send(());
-    }
+    signal_ready();
 
     // 帧驱动探测:JS 确定性时间轴(SEEK 约定)> CSS 动画寻址 > 墙钟回退
     let driver = if opts.wall_clock {
@@ -743,10 +783,15 @@ fn render_segment(
                 }
                 page.close();
                 drop(proc);
-                return Ok((enc, warnings));
+                return Ok((enc, warnings, browser_version));
             }
             Err(e) => {
                 last_err = e;
+                // 渲染器崩溃对编码器候选链是终态:同一个死页换几个编码器
+                // 都是全段超时,直接终止,错误信息里带上真因
+                if page.ensure_alive().is_err() {
+                    return Err(format!("{last_err}(页面已崩溃,编码器候选链终止)"));
+                }
                 if ci + 1 < enc_cands.len() {
                     warnings.push(format!(
                         "编码器 {} 失败,尝试 {}",
@@ -884,12 +929,13 @@ fn capture_and_encode(
         .ok_or_else(|| "无法获取 ffmpeg stdin".to_string())?;
 
     let _ = (vw, vh); // 视口截图无 clip;vw/vh 仅用于 establish metrics
-    for (k, png) in probe_buf.drain(..).enumerate() {
-        stdin
-            .write_all(&png)
-            .map_err(|e| format!("写入 ffmpeg 管道失败(探针帧 {k}):{e}"))?;
-    }
+                      // 探针帧只用于测速,不进成片:0.13.1 前它们被原样编码进段首,
+                      // workers=1 时成片多 8 帧真实播放内容、多实例时每段边界重复 8 帧。
+    drop(probe_buf);
     for i in a..b {
+        // 崩溃速断:渲染器已死时每帧截图要烧穿 beginFrame 60s + 截图
+        // 180s×2 三层超时,再被候选链用同一死页把整段重跑 N 遍,小时级假挂
+        page.ensure_alive()?;
         stats_frames += 1;
         if *driver != Driver::WallFallback {
             drive_frame(page, driver, i, fps);
@@ -986,7 +1032,9 @@ fn capture_and_encode(
 
 /// GIF / 兼容路径:内存帧序列(调色板需全帧统计;长片内存大,MP4 勿走此路)。
 #[allow(clippy::too_many_arguments)]
-fn export_anim_inmemory(
+/// GIF/静态格式内存车道:浏览器逐帧采集全帧 → 统计调色板 → 量化输出。
+/// (GIF 调色板需全帧统计,无法流式;导出入口 `export_anim` 对非 MP4 走这里。)
+pub fn export_anim_inmemory(
     source: &Path,
     format: Format,
     gif_loops: u16,

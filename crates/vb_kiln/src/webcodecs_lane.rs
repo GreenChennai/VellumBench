@@ -355,51 +355,64 @@ pub fn export_anim_webcodecs(source: &Path, opts: &AnimPipeOpts) -> Result<AnimL
     page.close();
     drop(proc);
 
-    // AVCC → Annex-B(读取上传 body:[4B BE 描述长][avcC][AVCC 块流])
-    let raw = std::fs::read(&sink).map_err(|e| format!("读取上传产物失败:{e}"))?;
-    let _ = std::fs::remove_file(&sink);
-    if raw.len() < 4 {
-        return Err("WebCodecs 上传产物过短".into());
-    }
-    let annexb = avcc_to_annexb(&raw).map_err(|e| format!("WebCodecs 码流转换失败:{e}"))?;
-    std::fs::write(&sink, &annexb).map_err(|e| format!("写 Annex-B 失败:{e}"))?;
-
-    // ffmpeg -c copy 无损封装(纯 remux;VUI 标记与截图车道同口径)
-    if !crate::frames::ffmpeg_available() {
-        return Err("WebCodecs 产物封装需要 ffmpeg(-c copy);未找到 ffmpeg".into());
-    }
+    // AVCC → Annex-B(读取上传 body:[4B BE 描述长][avcC][AVCC 块流])。
+    // 封装段整体进闭包:此前往何一步 Err 都把 sink/半截 mp4 留在 %TEMP%
+    // (sweep 兜底前它们是永久残留),现在无论成败一律清干净。
     let mp4_path = sink.with_extension("mp4");
-    let output = std::process::Command::new("ffmpeg")
-        .args([
-            "-y",
-            "-loglevel",
-            "error",
-            "-f",
-            "h264",
-            "-framerate",
-            &fps.to_string(),
-            "-i",
-            sink.to_str().unwrap_or("in.h264"),
-            "-c:v",
-            "copy",
-            "-movflags",
-            "+faststart",
-            mp4_path.to_str().unwrap_or("out.mp4"),
-        ])
-        .output()
-        .map_err(|e| format!("ffmpeg 封装启动失败:{e}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "WebCodecs 产物封装失败: {}",
-            String::from_utf8_lossy(&output.stderr)
-                .chars()
-                .take(300)
-                .collect::<String>()
-        ));
-    }
-    let bytes = std::fs::read(&mp4_path).map_err(|e| format!("读取成片失败:{e}"))?;
+    let encode_result = (|| -> Result<Vec<u8>, String> {
+        let raw = std::fs::read(&sink).map_err(|e| format!("读取上传产物失败:{e}"))?;
+        if raw.len() < 4 {
+            return Err("WebCodecs 上传产物过短".into());
+        }
+        // 上传完整性对账:页面自报 bytes 与落盘字节数应严格相等。
+        // 不等 = 中途截断(服务端已拦短传,这里是双保险),按警告放行
+        // 让 ffmpeg 给出最终裁决,数字进 warnings 方便定位。
+        if total_bytes > 0 && raw.len() != total_bytes {
+            warnings.push(format!(
+                "WebCodecs 上传对账:页面自报 {total_bytes} 字节,落盘 {} 字节(可能截断)",
+                raw.len()
+            ));
+        }
+        let annexb = avcc_to_annexb(&raw).map_err(|e| format!("WebCodecs 码流转换失败:{e}"))?;
+        std::fs::write(&sink, &annexb).map_err(|e| format!("写 Annex-B 失败:{e}"))?;
+
+        // ffmpeg -c copy 无损封装(纯 remux;VUI 标记与截图车道同口径)
+        if !crate::frames::ffmpeg_available() {
+            return Err("WebCodecs 产物封装需要 ffmpeg(-c copy);未找到 ffmpeg".into());
+        }
+        let output = std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-loglevel",
+                "error",
+                "-f",
+                "h264",
+                "-framerate",
+                &fps.to_string(),
+                "-i",
+                sink.to_str().unwrap_or("in.h264"),
+                "-c:v",
+                "copy",
+                "-movflags",
+                "+faststart",
+                mp4_path.to_str().unwrap_or("out.mp4"),
+            ])
+            .output()
+            .map_err(|e| format!("ffmpeg 封装启动失败:{e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "WebCodecs 产物封装失败: {}",
+                String::from_utf8_lossy(&output.stderr)
+                    .chars()
+                    .take(300)
+                    .collect::<String>()
+            ));
+        }
+        std::fs::read(&mp4_path).map_err(|e| format!("读取成片失败:{e}"))
+    })();
     let _ = std::fs::remove_file(&sink);
     let _ = std::fs::remove_file(&mp4_path);
+    let bytes = encode_result?;
 
     warnings.extend(
         srv.take_not_found()

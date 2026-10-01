@@ -91,8 +91,9 @@ enum Cmd {
         /// MP4 码率 kbps
         #[arg(long, default_value_t = 8000)]
         bitrate: u32,
-        /// MP4 并行分段数(0=自动 CPU/2 上限 4;1=串行)。确定性寻址下
-        /// 各段独立渲染后 concat 拼接,结果与串行一致
+        /// MP4 并行分段数(0=默认 1;1=串行;2..16=显式并发)。确定性寻址下
+        /// 各段独立渲染后 concat 拼接,结果与串行一致。注意:两轮下游实测
+        /// 多实例都是负收益,默认 1 是唯一安全档
         #[arg(long, default_value_t = 0)]
         workers: u32,
         /// GPU 光栅化(动画车道 0.12.2 起默认开;VB_GPU=1 等价)。
@@ -418,7 +419,7 @@ fn run_export(
                 if let Some(parent) = output.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
-                if let Err(e) = std::fs::write(&output, &out.bytes) {
+                if let Err(e) = vb_kiln::write_atomic(&output, &out.bytes) {
                     eprintln!(
                         "{{\"ok\":false,\"error\":\"写文件失败:{}\"}}",
                         jesc(&e.to_string())
@@ -512,6 +513,7 @@ fn run_export(
                 .unwrap_or(vb_kiln::animlane::EncChoice::Auto),
             wall_clock: wall,
             seek_fn: seek_norm.clone(),
+            gif_fallback_loops: r#loop,
         };
         // WebCodecs 车道(0.13):canvas+SEEK 页全 GPU —— 页内硬编 +
         // AnnexB 上传 + ffmpeg -c copy 封装。auto 探针/编码失败自动回退
@@ -527,7 +529,7 @@ fn run_export(
                     if let Some(parent) = output.parent() {
                         let _ = std::fs::create_dir_all(parent);
                     }
-                    if let Err(e) = std::fs::write(&output, &out.bytes) {
+                    if let Err(e) = vb_kiln::write_atomic(&output, &out.bytes) {
                         eprintln!(
                             "{{\"ok\":false,\"error\":\"写文件失败:{}\"}}",
                             jesc(&e.to_string())
@@ -569,7 +571,19 @@ fn run_export(
                 }
             }
         }
-        let anim = vb_kiln::animlane::export_anim_pipe(&source, &anim_opts);
+        // GIF 必须走内存车道(全帧统计调色板):export_anim_pipe 永远产
+        // H.264 MP4 字节,0.13.1 前浏览器车道 GIF 会把 MP4 流写进 .gif 文件
+        // (且输出格式随 ffmpeg 是否在场漂移)。
+        let anim = if matches!(fmt, vb_kiln::writer::Format::Gif) {
+            vb_kiln::animlane::export_anim_inmemory(
+                &source,
+                vb_kiln::writer::Format::Gif,
+                r#loop,
+                &anim_opts,
+            )
+        } else {
+            vb_kiln::animlane::export_anim_pipe(&source, &anim_opts)
+        };
         match anim {
             Ok(out) => {
                 for w in &out.warnings {
@@ -578,7 +592,7 @@ fn run_export(
                 if let Some(parent) = output.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
-                if let Err(e) = std::fs::write(&output, &out.bytes) {
+                if let Err(e) = vb_kiln::write_atomic(&output, &out.bytes) {
                     eprintln!(
                         "{{\"ok\":false,\"error\":\"写文件失败:{}\"}}",
                         jesc(&e.to_string())
@@ -656,7 +670,7 @@ fn run_export(
                 if let Some(parent) = output.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
-                if let Err(e) = std::fs::write(&output, &outcome.bytes) {
+                if let Err(e) = vb_kiln::write_atomic(&output, &outcome.bytes) {
                     eprintln!(
                         "{{\"ok\":false,\"error\":\"写文件失败:{}\"}}",
                         jesc(&e.to_string())
@@ -783,7 +797,7 @@ fn run_export(
     if let Some(parent) = output.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    if let Err(e) = std::fs::write(&output, &bytes) {
+    if let Err(e) = vb_kiln::write_atomic(&output, &bytes) {
         eprintln!(
             "{{\"ok\":false,\"error\":\"写文件失败:{}\"}}",
             jesc(&e.to_string())

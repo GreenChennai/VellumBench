@@ -60,8 +60,15 @@ pub fn crop(
     let cropped = if let Some((l, t, r, b)) = box_spec {
         let l = l.min(iw);
         let t = t.min(ih);
-        let r = r.clamp(l + 1, iw);
-        let b = b.clamp(t + 1, ih);
+        // 边界值防 panic:l==iw 时 clamp(min>max) 直接 assert(此前
+        // `--box iw,t,iw,b` exit 101,违反 CLI 不 panic 约定)
+        if l >= iw || t >= ih {
+            return Err(format!(
+                "裁剪框越界:左/上边界({l},{t})不小于图像尺寸({iw}x{ih})"
+            ));
+        }
+        let r = r.max(l + 1).min(iw);
+        let b = b.max(t + 1).min(ih);
         image::imageops::crop_imm(&img, l, t, r - l, b - l).to_image()
     } else if let Some(bg) = trim_color {
         trim_uniform_border(&img, bg)
@@ -181,8 +188,14 @@ pub fn blur(
         let (iw, ih) = img.dimensions();
         let l = l.min(iw);
         let t = t.min(ih);
-        let r = r.clamp(l + 1, iw);
-        let b = b.clamp(t + 1, ih);
+        // 与 crop 同源:越界 box 防 clamp assert panic
+        if l >= iw || t >= ih {
+            return Err(format!(
+                "模糊框越界:左/上边界({l},{t})不小于图像尺寸({iw}x{ih})"
+            ));
+        }
+        let r = r.max(l + 1).min(iw);
+        let b = b.max(t + 1).min(ih);
         let mut combined = img.clone();
         for y in t..b {
             for x in l..r {
