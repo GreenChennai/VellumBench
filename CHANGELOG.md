@@ -1,5 +1,71 @@
 # Changelog
 
+## 0.14.0(2026-10-02)
+
+主题:一轮全仓 review 收口(3 高危 + 8 中危 + 4 轻微)与 UI 可用性批次。
+配套:新增 `docs/windows-guide.md`(从零到能用)与 `tools/test.ps1` /
+`tools/test-clean.ps1`(target/debug 每测试一次清一次,治磁盘膨胀)。
+
+### Fixed(Kiln 动画车道)
+
+- **GIF 走浏览器车道产出 MP4 字节**(高危):`kiln-cli export --format gif`
+  此前与 MP4 共用流式管道,`.gif` 文件里写的是 H.264,且输出格式随本机
+  ffmpeg 是否在场漂移;现在 GIF 一律走内存车道(全帧调色板),`--loop`
+  在所有 GIF 路径生效(含 MP4 无 ffmpeg 降级 GIF 流)。
+- **分段均分 off-by-one 产生空段**(高危):`div_ceil` 均分下尾段 worker
+  可拿到 `a>=n` 空区间——确定性寻址时空段喂 ffmpeg 全链报错,墙钟下
+  探针帧进成片(内容污染)。改为逐帧网格均分 `wi*n/w`。
+- **墙钟探针帧泄漏进成片**:8 个测速探针帧此前被原样编码进段首
+  (workers=1 成片多 8 帧、多实例每段边界重复 8 帧),现在只测速不进片。
+- 渲染器崩溃速断:帧循环每帧 `ensure_alive`,崩溃后不再按
+  beginFrame 60s + 截图 180s×2 烧穿,也不再用死页重跑编码器候选链。
+- 首帧门控失败放行:启动/attach/navigate 失败也发就绪信号,后继 worker
+  不再各空烧 30s。
+- native 车道总帧数上限 20,000(fps×duration,防 RGBA 全帧常驻 OOM);
+  报告 `browser` 字段改报真实内核版本(/json/version,原为 exe 路径)。
+
+### Fixed(Kiln/浏览器基础)
+
+- `capture_tiled` u32 下溢(高危):内容测量后收缩时 `viewport_h - rel`
+  溢出(debug panic / release 错位裁剪),现在诚实报错。
+- 临时目录清扫白名单补齐 `kiln-wc-` / `kiln-raster-` / `kiln-paintlist-`
+  (此前异常退出残留永不回收),并支持文件型残留。
+- WebCodecs 封装段整体进清理守卫:任何一步失败不再把 sink/半截 mp4
+  留在 %TEMP%;上传服务端校验字节数(短传 400),Rust 侧再对账页面自报值。
+- `httpc::dechunk` 不完整 chunk 越界 panic 修复(chunked 响应超时场景)。
+- `kill_tree` 先 `try_wait` 探活再 taskkill:防 PID 复用误杀无关进程树。
+- `img crop/blur --box` 越界不再 clamp panic(违反 CLI 不 panic 约定)。
+- 导出落盘全部原子化(`.tmp-<名>-<pid>` → rename):进程被杀不再留半截
+  MP4/PNG 被下游当真。
+
+### Changed(UI)
+
+- **导出不再冻结界面**(P0):Kiln/WPI 导出移入后台线程,状态栏显示
+  目标与耗时,完成 toast;Kiln 无中途取消接口,关对话框 = 后台继续。
+- 导出格式选择 Slider → 下拉框(九格式不再数刻度)。
+- 快捷键:`view.toggle_all_panels` 从裸 **Tab 让位给 egui 焦点遍历**,
+  改绑 **Ctrl+B**(VS Code 肌肉记忆);`app.quit` 补 **Ctrl+Q**。
+  commands.yaml 同步(门禁校验)。
+- 图层改名:Esc 取消(此前 Esc 失焦即"提交")、**F2** 进入改名(键盘可达)。
+- 深色主题辅助文字 `text_3` 提亮 `#7A7A80 → #96969B`(对 bg_panel
+  3.3:1 → ≈4.6:1,过 WCAG AA;U-6 深色侧补走查)。
+- GPU 画布初始化失败 toast 告知 + `gpu_init_failed` 标记(不再白屏静默)。
+- 删除死代码 `vb_ui::LayerRow`(vb_app 未引用且 widget id 有冲突隐患;
+  图层面板用自己的行实现)。
+
+### Added
+
+- **undo 栈 200MB 内存上限**(ADR-0018 v0.1 缺口:注释声称有上限但无实现):
+  按 `command_bytes` 估算记账,超限从栈底丢弃,近期历史永远可撤销;
+  附 3 个单元测试。溢出写盘仍是 v0.2。
+- `vb_kiln::write_atomic`(导出产物原子落盘助手,pub)。
+- `tools/test.ps1`:测试 + 自动清理一步到位(测试无论成败都清);
+  `tools/test-clean.ps1`:仅清理(旧哈希测试 exe/pdb / incremental /
+  超 24h 的 kiln-* TEMP 残留;>8GB 提示 `-Full` 整清)。
+- `docs/windows-guide.md`:环境要求、构建、Kiln 导出实战、磁盘/内存
+  自救手册(target/debug 膨胀机理、rustc 0xc0000409 = 提交内存耗尽)、
+  硬件限制与故障速查。
+
 ## 0.13.1(2026-10-01)
 
 下游第三轮实测三连报修复。

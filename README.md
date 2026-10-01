@@ -113,6 +113,13 @@ pwsh tools/ci.ps1          # 全量档:轻量档再加 画布↔导出像素对�
                            #   ;-UiShots 附带 UI 截图基线比对(报告模式)
 ```
 
+日常开发跑测试用 `tools/test.ps1`(测试 + 自动清理 target/debug 旧哈希
+测试二进制与 incremental 缓存,**每测试一次清一次**,防磁盘塞爆;
+`tools/test-clean.ps1` 单独清理)。
+
+> Windows 从零部署 / 导出实战 / 磁盘与内存排障(rustc 0xc0000409、
+> target/debug 膨胀、C 盘满截断工件)见 **[docs/windows-guide.md](docs/windows-guide.md)**。
+
 ---
 
 ## 能力清单(以代码为唯一真相)
