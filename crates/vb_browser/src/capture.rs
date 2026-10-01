@@ -386,11 +386,15 @@ fn capture_tiled(
         page.wait_two_raf();
         let actual = page.scroll_y();
         let rel = y.saturating_sub(actual);
-        let take = (viewport_h - rel).min(total - y);
-        if take == 0 {
-            y += viewport_h;
-            continue;
+        // 滚动没到位(懒加载塌陷/图片加载失败/scroll_to evaluate 静默失败)
+        // 会让 rel 无界增长:此前 `viewport_h - rel` u32 下溢,debug panic、
+        // release 钳成超视口 clip 截错区域。诚实报错优于错位产物。
+        if rel >= viewport_h {
+            return Err(format!(
+                "分块截图滚动异常:请求 y={y} 实际 scroll_y={actual}(内容高度可能在测量后收缩)"
+            ));
         }
+        let take = (viewport_h - rel).min(total - y);
         if first {
             page.toggle_fixed_topbar(false);
             first = false;

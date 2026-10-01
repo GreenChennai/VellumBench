@@ -214,10 +214,20 @@ fn handle(
                 stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n");
             return;
         };
-        // 请求头已在函数顶部消费(content_length 已就位),此处直接读体
+        // 请求头已在函数顶部消费(content_length 已就位),此处直接读体。
+        // 拷贝字节数必须与声明相等:客户端少发/连接中断时 copy 返回短计数,
+        // 此前照样 200,截断的 h264 流要拖到 ffmpeg remux 才以费解的
+        // stderr 暴露。
         let resp = (|| -> std::io::Result<()> {
             let mut out = std::fs::File::create(&sink_path)?;
-            std::io::copy(&mut reader.by_ref().take(content_length), &mut out).map(|_| ())
+            let copied = std::io::copy(&mut reader.by_ref().take(content_length), &mut out)?;
+            if copied != content_length {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    format!("上传不完整:{copied}/{content_length}"),
+                ));
+            }
+            Ok(())
         })();
         let ok = resp.is_ok();
         let body = match resp {

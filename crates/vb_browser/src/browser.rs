@@ -261,14 +261,23 @@ fn sweep_stale_temp_dirs() {
             return;
         };
         let cutoff = std::time::SystemTime::now() - Duration::from_secs(6 * 3600);
+        // 前缀清单 = 全部 kiln 临时产物的落盘命名:browser/anim/mp4/gif 是
+        // 各车道的工作目录;wc = WebCodecs 上传 sink;raster = dompaint
+        // data:URI 落盘降级;paintlist = domexport 调试 dump(文件非目录)。
+        // 新增落盘路径时必须同步这里,否则异常退出残留永不回收。
+        const PREFIXES: [&str; 7] = [
+            "kiln-browser-",
+            "kiln-anim-",
+            "kiln-mp4-",
+            "kiln-gif-",
+            "kiln-wc-",
+            "kiln-raster-",
+            "kiln-paintlist-",
+        ];
         for entry in entries.flatten() {
             let name = entry.file_name();
             let Some(name) = name.to_str() else { continue };
-            if !(name.starts_with("kiln-browser-")
-                || name.starts_with("kiln-anim-")
-                || name.starts_with("kiln-mp4-")
-                || name.starts_with("kiln-gif-"))
-            {
+            if !PREFIXES.iter().any(|p| name.starts_with(p)) {
                 continue;
             }
             let fresh = entry
@@ -277,7 +286,12 @@ fn sweep_stale_temp_dirs() {
                 .map(|t| t > cutoff)
                 .unwrap_or(true); // 拿不到时间 = 当它是新的,宁留勿删
             if !fresh {
-                let _ = std::fs::remove_dir_all(entry.path());
+                let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                if is_dir {
+                    let _ = std::fs::remove_dir_all(entry.path());
+                } else {
+                    let _ = std::fs::remove_file(entry.path());
+                }
             }
         }
     });
@@ -461,12 +475,17 @@ impl BrowserProcess {
     fn kill_tree(&mut self) {
         #[cfg(windows)]
         {
-            let pid = self.child.id();
-            let _ = Command::new("taskkill")
-                .args(["/PID", &pid.to_string(), "/T", "/F"])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
+            // 已自行退出的浏览器不再 taskkill:child.id() 返回的 PID 可能
+            // 已被 OS 复用给无关进程,/T /F 会强杀别人的进程树
+            let already_exited = matches!(self.child.try_wait(), Ok(Some(_)));
+            if !already_exited {
+                let pid = self.child.id();
+                let _ = Command::new("taskkill")
+                    .args(["/PID", &pid.to_string(), "/T", "/F"])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
         }
         let _ = self.child.kill();
         let _ = self.child.wait();

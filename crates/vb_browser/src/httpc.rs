@@ -120,7 +120,12 @@ fn dechunk(data: &[u8]) -> Vec<u8> {
         let start = line_end + 2;
         let end = (start + size).min(data.len());
         out.extend_from_slice(&data[start..end]);
+        // 不完整 chunk(超时 best-effort)会让 end 钳到末尾,end+2 直接越界,
+        // 下一轮 data[pos..] 切片 panic——解到哪算哪,到此为止
         pos = end + 2;
+        if pos >= data.len() {
+            break;
+        }
     }
     out
 }
