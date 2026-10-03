@@ -39,7 +39,7 @@ v0.14.0:733 测试全绿;双车道导出(Kiln)九格式;204 条命令单源;深�
 
 ### Q3 · GPUI 成熟度风险怎么兜底?
 
-三层兜底:①**双宿主并行**——旧宿主冻结在 zh、只修 P0,任何一轮不绿都随时 `--host=egui` 回退;②**版本锁定**——gpui-component 锁 0.5.1(0.6+ 迁 gpui-pre 0.3,类型世界不兼容),升级走 sable TD-01 的"升级窗口",不在本工程内追新;③**R0 画布上屏 spike 前置**——vello Scene→GPUI 窗口的上屏通道是最大技术未知数,R0 就做三条路线对比 spike 并落 ADR-0046,不允许带着未知数进 R1。
+三层兜底:①**双宿主并行**——旧宿主冻结在 zh、只修 P0,任何一轮不绿都随时 `--host=egui` 回退;②**版本锁定**——gpui-component 锁 0.5.1(0.6+ 迁 gpui-pre 0.3,类型世界不兼容),升级走 sable TD-01 的"升级窗口",不在本工程内追新;③**R0 画布上屏 spike 前置**——vello Scene→GPUI 窗口的上屏通道是最大技术未知数,R0 就做三条路线对比 spike 并落 ADR-0047,不允许带着未知数进 R1。
 
 ### Q4 · ACL-1.0 红线怎么守?
 
@@ -222,10 +222,10 @@ Partial(6):09-H 符号/组件、09-K CRDT/协同/Web、07-L 图层富交互、X-
 **交付**
 1. `vb_shell`:GPUI Application 入口、单项目窗口、标题/图标/深色标题栏;启动器窗口(先只读 MRU 列表,复用启动器纯逻辑)。
 2. `vb_kit` 骨架:SableTheme 注入(vb 调色板)+ tokens_sync2 门禁;h_flex/v_flex 布局件;一个示范面板(能力台账,79 行逻辑最薄)走通"面板=纯投影"模式。
-3. **⟳ 画布上屏通道 spike(ADR-0046)**:三条路实测——(a) 现有 vb_render wgpu 管线离屏渲染→纹理上传 GPUI;(b) vb_render DrawList→sable-paint PaintSink→sable gpui_element 直绘;(c) GPUI 原生 paint path 翻译层。判据:1080p 下 1 万节点 60fps、缩放无糊、内存峰值。**R0 结束必须裁定,不许带着未知数进 R1。**
+3. **⟳ 画布上屏通道 spike(ADR-0047,已落)**:三条路实测——(a) 现有 vb_render wgpu 管线离屏渲染→纹理上传 GPUI;(b) vb_render DrawList→sable-paint PaintSink→sable gpui_element 直绘;(c) GPUI 原生 paint path 翻译层。判据:1080p 下 1 万节点 60fps、缩放无糊、内存峰值。**R0 结束必须裁定,不许带着未知数进 R1。**
 4. `vb_session` 提取第一批:选中态、工具状态机、命令分发适配(run_command 原样搬家)。
 5. **硬骨头 #6 导出真取消(Kiln 侧)**:导出任务句柄化 + 协作式取消(分段边界检查 `cancel_flag`,浏览器车道每帧后检查,native 车道每分段后检查;`kiln-cli` 同步获得 `--cancel-token` 语义=stdin 'c' 或信号)。**UI 无关,先落核心。**
-6. **硬骨头 #18 跨实例串行点终判**:kiln 报告新增逐实例帧间隔直方图(不改 warnings 兼容字段),用数据终判 GPU 读回串行 vs CPU 饱和;结论写进 ADR-0047 备忘。
+6. **硬骨头 #18 跨实例串行点终判**:kiln 报告新增逐实例帧间隔直方图(不改 warnings 兼容字段),用数据终判 GPU 读回串行 vs CPU 饱和;结论写进 ADR-0049 备忘。
 7. i18n 地基:Fluent 目录结构定稿(`i18n/zh.ftl`/`en.ftl` + `vb_session::i18n::t()`),命令标签 204 条全部入 catalog;新宿主从第一行代码起禁裸文案(G-UI3)。
 
 **门禁**:既有全套对 vb_shell/vb_kit 生效;G-UI1/3/7 首次运行;spike 结论入 ADR。
@@ -375,7 +375,7 @@ Partial(6):09-H 符号/组件、09-K CRDT/协同/Web、07-L 图层富交互、X-
 | 20 | 符号跨文档复用 | 09-H Partial | R6 | .vb-symbol 导入导出 + 重链 |
 | 21 | 07-L 两条缺命令菜单项 | 台账 Partial | R6 | 命令登记 + 可逆性门禁过 |
 | 22 | X-5 曲率/铅笔/形状生成器 | 台账 Partial(生成器未做) | R1(铺路)+R6 | 三工具可用,可编辑边界诚实标注 |
-| 23 | 控件高度体系裁决 | 两上游冲突悬案 | R0 | ADR-0048 落案(§3.4 裁决一),门禁测试 |
+| 23 | 控件高度体系裁决 | 两上游冲突悬案 | R0 | ADR-0050 落案(§3.4 裁决一),门禁测试 |
 | 24 | 图标系统迁移 | iconflow 字体(egui 生态) | R2 | Lucide SVG + all_icons_resolve 式门禁 |
 
 ---
@@ -480,11 +480,11 @@ Partial(6):09-H 符号/组件、09-K CRDT/协同/Web、07-L 图层富交互、X-
 - **SAB-1 GPUI 宿主**(Partial → R7 Done):判据 = G-SWITCH。
 - **SAB-2 命令面板**(Partial → R3 Done);**SAB-3 上下文工具条**(R3);**SAB-4 token 原位绑定**(R2);**SAB-5 混合选中态**(R2);**SAB-6 吸附气泡+Alt 旁路**(R3);**SAB-7 渲染队列+真取消**(R5);**SAB-8 缓动库+命名动画组件**(R4);**SAB-9 Agent 幽灵 diff**(R6);**SAB-10 MCP 状态 UI**(R6);**SAB-11 协同入口**(R6,09-K 收口);**SAB-12 音频导出/GIF 流式**(R5)。
 - 收口既有 Partial:X-2(R1)、07-L(R6)、X-5(R6)、09-H(R6)。
-- 新增 Dropped:**DROP-3 节点图文档模型 / 状态机动效 / 内置生成式 AI / 实时协作光标**(理由见 §2.3,Dropped≤2 门禁需同步修订为按类别计数或并入 DROP-1/2 语义——实现时裁决,裁决记录进 ADR-0045)。
+- 新增 Dropped:**DROP-3 节点图文档模型 / 状态机动效 / 内置生成式 AI / 实时协作光标**(理由见 §2.3,Dropped≤2 门禁需同步修订为按类别计数或并入 DROP-1/2 语义——实现时裁决,裁决记录进 ADR-0048)。
 
 ## 11 · 本篇产出的 ADR 清单(实现时落 docs/adr/)
 
-ADR-0045 换宿主裁定(推翻 14 篇 Q5 的前提变化 + 双宿主策略 + DROP 修订);ADR-0046 画布上屏通道(R0 spike 结论);ADR-0047 Kiln 取消语义与逐实例直方图;ADR-0048 控件高度与浮动面板两项裁决;ADR-0049 i18n 策略(Fluent、回退链、门禁)。
+ADR-0048 换宿主裁定(推翻 14 篇 Q5 的前提变化 + 双宿主策略 + DROP 修订);ADR-0047 画布上屏通道(**已落**,GPUI 原生翻译层主线 + vello_cpu 兜底,四通道实测数据在案);ADR-0049 Kiln 取消语义与逐实例直方图;ADR-0050 控件高度与浮动面板两项裁决;ADR-0051 i18n 策略(Fluent、回退链、门禁)。
 
 ## 12 · 调研来源
 
