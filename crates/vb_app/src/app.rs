@@ -103,6 +103,8 @@ use egui::{Margin, Rect};
 use vb_doc::commands::Command;
 use vb_doc::model::Document;
 use vb_doc::undo::UndoStack;
+// 选中态类型转正(R0 会话态批次):字段类型在 vb_session,此处引进
+use vb_session::selection::SelectionState;
 use vb_tools::Camera;
 
 // 06-1 拆分后的私有转发:自由函数在 `external`,本文件与兄弟子模块
@@ -110,69 +112,22 @@ use vb_tools::Camera;
 use canvas_input::{Drag, PenPt};
 use external::re_sid_tree;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Tool {
-    Select,
-    DirectSelect,
-    Rect,
-    Ellipse,
-    /// 直线段:创建细长 Box(HTML 中即一个 2px 高的色条,02 篇 \)
-    Line,
-    /// 钢笔:逐点落锚点,直线段连接;点击起点或 Enter 闭合/结束
-    Pen,
-    Hand,
-    /// 缩放工具:单击放大 / Alt+单击缩小 / 拖框缩放到区域
-    Zoom,
-    /// 文字工具:单击点文本 / 拖框区域文本(06 篇 §5.2)
-    Text,
-    /// 吸管:点击取色应用到选区;Alt 取全部样式(06 篇 §5.4)
-    Eyedropper,
-    /// 画板工具:拖框新建画板(06 篇 §3.1)
-    Artboard,
-    /// 渐变工具:拖动设定线性渐变方向(06 篇 §5.5)
-    Gradient,
-    /// 剪刀:在矢量锚点处剪开(闭路开口/开路分段;06 篇 §5.3)
-    Scissors,
-    /// 编组选择:单击选中命中对象所在的整个编组(06 篇 P0)
-    GroupSelect,
-    // ── 阶段 5(05-2):X-4 变换工具族(06 篇 §3.10:单击设中心 → 拖拽变换)──
-    /// 旋转 R:单击设中心,拖动旋转;Shift 约束 15°
-    Rotate,
-    /// 镜像 O:单击设中心,拖动决定镜像轴
-    Mirror,
-    /// 缩放 S:单击设中心,拖动缩放;Shift 等比;Alt 从对象中心
-    Scale,
-    /// 自由变换 E:拖选区四角之一,对角锚定缩放(透视变形不做,网页无对应)
-    FreeTransform,
-    // ── 阶段 5(05-2):X-5 曲线工具 ──
-    /// 铅笔 N:自由绘制 → 按保真度容差抽稀为矢量路径(06 篇 §3.7)
-    Pencil,
-    /// 曲率:点击矢量路径段自动拟合平滑控制点(06 篇 §3.5)
-    Curvature,
-    // ── 阶段 5(05-2):09-C 切片 / 09-E 度量 ──
-    /// 切片 Shift+K:拖框建立 data-vb-slice 切片(06 篇 §3.14)
-    Slice,
-    /// 度量:拖动量两点击点间距离 / 单击标注对象尺寸(06 篇 §六)
-    Measure,
-}
-
-impl Tool {
-    /// X-4 变换工具族判定(单击设中心 → 拖拽变换的共享入口)。
-    pub fn is_transform_family(self) -> bool {
-        matches!(
-            self,
-            Tool::Rotate | Tool::Mirror | Tool::Scale | Tool::FreeTransform
-        )
-    }
-}
+// 工具枚举**转正**(R0 会话态批次,22 篇 §4 R0):`Tool` 即
+// `vb_session::tools::ToolId` —— 会话层的工具标识成为旧宿主的实际工具
+// 类型(镜像期结束)。变体名/`is_transform_family` 语义与原地定义逐项一致,
+// 全部 `Tool::…` 比较与穷尽 match 零改动;doc 注释随类型迁至 vb_session。
+pub use vb_session::tools::ToolId as Tool;
 
 pub struct VellumApp {
     pub doc: Document,
     pub undo: UndoStack,
     pub camera: Camera,
     pub tool: Tool,
-    /// 稳定 sid(跨 Undo 存活)
-    pub selection: Vec<String>,
+    /// 稳定 sid(跨 Undo 存活)。类型**转正**为会话层 [`vb_session::selection::SelectionState`]
+    /// (R0 批次;有序,点击序即语义 —— `last()`=主选中对象、`[0]`/`[1]`
+    /// 参与布尔运算主次序,与原裸 `Vec<String>` 字段行为逐项一致;
+    /// 读取经 `Deref`/`IntoIterator` 透明透出 Vec 形状)。
+    pub selection: SelectionState,
     pub project_dir: Option<PathBuf>,
     drag: Drag,
     space_down: bool,

@@ -49,7 +49,7 @@ impl VellumApp {
             index: usize::MAX,
             tree,
         });
-        self.selection = vec![sid.clone()];
+        self.selection = vec![sid.clone()].into();
         self.say(format!("已新建图层 {sid}(画板末尾;Ctrl+Z 可撤销)"));
     }
 
@@ -426,7 +426,7 @@ impl VellumApp {
 
         // 行交互:点击选中 / 双击或 F2 改名(键盘可达)/ 拖拽起手 / 右键菜单
         if resp.clicked() {
-            self.selection = vec![r.sid.clone()];
+            self.selection = vec![r.sid.clone()].into();
         }
         let f2 = self.selection.len() == 1
             && self.selection[0] == r.sid

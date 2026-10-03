@@ -102,7 +102,7 @@ impl VellumApp {
                 };
                 let ab = self.doc.artboards[next];
                 let sid = self.doc.nodes.get(ab).unwrap().sid.as_str().to_string();
-                self.selection = vec![sid];
+                self.selection = vec![sid].into();
                 self.run_command("view.zoom_to_selection", false, false);
             }
             "view.next_panel_tab" => {

@@ -25,7 +25,7 @@ impl VellumApp {
                 let (wx, wy) = self.camera.screen_to_world(pl.x as f64, pl.y as f64);
                 self.ds_vertex = self.find_vector_vertex(wx, wy, 8.0 / self.camera.zoom);
                 if let Some((sid, _)) = &self.ds_vertex {
-                    self.selection = vec![sid.clone()];
+                    self.selection = vec![sid.clone()].into();
                 }
             }
         }
@@ -145,7 +145,7 @@ impl VellumApp {
                 if shift {
                     self.selection.push(sid.clone());
                 } else {
-                    self.selection = vec![sid.clone()];
+                    self.selection = vec![sid.clone()].into();
                 }
             }
             let nid = self.doc.find_by_sid(&sid).unwrap();
@@ -184,7 +184,7 @@ impl VellumApp {
                 if shift {
                     self.selection.push(sid.clone());
                 } else {
-                    self.selection = vec![sid.clone()];
+                    self.selection = vec![sid.clone()].into();
                 }
             }
             // Alt = 复制并拖动(AI 招牌);走 Insert 命令入 undo 栈,
@@ -214,7 +214,7 @@ impl VellumApp {
                             index: usize::MAX,
                             tree,
                         });
-                        self.selection = vec![new_sid.clone()];
+                        self.selection = vec![new_sid.clone()].into();
                         new_sid
                     }
                     None => sid.clone(),
@@ -414,7 +414,7 @@ impl VellumApp {
                     }
                 }
             }
-            self.selection = sids;
+            self.selection = sids.into();
             if !self.selection.is_empty() {
                 self.status = format!("框选 {} 个对象", self.selection.len());
             }

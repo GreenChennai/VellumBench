@@ -290,7 +290,7 @@ impl VellumApp {
             "select.inverse" => {
                 let before = self.selection.len();
                 let hits = inverse_targets(&self.doc, &self.selection);
-                self.selection = hits;
+                self.selection = hits.into();
                 self.say(format!(
                     "反向选择:{before} → {} 个对象",
                     self.selection.len()
@@ -300,7 +300,7 @@ impl VellumApp {
             "select.next_object" | "select.prev_object" => {
                 match step_target(&self.doc, &self.selection, id == "select.next_object") {
                     Some((sid, i, n)) => {
-                        self.selection = vec![sid];
+                        self.selection = vec![sid].into();
                         self.say(format!("已选中 {} / {}", i + 1, n));
                     }
                     None => self.say("选择:当前画板没有可选对象"),
@@ -322,7 +322,7 @@ impl VellumApp {
                     self.toast_warn("选择相同:参照对象没有该属性");
                 } else {
                     let n = hits.len();
-                    self.selection = hits;
+                    self.selection = hits.into();
                     self.say(format!("选择相同:{n} 个对象"));
                 }
                 true
@@ -335,7 +335,7 @@ impl VellumApp {
                 };
                 let hits = all_of_targets(&self.doc, which);
                 let n = hits.len();
-                self.selection = hits;
+                self.selection = hits.into();
                 if n == 0 {
                     self.say(format!("没有{}", which.label()));
                 } else {

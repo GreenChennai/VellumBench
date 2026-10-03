@@ -571,7 +571,7 @@ mod tests {
             Some("hidden"),
             "Ctrl+7 建立剪切蒙版"
         );
-        app.selection = vec![mask_sid.clone()];
+        app.selection = vec![mask_sid.clone()].into();
         app.run_command("object.release_clip_mask", false, false);
         let mid = app.doc.find_by_sid(&mask_sid).unwrap();
         assert_eq!(

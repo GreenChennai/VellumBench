@@ -612,7 +612,7 @@ mod tests {
         let id = app.doc.nodes.insert(n);
         app.doc.nodes.get_mut(id).unwrap().parent = Some(ab);
         app.doc.nodes.get_mut(ab).unwrap().children.push(id);
-        app.selection = vec![sid.as_str().to_string()];
+        app.selection = vec![sid.as_str().to_string()].into();
         let cmd = media_style_cmd(&app.doc, sid.as_str(), 375, "display", Some("none"));
         app.exec(cmd);
         let css = vb_doc::export::render_project(&app.doc)

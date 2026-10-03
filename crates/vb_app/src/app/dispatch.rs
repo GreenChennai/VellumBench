@@ -269,7 +269,9 @@ impl VellumApp {
                 if acted {
                     self.isolate_stack
                         .retain(|id| self.doc.nodes.get(*id).is_some());
-                    self.selection = match (&top, redo) {
+                    // 撤销后的重选集合先以 Vec 归一(其中一臂要 mem::take
+                    // 旧选中),再整批写入会话层选中态
+                    let restored: Vec<String> = match (&top, redo) {
                         (Some(Command::Delete { target_sid, .. }), false) => {
                             vec![target_sid.clone()]
                         }
@@ -300,8 +302,9 @@ impl VellumApp {
                                     .collect()
                             })
                             .unwrap_or_default(),
-                        _ => std::mem::take(&mut self.selection),
+                        _ => std::mem::take(&mut self.selection).into_vec(),
                     };
+                    self.selection = restored.into();
                     self.selection.retain(|s| self.doc.find_by_sid(s).is_some());
                 }
                 self.status = match label {
@@ -323,7 +326,8 @@ impl VellumApp {
                                 .unwrap_or(false)
                         })
                         .map(|id| self.doc.nodes.get(id).unwrap().sid.as_str().to_string())
-                        .collect();
+                        .collect::<Vec<_>>()
+                        .into();
                     self.status = format!("已全选 {} 个对象", self.selection.len());
                 }
             }

@@ -239,7 +239,7 @@ impl VellumApp {
                         )
                         .clicked()
                     {
-                        self.selection = vec![n.sid.as_str().to_string()];
+                        self.selection = vec![n.sid.as_str().to_string()].into();
                         // 联动画布:选中后视图居中(既有命令路径)
                         self.run_command("view.zoom_to_selection", false, false);
                     }
