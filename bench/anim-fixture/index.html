@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Anim Fixture · #18 跨实例串行点终判基准页</title>
+<style>
+  body { margin: 0; background: #101418; overflow: hidden; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1280" height="720"></canvas>
+<script>
+// 硬骨头 #18 基准页:纯函数确定性时间轴(kiln SEEK 约定接口)。
+// SEEK(t 秒)把整片画成一帧 —— 帧内容只依赖 t,分段并行各实例渲染
+// 同一时间网格,产物与串行逐帧一致;帧间隔采样因此只反映渲染/读回/
+// 编码的节奏,不受页面动画时钟漂移干扰。
+//
+// 负载画像:240 个运动圆弧 + 20 条连线 + 动态色相/半径(2D canvas),
+// 中等光栅负载,足以让逐帧截图成本主导而非网络/脚本空转。
+const cvs = document.getElementById('c');
+const ctx = cvs.getContext('2d');
+const N = 240;
+
+function draw(t) {
+  ctx.fillStyle = '#101418';
+  ctx.fillRect(0, 0, 1280, 720);
+  for (let i = 0; i < N; i++) {
+    const ph = i * 0.618 * Math.PI * 2;
+    const x = 640 + 480 * Math.cos(ph + t * (0.2 + (i % 7) * 0.03));
+    const y = 360 + 300 * Math.sin(ph * 1.3 + t * (0.35 + (i % 5) * 0.05));
+    const r = 6 + 5 * Math.sin(t * 2 + ph);
+    ctx.fillStyle = 'hsl(' + ((i * 7 + t * 40) % 360) + ',70%,55%)';
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+    if (i % 12 === 0) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(640, 360);
+      ctx.stroke();
+    }
+  }
+  ctx.fillStyle = '#fff';
+  ctx.font = '48px sans-serif';
+  ctx.fillText(t.toFixed(2) + 's', 40, 80);
+}
+
+window.SEEK = draw; // kiln 逐帧确定性寻址约定(自动探测 window.SEEK)
+draw(0);
+</script>
+</body>
+</html>
