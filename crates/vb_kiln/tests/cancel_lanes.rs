@@ -224,3 +224,120 @@ fn cancel_propagates_to_worker_children() {
     }
     assert_eq!(stops.load(std::sync::atomic::Ordering::Relaxed), 4);
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// 静态快照车道收口(硬骨头 #3,R0):单页 PNG/JPG/PDF/AI 截图导出接令牌。
+// 确定性部分:预取消必须在静态服务/浏览器拉起前收口;浏览器 CDP 长等待的
+// ≤100ms 分片轮询在 vb_browser::cancel 单测与真浏览器手动实测覆盖。
+
+/// 预取消令牌 × DOM 快照车道(单页 AI/PDF):入口边界即命中,不拉起
+/// 静态服务与浏览器,错误可三态区分。
+#[test]
+fn precancelled_dom_lane_stops_at_entry_boundary() {
+    let token = CancelToken::new();
+    token.cancel();
+    let src = std::path::Path::new("no-such.html");
+    let err = vb_kiln::domexport::export_dom_with_cancel(
+        src,
+        Format::Ai,
+        false,
+        0,
+        1,
+        0,
+        Some(token.child()),
+    )
+    .err()
+    .expect("预取消必须 Err");
+    assert!(is_lane_cancelled(&err), "取消必须带标记串:{err}");
+    assert!(err.contains("入口"), "检查点标注应保留:{err}");
+    // 同一入口,令牌未取消:同错误应是普通失败(找不到源),不得误标取消
+    let err = vb_kiln::domexport::export_dom_with_cancel(
+        src,
+        Format::Ai,
+        false,
+        0,
+        1,
+        0,
+        Some(CancelToken::new()),
+    )
+    .err()
+    .expect("缺源文件必须 Err");
+    assert!(!is_lane_cancelled(&err), "普通失败不得误标取消:{err}");
+}
+
+/// 预取消令牌 × 多页 DOM 车道:同样在入口收口。
+#[test]
+fn precancelled_dom_pages_lane_stops_at_entry_boundary() {
+    let token = CancelToken::new();
+    token.cancel();
+    let sources = vec![std::path::PathBuf::from("no-such-a.html")];
+    let err = vb_kiln::domexport::export_dom_pages_with_cancel(
+        &sources,
+        false,
+        0,
+        1,
+        0,
+        Some(token.child()),
+    )
+    .err()
+    .expect("预取消必须 Err");
+    assert!(is_lane_cancelled(&err), "{err}");
+}
+
+/// 浏览器截图车道(单页 PNG/PDF/AI)预取消:探针在车道起跑边界命中,
+/// 不发现/不拉起浏览器;取消错误串与 vb_kiln 三态判定兼容(编译期
+/// 同源常量,此处对 vb_browser 侧构造函数再验一遍)。
+#[test]
+fn precancelled_static_browser_lane_stops_before_launch() {
+    let token = CancelToken::new();
+    token.cancel();
+    let probe: vb_browser::CancelProbe = {
+        let t = token.clone();
+        std::sync::Arc::new(move || t.is_cancelled())
+    };
+    let req = vb_browser::LaneRequest {
+        format: vb_browser::LaneFormat::Png,
+        width: 64,
+        height: 64,
+        scale: 1,
+        transparent: false,
+        artboard: false,
+        artboard_index: 0,
+    };
+    let err =
+        vb_browser::export_source_cancellable(std::path::Path::new("no-such.html"), &req, probe)
+            .err()
+            .expect("预取消必须 Err");
+    assert!(vb_browser::is_wait_cancelled(&err), "{err}");
+    assert!(
+        is_lane_cancelled(&err),
+        "vb_kiln 判定必须兼容 vb_browser 取消串:{err}"
+    );
+    // 探针未命中时:同一入口报的是普通失败(找不到源/无浏览器),非取消
+    let probe: vb_browser::CancelProbe = {
+        let t = CancelToken::new();
+        std::sync::Arc::new(move || t.is_cancelled())
+    };
+    let err =
+        vb_browser::export_source_cancellable(std::path::Path::new("no-such.html"), &req, probe)
+            .err()
+            .expect("缺源文件(或缺浏览器)必须 Err");
+    assert!(
+        !vb_browser::is_wait_cancelled(&err),
+        "普通失败不得误标取消:{err}"
+    );
+}
+
+/// 取消令牌 → 探针的传播语义(kiln-cli 同一 stdin 通道的机制基础):
+/// CLI 监听线程持有的 child 句柄 cancel() 后,车道探针立即可见。
+#[test]
+fn cli_child_token_drives_lane_probe() {
+    let parent = CancelToken::new();
+    let cli_listener = parent.child(); // spawn_cancel_listener 持有的句柄
+    let probe_token = parent.child(); // 车道探针闭包捕获的句柄
+    let probe: vb_browser::CancelProbe = std::sync::Arc::new(move || probe_token.is_cancelled());
+    assert!(!probe());
+    cli_listener.cancel(); // stdin 'c' 触发点
+    assert!(probe(), "stdin 通道取消必须立即传播到车道探针");
+    assert!(parent.is_cancelled());
+}

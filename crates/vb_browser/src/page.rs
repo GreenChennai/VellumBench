@@ -164,6 +164,9 @@ pub struct PageSession {
     last_net_activity: Instant,
     net_event_count: u64,
     pub crashed: bool,
+    /// 取消探针(硬骨头 #3 静态快照车道收口;None = 不可取消,行为与
+    /// 旧版完全一致)。设置后所有 CDP 长等待走 ≤100ms 泵片轮询。
+    cancel_probe: Option<crate::cancel::CancelProbe>,
 }
 
 impl PageSession {
@@ -182,6 +185,7 @@ impl PageSession {
             last_net_activity: Instant::now(),
             net_event_count: 0,
             crashed: false,
+            cancel_probe: None,
         };
         // 多实例并发冷启动时系统负载高,enable 类调用显著变慢(下游实测
         // 4 实例并发时 5s 超时直接 attach 失败):放宽到 30s 并带一次重试。
@@ -195,6 +199,40 @@ impl PageSession {
             }
         }
         Ok(page)
+    }
+
+    /// 注入取消探针(硬骨头 #3):此后所有 CDP 长等待按 ≤100ms 泵片轮询,
+    /// 片间查令牌;load 等待循环同样检查。取消以「导出已取消(…)」错误串
+    /// 返回,与真失败三态可判(见 `crate::cancel`)。
+    pub fn set_cancel_probe(&mut self, probe: crate::cancel::CancelProbe) {
+        self.cancel_probe = Some(probe);
+    }
+
+    /// 统一 CDP 调用入口:设过探针走分片可取消等待,否则原样直呼。
+    /// 借助字段级借用(取消探针 ≠ cdp)免整self冲突。
+    fn cdp_call(
+        &mut self,
+        method: &str,
+        params: serde_json::Value,
+        timeout: Duration,
+    ) -> Result<serde_json::Value, String> {
+        match &self.cancel_probe {
+            Some(probe) => {
+                let p = probe.as_ref();
+                self.cdp.call_cancellable(method, params, timeout, p)
+            }
+            None => self.cdp.call(method, params, timeout),
+        }
+    }
+
+    /// 边界取消检查(等待循环用):已取消则返回取消标记错误。
+    fn check_cancel(&self, what: &str) -> Result<(), String> {
+        if let Some(p) = &self.cancel_probe {
+            if p() {
+                return Err(crate::cancel::wait_cancelled(what));
+            }
+        }
+        Ok(())
     }
 
     /// 消费事件,维护 load / 网络活动状态。
@@ -272,15 +310,18 @@ impl PageSession {
     pub fn navigate(&mut self, url: &str) -> Result<(), String> {
         // 多实例并发冷启动时 CDP 响应可能远慢于单实例(下游 w4 实测
         // "Page.navigate 等待响应超时"):35s + 一次重试
-        match self.cdp.call(
+        match self.cdp_call(
             "Page.navigate",
             json!({ "url": url }),
             Duration::from_secs(35),
         ) {
             Ok(_) => {}
             Err(first) => {
+                if crate::cancel::is_wait_cancelled(&first) {
+                    return Err(first);
+                }
                 eprintln!("kiln: Page.navigate 首次超时({first}),重试一次");
-                self.cdp.call(
+                self.cdp_call(
                     "Page.navigate",
                     json!({ "url": url }),
                     Duration::from_secs(35),
@@ -289,6 +330,7 @@ impl PageSession {
         }
         let deadline = Instant::now() + Duration::from_secs(30);
         while !self.load_fired {
+            self.check_cancel("Page.load 等待")?;
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return Err("页面加载超时(load 事件未触发)".into());
@@ -326,7 +368,7 @@ impl PageSession {
 
     /// evaluate:表达式求值(可 await Promise),返回 returnByValue 结果。
     pub fn evaluate(&mut self, expression: &str, await_promise: bool) -> Result<Value, String> {
-        let res = self.cdp.call(
+        let res = self.cdp_call(
             "Runtime.evaluate",
             json!({
                 "expression": expression,
@@ -428,9 +470,8 @@ impl PageSession {
         if let Some((x, y, w, h)) = clip {
             params["clip"] = json!({ "x": x, "y": y, "width": w, "height": h, "scale": 1 });
         }
-        let res = self
-            .cdp
-            .call("Page.captureScreenshot", params, Duration::from_secs(180))?;
+        // 180s 截图等待经分片可取消通道(硬骨头 #3):≤100ms/片,片间查令牌
+        let res = self.cdp_call("Page.captureScreenshot", params, Duration::from_secs(180))?;
         let data = res
             .get("data")
             .and_then(Value::as_str)
@@ -446,9 +487,7 @@ impl PageSession {
             "optimizeForSpeed": true,
             "captureBeyondViewport": false,
         });
-        let res = self
-            .cdp
-            .call("Page.captureScreenshot", params, Duration::from_secs(180))?;
+        let res = self.cdp_call("Page.captureScreenshot", params, Duration::from_secs(180))?;
         let data = res
             .get("data")
             .and_then(Value::as_str)
@@ -479,14 +518,20 @@ impl PageSession {
             .map(|v| v == "1")
             .unwrap_or(false);
         let params = json!({ "noDisplayUpdates": no_display, "screenshot": shot });
+        // 60s beginFrame 等待同样走分片可取消通道
         let res = self
-            .cdp
-            .call(
+            .cdp_call(
                 "HeadlessExperimental.beginFrame",
                 params,
                 Duration::from_secs(60),
             )
-            .map_err(|e| format!("beginFrame 失败(需 --enable-begin-frame-control): {e}"))?;
+            .map_err(|e| {
+                if crate::cancel::is_wait_cancelled(&e) {
+                    e
+                } else {
+                    format!("beginFrame 失败(需 --enable-begin-frame-control): {e}")
+                }
+            })?;
         let data = res
             .get("screenshotData")
             .and_then(Value::as_str)
@@ -512,9 +557,8 @@ impl PageSession {
             "scale": 1.0,
             "preferCSSPageSize": prefer_css_page_size,
         });
-        let res = self
-            .cdp
-            .call("Page.printToPDF", params, Duration::from_secs(300))?;
+        // 300s printToPDF 等待同样走分片可取消通道
+        let res = self.cdp_call("Page.printToPDF", params, Duration::from_secs(300))?;
         let data = res
             .get("data")
             .and_then(Value::as_str)

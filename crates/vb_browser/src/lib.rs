@@ -10,6 +10,7 @@
 
 pub mod b64;
 pub mod browser;
+pub mod cancel;
 pub mod capture;
 pub mod cdp;
 pub mod domsnap;
@@ -24,6 +25,7 @@ use std::path::{Path, PathBuf};
 use serde_json::json;
 
 pub use browser::{browser_version, discover_browser};
+pub use cancel::{is_wait_cancelled, wait_cancelled, CancelProbe, WAIT_CANCELLED_PREFIX};
 pub use capture::{capture_png, CaptureOptions, CaptureOutcome};
 pub use print::{ai_from_pdf, print_pdf, PrintOutcome};
 
@@ -85,6 +87,34 @@ pub struct LaneOutcome {
 
 /// 车道 B 一站式导出:静态服务挂载 → 浏览器进程 → 页面会话 → 采集/打印。
 pub fn export_source(source: &Path, req: &LaneRequest) -> Result<LaneOutcome, String> {
+    run_static_lane(source, req, None)
+}
+
+/// 可取消版 [`export_source`](硬骨头 #3 静态快照车道收口,R0)。
+///
+/// - **起跑边界**:探针已命中则不发现/不拉起浏览器,直接按取消收口;
+/// - **等待分片**:页面会话注入探针后,navigate/load/截图/printToPDF 等
+///   全部 CDP 长等待按 ≤100ms 泵片轮询(见 `cancel` 模块语义);
+/// - **收割与半截**:任何返回路径上 `BrowserProcess::Drop` 整树收割浏览器
+///   并清理临时 user-data;产物由调用方完整成功后 `write_atomic` 落盘,
+///   本函数不写输出文件——取消天然不留半截。
+pub fn export_source_cancellable(
+    source: &Path,
+    req: &LaneRequest,
+    probe: CancelProbe,
+) -> Result<LaneOutcome, String> {
+    if probe() {
+        return Err(cancel::wait_cancelled("车道起跑前"));
+    }
+    run_static_lane(source, req, Some(probe))
+}
+
+/// 静态单页车道主体(export_source / export_source_cancellable 共用)。
+fn run_static_lane(
+    source: &Path,
+    req: &LaneRequest,
+    probe: Option<CancelProbe>,
+) -> Result<LaneOutcome, String> {
     let Some(exe) = discover_browser(None) else {
         return Err("未发现系统浏览器(Edge/Chrome);浏览器车道不可用".into());
     };
@@ -111,7 +141,7 @@ pub fn export_source(source: &Path, req: &LaneRequest) -> Result<LaneOutcome, St
     };
     let proc = browser::BrowserProcess::launch(&exe)?;
     let engine_hint = proc.version();
-    let mut outcome = export_with_url(&proc, &url, req, &engine_hint)?;
+    let mut outcome = export_with_url(&proc, &url, req, &engine_hint, probe.as_ref())?;
     // VB-1:静态资源 404 不许静默(浏览器会静默回退系统字体等)——
     // 服务线程收集的 404 路径在此并入结果告警。
     if let Some(srv) = _srv.as_ref() {
@@ -142,8 +172,12 @@ fn export_with_url(
     url: &str,
     req: &LaneRequest,
     engine_hint: &str,
+    probe: Option<&CancelProbe>,
 ) -> Result<LaneOutcome, String> {
     let mut page = page::PageSession::attach(proc)?;
+    if let Some(p) = probe {
+        page.set_cancel_probe(p.clone());
+    }
     // 要素 2/3:视口只定宽(高占位同宽,防 100vh 撑爆),DSF 原生倍率。
     // P0-3:画板声明尺寸下发后,宽高均按声明值定视口(此前高占位 = 宽,
     // 声明 1080 高的海报会被撑成 1080×1080 视口)。
