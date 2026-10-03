@@ -386,6 +386,25 @@ mod tests {
     }
 
     #[test]
+    fn cmd_catalog_roundtrips_through_fluent() {
+        // 生成的 cmd-* 目录(204 条)fluent 能整段读入并取词
+        let cats = catalogs();
+        assert_eq!(
+            lookup_in(cats, Lang::Zh, "cmd-object-group", None).as_deref(),
+            Some("编组")
+        );
+        assert_eq!(
+            lookup_in(cats, Lang::En, "cmd-object-group", None).as_deref(),
+            Some("Group")
+        );
+        assert_eq!(
+            lookup_in(cats, Lang::En, "cmd-file-export-dialog", None).as_deref(),
+            Some("Export…"),
+            "id 里的下划线转连字符后照常取词"
+        );
+    }
+
+    #[test]
     fn en_missing_key_falls_back_to_zh() {
         let zh = cat("only-zh = 仅中文", Lang::Zh);
         let en = cat("unrelated = x", Lang::En);
