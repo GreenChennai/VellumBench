@@ -9,6 +9,9 @@
 
 pub mod color;
 pub mod geom;
+/// Fluent i18n 取词底座(R0 第 7 条;设计 22 §4):`i18n/zh.ftl` / `en.ftl`
+/// 编译期内嵌,t/t_args/set_language,缺词回退链显式可见。
+pub mod i18n;
 pub mod id;
 /// `transform` 平移分量解析(导入折算与导出补偿的**唯一口径**)。
 pub mod transform;
