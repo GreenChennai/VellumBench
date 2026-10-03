@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 
 use egui::{Align2, Color32, Key, ScrollArea};
+use vb_platform::Clipboard as _;
 use vb_ui::theme::Tokens;
 
 use crate::capabilities::{CapStatus, CAPABILITIES};
@@ -393,7 +394,11 @@ impl LauncherUi {
                 )));
                 let copy = copy.on_hover_text("复制路径");
                 if copy.clicked() {
-                    ui.ctx().copy_text(item.path.clone());
+                    // 硬骨头 #13 接线:剪贴板经 vb_platform trait(egui 命令
+                    // 通道,与 ctx.copy_text 同一宿主路径);面板不再直呼 egui
+                    // 平台面。右键菜单同款见下方 context_menu 分支。
+                    let mut clip = vb_platform::egui_backend::EguiClipboard::new(ui.ctx().clone());
+                    let _ = clip.set_text(&item.path);
                 }
                 let pin_label = if item.pinned {
                     "取消固定"

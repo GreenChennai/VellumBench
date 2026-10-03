@@ -90,3 +90,35 @@ fn hex_color_literals_only_in_tokens() {
         violations.join("\n")
     );
 }
+
+/// 硬骨头 #13 完成定义(22 篇 §3.7):vb_kit 源码零 OS 直引——
+/// `windows::` / `winit::` 一个都不许出现。窗口/剪贴板/对话框/光标/DPI/
+/// 深色探测一律经 `vb_platform` 六 trait 注入,宿主实现在 vb_app/vb_shell。
+#[test]
+fn no_os_direct_imports_in_sources() {
+    // 被禁 token:Windows API crate 与 winit(egui/gpui 底层窗口系统)的
+    // 路径表达。tests/ 不在扫描范围(与既有 purity 口径一致)。
+    let forbidden: [&str; 2] = ["windows::", "winit::"];
+    let mut violations = Vec::new();
+    for file in rs_files(&src_dir()) {
+        let content =
+            fs::read_to_string(&file).unwrap_or_else(|e| panic!("读 {} 失败:{e}", file.display()));
+        let file_name = file.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+        for token in forbidden {
+            if content.contains(token) {
+                let line = content
+                    .lines()
+                    .enumerate()
+                    .find(|(_, l)| l.contains(token))
+                    .map(|(i, _)| i + 1)
+                    .unwrap_or(0);
+                violations.push(format!("{file_name}:{line}: OS 直引 `{token}`"));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "vb_kit 触碰 OS 红线(22 篇 §3.7:平台触点归口 vb_platform 六 trait):\n{}",
+        violations.join("\n")
+    );
+}

@@ -4,6 +4,20 @@ version.workspace = true
 edition.workspace = true
 license-file.workspace = true
 repository.workspace = true
-description = "Vellum Bench 占位 crate(v0.x 后续填充)"
+description = "VellumBench 平台服务 seam(硬骨头 #13):窗口/剪贴板/文件对话框/光标/每显示器 DPI/深色模式 六 trait + egui/gpui/null 实现"
+
+[features]
+default = []
+# egui 宿主(vb_app)实现:egui Context 薄封装 + arboard 真 OS 剪贴板 +
+# rfd 文件对话框(三者均为 vb_app 树内既有依赖,零新增编译)
+egui = ["dep:egui", "dep:arboard", "dep:rfd"]
+# gpui 宿主(vb_shell)实现:经 sable::gpui re-export(版本与宿主同锁,
+# 22 篇 §3.6),文件对话框复用 rfd
+gpui = ["dep:sable", "dep:rfd"]
 
 [dependencies]
+thiserror = { workspace = true }
+egui = { version = "0.35.0", optional = true }
+arboard = { version = "3.6", optional = true }
+rfd = { version = "0.17", optional = true }
+sable = { workspace = true, optional = true }

@@ -8846,6 +8846,7 @@ dependencies = [
  "vb_export",
  "vb_kiln",
  "vb_layout",
+ "vb_platform",
  "vb_plugin",
  "vb_render",
  "vb_session",
@@ -8971,6 +8972,13 @@ dependencies = [
 [[package]]
 name = "vb_platform"
 version = "0.14.0"
+dependencies = [
+ "arboard",
+ "egui",
+ "rfd",
+ "sable",
+ "thiserror 2.0.20",
+]
 
 [[package]]
 name = "vb_plugin"
@@ -9018,6 +9026,7 @@ dependencies = [
  "pollster 0.4.0",
  "sable",
  "vb_kit",
+ "vb_platform",
  "vb_render",
  "vb_session",
  "vello",
