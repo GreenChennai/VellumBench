@@ -12,6 +12,17 @@ path = "src/main.rs"
 
 [dependencies]
 # 宿主底座与面板(22 篇 §3.1:vb_shell 只依赖 sable + vb_kit + vb_session)
-sable = { workspace = true }
+# 【canvas_spike 例外,ADR-0047 裁定后收敛】features 加 backend-auto 是为了开
+# sable-paint/gpu(VelloSink)供路线 (b) 实测;vb_render 提供 DrawList 与既有
+# vello 编码(路线 (a))。两者只被 src/bin/canvas_spike/ 消费,不进 main.rs。
+sable = { workspace = true, features = ["backend-auto"] }
 vb_kit = { workspace = true }
 vb_session = { workspace = true }
+vb_render = { workspace = true }
+# canvas_spike(22 篇 §4 R0 交付 3):vello Scene/Renderer 与 wgpu 一律经
+# vello::wgpu re-export 使用(与 vb_render/sable-paint 同一 vello 0.10 实例,
+# 单一真相);pollster 阻塞式设备初始化(Cargo.lock 已有 0.4,零新增编译);
+# image 供 RenderImage 裸帧构造(与 gpui 0.2.2 同一 0.25 实例)。
+vello = "0.10"
+pollster = "0.4"
+image = { workspace = true }

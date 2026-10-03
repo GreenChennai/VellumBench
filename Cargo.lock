@@ -7075,6 +7075,7 @@ dependencies = [
  "sable-foundation",
  "thiserror 2.0.20",
  "tracing",
+ "vello",
  "vello_cpu 0.2.0",
 ]
 
@@ -9010,9 +9011,13 @@ dependencies = [
 name = "vb_shell"
 version = "0.14.0"
 dependencies = [
+ "image",
+ "pollster 0.4.0",
  "sable",
  "vb_kit",
+ "vb_render",
  "vb_session",
+ "vello",
 ]
 
 [[package]]
