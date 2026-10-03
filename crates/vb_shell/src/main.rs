@@ -122,7 +122,7 @@ impl Render for CanvasPlaceholder {
                     div()
                         .text_size(px(FONT_SIZE_BODY))
                         .text_color(colors.text_secondary)
-                        .child("画布(R1)— 画布上屏通道按 ADR-0046 裁定后接管"),
+                        .child("画布(R1)— 画布上屏通道按 ADR-0047 裁定后接管"),
                 ),
             )
             .child(
