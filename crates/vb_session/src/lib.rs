@@ -23,6 +23,7 @@
 pub mod capabilities;
 pub mod i18n;
 pub mod selection;
+pub mod snap;
 pub mod tools;
 
 pub use capabilities::{CapStatus, Capability, CapabilityUi, CAPABILITIES};
