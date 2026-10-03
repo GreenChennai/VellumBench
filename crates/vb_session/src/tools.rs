@@ -1,17 +1,17 @@
-//! 工具状态机骨架(纯数据 + 纯函数,零 UI 依赖)。
+//! 工具状态机(纯数据 + 纯函数,零 UI 依赖)。
 //!
-//! **vb_app 全量迁移是后续批次,本批只立骨架**(22 篇 §4 R0 交付 4):
-//! 画布手势 → 状态机 → 命令的完整接线、scrubby/光标映射等仍按轮次迁入;
-//! 本模块先固化「工具枚举镜像 + 活跃/上一个工具」的最小形状,供
-//! `vb_kit`/`vb_shell` 投影消费(工具箱高亮、上下文条切换等)。
+//! # R0 转正批次(22 篇 §4 R0 交付 4)
 //!
-//! [`ToolId`] **镜像** `vb_app::Tool` 现有 22 个工具(镜像而非引用:
-//! 本 crate 禁依赖旧宿主)。两边的一致性由新宿主接线批次(命令单源
-//! `commands.yaml`)收口,届时 `tool.*` 命令 id ↔ `ToolId` 的映射表进门禁。
+//! [`ToolId`] 曾是 `vb_app::Tool` 的**镜像**(22 变体逐名对齐);本批起
+//! 关系反转:旧宿主删除原地定义,`pub use vb_session::tools::ToolId as Tool`
+//! —— 两边**按构造恒等**,镜像一致性门禁不再需要。`ToolState`
+//! (活跃/上一个工具)是会话层状态机,供新宿主接线批次消费;旧宿主的
+//! 画布手势 → 工具 → 命令完整接线、scrubby/光标映射等仍按轮次迁入,
+//! 届时 `tool.*` 命令 id ↔ `ToolId` 的映射表进门禁。
 
 use serde::{Deserialize, Serialize};
 
-/// 工具标识(镜像 `vb_app::Tool`;注释保留各工具的行为要点出处)。
+/// 工具标识(= `vb_app::Tool`,经 re-export;doc 注释保留各工具的行为要点出处)。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToolId {
     Select,
