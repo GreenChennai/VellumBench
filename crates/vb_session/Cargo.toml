@@ -13,6 +13,9 @@ vb_common = { workspace = true }
 # 复用 vb_tools::abs_bbox(复用而非抄写,防第二份几何)。两者皆无 UI 依赖。
 vb_doc = { workspace = true }
 vb_tools = { workspace = true }
+# 仅为本模块 `pub use fluent::FluentValue` 再导出(t_args 实参类型给 UI 侧;
+# 取词本体仍在 vb_common::i18n,单一 fluent 消费逻辑不在此重复)
+fluent = { workspace = true }
 # 会话态纯数据的(反)序列化:选中集/工具状态未来随 workspace 布局持久化;
 # mru(R0 自 vb_app::recent 下沉)的 recent.json 读写是真实运行时依赖
 serde = { workspace = true }

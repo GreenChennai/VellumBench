@@ -25,6 +25,34 @@ state.normal = Normal
 state.hover = Hover
 state.hover-note = Hover minimal loop: fill/text color/opacity/font-size/visibility land in a selector:hover rule; the canvas does not simulate hover, use View → Browser Proof
 
+# ── New host vb_kit / vb_shell (R0 gap batch; G-UI3: no bare copy in render paths) ──
+# Hand-maintained section outside the gen_cmd_ftl.py BEGIN/END block (rerunning
+# the generator leaves it alone). Key scheme: ui-<panel>-<semantic>, hyphenated.
+# English follows the CONTEXT.md glossary (Capability Ledger; glossary-banned words avoided).
+
+# Capability Ledger panel (filter chips)
+ui-cap-filter-all = All
+ui-cap-filter-done = Done
+ui-cap-filter-partial = Partial
+ui-cap-filter-dropped = Dropped
+ui-cap-filter-agent-only = Agent-reproducible only
+# Capability Ledger panel (counts line / empty state / footer / Agent column)
+ui-cap-counts = { $total } total · { $done } done · { $partial } partial · { $dropped } dropped
+ui-cap-empty = No matching entries (current filter combination)
+ui-cap-footer = Data source: vb_session::capabilities (single source of truth) · three states: Done / Partial + whereabouts / Dropped
+ui-cap-agent-repro = reproducible ×{ $n }
+# Capability Ledger panel (three-state badges; Planned is gate-guaranteed empty, kept as fallback)
+ui-cap-badge-done = Done
+ui-cap-badge-partial = Partial
+ui-cap-badge-planned = Planned
+ui-cap-badge-dropped = Dropped
+# Shell (vb_shell)
+ui-shell-window-title = VellumBench · sable Preview Host
+ui-shell-panel-capabilities = Capability Ledger
+ui-shell-panel-canvas = Canvas (R1)
+ui-shell-canvas-placeholder = Canvas (R1) — takes over once the canvas presentation channel is ruled by ADR-0047
+ui-shell-canvas-subtitle = R0 preview host: window / theme / dock layout skeleton
+
 # ── BEGIN cmd-catalog(由 tools/gen_cmd_ftl.py 生成;勿手改)──
 cmd-file-new = New Project… (dialog, opens in a new window)
 cmd-file-open = Open Project…

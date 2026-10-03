@@ -25,6 +25,33 @@ state.normal = 正常
 state.hover = 悬停 (hover)
 state.hover-note = hover 最小闭环:填充/字色/不透明度/字号/显示,落 selector:hover 规则;画布不模拟 hover,以「视图 → 浏览器校对」为准
 
+# ── 新宿主 vb_kit / vb_shell(R0 补缺批;G-UI3:渲染路径禁裸文案)──
+# 手工维护段:在 gen_cmd_ftl.py 的 BEGIN/END 生成块之外,重跑生成器不影响;
+# key 规范:`ui-<面板>-<语义>`,连字符。en 遵守 CONTEXT.md 术语表。
+
+# 能力台账面板(过滤 chips)
+ui-cap-filter-all = 全部
+ui-cap-filter-done = 已落地
+ui-cap-filter-partial = 部分
+ui-cap-filter-dropped = 不做
+ui-cap-filter-agent-only = 仅 Agent 可复现
+# 能力台账面板(计数行 / 空态 / 页脚 / Agent 列)
+ui-cap-counts = 共 { $total } 条 · 已落地 { $done } · 部分 { $partial } · 不做 { $dropped }
+ui-cap-empty = 无匹配条目(当前过滤组合)
+ui-cap-footer = 数据源:vb_session::capabilities(单一真相) · 三态:已落地 / 部分+去向 / 不做
+ui-cap-agent-repro = 可复现 ×{ $n }
+# 能力台账面板(三态徽章;Planned 由门禁保证为空,仍保留兜底)
+ui-cap-badge-done = 已落地
+ui-cap-badge-partial = 部分
+ui-cap-badge-planned = 计划
+ui-cap-badge-dropped = 不做
+# 壳(vb_shell)
+ui-shell-window-title = VellumBench · sable 预览宿主
+ui-shell-panel-capabilities = 能力台账
+ui-shell-panel-canvas = 画布(R1)
+ui-shell-canvas-placeholder = 画布(R1)— 画布上屏通道按 ADR-0047 裁定后接管
+ui-shell-canvas-subtitle = R0 预览宿主:窗口 / 主题 / dock 布局骨架
+
 # ── BEGIN cmd-catalog(由 tools/gen_cmd_ftl.py 生成;勿手改)──
 cmd-file-new = 新建项目…(对话框,新窗口打开)
 cmd-file-open = 打开项目…

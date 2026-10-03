@@ -281,8 +281,8 @@ pub mod font_size {
     pub const MONO: f32 = 12.0;
 }
 
-/// 行高 px(JSON `font.size.*.line_height`;控件高度派生制的输入,
-/// 裁决一:名义档 22/26/32 保留,文字控件高度 = 行高 + 8、下限 24)。
+/// 行高 px(JSON `font.size.*.line_height`;[`row_height`] 派生制的输入,
+/// 裁决一:名义档 22/26/32 保留,文字控件高度走 [`row_height`] 派生)。
 pub mod line_height {
     pub const CAPTION: f32 = 16.0;
     pub const LABEL: f32 = 18.0;
@@ -290,6 +290,98 @@ pub mod line_height {
     pub const BODY_STRONG: f32 = 20.0;
     pub const TITLE: f32 = 22.0;
     pub const MONO: f32 = 18.0;
+}
+
+// ---------------------------------------------------------------------------
+// 控件高度派生(22 篇 §3.4 裁决一 / ADR-0050;硬骨头 #23)
+// ---------------------------------------------------------------------------
+
+/// CJK galley 系数:一行 CJK 文字的实际排版(galley)高 ≈ 字号 × 1.45。
+///
+/// 实证口径沿旧宿主 theme.rs `row_height`(sable 02 分册 §3.4:galley 高
+/// ≈ 字号×1.4–1.5,写死小行高导致 CJK 压叠),两上游合并裁决取 1.45。
+pub const CJK_GALLEY_FACTOR: f32 = 1.45;
+/// 派生公式的呼吸空间(行高 + 8,与旧宿主同口径)。
+pub const ROW_HEIGHT_PADDING: f32 = 8.0;
+/// 文字控件高度下限(小字号也不许低于此值)。
+pub const ROW_HEIGHT_MIN: f32 = 24.0;
+
+/// 文字控件行高派生:**⌈字号 × 1.45⌉ + 8,下限 24**(22 篇 §3.4 裁决一,
+/// G-UI8 门禁测试锁公式,ADR-0050)。
+///
+/// 一切承载文字的控件(按钮/输入框/列表行/下拉)高度一律走本函数,禁止
+/// 写死小行高;随字号/界面缩放/DPI 自动适配,CJK 永不压叠。
+///
+/// ```text
+/// row_height(11) = 24  (CAPTION;下限兜底)
+/// row_height(12) = 26  (LABEL)
+/// row_height(13) = 27  (BODY)
+/// row_height(15) = 30  (TITLE)
+/// ```
+pub fn row_height(font_size: f32) -> f32 {
+    ((font_size * CJK_GALLEY_FACTOR).ceil() + ROW_HEIGHT_PADDING).max(ROW_HEIGHT_MIN)
+}
+
+/// 名义档 22/26/32(sable 02 §3.4 悬案的保留项;裁决一:仅供**无文字**
+/// 控件 —— 纯图标钮/分隔条/图标轨道等,不承载 galley,压叠不适用)。
+/// 承载文字的控件禁用本档,必须走 [`row_height`]。
+pub mod nominal_height {
+    /// 小图标钮 / 紧凑分隔条
+    pub const CONTROL_SM: f32 = 22.0;
+    /// 标准图标钮 / 滚动条轨道
+    pub const CONTROL_MD: f32 = 26.0;
+    /// 大图标钮 / 分组头图标位
+    pub const CONTROL_LG: f32 = 32.0;
+}
+
+#[cfg(test)]
+mod height_tests {
+    use super::*;
+
+    /// 公式锁定(G-UI8):⌈字号 × 1.45⌉ + 8,下限 24;四档字号逐一断言。
+    #[test]
+    fn row_height_formula_locks_named_tiers() {
+        assert_eq!(
+            row_height(font_size::CAPTION),
+            24.0,
+            "11×1.45=15.95→16+8=24"
+        );
+        assert_eq!(row_height(font_size::LABEL), 26.0, "12×1.45=17.4→18+8=26");
+        assert_eq!(row_height(font_size::BODY), 27.0, "13×1.45=18.85→19+8=27");
+        assert_eq!(row_height(font_size::TITLE), 30.0, "15×1.45=21.75→22+8=30");
+    }
+
+    /// 下限:小字号/零值兜底 24,CJK 最小可读高度不被压塌。
+    #[test]
+    fn row_height_floors_at_24() {
+        assert_eq!(row_height(0.0), 24.0);
+        assert_eq!(row_height(8.0), 24.0, "8×1.45=11.6→12+8=20 → 下限 24");
+        assert_eq!(row_height(f32::NEG_INFINITY), 24.0);
+    }
+
+    /// 向上取整与缩放适应性:非整值进一;高度随字号单调不减。
+    #[test]
+    fn row_height_ceils_and_is_monotonic() {
+        assert_eq!(row_height(10.4), 24.0, "10.4×1.45=15.08→16+8=24");
+        assert_eq!(row_height(12.5), 27.0, "12.5×1.45=18.125→19+8=27");
+        assert_eq!(row_height(100.0), 153.0, "大字号不封顶(界面缩放可用)");
+        let mut prev = 0.0;
+        for size in [
+            8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 20.0, 24.0,
+        ] {
+            let h = row_height(size);
+            assert!(h >= prev, "字号 {size} 派生高 {h} 不得低于上一档 {prev}");
+            prev = h;
+        }
+    }
+
+    /// 名义档保留(仅供无文字控件;裁决一的"两上游合并"保留项)。
+    #[test]
+    fn nominal_tiers_are_preserved() {
+        assert_eq!(nominal_height::CONTROL_SM, 22.0);
+        assert_eq!(nominal_height::CONTROL_MD, 26.0);
+        assert_eq!(nominal_height::CONTROL_LG, 32.0);
+    }
 }
 
 /// 结构常量(JSON `layout.*`;R0 消费子集)。
@@ -304,7 +396,8 @@ pub mod layout {
     pub const RIGHT_DOCK_COLLAPSED: f32 = 40.0;
     /// 低于此宽度右侧坞自动折叠为图标条(22 篇裁决二:新宿主保留)
     pub const COLLAPSE_BELOW: f32 = 1200.0;
-    /// 图层行 / 列表项行高
+    /// 图层行 / 列表项行高(名义值,JSON `layout.row-height.*` 镜像;
+    /// 文字行高一律走派生 [`row_height`],本档仅无文字占位场景引用)
     pub const ROW_HEIGHT_LAYER: f32 = 24.0;
     pub const ROW_HEIGHT_LIST: f32 = 24.0;
     /// 最小窗口 1024×640
