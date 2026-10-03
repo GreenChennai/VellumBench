@@ -14,6 +14,8 @@
 //!
 //! - [`capabilities`]:能力台账**数据模型**自 `vb_app::capabilities` 整体下沉;
 //!   `vb_app` 侧 re-export,既有代码与测试行为不变。
+//! - [`mru`]:最近项目(MRU)持久化自 `vb_app::recent` 整体下沉(含
+//!   v0.14 旧文件向后兼容用例);`vb_app` 侧 re-export,行为零变化。
 //! - [`selection`] / [`tools`]:选中态与工具状态机**骨架**(纯数据 + 纯函数)。
 //!   **vb_app 全量迁移是后续批次,本批只立骨架** —— 画布手势、吸附引擎、
 //!   命令分发、撤销栈门面等仍在旧宿主,按轮次迁入。
@@ -22,6 +24,7 @@
 
 pub mod capabilities;
 pub mod i18n;
+pub mod mru;
 pub mod selection;
 pub mod tools;
 

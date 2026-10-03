@@ -344,23 +344,10 @@ impl Default for WorkspaceConfig {
 
 /// 配置目录(**所有全局配置共用**:workspace.json / recent.json)。
 ///
-/// 解析顺序:`%APPDATA%\VellumBench\`(Windows)/
-/// `$XDG_CONFIG_HOME|$HOME/.config/vellum-bench/`(其它平台)。
-/// 全部不可得 → `None`(调用方退化为纯内存,并如实提示)。
+/// R0 数据下沉后解析单一真相在 `vb_session::mru::config_dir`(recent.json
+/// 与 workspace.json 同目录,02-2-6);此处委托,行为零变化。
 pub fn config_dir() -> Option<PathBuf> {
-    let base = if cfg!(windows) {
-        std::env::var("APPDATA").ok().map(PathBuf::from)
-    } else {
-        std::env::var("XDG_CONFIG_HOME")
-            .ok()
-            .map(PathBuf::from)
-            .or_else(|| {
-                std::env::var("HOME")
-                    .ok()
-                    .map(|h| PathBuf::from(h).join(".config"))
-            })
-    }?;
-    Some(base.join("VellumBench"))
+    vb_session::mru::config_dir()
 }
 
 /// 配置文件路径(`workspace.json`)。
