@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 use vb_doc::model::Document;
 use vb_doc::undo::UndoStack;
+use vb_session::selection::SelectionState;
 use vb_tools::Camera;
 use vb_ui::fonts as vb_fonts;
 
@@ -101,7 +102,7 @@ impl VellumApp {
             undo: UndoStack::new(),
             camera: Camera::default(),
             tool: Tool::Select,
-            selection: Vec::new(),
+            selection: SelectionState::new(),
             project_dir,
             drag: Drag::None,
             space_down: false,

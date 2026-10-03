@@ -144,7 +144,8 @@ impl VellumApp {
                                         .unwrap()
                                         .sid
                                         .as_str()
-                                        .to_string()];
+                                        .to_string()]
+                                    .into();
                                     self.say(
                                         "已选中主件原型(定义区不在画布;编辑主件将同步全部实例)",
                                     );

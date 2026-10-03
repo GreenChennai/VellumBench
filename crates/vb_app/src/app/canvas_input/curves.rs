@@ -63,7 +63,7 @@ impl VellumApp {
             new: smoothed,
             old: None,
         });
-        self.selection = vec![sid];
+        self.selection = vec![sid].into();
         self.status = format!(
             "曲率:已为 {} 个锚点拟合平滑控制点(直接选择 A 可微调手柄)",
             anchors.len()

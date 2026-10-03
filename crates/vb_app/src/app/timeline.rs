@@ -986,7 +986,7 @@ impl VellumApp {
                     if active { tokens.accent } else { tokens.text_2 },
                 );
                 if head_resp.clicked() {
-                    self.selection = vec![sid.to_string()];
+                    self.selection = vec![sid.to_string()].into();
                 }
                 let (lane, resp) = ui
                     .allocate_exact_size(egui::vec2(lane_w, LANE_H), egui::Sense::click_and_drag());

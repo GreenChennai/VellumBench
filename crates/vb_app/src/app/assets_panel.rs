@@ -289,7 +289,7 @@ impl VellumApp {
         // 定位到引用(与体检报告同款交互:选中 + 状态提示)
         if let Some(sid) = locate {
             if self.doc.find_by_sid(&sid).is_some() {
-                self.selection = vec![sid.clone()];
+                self.selection = vec![sid.clone()].into();
                 self.say(format!("资产面板:已定位图层({sid})"));
             } else {
                 self.say("该图层已不存在(文档可能已变更;点「刷新」更新面板)");

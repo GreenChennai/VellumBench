@@ -47,7 +47,7 @@ impl VellumApp {
         match sym::symbol_create_commands(&mut self.doc, &sid, &name) {
             Ok((cmd, inst_sid)) => {
                 self.exec(cmd);
-                self.selection = vec![inst_sid];
+                self.selection = vec![inst_sid].into();
                 self.say(format!(
                     "已创建组件「{name}」(当前位置成为首个实例;编辑主件将同步全部实例)"
                 ));
@@ -69,7 +69,7 @@ impl VellumApp {
                 Err(e) => self.toast_error(format!("分离实例:{e}")),
             }
         }
-        self.selection = roots;
+        self.selection = roots.into();
         self.say("已分离为普通元素(不再随主件同步)");
     }
 
@@ -90,7 +90,7 @@ impl VellumApp {
                 Err(e) => self.toast_error(format!("重置覆盖:{e}")),
             }
         }
-        self.selection = roots;
+        self.selection = roots.into();
         self.say(format!("已还原 {n} 个实例为主件当前内容(覆盖已清除)"));
     }
 
@@ -121,7 +121,7 @@ impl VellumApp {
             self.toast_warn("选择所有实例:选中对象不属于任何组件");
         } else {
             let n = hits.len();
-            self.selection = hits;
+            self.selection = hits.into();
             self.say(format!("已选中同主件全部实例({n} 个)"));
         }
     }
@@ -240,7 +240,7 @@ mod symbol_tests {
         let _env = crate::ENV_LOCK.lock();
         let mut app = app_fresh(None);
         let card = add_card(&mut app, "卡片", 40.0, "标题 A");
-        app.selection = vec![card];
+        app.selection = vec![card].into();
         app.run_command("object.symbol_create", false, false);
         assert!(app.status.contains("已创建组件"), "创建失败:{}", app.status);
         let inst0 = app.selection[0].clone();
@@ -324,7 +324,7 @@ mod symbol_tests {
         let _env = crate::ENV_LOCK.lock();
         let mut app = app_fresh(None);
         let card = add_card(&mut app, "卡片", 0.0, "T");
-        app.selection = vec![card];
+        app.selection = vec![card].into();
         app.run_command("object.symbol_create", false, false);
         let inst = app.selection[0].clone();
 
@@ -362,7 +362,7 @@ mod symbol_tests {
         let _env = crate::ENV_LOCK.lock();
         let mut app = app_fresh(None);
         let card = add_card(&mut app, "卡片", 0.0, "T");
-        app.selection = vec![card];
+        app.selection = vec![card].into();
         app.run_command("object.symbol_create", false, false);
         let inst0 = app.selection[0].clone();
         let inst1 = duplicate_instance(&mut app, &inst0);
@@ -411,7 +411,7 @@ mod symbol_tests {
         assert_eq!(child_text(&app, &inst1), "主件新值");
 
         // 重置覆盖:实例 0 回主件内容,覆盖列表清空
-        app.selection = vec![inst0.clone()];
+        app.selection = vec![inst0.clone()].into();
         app.run_command("object.symbol_reset_overrides", false, false);
         {
             let id = app.doc.find_by_sid(&inst0).unwrap();
@@ -423,7 +423,7 @@ mod symbol_tests {
         }
 
         // 替换主件定义(以实例 0 当前内容为定义)
-        app.selection = vec![inst0.clone()];
+        app.selection = vec![inst0.clone()].into();
         app.run_command("object.symbol_swap_main", false, false);
         assert!(app.status.contains("替换主件定义"), "{}", app.status);
         {
@@ -451,12 +451,12 @@ mod symbol_tests {
         }
 
         // 选择所有实例:以实例 1 为种子
-        app.selection = vec![inst1];
+        app.selection = vec![inst1].into();
         app.run_command("object.symbol_select_instances", false, false);
         assert_eq!(app.selection.len(), 2, "应选中全部实例");
 
         // 错误路径:非实例调分离给可读提示,不入撤销栈
-        app.selection = vec![];
+        app.selection = vec![].into();
         app.run_command("object.symbol_detach", false, false);
         assert!(app.status.contains("没有组件实例"));
     }
@@ -468,7 +468,7 @@ mod symbol_tests {
         let _env = crate::ENV_LOCK.lock();
         let mut app = app_fresh(None);
         let card = add_card(&mut app, "卡片", 0.0, "T");
-        app.selection = vec![card];
+        app.selection = vec![card].into();
         app.run_command("object.symbol_create", false, false);
         let inst = app.selection[0].clone();
         let t0 = first_child(&app, &inst);

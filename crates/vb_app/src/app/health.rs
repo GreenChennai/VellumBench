@@ -650,7 +650,7 @@ impl VellumApp {
                                 match &it.locate {
                                     Locate::Node(sid) => {
                                         if self.doc.find_by_sid(sid).is_some() {
-                                            self.selection = vec![sid.clone()];
+                                            self.selection = vec![sid.clone()].into();
                                             self.say(format!("健康检查:已定位图层({sid})"));
                                         } else {
                                             self.say("该图层已不存在(文档可能已变更)");

@@ -103,7 +103,7 @@ impl VellumApp {
             group_sid: group_sid.as_str().to_string(),
             old_slots: None,
         });
-        self.selection = vec![group_sid.as_str().to_string()];
+        self.selection = vec![group_sid.as_str().to_string()].into();
         self.status = "已编组(Ctrl+G)".into();
     }
 
@@ -138,7 +138,7 @@ impl VellumApp {
                 captured: None,
             });
         }
-        self.selection = members;
+        self.selection = members.into();
         self.status = "已取消编组(Ctrl+Shift+G)".into();
     }
 
@@ -201,7 +201,7 @@ impl VellumApp {
             });
         }
         self.exec(Command::Compound { cmds });
-        self.selection = pasted_sids;
+        self.selection = pasted_sids.into();
         self.status = format!(
             "已粘贴 {} 个对象{}",
             self.clipboard.len(),
@@ -388,7 +388,7 @@ impl VellumApp {
             index: ab_len,
             tree,
         });
-        self.selection = vec![sid.as_str().to_string()];
+        self.selection = vec![sid.as_str().to_string()].into();
     }
 
     /// 直接选择/剪刀共用的顶点枚举:返回 (元素序号, 世界坐标)。
@@ -540,7 +540,7 @@ impl VellumApp {
             new_geom,
             captured: None,
         });
-        self.selection = vec![lhs];
+        self.selection = vec![lhs].into();
         self.status = format!("路径查找器:{}", op.as_str());
     }
 
@@ -566,7 +566,7 @@ impl VellumApp {
             result_sids,
         } = plan;
         self.exec(command);
-        self.selection = result_sids;
+        self.selection = result_sids.into();
         self.status = format!(
             "路径查找器:{}:产出 {} 个对象",
             op.zh(),
@@ -781,7 +781,7 @@ impl VellumApp {
             index: plen,
             tree,
         });
-        self.selection = vec![sid.as_str().to_string()];
+        self.selection = vec![sid.as_str().to_string()].into();
         self.status = "已创建对象".into();
     }
 
@@ -887,7 +887,7 @@ impl VellumApp {
             index: plen,
             tree,
         });
-        self.selection = vec![sid.as_str().to_string()];
+        self.selection = vec![sid.as_str().to_string()].into();
         self.editing_text = Some(sid.as_str().to_string());
         self.status = if area.is_some() {
             "已创建区域文本(拖框宽度即换行宽度)".into()
@@ -922,7 +922,7 @@ impl VellumApp {
             index: plen,
             tree,
         });
-        self.selection = vec![sid.as_str().to_string()];
+        self.selection = vec![sid.as_str().to_string()].into();
         self.status = format!(
             "已建立切片「{name}」({}×{},Shift+K 拖框可再建;vellum-cli export --slice 按名出图)",
             g.w as i64, g.h as i64
@@ -993,7 +993,7 @@ impl VellumApp {
             index: usize::MAX,
             tree,
         });
-        self.selection = vec![sid.as_str().to_string()];
+        self.selection = vec![sid.as_str().to_string()].into();
         self.status = format!("已新建画板 {}({}×{})", count + 1, g.w as i64, g.h as i64);
     }
 
@@ -1270,7 +1270,7 @@ impl VellumApp {
                     },
                 ],
             });
-            self.selection = vec![sid, new_sid];
+            self.selection = vec![sid, new_sid].into();
             self.status = "剪刀:已剪开为两段(两段均已选中)".into();
         }
     }
@@ -1339,7 +1339,7 @@ mod pathfinder_tests {
         let mut app = app_fresh(None);
         let a = add_rect(&mut app, "A", 0.0, 0.0, 200.0, 200.0, "#ff0000");
         let b = add_rect(&mut app, "B", 100.0, 50.0, 200.0, 100.0, "#0000ff");
-        app.selection = vec![a.clone(), b.clone()];
+        app.selection = vec![a.clone(), b.clone()].into();
 
         app.run_command("path.divide", false, false);
         assert_eq!(app.selection.len(), 3, "分割后选区 = 3 个结果");
@@ -1370,7 +1370,7 @@ mod pathfinder_tests {
         let _env = crate::ENV_LOCK.lock();
         let mut app = app_fresh(None);
         let a = add_rect(&mut app, "A", 0.0, 0.0, 100.0, 100.0, "#123456");
-        app.selection = vec![a.clone()];
+        app.selection = vec![a.clone()].into();
 
         app.run_command("path.outline", false, false);
         assert_eq!(app.selection.len(), 4, "单矩形轮廓产出 4 段");
@@ -1393,7 +1393,7 @@ mod pathfinder_tests {
         let mut app = app_fresh(None);
         let a = add_rect(&mut app, "A", 0.0, 0.0, 200.0, 200.0, "#ff0000");
         let b = add_rect(&mut app, "B", 100.0, 50.0, 200.0, 100.0, "#ff0000");
-        app.selection = vec![a.clone(), b.clone()];
+        app.selection = vec![a.clone(), b.clone()].into();
 
         app.run_command("path.trim", false, false);
         assert_eq!(app.selection.len(), 1, "同色修边合并为 1 件");
@@ -1419,7 +1419,7 @@ mod pathfinder_tests {
             .sid
             .as_str()
             .to_string();
-        app.selection = vec![a, ab];
+        app.selection = vec![a, ab].into();
         app.run_command("path.divide", false, false);
         assert!(
             app.status.contains("矢量路径"),
@@ -1442,7 +1442,7 @@ mod pathfinder_tests {
         let mut app = app_fresh(None);
         let bottom = add_rect(&mut app, "下", 50.0, 0.0, 100.0, 100.0, "#00ff00");
         let top = add_rect(&mut app, "上", 0.0, 0.0, 100.0, 100.0, "#ff0000");
-        app.selection = vec![bottom.clone(), top.clone()];
+        app.selection = vec![bottom.clone(), top.clone()].into();
 
         // 减去顶层:存活 = 下方(B);结果 = B − A = 右侧条带 (100,0)-(150,100)
         app.run_command("path.subtract", false, false);
@@ -1460,7 +1460,7 @@ mod pathfinder_tests {
         // 减去后方对象:撤销恢复后重跑 —— 存活 = 最上(A);结果 = A − B
         app.run_command("edit.undo", false, false);
         assert!(app.doc.find_by_sid(&top).is_some(), "撤销恢复上方对象");
-        app.selection = vec![bottom.clone(), top.clone()];
+        app.selection = vec![bottom.clone(), top.clone()].into();
         app.run_command("path.subtract_back", false, false);
         assert_eq!(app.selection, vec![top.clone()], "减去后方对象保留最上对象");
         assert!(app.doc.find_by_sid(&bottom).is_none(), "下方对象被删除");

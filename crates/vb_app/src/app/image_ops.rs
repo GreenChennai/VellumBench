@@ -75,7 +75,7 @@ impl VellumApp {
             match place_image_cmd(&mut self.doc, &rel, &dir, &file) {
                 Some((cmd, sid)) => {
                     self.exec(cmd);
-                    self.selection = vec![sid];
+                    self.selection = vec![sid].into();
                     self.status = format!("已置入图像:{rel}(新 img 节点,原图尺寸)");
                 }
                 None => self.toast_error("置入图像:无法读取图片尺寸"),

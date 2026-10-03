@@ -265,7 +265,7 @@ impl VellumApp {
                 }) {
                     Some((cmd, new_sid)) => {
                         self.exec(cmd);
-                        self.selection = vec![new_sid];
+                        self.selection = vec![new_sid].into();
                         self.say("画板已复制(纵向落到最下方)");
                     }
                     None => self.say("复制:先选中一块画板"),
@@ -569,7 +569,7 @@ impl VellumApp {
                     t.text_3,
                 );
                 if resp.clicked() {
-                    self.selection = vec![sid.clone()];
+                    self.selection = vec![sid.clone()].into();
                     // 点击 = 选中并画布定位(复用既有命令)
                     self.run_command("view.zoom_to_selection", false, false);
                 }

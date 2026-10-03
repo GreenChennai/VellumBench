@@ -79,14 +79,14 @@ impl VellumApp {
                         &parent_sid,
                     ));
                     self.exec(Command::Compound { cmds });
-                    self.selection = vec![new_sid];
+                    self.selection = vec![new_sid].into();
                     self.say("已复制(副本插到原对象之后;Ctrl+Z 可撤销)");
                 }
                 ui.close();
             }
             // ── 删除(画板行不删:保底至少一块画板的守卫在选区删除路径)──
             if !r.is_artboard && ui.button("删除").clicked() {
-                self.selection = vec![r.sid.clone()];
+                self.selection = vec![r.sid.clone()].into();
                 self.exec(Command::Delete {
                     target_sid: r.sid.clone(),
                     captured: None,
@@ -132,7 +132,7 @@ impl VellumApp {
             if r.container && ui.button("隔离(进入隔离模式)").clicked() {
                 if let Some(nid) = self.doc.find_by_sid(&r.sid) {
                     self.isolate_stack.push(nid);
-                    self.selection = vec![r.sid.clone()];
+                    self.selection = vec![r.sid.clone()].into();
                     self.say(format!("已进入隔离模式:{}(Esc 退出)", r.name));
                 }
                 ui.close();
@@ -173,7 +173,7 @@ impl VellumApp {
                         })
                         .collect();
                     self.exec(Command::Compound { cmds });
-                    self.selection = vec![r.sid.clone()];
+                    self.selection = vec![r.sid.clone()].into();
                     self.say(format!("已隐藏其他 {n} 个对象"));
                 }
                 ui.close();
@@ -181,7 +181,7 @@ impl VellumApp {
             if ui.button("选择同类").clicked() {
                 let sids = same_kind_sids(&self.doc, &r.sid);
                 let n = sids.len();
-                self.selection = sids;
+                self.selection = sids.into();
                 self.say(format!("已选择同类 {n} 个对象"));
                 ui.close();
             }
@@ -197,7 +197,7 @@ impl VellumApp {
                     Some(c) => {
                         self.exec(c);
                         if let Some(g) = gsid {
-                            self.selection = vec![g];
+                            self.selection = vec![g].into();
                         }
                         self.say("已转换为编组");
                     }
@@ -240,7 +240,7 @@ impl VellumApp {
                     &parent_sid,
                 ));
                 self.exec(Command::Compound { cmds });
-                self.selection = vec![new_sid];
+                self.selection = vec![new_sid].into();
                 self.say("已复制到目标位置(Alt+拖拽)");
             }
         } else {
@@ -263,7 +263,7 @@ impl VellumApp {
                     "已调整层序"
                 });
             }
-            self.selection = vec![drag.sid.clone()];
+            self.selection = vec![drag.sid.clone()].into();
         }
     }
 }

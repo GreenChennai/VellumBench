@@ -9005,6 +9005,8 @@ dependencies = [
  "serde",
  "serde_json",
  "vb_common",
+ "vb_doc",
+ "vb_tools",
 ]
 
 [[package]]
