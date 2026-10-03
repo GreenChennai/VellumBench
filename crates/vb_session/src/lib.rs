@@ -21,7 +21,9 @@
 //!   (`SelectionState` = 有序 sid 列表;`ToolId` 即旧宿主 `Tool`),
 //!   成为 `VellumApp.selection` / `VellumApp.tool` 的**实际字段类型**。
 //! - [`command`]:命令**信封**最小实体(稳定 id + 请求/回执线格式);
-//!   `run_command` 分发体仍在旧宿主,搬家属 R1(模块文档写明边界)。
+//!   `run_command` 分发体仍在旧宿主,搬家属 R1(ADR-0048 §3 口径)。
+//! - [`mru`]:最近项目(MRU)持久化自 `vb_app::recent` 整体下沉(含
+//!   v0.14 旧文件向后兼容用例);`vb_app` 侧 re-export,行为零变化。
 //! - [`i18n`]:占位模块(i18n 地基在另一分支落 `vb_common`,合并后此处
 //!   re-export,本批不实现)。
 //!
@@ -31,6 +33,7 @@
 pub mod capabilities;
 pub mod command;
 pub mod i18n;
+pub mod mru;
 pub mod selection;
 pub mod snap;
 pub mod tools;

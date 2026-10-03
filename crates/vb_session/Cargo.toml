@@ -13,8 +13,7 @@ vb_common = { workspace = true }
 # 复用 vb_tools::abs_bbox(复用而非抄写,防第二份几何)。两者皆无 UI 依赖。
 vb_doc = { workspace = true }
 vb_tools = { workspace = true }
-# 会话态纯数据的(反)序列化预留:选中集/工具状态未来随 workspace 布局持久化
+# 会话态纯数据的(反)序列化:选中集/工具状态未来随 workspace 布局持久化;
+# mru(R0 自 vb_app::recent 下沉)的 recent.json 读写是真实运行时依赖
 serde = { workspace = true }
-
-[dev-dependencies]
 serde_json = { workspace = true }
