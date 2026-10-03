@@ -6,7 +6,13 @@
 //! 文档模型/宿主的反向依赖。R6 的「台账 UI 升级」(直达命令)在此基础上做。
 //!
 //! 组件形态:gpui-component `Button`(过滤 chips + Agent 过滤开关)+
-//! `Label`(条目名/去向),行高走令牌 [`layout::ROW_HEIGHT_LIST`](24)。
+//! `Label`(条目名/去向);行高走高度派生制 [`tokens::row_height`]
+//! (22 篇 §3.4 裁决一 / ADR-0050)。
+//!
+//! 文案纪律(G-UI3):渲染路径一切用户可见字面量走
+//! `vb_session::i18n::t/t_args`(`i18n/zh.ftl` 的 `ui-cap-*` 段);
+//! 台账条目名/去向(`Capability.name`/`CapStatus::note`)是数据而非
+//! chrome 文案,随数据透传(全量双语收口 R7,硬骨头 #2)。
 
 use sable::gpui::{
     div, hsla, px, App, AppContext as _, ClickEvent, Context, Entity, Hsla,
@@ -20,8 +26,9 @@ use sable::widgets::prelude::{h_flex, v_flex};
 use sable::widgets::theme::theme;
 use sable::widgets::tokens::ColorTokens;
 use vb_session::capabilities::{CapStatus, Capability, CAPABILITIES};
+use vb_session::i18n::{t, t_args, FluentValue};
 
-use crate::tokens::{font_size, layout, radius, space};
+use crate::tokens::{font_size, radius, row_height, space};
 
 /// 状态过滤档。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,7 +68,7 @@ impl CapabilitiesPanel {
     fn filter_chip(
         &self,
         id: &'static str,
-        label: &'static str,
+        label: String,
         value: CapFilter,
         weak: &sable::gpui::WeakEntity<Self>,
     ) -> Button {
@@ -83,7 +90,7 @@ impl CapabilitiesPanel {
     fn agent_chip(&self, weak: &sable::gpui::WeakEntity<Self>) -> Button {
         let weak = weak.clone();
         Button::new("cap-filter-agent")
-            .label("仅 Agent 可复现")
+            .label(t("ui-cap-filter-agent-only"))
             .compact()
             .selected(self.agent_only)
             .on_click(move |_: &ClickEvent, _, cx: &mut App| {
@@ -97,9 +104,19 @@ impl CapabilitiesPanel {
     }
 }
 
+/// 三态徽章 key(G-UI3:徽章文案走 i18n;`Planned` 被
+/// 「no_dangling_planned」门禁保证为空,仍保留兜底 key)。
+fn badge_key(status: CapStatus) -> &'static str {
+    match status {
+        CapStatus::Done => "ui-cap-badge-done",
+        CapStatus::Partial(_) => "ui-cap-badge-partial",
+        CapStatus::Planned(_) => "ui-cap-badge-planned",
+        CapStatus::Dropped(_) => "ui-cap-badge-dropped",
+    }
+}
+
 /// 三态徽章:(底色, 文字色)。语义色映射 —— Done=success / Partial=warn /
-/// Dropped=danger;`Planned` 被「no_dangling_planned」门禁保证为空,仍给
-/// 兜底色(次级文字色),徽章文案用 [`CapStatus::badge`]。
+/// Dropped=danger;徽章文案经 [`badge_key`] 走 i18n。
 fn badge_colors(status: CapStatus, c: &ColorTokens) -> (Hsla, Hsla) {
     let base = match status {
         CapStatus::Done => c.success,
@@ -127,7 +144,13 @@ fn counts() -> (usize, usize, usize) {
 fn capability_row(cap: &'static Capability, c: &ColorTokens) -> sable::gpui::AnyElement {
     let (badge_bg, badge_fg) = badge_colors(cap.status, c);
     let (agent_text, agent_color) = if cap.agent_reproducible() {
-        (format!("可复现 ×{}", cap.commands.len()), c.success)
+        (
+            t_args(
+                "ui-cap-agent-repro",
+                &[("n", FluentValue::from(cap.commands.len() as i64))],
+            ),
+            c.success,
+        )
     } else {
         ("—".to_string(), c.text_disabled)
     };
@@ -141,10 +164,11 @@ fn capability_row(cap: &'static Capability, c: &ColorTokens) -> sable::gpui::Any
             h_flex()
                 .gap(px(space::S2))
                 .items_center()
-                .min_h(px(layout::ROW_HEIGHT_LIST))
+                // 行高派生制:LABEL 字号 → ⌈12×1.45⌉+8 = 26(ADR-0050)
+                .min_h(px(row_height(font_size::LABEL)))
                 .child(
                     // 三态徽章
-                    div_badge(CapStatus::badge(cap.status), badge_bg, badge_fg),
+                    div_badge(t(badge_key(cap.status)), badge_bg, badge_fg),
                 )
                 .child(
                     div()
@@ -185,8 +209,8 @@ fn capability_row(cap: &'static Capability, c: &ColorTokens) -> sable::gpui::Any
     row.into_any_element()
 }
 
-/// 徽章小胶囊(div 形态,色经语义映射取自主题,零 hex)。
-fn div_badge(text: &'static str, bg: Hsla, fg: Hsla) -> sable::gpui::Div {
+/// 徽章小胶囊(div 形态,色经语义映射取自主题,零 hex;文案来自 i18n)。
+fn div_badge(text: String, bg: Hsla, fg: Hsla) -> sable::gpui::Div {
     sable::gpui::div()
         .px(px(5.0))
         .py(px(1.0))
@@ -209,6 +233,15 @@ impl Render for CapabilitiesPanel {
             .iter()
             .filter(|cap| self.matches(cap))
             .collect();
+        let counts_line = t_args(
+            "ui-cap-counts",
+            &[
+                ("total", FluentValue::from(total as i64)),
+                ("done", FluentValue::from(done as i64)),
+                ("partial", FluentValue::from(partial as i64)),
+                ("dropped", FluentValue::from(dropped as i64)),
+            ],
+        );
 
         // ── 过滤行:三态 chips + Agent 开关 + 计数 ──
         let toolbar = v_flex()
@@ -222,17 +255,27 @@ impl Render for CapabilitiesPanel {
                 h_flex()
                     .gap(px(2.0))
                     .flex_wrap()
-                    .child(self.filter_chip("cap-filter-all", "全部", CapFilter::All, &weak))
-                    .child(self.filter_chip("cap-filter-done", "已落地", CapFilter::Done, &weak))
+                    .child(self.filter_chip(
+                        "cap-filter-all",
+                        t("ui-cap-filter-all"),
+                        CapFilter::All,
+                        &weak,
+                    ))
+                    .child(self.filter_chip(
+                        "cap-filter-done",
+                        t("ui-cap-filter-done"),
+                        CapFilter::Done,
+                        &weak,
+                    ))
                     .child(self.filter_chip(
                         "cap-filter-partial",
-                        "部分",
+                        t("ui-cap-filter-partial"),
                         CapFilter::Partial,
                         &weak,
                     ))
                     .child(self.filter_chip(
                         "cap-filter-dropped",
-                        "不做",
+                        t("ui-cap-filter-dropped"),
                         CapFilter::Dropped,
                         &weak,
                     ))
@@ -242,9 +285,7 @@ impl Render for CapabilitiesPanel {
                 div()
                     .text_size(px(font_size::CAPTION))
                     .text_color(c.text_secondary)
-                    .child(format!(
-                        "共 {total} 条 · 已落地 {done} · 部分 {partial} · 不做 {dropped}"
-                    )),
+                    .child(counts_line),
             );
 
         // ── 条目列表 ──
@@ -257,7 +298,7 @@ impl Render for CapabilitiesPanel {
                     div()
                         .text_size(px(font_size::LABEL))
                         .text_color(c.text_secondary)
-                        .child("无匹配条目(当前过滤组合)"),
+                        .child(t("ui-cap-empty")),
                 )
                 .into_any_element()
         } else {
@@ -277,7 +318,7 @@ impl Render for CapabilitiesPanel {
             .border_color(c.border_subtle)
             .text_size(px(font_size::CAPTION))
             .text_color(c.text_disabled)
-            .child("数据源:vb_session::capabilities(单一真相) · 三态:已落地 / 部分+去向 / 不做");
+            .child(t("ui-cap-footer"));
 
         v_flex()
             .id("capabilities-panel")

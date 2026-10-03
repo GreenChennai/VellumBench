@@ -8,6 +8,9 @@ description = "VellumBench 宿主无关会话态(选中态/工具状态机/能�
 
 [dependencies]
 vb_common = { workspace = true }
+# 仅为本模块 `pub use fluent::FluentValue` 再导出(t_args 实参类型给 UI 侧;
+# 取词本体仍在 vb_common::i18n,单一 fluent 消费逻辑不在此重复)
+fluent = { workspace = true }
 # 会话态纯数据的(反)序列化预留:选中集/工具状态未来随 workspace 布局持久化
 serde = { workspace = true }
 

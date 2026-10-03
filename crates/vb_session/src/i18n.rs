@@ -7,4 +7,12 @@
 //!
 //! 新宿主从第一行代码起禁裸文案(G-UI3;全量双语收口在 R7)。
 
-pub use vb_common::i18n;
+/// 取词 API 条目级再导出:UI 侧统一经 `vb_session::i18n::t(key)` 取词
+/// (本模块文档声明的路径;只再导出条目而非整个模块,`vb_session::i18n`
+/// 即取词门面,不产生 `i18n::i18n` 双层路径)。
+pub use vb_common::i18n::{init, language, set_language, t, t_args, try_t, try_t_args, Lang};
+
+/// `t_args` 实参类型再导出:UI 侧(`vb_kit`/`vb_shell`)按依赖纪律只认识
+/// `vb_session`,不必为拼一条插值文案直依赖 `fluent`(vb_common 已是
+/// 唯一的 fluent 消费者)。
+pub use fluent::FluentValue;

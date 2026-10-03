@@ -20,12 +20,26 @@ use sable::gpui_component::{Root, ThemeMode};
 use sable::widgets::prelude::{h_flex, v_flex};
 use sable::widgets::theme::theme;
 use sable::widgets::tokens::FONT_SIZE_BODY;
+use vb_session::i18n::t;
 
 use vb_kit::capabilities_panel::CapabilitiesPanel;
 use vb_kit::tokens::inject_vb_theme;
 
-/// 窗口标题(22 篇 §4 R0:标题/图标/深色标题栏的最小形态;图标 R1 补)。
-const WINDOW_TITLE: &str = "VellumBench · sable 预览宿主";
+/// 面板坞折叠规则(纯函数;ADR-0050 裁决二,规则表与单测在模块内)。
+/// R0 只落规则+锁测,接进 DockArea 事件流(窗口 resize → 折叠切换)属
+/// R2 面板批次首项,故暂有 dead_code 允许,接线时移除。
+#[allow(dead_code)]
+mod dock_rules;
+
+/// 窗口/dock 标题取词(G-UI3:渲染路径禁裸文案)。
+///
+/// R0 已知限制:sable `SablePanel::create` 与 `WindowOptions` 标题收
+/// `&'static str`,故取词结果 leak 成 'static —— 标题随窗口构建一次性
+/// 定格,热切换语言不改已开面板标题;R2 面板批次接 DockArea 状态重建时
+/// 一并收口(届时面板标题可重建)。
+fn title(key: &str) -> &'static str {
+    Box::leak(t(key).into_boxed_str())
+}
 
 fn main() {
     Application::new().run(|cx: &mut App| {
@@ -42,7 +56,7 @@ fn main() {
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(sable::gpui::TitlebarOptions {
-                title: Some(WINDOW_TITLE.into()),
+                title: Some(title("ui-shell-window-title").into()),
                 ..Default::default()
             }),
             ..Default::default()
@@ -69,9 +83,17 @@ impl ShellApp {
         let focus = cx.focus_handle();
 
         // 左坞:能力台账(「面板 = 纯投影」示范;数据在 vb_session)
-        let capabilities = SablePanel::create("能力台账", CapabilitiesPanel::new(cx).into(), cx);
+        let capabilities = SablePanel::create(
+            title("ui-shell-panel-capabilities"),
+            CapabilitiesPanel::new(cx).into(),
+            cx,
+        );
         // 中央:画布占位(R1 接管;R0 先立窗口骨架与 dock 布局)
-        let canvas = SablePanel::create("画布(R1)", cx.new(|_| CanvasPlaceholder).into(), cx);
+        let canvas = SablePanel::create(
+            title("ui-shell-panel-canvas"),
+            cx.new(|_| CanvasPlaceholder).into(),
+            cx,
+        );
 
         let dock = WorkspacePresets::build_workspace(
             "vellum-sable",
@@ -122,14 +144,14 @@ impl Render for CanvasPlaceholder {
                     div()
                         .text_size(px(FONT_SIZE_BODY))
                         .text_color(colors.text_secondary)
-                        .child("画布(R1)— 画布上屏通道按 ADR-0047 裁定后接管"),
+                        .child(t("ui-shell-canvas-placeholder")),
                 ),
             )
             .child(
                 div()
                     .text_size(px(11.0))
                     .text_color(colors.text_disabled)
-                    .child("R0 预览宿主:窗口 / 主题 / dock 布局骨架"),
+                    .child(t("ui-shell-canvas-subtitle")),
             )
     }
 }
