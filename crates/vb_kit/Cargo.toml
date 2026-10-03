@@ -1,0 +1,16 @@
+[package]
+name = "vb_kit"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+description = "VellumBench sable 面板与控件(R0 骨架:VB 调色板注入 + 能力台账面板)"
+
+[dependencies]
+# 面板底座(sable 门面:widgets/dock);rev 由 workspace 锁定(22 篇 §3.6)
+sable = { workspace = true }
+vb_session = { workspace = true }
+
+[dev-dependencies]
+# G-UI1 tokens_sync2:解析 vb-ui-tokens.json 与 Rust 侧逐值比对
+serde_json = { workspace = true }
