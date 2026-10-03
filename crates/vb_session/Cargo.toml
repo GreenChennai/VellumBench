@@ -1,0 +1,15 @@
+[package]
+name = "vb_session"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+description = "VellumBench 宿主无关会话态(选中态/工具状态机/能力台账数据;零 UI 依赖)"
+
+[dependencies]
+vb_common = { workspace = true }
+# 会话态纯数据的(反)序列化预留:选中集/工具状态未来随 workspace 布局持久化
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

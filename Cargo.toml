@@ -16,6 +16,10 @@ members = [
     "crates/vb_platform",
     "crates/vb_ui",
     "crates/vb_app",
+    # R0 双宿主脚手架(22 篇 §4 R0):会话态提取 / sable 面板与控件 / sable 宿主
+    "crates/vb_session",
+    "crates/vb_kit",
+    "crates/vb_shell",
     # K2 Web 壳(05-11-2,台账 09-K):仅 wasm32 使用;加入 workspace 是为了
     # 统一版本/过门禁(宿主编译无行为,详见该 crate 文档头)
     "crates/vb_web",
@@ -43,6 +47,15 @@ vb_html = { path = "crates/vb_html" }
 vb_doc = { path = "crates/vb_doc" }
 vb_tools = { path = "crates/vb_tools" }
 vb_layout = { path = "crates/vb_layout" }
+vb_plugin = { path = "crates/vb_plugin" }
+vb_platform = { path = "crates/vb_platform" }
+vb_session = { path = "crates/vb_session" }
+vb_kit = { path = "crates/vb_kit" }
+vb_shell = { path = "crates/vb_shell" }
+
+# R0 换宿主(22 篇 §3.6 版本锁定):sable 门面,rev 与 cutforge 同锁;
+# 升级 = 显式提交带 diff 审查,勿随手改。
+sable = { git = "https://github.com/GreenChennai/sable-ui.git", rev = "72d83c65ae149334c362d5e4bf9f0c84057781c2" }
 
 kurbo = "0.13"
 slotmap = "1"

@@ -1,0 +1,17 @@
+[package]
+name = "vb_shell"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+description = "VellumBench sable 宿主(R0 预览壳:GPUI 开窗 + dock 工作台)"
+
+[[bin]]
+name = "vellum-sable"
+path = "src/main.rs"
+
+[dependencies]
+# 宿主底座与面板(22 篇 §3.1:vb_shell 只依赖 sable + vb_kit + vb_session)
+sable = { workspace = true }
+vb_kit = { workspace = true }
+vb_session = { workspace = true }
