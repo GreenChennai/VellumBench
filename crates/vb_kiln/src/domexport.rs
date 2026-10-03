@@ -50,7 +50,7 @@ pub fn meta_warnings(meta: &DomPaintMeta, fmt: Format, not_found: &[String]) -> 
     w
 }
 
-/// 单源导出(AI 默认走此路线;PDF 可选)。
+/// 单源导出(AI 默认走此路线;PDF 可选)。不可取消兼容入口。
 pub fn export_dom(
     source: &Path,
     format: Format,
@@ -59,6 +59,28 @@ pub fn export_dom(
     scale: u32,
     height: u32,
 ) -> Result<DomExportResult, String> {
+    export_dom_with_cancel(source, format, transparent, width, scale, height, None)
+}
+
+/// 可取消版单源导出(硬骨头 #3 静态快照车道收口):`cancel = Some` 时,
+/// 入口/采集/写出三段边界 + 浏览器内全部 CDP 长等待(≤100ms 泵片轮询,
+/// 见 `vb_browser::cancel`)均可协作中止;取消错误串带「导出已取消」
+/// 前缀,三态可判;浏览器随作用域 Drop 整树收割,产物不写半截。
+pub fn export_dom_with_cancel(
+    source: &Path,
+    format: Format,
+    transparent: bool,
+    width: u32,
+    scale: u32,
+    height: u32,
+    cancel: Option<crate::cancel::CancelToken>,
+) -> Result<DomExportResult, String> {
+    // 入口边界:预取消不起静态服务、不拉浏览器(与 cancel_lanes 同风格)
+    if let Some(t) = &cancel {
+        if t.is_cancelled() {
+            return Err(crate::cancel::lane_cancelled("DOM 快照车道入口"));
+        }
+    }
     let (mount_dir, html_path) = resolve_source(source)?;
     let srv = vb_browser::staticsrv::StaticServer::start(&mount_dir)?;
     let url = if source.is_dir() {
@@ -77,6 +99,11 @@ pub fn export_dom(
     let proc = vb_browser::browser::BrowserProcess::launch(&exe)?;
     let browser_ver = proc.version();
     let mut page = vb_browser::page::PageSession::attach(&proc)?;
+    // 采集/写出全链共用一个探针:CancelToken → CancelProbe 闭包
+    if let Some(t) = &cancel {
+        let t = t.clone();
+        page.set_cancel_probe(std::sync::Arc::new(move || t.is_cancelled()));
+    }
     // 采集视口(P0-3 尺寸门):显式 --width/--height 优先,否则按画板声明
     // 尺寸取景(abprobe,与导入器同一识别口径),再否则历史兜底 1080。
     // 此前视口宽固定 1080:1920 宽内容被裁掉 44%(PDF 页只剩 1080×1080)。
@@ -173,8 +200,14 @@ pub fn export_dom(
         transparent,
         ..Default::default()
     };
-    let export_res = crate::export_artboard(&dom.doc, dom.artboard, &req, Some(&mount_dir))
-        .map_err(|e| format!("DOM 快照导出失败: {e}"));
+    let export_res = crate::export_artboard_with_cancel(
+        &dom.doc,
+        dom.artboard,
+        &req,
+        Some(&mount_dir),
+        cancel.clone(),
+    )
+    .map_err(|e| format!("DOM 快照导出失败: {e}"));
     cleanup_intermediate(&dom.raster_dir);
     let (bytes, mut report) = export_res?;
     // VB-1/VB-2:404 与采集期降级并入强类型报告(先于 message 汇总,
@@ -403,7 +436,7 @@ pub fn url_encode(s: &str) -> String {
 }
 
 /// 多源导出(N4 多画板):每源一页(浏览器采集 → 单页 PDF)→ 合并 →
-/// AI 头在头部之内落笔。Illustrator 中 PDF 页 = 画板。
+/// AI 头在头部之内落笔。Illustrator 中 PDF 页 = 画板。不可取消兼容入口。
 pub fn export_dom_pages(
     sources: &[PathBuf],
     transparent: bool,
@@ -411,11 +444,31 @@ pub fn export_dom_pages(
     scale: u32,
     height: u32,
 ) -> Result<DomExportResult, String> {
+    export_dom_pages_with_cancel(sources, transparent, width, scale, height, None)
+}
+
+/// 可取消版多源导出(硬骨头 #3):逐源采集/写出边界 + CDP 长等待可中止。
+pub fn export_dom_pages_with_cancel(
+    sources: &[PathBuf],
+    transparent: bool,
+    width: u32,
+    scale: u32,
+    height: u32,
+    cancel: Option<crate::cancel::CancelToken>,
+) -> Result<DomExportResult, String> {
     if sources.is_empty() {
         return Err("多源导出至少需要一个 --source".into());
     }
     if sources.len() == 1 {
-        return export_dom(&sources[0], Format::Ai, transparent, width, scale, height);
+        return export_dom_with_cancel(
+            &sources[0],
+            Format::Ai,
+            transparent,
+            width,
+            scale,
+            height,
+            cancel,
+        );
     }
     let mut page_pdfs: Vec<Vec<u8>> = Vec::new();
     let mut meta = DomPaintMeta::default();
@@ -425,8 +478,17 @@ pub fn export_dom_pages(
     let mut w0 = 0f64;
     let mut h0 = 0f64;
     for src in sources {
+        // 入口边界:预取消不再拉起下一源的浏览器会话
+        if let Some(t) = &cancel {
+            if t.is_cancelled() {
+                return Err(crate::cancel::lane_cancelled(&format!(
+                    "DOM 快照多页车道(源 {})",
+                    src.display()
+                )));
+            }
+        }
         // 逐源走单页导出(浏览器会话各自起落;效率列 carry-forward)
-        let r = export_dom_pdf_bytes(src, transparent, width, height)?;
+        let r = export_dom_pdf_bytes(src, transparent, width, height, cancel.as_ref())?;
         meta.line_count += r.meta.line_count;
         meta.clip_demand += r.meta.clip_demand;
         meta.raster_count += r.meta.raster_count;
@@ -473,6 +535,7 @@ fn export_dom_pdf_bytes(
     transparent: bool,
     width: u32,
     height: u32,
+    cancel: Option<&crate::cancel::CancelToken>,
 ) -> Result<DomPageOut, String> {
     let (mount_dir, html_path) = resolve_source(src)?;
     let srv = vb_browser::staticsrv::StaticServer::start(&mount_dir)?;
@@ -491,6 +554,10 @@ fn export_dom_pdf_bytes(
     let proc = vb_browser::browser::BrowserProcess::launch(&exe)?;
     let browser_ver = proc.version();
     let mut page = vb_browser::page::PageSession::attach(&proc)?;
+    if let Some(t) = cancel {
+        let t = t.clone();
+        page.set_cancel_probe(std::sync::Arc::new(move || t.is_cancelled()));
+    }
     // P0-3:逐源取画板声明尺寸(多画板按各自尺寸),显式 --width/--height 优先
     let (vw, vh, artboard) = viewport_plan(src, width, height);
     page.set_device_metrics(vw, vh, 1)?;
@@ -536,8 +603,14 @@ fn export_dom_pdf_bytes(
         transparent,
         ..Default::default()
     };
-    let export_res = crate::export_artboard(&dom.doc, dom.artboard, &req, Some(&mount_dir))
-        .map_err(|e| format!("DOM 快照导出失败: {e}"));
+    let export_res = crate::export_artboard_with_cancel(
+        &dom.doc,
+        dom.artboard,
+        &req,
+        Some(&mount_dir),
+        cancel.cloned(),
+    )
+    .map_err(|e| format!("DOM 快照导出失败: {e}"));
     cleanup_intermediate(&dom.raster_dir);
     let (bytes, mut report) = export_res?;
     let typed = meta_warnings(&dom.meta, Format::Pdf, &srv.take_not_found());

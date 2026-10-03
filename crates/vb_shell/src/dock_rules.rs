@@ -28,6 +28,9 @@
 use vb_kit::tokens::layout::{COLLAPSE_BELOW, RIGHT_DOCK_MAX, RIGHT_DOCK_MIN};
 
 /// 折叠态图标条宽度(= 令牌 `RIGHT_DOCK_COLLAPSED`;沿用旧 dock.rs 命名)。
+/// R0 只落规则+单测(接线归 R2,见模块注释),别名当前仅测试引用——
+/// cfg(test) 门控避免二进制构建的 unused_import 警告;R2 接线时去掉门控。
+#[cfg(test)]
 pub use vb_kit::tokens::layout::RIGHT_DOCK_COLLAPSED as ICON_RAIL_WIDTH;
 
 /// 面板坞此刻应否折叠(纯函数;规则表见模块注释)。

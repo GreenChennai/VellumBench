@@ -49,8 +49,10 @@ enum Cmd {
         "协作取消:\n",
         "  导出期间在 stdin 输入单独一行 c(或 q)触发协作取消,导出在最近的\n",
         "  帧/分段边界尽快停止,不留半截产物文件(最终产物只经原子写落盘);\n",
-        "  退出码:成功 0、失败非 0、取消 130(取消时 stderr 输出\n",
-        "  {\"ok\":false,\"cancelled\":true,...} 供脚本判定)\n",
+        "  R0 收口(硬骨头 #3)后静态单页 PNG/JPG/PDF/AI 截图车道同样可取消:\n",
+        "  浏览器 CDP 长等待(截图 180s/printToPDF 300s)按 ≤100ms 分片轮询,\n",
+        "  取消时收割浏览器进程,退出码:成功 0、失败非 0、取消 130(取消时\n",
+        "  stderr 输出 {\"ok\":false,\"cancelled\":true,...} 供脚本判定)\n",
         "逐实例帧间隔直方图(硬骨头 #18):\n",
         "  动画浏览器车道结果 JSON 含 instances 数组(index/frames/\n",
         "  wall_seconds/fps/frame_interval_ms{p50,p95,p99,max,histogram}),\n",
@@ -485,10 +487,27 @@ fn run_export(
     ) && matches!(vector_mode.as_str(), "auto" | "dom")
         && engine_mode != "native";
     if want_dom {
+        // 硬骨头 #3 收口:DOM 快照车道(单页/多页)接同一取消令牌——
+        // 入口/采集/写出边界 + CDP 长等待分片轮询;stdin 'c' 一通道生效
         let dom_result = if sources.len() > 1 {
-            vb_kiln::domexport::export_dom_pages(&sources, transparent, width, scale, height)
+            vb_kiln::domexport::export_dom_pages_with_cancel(
+                &sources,
+                transparent,
+                width,
+                scale,
+                height,
+                Some(cancel.child()),
+            )
         } else {
-            vb_kiln::domexport::export_dom(&source, fmt, transparent, width, scale, height)
+            vb_kiln::domexport::export_dom_with_cancel(
+                &source,
+                fmt,
+                transparent,
+                width,
+                scale,
+                height,
+                Some(cancel.child()),
+            )
         };
         match dom_result {
             Ok(out) => {
@@ -736,7 +755,14 @@ fn run_export(
             artboard: artboard_frame,
             artboard_index: 0,
         };
-        match vb_browser::export_source(&source, &req) {
+        // 硬骨头 #3 收口:单页 PNG/PDF/AI 截图车道接取消令牌——CDP 长等待
+        // (截图 180s/printToPDF 300s)分片轮询,stdin 'c' 同通道生效;
+        // 取消路径浏览器整树收割 + 产物不落盘(lane_failure_exit 三态收口)
+        let probe: vb_browser::CancelProbe = {
+            let t = cancel.clone();
+            std::sync::Arc::new(move || t.is_cancelled())
+        };
+        match vb_browser::export_source_cancellable(&source, &req, probe) {
             Ok(outcome) => {
                 // 车道 B 告警逐条留痕:此前只报计数,告警内容被吞,
                 // 违反「降级必须可观测」(ADR-0046)

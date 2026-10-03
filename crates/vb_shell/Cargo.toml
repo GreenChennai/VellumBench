@@ -19,6 +19,9 @@ sable = { workspace = true, features = ["backend-auto"] }
 vb_kit = { workspace = true }
 vb_session = { workspace = true }
 vb_render = { workspace = true }
+# 硬骨头 #13(22 篇 §3.7):gpui 宿主的平台服务 seam(深色探测/剪贴板/
+# 光标/窗口/DPI/对话框),OS 触点归口一处;实现经 sable::gpui 同锁版本
+vb_platform = { path = "../vb_platform", features = ["gpui"] }
 # canvas_spike(22 篇 §4 R0 交付 3):vello Scene/Renderer 与 wgpu 一律经
 # vello::wgpu re-export 使用(与 vb_render/sable-paint 同一 vello 0.10 实例,
 # 单一真相);pollster 阻塞式设备初始化(Cargo.lock 已有 0.4,零新增编译);

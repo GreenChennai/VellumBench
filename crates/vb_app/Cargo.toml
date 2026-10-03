@@ -27,6 +27,9 @@ vb_browser = { path = "../vb_browser" }
 vb_kiln = { path = "../vb_kiln" }
 # 09-J 插件宿主:外部子进程 + stdio JSON-RPC + manifest 权限(零新依赖)
 vb_plugin = { path = "../vb_plugin" }
+# 硬骨头 #13(22 篇 §3.7):egui 宿主的平台服务 seam(剪贴板/光标/窗口/
+# DPI/深色/对话框),OS 触点归口一处
+vb_platform = { path = "../vb_platform", features = ["egui"] }
 image = { workspace = true }
 anyhow = { workspace = true }
 eframe = { version = "0.35.0", features = ["wgpu"] }

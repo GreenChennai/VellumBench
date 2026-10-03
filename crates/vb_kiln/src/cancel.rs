@@ -95,7 +95,12 @@ pub fn guard_lane(token: &Option<CancelToken>, checkpoint: &str) -> Result<(), S
 
 /// 车道取消标记串(anim 车道以 String 报错;取消与失败共用错误通道,
 /// 经此前缀区分三态)。勿在别处硬编码同文案,一律经本模块构造/判定。
-pub const LANE_CANCELLED_PREFIX: &str = "导出已取消";
+///
+/// **单源 = `vb_browser::cancel::WAIT_CANCELLED_PREFIX`**(编译期别名):
+/// 静态快照车道(硬骨头 #3 收口)的取消错误在 vb_browser 深处产生,两
+/// crate 的字面量经此别名强制一致,`is_lane_cancelled` 对两条车道的取消
+/// 错误统一判定。
+pub const LANE_CANCELLED_PREFIX: &str = vb_browser::cancel::WAIT_CANCELLED_PREFIX;
 
 /// 构造车道取消错误(带检查点标注,便于日志定位取消生效位置)。
 pub fn lane_cancelled(checkpoint: &str) -> String {

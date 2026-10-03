@@ -53,6 +53,44 @@ impl Cdp {
         }
     }
 
+    /// 可取消版 [`Cdp::call`](硬骨头 #3 静态快照车道收口):等待循环按
+    /// **≤100ms 泵片**推进(片数 = timeout/100ms,即 60s/180s/300s 等待
+    /// 被拆成 600/1800/3000 片),每片之间查一次取消探针——命中即返回
+    /// 取消标记错误([`crate::cancel::wait_cancelled`],三态可判)。
+    ///
+    /// 取消瞬点后迟到的响应留在 `responses` 表(新 call 用新 id 永不误配,
+    /// 随连接关闭释放);连接与浏览器进程由上层 Drop 收割,本方法只管停等。
+    pub fn call_cancellable(
+        &mut self,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+        probe: &dyn Fn() -> bool,
+    ) -> Result<Value, String> {
+        // 起跑前已取消:不发命令,直接按取消收口
+        if probe() {
+            return Err(crate::cancel::wait_cancelled(&format!("{method}(起跑前)")));
+        }
+        let id = self.send(method, params)?;
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(res) = self.responses.remove(&id) {
+                return match res {
+                    Ok(v) => Ok(v),
+                    Err(e) => Err(format!("{method} 传输失败: {e}")),
+                };
+            }
+            if probe() {
+                return Err(crate::cancel::wait_cancelled(&format!("{method} 等待响应")));
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(format!("{method} 等待响应超时"));
+            }
+            self.pump(remaining.min(Duration::from_millis(100)))?;
+        }
+    }
+
     fn send(&mut self, method: &str, params: Value) -> Result<u64, String> {
         let id = self.next_id;
         self.next_id += 1;

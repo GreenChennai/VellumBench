@@ -33,6 +33,7 @@ use sable::gpui_component::{Root, ThemeMode};
 use sable::widgets::prelude::{h_flex, v_flex};
 use sable::widgets::theme::theme;
 use sable::widgets::tokens::FONT_SIZE_BODY;
+use vb_platform::DarkModeProbe as _;
 use vb_session::i18n::t;
 
 use vb_kit::capabilities_panel::CapabilitiesPanel;
@@ -80,6 +81,7 @@ fn main() {
             });
         }
     }
+}
 
 // ─────────────────────────── 命令行(ADR-0033) ───────────────────────────
 
@@ -140,9 +142,21 @@ fn parse_launch() -> Launch {
 /// gpui_component::init 与 sable theme::init,只调后者会丢 sable 主题;
 /// gpui-component 面板 chrome 固定深色;VB 调色板灌进 sable tokens
 /// (JSON 单一真相的投影,tokens_sync2 门禁)。
+///
+/// 硬骨头 #13 接线:gpui_component 主题档经 [`vb_platform::DarkModeProbe`]
+/// 探测系统外观(壳不再自己摸 OS),探测语义在 vb_platform::gpui_backend。
 fn init_chrome(cx: &mut App) {
     sable::dock::init(cx);
-    Theme::change(ThemeMode::Dark, None, cx);
+    let dark = vb_platform::gpui_backend::GpuiDarkMode::new(cx).is_dark_mode();
+    Theme::change(
+        if dark {
+            ThemeMode::Dark
+        } else {
+            ThemeMode::Light
+        },
+        None,
+        cx,
+    );
     inject_vb_theme(cx);
 }
 
