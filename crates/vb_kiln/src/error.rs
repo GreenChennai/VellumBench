@@ -39,6 +39,12 @@ pub enum KilnError {
 
     #[error("PDF 结构错误:{0}")]
     PdfStructure(String),
+
+    /// 协作式取消(硬骨头 #6):调用方经 `CancelToken` 请求停止,导出在
+    /// 最近的分段边界检查点中止。与失败三态区分:不是错误,产物不落盘,
+    /// kiln-cli 据此返回退出码 130(成功 0 / 失败非 0)。
+    #[error("导出已取消")]
+    Cancelled,
 }
 
 pub type KilnResult<T> = Result<T, KilnError>;

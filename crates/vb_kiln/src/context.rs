@@ -52,6 +52,10 @@ pub struct ExportContext {
     /// 动画覆盖矩阵(VB-3;无动画声明时为 None)。
     pub anim_coverage: Option<crate::anim::AnimCoverage>,
     pub project_dir: Option<PathBuf>,
+    /// 协作式取消令牌(硬骨头 #6;`build` 恒为 None,由
+    /// `export_artboard_with_cancel` 注入)。GIF/MP4 写出器在帧分段
+    /// 边界检查,命中即返回 `KilnError::Cancelled`。
+    pub cancel: Option<crate::cancel::CancelToken>,
 }
 
 impl ExportContext {
@@ -217,6 +221,7 @@ impl ExportContext {
             build_warnings,
             anim_coverage,
             project_dir: project_dir.map(|p| p.to_path_buf()),
+            cancel: None,
         })
     }
 

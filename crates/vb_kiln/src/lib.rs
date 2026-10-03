@@ -14,6 +14,7 @@
 pub mod abprobe;
 pub mod anim;
 pub mod animlane;
+pub mod cancel;
 pub mod context;
 pub mod domexport;
 pub mod dompaint;
@@ -45,6 +46,8 @@ use std::path::Path;
 
 use vb_doc::model::{Document, NodeId};
 
+use crate::cancel::CancelToken;
+
 /// 画布单边上限(像素)。超过报 CanvasTooLarge,防 OOM。
 pub const MAX_CANVAS_EDGE: u32 = 32_768;
 /// 画布面积上限(约 1GB RGBA)。
@@ -57,7 +60,22 @@ pub fn export_artboard(
     req: &ExportRequest,
     project_dir: Option<&Path>,
 ) -> KilnResult<(Vec<u8>, KilnReport)> {
-    let ctx = ExportContext::build(doc, artboard, req, project_dir)?;
+    export_artboard_with_cancel(doc, artboard, req, project_dir, None)
+}
+
+/// 可取消版统一导出入口(硬骨头 #6):`cancel = Some` 时 native 车道在
+/// 分段边界检查点(帧落盘循环、每次 ffmpeg 调用前后)协作中止,返回
+/// [`KilnError::Cancelled`];临时帧目录照常清扫,产物不落半截。
+pub fn export_artboard_with_cancel(
+    doc: &Document,
+    artboard: NodeId,
+    req: &ExportRequest,
+    project_dir: Option<&Path>,
+    cancel: Option<CancelToken>,
+) -> KilnResult<(Vec<u8>, KilnReport)> {
+    cancel::guard_kiln(&cancel, "export_artboard 入口")?;
+    let mut ctx = ExportContext::build(doc, artboard, req, project_dir)?;
+    ctx.cancel = cancel;
     let writer = writer::writer_for(req.format);
     let mut out = Vec::with_capacity(256 * 1024);
     let mut report = writer.write(&ctx, &mut out)?;

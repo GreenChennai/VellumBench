@@ -39,7 +39,9 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+use crate::cancel::{guard_lane, lane_cancelled, CancelToken};
 use crate::context::{ExportContext, Frame};
+use crate::report::{summarize_intervals, FrameIntervalStats, InstanceStats};
 use crate::writer::Format;
 use vb_render::encode::DrawList;
 
@@ -53,6 +55,10 @@ pub struct AnimLaneResult {
     /// 动画覆盖矩阵(VB-3):浏览器车道全量播放,`animated` = 源中声明的
     /// 全部关键帧属性;无动画声明时为 None。
     pub anim_coverage: Option<crate::anim::AnimCoverage>,
+    /// 逐实例帧间隔统计(硬骨头 #18;截图车道每 headless 实例一条,
+    /// GIF 内存车道恒 index 0,WebCodecs 车道为空——帧循环在页内,
+    /// Rust 侧无逐帧边界可采样)。kiln-cli 并入结果 JSON `instances`。
+    pub instances: Vec<InstanceStats>,
 }
 
 /// 动画导出选项(MP4 流水线;GIF 走内存路径忽略其中大部分)。
@@ -81,6 +87,11 @@ pub struct AnimPipeOpts {
     /// MP4 无 ffmpeg 降级 GIF 流时的循环次数(CLI `--loop` 透传)。
     pub gif_fallback_loops: u16,
     pub seek_fn: Option<String>,
+    /// 协作式取消令牌(硬骨头 #6;None = 不可取消)。检查点:截图车道
+    /// 每帧边界 + worker 拉起/门控/聚合边界 + concat 运行期;GIF 内存
+    /// 车道每帧边界;WebCodecs 车道每批(60 帧)边界。命中即停止并
+    /// 清扫临时/分段文件,返回「导出已取消」标记错误。
+    pub cancel: Option<CancelToken>,
 }
 
 impl Default for AnimPipeOpts {
@@ -103,6 +114,7 @@ impl Default for AnimPipeOpts {
             gpu: true,
             wall_clock: false,
             seek_fn: None,
+            cancel: None,
         }
     }
 }
@@ -420,6 +432,7 @@ pub fn export_anim(
 
 /// 完整选项版入口(kiln-cli `--workers/--gpu/--img/--encoder/--wall`)。
 pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneResult, String> {
+    guard_lane(&opts.cancel, "动画流水线入口")?;
     let t_start = std::time::Instant::now();
     let (mount_dir, html_path) = crate::domexport::resolve_source(source)?;
     let srv = vb_browser::staticsrv::StaticServer::start(&mount_dir)?;
@@ -513,10 +526,33 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
         let mut handles = Vec::with_capacity(workers);
         // 全部 tx 克隆共用一条就绪通道;主循环顺序收 N-1 个信号
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
+        // 取消即停止拉起后续实例:已拉起的 worker 各自在帧边界退出
+        let cancelled_now = || opts.cancel.as_ref().is_some_and(|t| t.is_cancelled());
         for wi in 0..workers {
-            // 门控:i>0 等前一个实例就绪(30s 兜底,防前实例挂死拖垮全队)
+            if cancelled_now() {
+                break;
+            }
+            // 门控:i>0 等前一个实例就绪(30s 兜底,防前实例挂死拖垮全队;
+            // 等待期每 300ms 查一次取消,取消则不再拉起后继实例)
             if wi > 0 {
-                let _ = ready_rx.recv_timeout(Duration::from_secs(30));
+                let gate = std::time::Instant::now() + Duration::from_secs(30);
+                loop {
+                    if cancelled_now() {
+                        break;
+                    }
+                    match ready_rx.recv_timeout(Duration::from_millis(300)) {
+                        Ok(()) => break,
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                            if std::time::Instant::now() >= gate {
+                                break;
+                            }
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+                if cancelled_now() {
+                    break;
+                }
             }
             // 均分取整:逐帧边界落在 wi*n/workers 网格上。此前 div_ceil 会让
             // 尾段 worker 拿到 a>=n 的空区间(n=5/w=4 → per=2 → 6..5):
@@ -555,14 +591,18 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
     let mut failed = None;
     let mut encoder_used: Option<String> = None;
     let mut browser_real: Option<String> = None;
+    let mut instances: Vec<InstanceStats> = Vec::new();
     for (wi, r) in seg_results.iter().enumerate() {
         match r {
-            Ok((enc_used, ws, ver)) => {
+            Ok((enc_used, ws, ver, stats)) => {
                 if browser_real.is_none() && !ver.is_empty() {
                     browser_real = Some(ver.clone());
                 }
                 if encoder_used.is_none() {
                     encoder_used = Some(enc_used.codec_name().to_string());
+                }
+                if let Some(s) = stats {
+                    instances.push(s.clone());
                 }
                 warnings.extend(ws.iter().cloned());
             }
@@ -572,6 +612,16 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
             }
         }
     }
+    // 取消优先于失败判读:任一 worker 报取消,或聚合时令牌已置位,都按
+    // 取消收口——清扫临时/分段文件,不落半截产物(与失败同路径清扫)
+    let cancelled_hit = seg_results
+        .iter()
+        .any(|r| matches!(r, Err(e) if crate::cancel::is_lane_cancelled(e)))
+        || opts.cancel.as_ref().is_some_and(|t| t.is_cancelled());
+    if cancelled_hit {
+        let _ = std::fs::remove_dir_all(&tmp);
+        return Err(lane_cancelled("分段并行(聚合收口)"));
+    }
     if let Some(e) = failed {
         let _ = std::fs::remove_dir_all(&tmp);
         return Err(e);
@@ -580,6 +630,7 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
     // concat 无缝拼接(同编码参数 CFR,-c copy 零重编码)
     let out_path = tmp.join("out.mp4");
     let concat_result = (|| -> Result<(), String> {
+        guard_lane(&opts.cancel, "concat 边界")?;
         if workers == 1 {
             std::fs::rename(tmp.join("seg_0000.mp4"), &out_path)
                 .map_err(|e| format!("段文件改名失败:{e}"))?;
@@ -591,8 +642,8 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
             text.push_str(&format!("file 'seg_{wi:04}.mp4'\n"));
         }
         std::fs::write(&list, text).map_err(|e| format!("写 concat 清单失败:{e}"))?;
-        let output = Command::new("ffmpeg")
-            .current_dir(&tmp)
+        let mut cmd = Command::new("ffmpeg");
+        cmd.current_dir(&tmp)
             .args([
                 "-y",
                 "-loglevel",
@@ -609,8 +660,26 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
                 "+faststart",
                 "out.mp4",
             ])
-            .output()
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let child = cmd
+            .spawn()
             .map_err(|e| format!("ffmpeg concat 启动失败:{e}"))?;
+        // concat 运行期同样可取消(轮询;取消即 kill + wait 收尸不泄漏进程)
+        let mut child = child;
+        let output = loop {
+            if let Ok(Some(_)) = child.try_wait() {
+                break child
+                    .wait_with_output()
+                    .map_err(|e| format!("ffmpeg concat 等待失败:{e}"))?;
+            }
+            if opts.cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(lane_cancelled("concat 运行期"));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        };
         if !output.status.success() {
             return Err(format!(
                 "ffmpeg concat 失败: {}",
@@ -656,15 +725,19 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
         encoder_used,
         warnings,
         anim_coverage,
+        instances,
     })
 }
 
-/// 单段渲染结果:(实际用上的编码器, 段告警, 浏览器内核版本)。
-type SegResult = Result<(EncChoice, Vec<String>, String), String>;
+/// 单段渲染结果:(实际用上的编码器, 段告警, 浏览器内核版本, 逐实例统计)。
+type SegResult = Result<(EncChoice, Vec<String>, String, Option<InstanceStats>), String>;
 
 /// 渲染一个帧区间 [a, b) 到独立 mp4:独立浏览器实例 + image2pipe 直通编码。
 /// 编码失败(如 N 卡并发会话超限)沿候选表回退整段重试;确定性寻址下
 /// 重试就是重新 seek,结果与首跑一致。返回(实际用上的编码器,告警)。
+///
+/// 协作取消:入口边界 + 帧边界(见 capture_and_encode)检查令牌;取消
+/// 时放行门控信号并返回取消标记错误,浏览器实例随线程退出整树收割。
 #[allow(clippy::too_many_arguments)]
 fn render_segment(
     exe: &Path,
@@ -682,9 +755,21 @@ fn render_segment(
     wi: usize,
     ready_tx: Option<std::sync::mpsc::Sender<()>>,
     is_edge: bool,
-) -> Result<(EncChoice, Vec<String>, String), String> {
+) -> Result<(EncChoice, Vec<String>, String, Option<InstanceStats>), String> {
     let _ = srv; // 静态服务由调用方持有保活;连接经 URL,无需逐段操作
     let mut warnings = Vec::new();
+    // 启动/attach/navigate 任一步失败也要放行门控信号:否则后继 worker
+    // 各空烧 30s(0.13.1 前快速失败的前实例会把整队串行拖 30s×N)
+    let signal_ready = || {
+        if let Some(tx) = &ready_tx {
+            let _ = tx.send(());
+        }
+    };
+    // 分段边界检查(硬骨头 #6):取消后不再拉起本实例的浏览器进程
+    if let Err(e) = guard_lane(&opts.cancel, &format!("实例 {wi} 分段边界(拉起前)")) {
+        signal_ready();
+        return Err(e);
+    }
     // Edge 没有 HeadlessExperimental 域(0.12.3 起 beginFrame 首败缓存;
     // 这里直接按浏览器识别跳过,连第一次尝试都不必浪费)
     if is_edge && wi == 0 {
@@ -701,13 +786,6 @@ fn render_segment(
             "确定性"
         }
     ));
-    // 启动/attach/navigate 任一步失败也要放行门控信号:否则后继 worker
-    // 各空烧 30s(0.13.1 前快速失败的前实例会把整队串行拖 30s×N)
-    let signal_ready = || {
-        if let Some(tx) = &ready_tx {
-            let _ = tx.send(());
-        }
-    };
     let proc = match vb_browser::browser::BrowserProcess::launch_with(
         exe,
         vb_browser::browser::LaunchOptions { gpu: opts.gpu },
@@ -772,7 +850,7 @@ fn render_segment(
         match capture_and_encode(
             &mut page, seg_path, a, b, fps, vw, vh, dsf, opts, enc, &driver, &bf_broken, wi,
         ) {
-            Ok(ws) => {
+            Ok((ws, stats)) => {
                 warnings.extend(ws);
                 if ci > 0 {
                     warnings.push(format!(
@@ -783,9 +861,15 @@ fn render_segment(
                 }
                 page.close();
                 drop(proc);
-                return Ok((enc, warnings, browser_version));
+                return Ok((enc, warnings, browser_version, stats));
             }
             Err(e) => {
+                // 取消是终态:候选链回退没有意义,直接收口
+                if crate::cancel::is_lane_cancelled(&e) {
+                    page.close();
+                    drop(proc);
+                    return Err(e);
+                }
                 last_err = e;
                 // 渲染器崩溃对编码器候选链是终态:同一个死页换几个编码器
                 // 都是全段超时,直接终止,错误信息里带上真因
@@ -806,6 +890,7 @@ fn render_segment(
 }
 
 /// 单次"采集 [a,b) + 直通编码"尝试:截图字节 → ffmpeg stdin → mp4。
+/// 返回(段告警, 逐实例帧间隔统计;取消/失败时 None)。
 #[allow(clippy::too_many_arguments)]
 fn capture_and_encode(
     page: &mut vb_browser::page::PageSession,
@@ -821,11 +906,13 @@ fn capture_and_encode(
     driver: &Driver,
     bf_broken: &std::cell::Cell<bool>,
     wi: usize,
-) -> Result<Vec<String>, String> {
+) -> Result<(Vec<String>, Option<InstanceStats>), String> {
     // 每实例帧间隔统计(串行点自证:多实例下单实例节奏显著劣化会直接
-    // 反映在这行数据里)
+    // 反映在这行数据里;结构化分布见 InstanceStats/硬骨头 #18)
     let stats_t0 = std::time::Instant::now();
     let mut stats_frames: usize = 0;
+    let mut prev_t: Option<std::time::Instant> = None;
+    let mut intervals_ms: Vec<f64> = Vec::with_capacity((b - a).saturating_sub(1));
     let _ = dsf; // 设备像素比已在页面建立时设定
     let mut warnings = Vec::new();
     // ffmpeg 直通:截图字节 → stdin → 编码(零解码零重编码)
@@ -936,7 +1023,23 @@ fn capture_and_encode(
         // 崩溃速断:渲染器已死时每帧截图要烧穿 beginFrame 60s + 截图
         // 180s×2 三层超时,再被候选链用同一死页把整段重跑 N 遍,小时级假挂
         page.ensure_alive()?;
+        // 协作取消(硬骨头 #6,浏览器车道每帧边界检查):命中即 kill 并
+        // wait 收尸 ffmpeg(半截 seg 文件由外层临时目录统一清扫),尽快停止
+        if let Some(tok) = &opts.cancel {
+            if tok.is_cancelled() {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(lane_cancelled(&format!("实例 {wi} 帧边界 {i}")));
+            }
+        }
         stats_frames += 1;
+        // 帧间隔采样(硬骨头 #18):自帧边界起量,覆盖 drive+repaint+
+        // 截图+管道写入全程,即该实例的真实产帧节奏
+        let frame_t = std::time::Instant::now();
+        if let Some(prev) = prev_t {
+            intervals_ms.push(frame_t.duration_since(prev).as_secs_f64() * 1000.0);
+        }
+        prev_t = Some(frame_t);
         if *driver != Driver::WallFallback {
             drive_frame(page, driver, i, fps);
         }
@@ -1027,7 +1130,16 @@ fn capture_and_encode(
                 .collect::<String>()
         ));
     }
-    Ok(warnings)
+    // 逐实例结构化统计(硬骨头 #18):老 warnings 行保持原样,新增
+    // 分位数 + 直方图;判读方法见 FrameIntervalStats 文档注释
+    let stats = InstanceStats {
+        index: wi,
+        frames: stats_frames,
+        wall_seconds: elapsed,
+        fps: stats_frames as f64 / elapsed.max(1e-3),
+        frame_interval_ms: summarize_intervals(&intervals_ms).unwrap_or(FrameIntervalStats::EMPTY),
+    };
+    Ok((warnings, Some(stats)))
 }
 
 /// GIF / 兼容路径:内存帧序列(调色板需全帧统计;长片内存大,MP4 勿走此路)。
@@ -1040,6 +1152,7 @@ pub fn export_anim_inmemory(
     gif_loops: u16,
     opts: &AnimPipeOpts,
 ) -> Result<AnimLaneResult, String> {
+    guard_lane(&opts.cancel, "GIF 内存车道入口")?;
     let (mount_dir, html_path) = crate::domexport::resolve_source(source)?;
     let srv = vb_browser::staticsrv::StaticServer::start(&mount_dir)?;
     let url = if source.is_dir() {
@@ -1089,7 +1202,19 @@ pub fn export_anim_inmemory(
     };
     let mut captures: Vec<Frame> = Vec::with_capacity(n);
     let wall_t0 = std::time::Instant::now();
+    let mut prev_t: Option<std::time::Instant> = None;
+    let mut intervals_ms: Vec<f64> = Vec::with_capacity(n.saturating_sub(1));
+    let stats_t0 = std::time::Instant::now();
     for i in 0..n {
+        // 协作取消(硬骨头 #6,GIF 内存车道每帧边界检查):无临时帧
+        // 文件,直接停采;浏览器实例随 Drop 整树收割,产物不落盘
+        if let Some(tok) = &opts.cancel {
+            if tok.is_cancelled() {
+                page.close();
+                drop(proc);
+                return Err(lane_cancelled(&format!("GIF 内存车道 帧边界 {i}")));
+            }
+        }
         if driver == Driver::WallFallback {
             if i > 0 {
                 std::thread::sleep(Duration::from_secs_f64(interval));
@@ -1097,6 +1222,11 @@ pub fn export_anim_inmemory(
         } else {
             drive_frame(&mut page, &driver, i, fps);
         }
+        let frame_t = std::time::Instant::now();
+        if let Some(prev) = prev_t {
+            intervals_ms.push(frame_t.duration_since(prev).as_secs_f64() * 1000.0);
+        }
+        prev_t = Some(frame_t);
         let png = page
             .screenshot(
                 "png",
@@ -1162,6 +1292,7 @@ pub fn export_anim_inmemory(
         }
     }
 
+    let n_captured = captures.len();
     let ctx = ExportContext {
         artboard_name: String::new(),
         doc_title: String::new(),
@@ -1187,6 +1318,7 @@ pub fn export_anim_inmemory(
         build_warnings: Vec::new(),
         anim_coverage: None,
         project_dir: None,
+        cancel: opts.cancel.clone(),
     };
     let bytes = match format {
         Format::Mp4 => crate::frames::encode_mp4(&ctx).map_err(|e| e.to_string())?,
@@ -1201,6 +1333,15 @@ pub fn export_anim_inmemory(
         &crate::anim::parse_keyframes(&style_blocks_of_html(&html_path)),
         "browser",
     );
+    // 逐实例统计(硬骨头 #18):单实例车道,index 恒 0
+    let wall_seconds = stats_t0.elapsed().as_secs_f64();
+    let instances = vec![InstanceStats {
+        index: 0,
+        frames: n_captured,
+        wall_seconds,
+        fps: n_captured as f64 / wall_seconds.max(1e-3),
+        frame_interval_ms: summarize_intervals(&intervals_ms).unwrap_or(FrameIntervalStats::EMPTY),
+    }];
     Ok(AnimLaneResult {
         bytes,
         frames: n,
@@ -1208,5 +1349,6 @@ pub fn export_anim_inmemory(
         encoder_used: None,
         warnings,
         anim_coverage,
+        instances,
     })
 }

@@ -15,6 +15,10 @@ use clap::{Parser, Subcommand};
 use vb_doc::import::import_project;
 use vb_kiln::{ExportRequest, Format};
 
+/// 导出期间收到取消指令的退出码(128 + SIGINT 惯例;三态之一:
+/// 成功 0 / 失败非 0(2/3/4)/ 取消 130)。
+const EXIT_CANCELLED: i32 = 130;
+
 /// 告警类别计数 → JSON 对象文本(VB-5;键 = KilnWarning::kind 稳定键)。
 fn kinds_json(map: &std::collections::BTreeMap<String, usize>) -> String {
     serde_json::to_string(map).unwrap_or_else(|_| "{}".into())
@@ -41,7 +45,16 @@ enum Cmd {
         "  PDFIUM_DLL        指定 pdfium.dll(import 子命令读 PDF/AI 时用)\n",
         "说明:\n",
         "  浏览器车道(engine=auto/browser)依赖系统 Edge/Chrome;不可用时\n",
-        "  engine=auto 会降级自研引擎并在结果 JSON 置 engine_fallback:true",
+        "  engine=auto 会降级自研引擎并在结果 JSON 置 engine_fallback:true\n",
+        "协作取消:\n",
+        "  导出期间在 stdin 输入单独一行 c(或 q)触发协作取消,导出在最近的\n",
+        "  帧/分段边界尽快停止,不留半截产物文件(最终产物只经原子写落盘);\n",
+        "  退出码:成功 0、失败非 0、取消 130(取消时 stderr 输出\n",
+        "  {\"ok\":false,\"cancelled\":true,...} 供脚本判定)\n",
+        "逐实例帧间隔直方图(硬骨头 #18):\n",
+        "  动画浏览器车道结果 JSON 含 instances 数组(index/frames/\n",
+        "  wall_seconds/fps/frame_interval_ms{p50,p95,p99,max,histogram}),\n",
+        "  用于终判「GPU 读回驱动级串行 vs CPU 真饱和」;老 warnings 行不变\n",
     ))]
     Export {
         /// 源 HTML 文件或项目目录(可重复:多源 = 多画板,仅 dom 矢量路线)
@@ -238,6 +251,63 @@ fn jesc(s: &str) -> String {
     out
 }
 
+/// 取消指令监听核心(可测纯逻辑):从逐行读取器读指令,单独一行
+/// `c` 或 `q`(大小写不敏感)→ 触发协作取消并经 `notify` 提示。
+/// EOF / IO 错误静默结束(不取消——stdin 关闭是脚本调用的常态)。
+/// 返回是否因收到取消指令而退出。
+fn listen_cancel_commands<R: std::io::BufRead>(
+    r: &mut R,
+    token: &vb_kiln::cancel::CancelToken,
+    notify: &mut dyn FnMut(&str),
+) -> bool {
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match r.read_line(&mut line) {
+            Ok(0) => return false,
+            Ok(_) => {
+                if matches!(line.trim().to_ascii_lowercase().as_str(), "c" | "q") {
+                    token.cancel();
+                    notify("已请求取消:导出将在最近的帧/分段边界尽快停止(不留半截产物文件)…");
+                    return true;
+                }
+                // 其他行忽略:stdin 可能承载无关输出,不做语义猜测
+            }
+            Err(_) => return false,
+        }
+    }
+}
+
+/// 拉起 stdin 取消监听线程(仅 export 子命令;阻塞读不碍导出,进程
+/// 退出时线程随内核回收)。标准库 thread + stdin,零新依赖。
+fn spawn_cancel_listener(token: vb_kiln::cancel::CancelToken) {
+    std::thread::spawn(move || {
+        let mut r = std::io::stdin().lock();
+        let _ = listen_cancel_commands(&mut r, &token, &mut |msg| eprintln!("{msg}"));
+    });
+}
+
+/// 车道失败统一收口(三态判定):取消令牌已置位或错误串带取消标记
+/// → 结构化 cancelled JSON + 退出码 130;真失败 → 沿用既有
+/// {"ok":false,...} + 退出码 4(失败码不变,下游兼容)。
+fn lane_failure_exit(cancel: &vb_kiln::cancel::CancelToken, msg: &str) -> i32 {
+    if cancel.is_cancelled() || vb_kiln::cancel::is_lane_cancelled(msg) {
+        eprintln!(
+            "{{\"ok\":false,\"cancelled\":true,\"error\":\"{}\"}}",
+            jesc(msg)
+        );
+        EXIT_CANCELLED
+    } else {
+        eprintln!("{{\"ok\":false,\"error\":\"{}\"}}", jesc(msg));
+        4
+    }
+}
+
+/// native 车道(KilnError)失败收口:同 lane_failure_exit 的三态判定。
+fn native_failure_exit(cancel: &vb_kiln::cancel::CancelToken, e: &vb_kiln::KilnError) -> i32 {
+    lane_failure_exit(cancel, &e.to_string())
+}
+
 fn main() {
     let cli = Cli::parse();
     let code = match cli.cmd {
@@ -328,6 +398,10 @@ fn run_export(
     render: String,
 ) -> i32 {
     let t0 = Instant::now();
+    // 协作取消(硬骨头 #6):export 期间监听 stdin,单独一行 c/q 触发;
+    // 令牌全链路透传(动画/WebCodecs/GIF 内存车道 + native 写出器)
+    let cancel = vb_kiln::cancel::CancelToken::new();
+    spawn_cancel_listener(cancel.child());
     let _ = max_wait; // 浏览器车道自带 settle 预算;自研车道无外部等待
     let source = sources[0].clone(); // 单源兼容:各路线内部用第一源
     let dir = if source.is_dir() {
@@ -362,6 +436,11 @@ fn run_export(
         );
         return 2;
     };
+
+    // 取消先决检查:监听线程已收到 c/q(如脚本预先写入 stdin)则不起跑
+    if cancel.is_cancelled() {
+        return lane_failure_exit(&cancel, "导出已取消(起跑前)");
+    }
 
     // ---------------- 车道 B(浏览器车道,ADR-0020):PNG/PDF/AI 高保真导出 ----------------
     // auto=浏览器可用即用(保真优先);browser=强制;native=跳过本段
@@ -458,11 +537,7 @@ fn run_export(
             }
             Err(e) => {
                 if vector_mode == "dom" {
-                    eprintln!(
-                        "{{\"ok\":false,\"error\":\"DOM 快照路线失败:{}\"}}",
-                        jesc(&e.to_string())
-                    );
-                    return 4;
+                    return lane_failure_exit(&cancel, &format!("DOM 快照路线失败:{e}"));
                 }
                 lane_fallback_native = true;
                 eprintln!(
@@ -514,6 +589,7 @@ fn run_export(
             wall_clock: wall,
             seek_fn: seek_norm.clone(),
             gif_fallback_loops: r#loop,
+            cancel: Some(cancel.child()),
         };
         // WebCodecs 车道(0.13):canvas+SEEK 页全 GPU —— 页内硬编 +
         // AnnexB 上传 + ffmpeg -c copy 封装。auto 探针/编码失败自动回退
@@ -541,8 +617,9 @@ fn run_export(
                         .as_ref()
                         .map(|c| c.to_json().to_string())
                         .unwrap_or_else(|| "null".into());
+                    let instances_json = vb_kiln::report::InstanceStats::array_json(&out.instances);
                     let json = format!(
-                        "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':{},'degraded':false,'degraded_artboard':false,'anim_coverage':{},'bytes':{},'encode_ms':{},'engine':'browser-anim-webcodecs','browser':'{}','encoder':'{}','gpu':{}}}",
+                        "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':{},'degraded':false,'degraded_artboard':false,'anim_coverage':{},'instances':{},'bytes':{},'encode_ms':{},'engine':'browser-anim-webcodecs','browser':'{}','encoder':'{}','gpu':{}}}",
                         fmt_str.to_uppercase(),
                         jesc(&output.display().to_string()),
                         width,
@@ -552,6 +629,7 @@ fn run_export(
                         out.warnings.len(),
                         out.frames,
                         anim_cov,
+                        instances_json,
                         out.bytes.len(),
                         t0.elapsed().as_millis(),
                         jesc(&out.browser),
@@ -564,8 +642,7 @@ fn run_export(
                 }
                 Err(e) => {
                     if render_mode == "webcodecs" {
-                        eprintln!("{{\"ok\":false,\"error\":\"WebCodecs 车道失败:{e}\"}}");
-                        return 4;
+                        return lane_failure_exit(&cancel, &format!("WebCodecs 车道失败:{e}"));
                     }
                     eprintln!("{{\"warn\":\"WebCodecs 车道不可用({e}),回退截图车道\"}}");
                 }
@@ -604,8 +681,9 @@ fn run_export(
                     .as_ref()
                     .map(|c| c.to_json().to_string())
                     .unwrap_or_else(|| "null".into());
+                let instances_json = vb_kiln::report::InstanceStats::array_json(&out.instances);
                 let json = format!(
-                    "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':{},'degraded':false,'degraded_artboard':false,'anim_coverage':{},'bytes':{},'encode_ms':{},'engine':'browser-anim','browser':'{}','encoder':'{}','gpu':{}}}",
+                    "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':{},'degraded':false,'degraded_artboard':false,'anim_coverage':{},'instances':{},'bytes':{},'encode_ms':{},'engine':'browser-anim','browser':'{}','encoder':'{}','gpu':{}}}",
                     fmt_str.to_uppercase(),
                     jesc(&output.display().to_string()),
                     width,
@@ -615,6 +693,7 @@ fn run_export(
                     out.warnings.len(),
                     out.frames,
                     anim_cov,
+                    instances_json,
                     out.bytes.len(),
                     t0.elapsed().as_millis(),
                     jesc(&out.browser),
@@ -627,21 +706,18 @@ fn run_export(
             }
             Err(e) => {
                 if engine_mode == "browser" {
-                    eprintln!(
-                        "{{\"ok\":false,\"error\":\"动画浏览器路线失败:{}\"}}",
-                        jesc(&e.to_string())
-                    );
-                    return 4;
+                    return lane_failure_exit(&cancel, &format!("动画浏览器路线失败:{e}"));
                 }
                 // 自研逐帧(Lane K)只覆盖 4 类动画轨道,对真实动画页面
                 // 的产物是"1 帧 + 尺寸瞎猜"的废片(下游实测教训)——
                 // 宁可显式失败并给原因,不做静默降级。确要 Lane K 的
                 // 场景请显式 --engine native。
-                eprintln!(
-                    "{{\"ok\":false,\"error\":\"动画浏览器路线失败:{};自研引擎只覆盖 4 类轨道,不再静默降级出废片。可设 VB_BROWSER_PATH 指定浏览器后重试,或显式 --engine native 接受降级产物\"}}",
-                    jesc(&e.to_string())
+                return lane_failure_exit(
+                    &cancel,
+                    &format!(
+                        "动画浏览器路线失败:{e};自研引擎只覆盖 4 类轨道,不再静默降级出废片。可设 VB_BROWSER_PATH 指定浏览器后重试,或显式 --engine native 接受降级产物"
+                    ),
                 );
-                return 4;
             }
         }
     }
@@ -697,11 +773,7 @@ fn run_export(
             }
             Err(e) => {
                 if engine_mode == "browser" {
-                    eprintln!(
-                        "{{\"ok\":false,\"error\":\"浏览器车道失败:{}\"}}",
-                        jesc(&e.to_string())
-                    );
-                    return 4;
+                    return lane_failure_exit(&cancel, &format!("浏览器车道失败:{e}"));
                 }
                 lane_fallback_native = true;
                 eprintln!(
@@ -784,14 +856,16 @@ fn run_export(
         gif_loops: r#loop,
         mp4_bitrate_kbps: bitrate,
     };
-    let (bytes, report) = match vb_kiln::export_artboard(&imported.doc, ab, &req, Some(&dir)) {
+    let (bytes, report) = match vb_kiln::export_artboard_with_cancel(
+        &imported.doc,
+        ab,
+        &req,
+        Some(&dir),
+        Some(cancel.child()),
+    ) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!(
-                "{{\"ok\":false,\"error\":\"导出失败:{}\"}}",
-                jesc(&e.to_string())
-            );
-            return 4;
+            return native_failure_exit(&cancel, &e);
         }
     };
     if let Some(parent) = output.parent() {
@@ -1141,5 +1215,98 @@ fn run_selfcheck() -> i32 {
         0
     } else {
         1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    use vb_kiln::cancel::CancelToken;
+
+    /// 进程内模拟 stdin:单独一行 c 触发协作取消(硬骨头 #6 CLI 入口)。
+    #[test]
+    fn listen_cancels_on_bare_c_line() {
+        let token = CancelToken::new();
+        let mut r = Cursor::new(b"hello\nc\nmore".to_vec());
+        let mut notes: Vec<String> = Vec::new();
+        let hit = listen_cancel_commands(&mut r, &token, &mut |m| notes.push(m.to_string()));
+        assert!(hit, "c 行必须触发取消返回");
+        assert!(token.is_cancelled());
+        assert_eq!(notes.len(), 1, "取消时必须给 stderr 提示:{notes:?}");
+        assert!(notes[0].contains("已请求取消"));
+    }
+
+    #[test]
+    fn listen_accepts_q_and_case_insensitive_trimmed_lines() {
+        for line in ["q", "Q", "  c  ", "\r\nq\r\n"] {
+            let token = CancelToken::new();
+            let mut r = Cursor::new(line.as_bytes().to_vec());
+            let hit = listen_cancel_commands(&mut r, &token, &mut |_| {});
+            assert!(hit, "行 {line:?} 应触发取消");
+            assert!(token.is_cancelled());
+        }
+    }
+
+    #[test]
+    fn listen_eof_and_errors_do_not_cancel() {
+        let token = CancelToken::new();
+        let mut r = Cursor::new(b"export running\n".to_vec());
+        let hit = listen_cancel_commands(&mut r, &token, &mut |_| {});
+        assert!(!hit, "EOF 静默结束,不取消");
+        assert!(!token.is_cancelled());
+        // 空输入(脚本调用 stdin 关闭的常态)
+        let token = CancelToken::new();
+        let mut r = Cursor::new(Vec::new());
+        assert!(!listen_cancel_commands(&mut r, &token, &mut |_| {}));
+        assert!(!token.is_cancelled());
+    }
+
+    #[test]
+    fn child_handle_sees_cancel_from_listener() {
+        // 监听器拿派生句柄(与 run_export 同构),父令牌必须同步可见
+        let parent = CancelToken::new();
+        let child = parent.child();
+        let mut r = Cursor::new(b"c\n".to_vec());
+        assert!(listen_cancel_commands(&mut r, &child, &mut |_| {}));
+        assert!(parent.is_cancelled());
+    }
+
+    /// 三态退出码:真失败 4(不变)/ 取消 130。
+    #[test]
+    fn failure_exit_codes_distinguish_cancelled_from_failed() {
+        let token = CancelToken::new();
+        assert_eq!(
+            lane_failure_exit(&token, "ffmpeg 编码失败: …"),
+            4,
+            "真失败沿用退出码 4"
+        );
+        // 错误串带取消标记(车道返回)→ 130
+        let token = CancelToken::new();
+        assert_eq!(
+            lane_failure_exit(&token, &vb_kiln::cancel::lane_cancelled("帧边界 12")),
+            EXIT_CANCELLED
+        );
+        // 令牌已置位(即使错误串普通)→ 130:用户意图优先
+        let token = CancelToken::new();
+        token.cancel();
+        assert_eq!(
+            lane_failure_exit(&token, "动画浏览器路线失败:x"),
+            EXIT_CANCELLED
+        );
+        assert_eq!(EXIT_CANCELLED, 130);
+    }
+
+    /// native 车道 KilnError::Cancelled → 130(经 to_string 走同一收口)。
+    #[test]
+    fn native_cancelled_error_maps_to_130() {
+        let token = CancelToken::new();
+        token.cancel();
+        let e = vb_kiln::KilnError::Cancelled;
+        assert_eq!(native_failure_exit(&token, &e), EXIT_CANCELLED);
+        let token = CancelToken::new();
+        let e = vb_kiln::KilnError::BadParam("scale".into());
+        assert_eq!(native_failure_exit(&token, &e), 4);
     }
 }
