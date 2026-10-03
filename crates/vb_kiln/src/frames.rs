@@ -2,12 +2,20 @@
 //!
 //! GIF:Kiln 自研编码(image crate 感知量化 + LZW),零外部依赖。
 //! MP4:探测 ffmpeg → libx264/yuv420p;无 ffmpeg 降级 GIF 流并告警。
+//!
+//! ## 协作式取消(硬骨头 #6,native 车道)
+//!
+//! `ctx.cancel = Some` 时,本模块在**分段边界**检查取消:每帧 PNG 落盘
+//! 前、GIF 逐帧编码前、每次 ffmpeg 子进程运行期间(100ms 轮询,命中即
+//! kill + wait 收尸)。命中返回 `KilnError::Cancelled`;临时帧目录由既
+//! 有失败清扫路径(`remove_dir_all`)照常清理,产物不落半截。
 
 use std::process::Command;
 
 use image::codecs::gif::{GifEncoder, Repeat};
 use image::{Frame as ImgFrame, RgbaImage};
 
+use crate::cancel::guard_kiln;
 use crate::context::ExportContext;
 use crate::error::{KilnError, KilnResult};
 
@@ -20,14 +28,46 @@ pub fn ffmpeg_available() -> bool {
         .unwrap_or(false)
 }
 
+/// 可取消的 ffmpeg 等待:100ms 轮询子进程;取消令牌命中即 kill + wait
+/// 收尸(不泄漏进程),返回 `Cancelled`。
+///
+/// stderr 死锁边界:调用方均用 `-loglevel error`,子进程输出远小于管道
+/// 缓冲(64KB),轮询期间不读管道也不会阻塞子进程;退出后统一
+/// `wait_with_output` 排干收割。
+fn wait_ffmpeg_cancellable(
+    mut child: std::process::Child,
+    ctx: &ExportContext,
+    what: &str,
+) -> KilnResult<std::process::Output> {
+    loop {
+        if let Ok(Some(_)) = child.try_wait() {
+            return child
+                .wait_with_output()
+                .map_err(|e| KilnError::FfmpegFailed {
+                    code: None,
+                    stderr: e.to_string(),
+                });
+        }
+        if ctx.cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
+            let _ = child.kill();
+            let _ = child.wait(); // 收尸:防 ffmpeg 僵尸/半截文件句柄
+            return Err(KilnError::Cancelled);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let _ = what; // 段标注留给人读的日志/断言扩展
+    }
+}
+
 /// RGBA 帧序列 → GIF 字节。
 ///
 /// 双通道:优先 ffmpeg palettegen/paletteuse(WPI 同款,体积更优、
 /// 动态调色板);无 ffmpeg 时回退 image 感知量化 LZW(纯 Rust 零依赖)。
 pub fn encode_gif(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
+    guard_kiln(&ctx.cancel, "encode_gif 入口")?;
     if ffmpeg_available() {
         match encode_gif_ffmpeg(ctx) {
             Ok(bytes) => return Ok(bytes),
+            Err(KilnError::Cancelled) => return Err(KilnError::Cancelled),
             Err(e) => {
                 // 桥失败(参数/编码异常)降级纯 Rust 路径,不中断导出
                 let _ = e;
@@ -48,6 +88,7 @@ fn encode_gif_ffmpeg(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
 
     let result = (|| -> KilnResult<Vec<u8>> {
         for (i, f) in ctx.frames.iter().enumerate() {
+            guard_kiln(&ctx.cancel, &format!("GIF 帧落盘分段边界 {i}"))?;
             let img = image::RgbaImage::from_raw(f.width, f.height, f.rgba.clone())
                 .ok_or_else(|| KilnError::BadAnimation("帧尺寸不一致".into()))?;
             img.save_with_format(tmp.join(format!("f{i:05}.png")), image::ImageFormat::Png)
@@ -69,11 +110,14 @@ fn encode_gif_ffmpeg(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
                 &ctx.gif_loops.to_string(),
                 out_path.to_str().unwrap_or("out.gif"),
             ])
-            .output()
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
             .map_err(|e| KilnError::FfmpegFailed {
                 code: None,
                 stderr: e.to_string(),
             })?;
+        let output = wait_ffmpeg_cancellable(output, ctx, "GIF palettegen 编码")?;
         if !output.status.success() {
             return Err(KilnError::FfmpegFailed {
                 code: output.status.code(),
@@ -107,6 +151,7 @@ fn encode_gif_image(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
         })
         .map_err(|e| KilnError::BadAnimation(format!("GIF 编码器初始化失败:{e}")))?;
     for f in &ctx.frames {
+        guard_kiln(&ctx.cancel, "GIF 逐帧编码边界(纯 Rust 路径)")?;
         let img = RgbaImage::from_raw(f.width, f.height, f.rgba.clone())
             .ok_or_else(|| KilnError::BadAnimation("帧尺寸不一致".into()))?;
         let delay = image::Delay::from_numer_denom_ms(f.delay_ms.max(20), 1);
@@ -125,6 +170,7 @@ fn encode_gif_image(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
 /// (nvenc→amf→qsv→x264,含运行时探针)逐个尝试;ffmpeg 缺失或候选全败
 /// 时降级 GIF 流(与既有语义一致,告警由调用方补)。
 pub fn encode_mp4(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
+    guard_kiln(&ctx.cancel, "encode_mp4 入口")?;
     if !ffmpeg_available() {
         // 降级:GIF 流(播放器大多兼容);告警由 Mp4Writer 补
         return encode_gif(ctx);
@@ -138,6 +184,7 @@ pub fn encode_mp4(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
 
     let result = (|| -> KilnResult<Vec<u8>> {
         for (i, f) in ctx.frames.iter().enumerate() {
+            guard_kiln(&ctx.cancel, &format!("MP4 帧落盘分段边界 {i}"))?;
             let img = RgbaImage::from_raw(f.width, f.height, f.rgba.clone())
                 .ok_or_else(|| KilnError::BadAnimation("帧尺寸不一致".into()))?;
             img.save_with_format(tmp.join(format!("f{i:05}.png")), image::ImageFormat::Png)
@@ -146,6 +193,10 @@ pub fn encode_mp4(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
         let mp4_path = tmp.join("out.mp4");
         let mut last_err: Option<KilnError> = None;
         for enc in crate::animlane::usable_encoder_chain() {
+            guard_kiln(
+                &ctx.cancel,
+                &format!("MP4 编码分段边界({})", enc.codec_name()),
+            )?;
             let mut cmd = Command::new("ffmpeg");
             cmd.args([
                 "-y",
@@ -167,20 +218,27 @@ pub fn encode_mp4(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
             crate::animlane::push_color_args(&mut cmd);
             crate::animlane::apply_encoder_args(&mut cmd, enc, 1);
             cmd.arg(mp4_path.to_str().unwrap_or("out.mp4"));
-            let output = cmd.output().map_err(|e| KilnError::FfmpegFailed {
-                code: None,
-                stderr: e.to_string(),
-            })?;
-            if output.status.success() {
-                return std::fs::read(&mp4_path).map_err(KilnError::Io);
+            let child = cmd
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .map_err(|e| KilnError::FfmpegFailed {
+                    code: None,
+                    stderr: e.to_string(),
+                })?;
+            let output = wait_ffmpeg_cancellable(child, ctx, "MP4 编码")?;
+            if !output.status.success() {
+                // 候选链语义:单个编码器失败不终局,记下原因沿表回退下一个
+                last_err = Some(KilnError::FfmpegFailed {
+                    code: output.status.code(),
+                    stderr: String::from_utf8_lossy(&output.stderr)
+                        .chars()
+                        .take(400)
+                        .collect(),
+                });
+                continue;
             }
-            last_err = Some(KilnError::FfmpegFailed {
-                code: output.status.code(),
-                stderr: String::from_utf8_lossy(&output.stderr)
-                    .chars()
-                    .take(400)
-                    .collect(),
-            });
+            return std::fs::read(&mp4_path).map_err(KilnError::Io);
         }
         // 候选全败(含"无可用编码器"):降级 GIF 流,语义与"无 ffmpeg"一致
         if let Some(e) = last_err {

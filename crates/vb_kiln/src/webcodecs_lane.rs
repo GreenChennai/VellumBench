@@ -19,6 +19,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use super::animlane::{style_blocks_of_html, AnimLaneResult, AnimPipeOpts};
+use crate::cancel::{guard_lane, lane_cancelled};
 
 /// WebCodecs 车道资格探针 + 单帧节奏(供 auto 决策与告警)。
 /// 返回 Err = 页面不符合资格(非 canvas/无驱动/编码器不可用)。
@@ -158,7 +159,12 @@ fn avcc_to_annexb(body: &[u8]) -> Result<Vec<u8>, &'static str> {
 
 /// WebCodecs 车道导出(MP4)。`opts` 复用 AnimPipeOpts 的宽高/fps/码率等
 /// 字段;workers/截屏相关字段忽略(单实例页内编码)。
+///
+/// 协作取消:Rust 侧唯一边界是**批边界**(60 帧/批,帧循环在页内 JS,
+/// 单帧粒度不可达)——取消最迟在下一批边界生效;页内批中途的取消要等
+/// 本批 evaluate 返回。命中即关页/收割浏览器/清扫 sink,不落半截产物。
 pub fn export_anim_webcodecs(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneResult, String> {
+    guard_lane(&opts.cancel, "WebCodecs 车道入口")?;
     let t_start = std::time::Instant::now();
     let (mount_dir, html_path) = crate::domexport::resolve_source(source)?;
     let sink = std::env::temp_dir().join(format!(
@@ -221,6 +227,17 @@ pub fn export_anim_webcodecs(source: &Path, opts: &AnimPipeOpts) -> Result<AnimL
     let bitrate = opts.bitrate_kbps.max(500) * 1000;
     let keyframe_interval = (fps as usize * 5).max(30);
     for start in (0..n).step_by(BATCH) {
+        // 批边界协作取消(硬骨头 #6):关页 + 收割浏览器 + 清扫 sink,
+        // 页内已编码但未封装的字节一并丢弃(不落半截产物)
+        if let Some(tok) = &opts.cancel {
+            if tok.is_cancelled() {
+                page.close();
+                drop(proc);
+                let _ = std::fs::remove_file(&sink);
+                let _ = std::fs::remove_file(sink.with_extension("mp4"));
+                return Err(lane_cancelled(&format!("WebCodecs 批边界 {start}")));
+            }
+        }
         let end = (start + BATCH).min(n);
         // 批内脚本:Seek 编码 [start, end);首帧初始化解码器配置,
         // 末帧把累计 AnnexB 追加进 window.__vbAnnexB
@@ -435,5 +452,6 @@ pub fn export_anim_webcodecs(source: &Path, opts: &AnimPipeOpts) -> Result<AnimL
         encoder_used: Some("h264(WebCodecs 硬编)".into()),
         warnings,
         anim_coverage,
+        instances: Vec::new(),
     })
 }
