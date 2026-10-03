@@ -9,3 +9,8 @@ description = "Vellum Bench 共享基础:几何、单位、角度约定、稳定
 [dependencies]
 kurbo = { workspace = true }
 serde = { workspace = true }
+# R0 i18n 地基:Fluent 取词(vb_common::i18n);log 仅记缺词/降级调试日志
+fluent = { workspace = true }
+unic-langid = { workspace = true }
+fluent-syntax = { workspace = true }
+log = { workspace = true }

@@ -67,6 +67,12 @@ clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 log = "0.4"
 env_logger = "0.11"
+# R0 i18n 地基(硬骨头 #2 前半):Fluent 运行时 + 语言 id;版本锁 0.17/0.9
+# (MSRV 1.67,低于工具链 1.98;升级走"升级窗口"纪律,不追新)
+fluent = "0.17.0"
+unic-langid = "0.9.6"
+# fluent-bundle 同源依赖(降级判定数消息条数用;树内已有,零新增编译)
+fluent-syntax = "0.12.0"
 
 [profile.release]
 lto = "thin"
