@@ -259,3 +259,16 @@ cmd-anim-clear = Clear Object Animation (removes @keyframes and animation)
 cmd-edit-plugins = Plugin Manager… (install/authorize/enable/logs/restart; plugins are external processes, zero-permission by default)
 cmd-view-toggle-plugins-panel = Toggle Plugins Panel (panels registered by Running plugins, controlled UI)
 # ── END cmd-catalog ──
+
+# ── vb_shell(R0 launcher/CLI;manual section;single-line messages — gate parser is single-line)──
+ui-shell-usage = vellum-sable — VellumBench sable preview host (R0) | Usage: vellum-sable opens the launcher · --project <dir> goes straight to a project window (ADR-0033) · <project-dir> same as --project · --help | --version
+ui-shell-project-arg-required = vellum-sable: --project requires a project directory argument
+ui-shell-arg-unknown = vellum-sable: unknown argument {$arg} (see --help)
+ui-shell-project-dir-missing = vellum-sable: project directory does not exist
+ui-shell-launcher-title = VellumBench · Launcher
+ui-shell-launcher-search-placeholder = Search name or path…
+ui-shell-launcher-invalid-path = Path no longer exists
+ui-shell-launcher-empty = No projects yet
+ui-shell-launcher-empty-hint = Open your first project with vellum-sable --project <dir>; it will appear in recents
+ui-shell-launcher-no-match = No projects matching "{$query}"
+ui-shell-launcher-footer = ↑↓ select · Enter open · R remove · click row to open

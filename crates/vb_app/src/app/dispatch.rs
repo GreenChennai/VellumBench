@@ -412,3 +412,45 @@ mod tests {
         assert!(!app.assets_open);
     }
 }
+
+/// ADR-0048 §3 的 R0 桥接:命令信封 → 旧宿主分发体。
+///
+/// 口径诚实说明:`run_command` 返回 `()`,故 [`CommandOutcome::Applied`]
+/// 表示"已提交旧宿主执行",`NotRun` 在 R0 只覆盖"未知命令"拦截;前置
+/// 不满足级(无选中等)的逐命令诚实回执属 R1 分发体搬家批次(届时由
+/// 带返回值的分发体给出)。目录 id 经
+/// [`CommandId::from_catalog`](vb_session::command::CommandId::from_catalog)
+/// 进入,稳定 id 的两层映射同属 R1。
+impl vb_session::command::Dispatcher for VellumApp {
+    fn dispatch(
+        &mut self,
+        req: vb_session::command::CommandRequest,
+    ) -> vb_session::command::CommandOutcome {
+        let id = req.id.as_str();
+        if !shortcuts::is_implemented(id) {
+            return vb_session::command::CommandOutcome::not_run(format!("未知命令:{id}"));
+        }
+        self.run_command(id, req.modifiers.shift, req.modifiers.alt);
+        vb_session::command::CommandOutcome::Applied
+    }
+}
+
+#[cfg(test)]
+mod dispatcher_tests {
+    use vb_session::command::{CommandId, CommandOutcome, CommandRequest, Dispatcher};
+
+    #[test]
+    fn dispatcher_unknown_rejected_known_forwarded() {
+        let _env = crate::ENV_LOCK.lock();
+        let mut app = crate::app::assemble::tests::app_fresh(None);
+        // 未知命令:6 位稳定 id 语法合法但不在注册表 → NotRun(人类可读原因)
+        let unknown = app.dispatch(CommandRequest::new(CommandId::parse("zz9zz9").unwrap()));
+        assert_eq!(unknown, CommandOutcome::not_run("未知命令:zz9zz9"));
+        // 已知命令:目录 id 经 from_catalog 进桥 → Applied(已提交执行)
+        let known = app.dispatch(CommandRequest::new(CommandId::from_catalog(
+            "view.toggle_assets_panel",
+        )));
+        assert_eq!(known, CommandOutcome::Applied);
+        assert!(known.is_applied());
+    }
+}

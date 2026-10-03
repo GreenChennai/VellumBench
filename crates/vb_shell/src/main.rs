@@ -34,7 +34,7 @@ use sable::widgets::prelude::{h_flex, v_flex};
 use sable::widgets::theme::theme;
 use sable::widgets::tokens::FONT_SIZE_BODY;
 use vb_platform::DarkModeProbe as _;
-use vb_session::i18n::t;
+use vb_session::i18n::{t, t_args};
 
 use vb_kit::capabilities_panel::CapabilitiesPanel;
 use vb_kit::tokens::inject_vb_theme;
@@ -95,34 +95,32 @@ enum Launch {
 }
 
 fn parse_launch() -> Launch {
-    const HELP: &str = "vellum-sable — VellumBench 新宿主预览壳(R0)\n\
-         用法:\n  \
-         vellum-sable                    先开启动器窗口(只读最近项目列表)\n  \
-         vellum-sable --project <目录>   直达项目窗口(跳过启动器,ADR-0033)\n  \
-         vellum-sable <项目目录>         同 --project(位置参数)\n  \
-         vellum-sable --help | --version";
+    fn usage_text() -> String {
+        t("ui-shell-usage")
+    }
     let mut args = std::env::args().skip(1);
     let mut project: Option<PathBuf> = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--help" | "-h" => return Launch::Help(HELP.into()),
+            "--help" | "-h" => return Launch::Help(usage_text()),
             "--version" | "-V" => {
                 return Launch::Version(format!("vellum-sable {}", env!("CARGO_PKG_VERSION")))
             }
             "--project" => match args.next() {
                 Some(p) if !p.trim().is_empty() => project = Some(PathBuf::from(p)),
-                _ => return Launch::Error("vellum-sable: --project 需要一个项目目录参数".into()),
+                _ => return Launch::Error(t("ui-shell-project-arg-required")),
             },
             _ => {
                 if let Some(p) = arg.strip_prefix("--project=") {
                     if p.trim().is_empty() {
-                        return Launch::Error(
-                            "vellum-sable: --project 需要一个项目目录参数".into(),
-                        );
+                        return Launch::Error(t("ui-shell-project-arg-required"));
                     }
                     project = Some(PathBuf::from(p));
                 } else if arg.starts_with('-') {
-                    return Launch::Error(format!("vellum-sable: 未知参数 {arg}(--help 查看用法)"));
+                    return Launch::Error(t_args(
+                        "ui-shell-arg-unknown",
+                        &[("arg", arg.as_str().into())],
+                    ));
                 } else {
                     // 位置参数:项目目录(ADR-0033;拖拽/关联文件 R2 接入)
                     project = Some(PathBuf::from(arg));
@@ -174,7 +172,7 @@ fn window_options(title: impl Into<SharedString>, w: f32, h: f32, cx: &mut App) 
 
 /// 启动器窗口(缺省入口;ADR-0033「主页窗口」的新宿主形态)。
 fn open_launcher_window(cx: &mut App) {
-    let options = window_options("VellumBench · 启动器", 720., 560., cx);
+    let options = window_options(title("ui-shell-launcher-title"), 720., 560., cx);
     cx.open_window(options, |window, cx| {
         let launcher = LauncherView::new(window, cx);
         cx.new(|cx| Root::new(launcher, window, cx))
@@ -234,7 +232,9 @@ impl LauncherView {
         let focus = cx.focus_handle();
         // 初始焦点落根视图:↑↓/Enter/R 无需先点窗口即可用
         window.focus(&focus);
-        let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("搜索名称或路径…"));
+        let search_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(t("ui-shell-launcher-search-placeholder"))
+        });
         let search_focus = search_input.read(cx).focus_handle(cx);
         let launcher = cx.new(|_| Self {
             model: LauncherModel::new(),
@@ -404,7 +404,7 @@ impl LauncherView {
                                 div()
                                     .text_size(px(11.0))
                                     .text_color(colors.warning)
-                                    .child("路径已失效".to_string()),
+                                    .child(t("ui-shell-launcher-invalid-path")),
                             ),
                     )
                     .child(
@@ -449,13 +449,13 @@ impl Render for LauncherView {
                         div()
                             .text_size(px(16.0))
                             .text_color(colors.text_primary)
-                            .child("还没有项目"),
+                            .child(t("ui-shell-launcher-empty")),
                     )
                     .child(
                         div()
                             .text_size(px(FONT_SIZE_BODY))
                             .text_color(colors.text_disabled)
-                            .child("用 vellum-sable --project <目录> 打开第一个项目;打开后自动进入最近列表"),
+                            .child(t("ui-shell-launcher-empty-hint")),
                     ),
             );
         } else if view.is_empty() {
@@ -464,7 +464,10 @@ impl Render for LauncherView {
                     div()
                         .text_size(px(FONT_SIZE_BODY))
                         .text_color(colors.text_secondary)
-                        .child(format!("没有匹配「{}」的项目", self.model.search)),
+                        .child(t_args(
+                            "ui-shell-launcher-no-match",
+                            &[("query", self.model.search.as_str().into())],
+                        )),
                 ),
             );
         } else {
@@ -522,7 +525,7 @@ impl Render for LauncherView {
                         div()
                             .text_size(px(11.0))
                             .text_color(colors.text_disabled)
-                            .child("↑↓ 选择 · Enter 打开 · R 移除记录 · 单击行打开"),
+                            .child(t("ui-shell-launcher-footer")),
                     )
                     .child(div().flex_1())
                     .children(self.load_warning.clone().map(|w| {

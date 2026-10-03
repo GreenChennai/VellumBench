@@ -258,3 +258,16 @@ cmd-anim-clear = 清除对象动画(移除 @keyframes 与 animation)
 cmd-edit-plugins = 插件管理…(安装/授权/启停/日志/重启;插件 = 外部进程,默认零权限)
 cmd-view-toggle-plugins-panel = 插件面板显隐(Running 插件的注册面板,受控 UI)
 # ── END cmd-catalog ──
+
+# ── vb_shell(R0 启动器/命令行;手工维护段;单行消息——门禁解析器只认单行)──
+ui-shell-usage = vellum-sable — VellumBench 新宿主预览壳(R0)| 用法: vellum-sable 先开启动器窗口 · --project <目录> 直达项目窗口(ADR-0033)· <项目目录> 同 --project · --help | --version
+ui-shell-project-arg-required = vellum-sable: --project 需要一个项目目录参数
+ui-shell-arg-unknown = vellum-sable: 未知参数 {$arg}(--help 查看用法)
+ui-shell-project-dir-missing = vellum-sable: 项目目录不存在
+ui-shell-launcher-title = VellumBench · 启动器
+ui-shell-launcher-search-placeholder = 搜索名称或路径…
+ui-shell-launcher-invalid-path = 路径已失效
+ui-shell-launcher-empty = 还没有项目
+ui-shell-launcher-empty-hint = 用 vellum-sable --project <目录> 打开第一个项目;打开后自动进入最近列表
+ui-shell-launcher-no-match = 没有匹配「{$query}」的项目
+ui-shell-launcher-footer = ↑↓ 选择 · Enter 打开 · R 移除记录 · 单击行打开

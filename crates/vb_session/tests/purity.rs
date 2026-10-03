@@ -101,8 +101,9 @@ fn dependencies_stay_in_allowlist() {
         ["vb_common", "vb_doc", "vb_tools"],
         "vb_* 依赖偏离白名单(改动须经本测试申报;vb_doc/vb_tools 注记见 src/snap.rs)"
     );
-    assert!(
-        other_deps.is_empty(),
-        "出现白名单外依赖(只许 serde / dev serde_json):{other_deps:?}"
+    assert_eq!(
+        other_deps,
+        ["fluent", "serde_json"],
+        "出现白名单外依赖(只许 serde / fluent[R0 i18n 再导出 FluentValue]/ serde_json[mru recent.json 运行时依赖,申报见 Cargo.toml]/dev serde_json):{other_deps:?}"
     );
 }

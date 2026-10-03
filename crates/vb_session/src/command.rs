@@ -123,6 +123,24 @@ impl CommandOutcome {
     }
 }
 
+impl CommandId {
+    /// 目录 id 构造(点分空间,如 `file.new`;不做 6 位稳定 id 校验)。
+    ///
+    /// R0 边界:稳定 id ↔ 目录 id 的两层映射属 R1(见模块文档);本构造
+    /// 让 R0 的旧宿主桥接能以目录 id 走 [`Dispatcher`],映射落地后收紧。
+    pub fn from_catalog(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+/// 命令分发边界(ADR-0048 §3):宿主实现它来接受命令信封。
+///
+/// R0 只立边界 + 旧宿主桥接(vb_app 提供);新宿主在 R1 有了自己的会话
+/// 后经同一 trait 接入。命中/未命中的回执口径见 [`CommandOutcome`]。
+pub trait Dispatcher {
+    fn dispatch(&mut self, req: CommandRequest) -> CommandOutcome;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
