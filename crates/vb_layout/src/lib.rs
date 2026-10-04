@@ -269,35 +269,6 @@ fn compute_outcome(doc: &Document, artboard: NodeId) -> Result<LayoutOutcome, St
         .map_err(|e| format!("taffy 求值失败:{e}"))?;
 
     ctx.collect(root);
-    if std::env::var("KILN_DUMP_RECTS").is_ok() {
-        let mut names: Vec<String> = Vec::new();
-        for (id, tid) in &ctx.taffy_of {
-            if let Some(n) = ctx.doc.node(*id) {
-                if let Some(r) = ctx.rects.get(n.sid.as_str()) {
-                    names.push(format!(
-                        "{:?} name={} rect=({:.0},{:.0},{:.0},{:.0}) geom=({:.0},{:.0},{:.0},{:.0}) authored={:?} pos={:?}",
-                        n.kind.kind_name(),
-                        n.name,
-                        r[0],
-                        r[1],
-                        r[2],
-                        r[3],
-                        n.geom.x,
-                        n.geom.y,
-                        n.geom.w,
-                        n.geom.h,
-                        n.authored,
-                        n.style_get("position"),
-                    ));
-                }
-            }
-            let _ = tid;
-        }
-        names.sort();
-        for n in &names {
-            eprintln!("[rect] {n}");
-        }
-    }
     Ok(LayoutOutcome {
         rects: ctx.rects,
         warnings: ctx.warnings,
@@ -354,7 +325,7 @@ fn measure_leaf(input: LayoutInput, node_ctx: Option<&mut LeafCtx>) -> LayoutOut
             } as f32;
             let ls = *letter_spacing as f32;
             if *nowrap {
-                let (mw, _n) = vb_render::text::measure_text_weighted(
+                let (mw, _n) = vb_textmeasure::measure_text_weighted(
                     text,
                     family,
                     *font_size as f32,
@@ -367,7 +338,7 @@ fn measure_leaf(input: LayoutInput, node_ctx: Option<&mut LeafCtx>) -> LayoutOut
                     known_h.unwrap_or(lh.max(1.0).ceil()),
                 )
             } else {
-                let (mw, lines) = vb_render::text::measure_text_weighted(
+                let (mw, lines) = vb_textmeasure::measure_text_weighted(
                     text,
                     family,
                     *font_size as f32,
@@ -406,7 +377,10 @@ fn measure_leaf(input: LayoutInput, node_ctx: Option<&mut LeafCtx>) -> LayoutOut
 thread_local! {
     static IMG_DIR: std::cell::RefCell<Option<std::path::PathBuf>> =
         const { std::cell::RefCell::new(None) };
-    static IMG_CACHE: std::cell::RefCell<HashMap<String, (f64, f64)>> =
+    // COUP-07(2026-10-05 迭代审查):缓存键含项目根绝对路径。旧键只有
+    // `src`,同线程先后处理两个项目的同名图片会命中**错误项目**的尺寸
+    // (跨项目污染且从不清理)。
+    static IMG_CACHE: std::cell::RefCell<HashMap<(std::path::PathBuf, String), (f64, f64)>> =
         std::cell::RefCell::new(HashMap::new());
 }
 
@@ -414,14 +388,21 @@ fn set_image_dir(dir: Option<&Path>) {
     IMG_DIR.with(|d| *d.borrow_mut() = dir.map(|p| p.to_path_buf()));
 }
 
+/// 清空图片固有尺寸探测缓存(COUP-07 显式清理入口):长驻进程先后打开
+/// 多个项目时,调用方可主动丢弃全部缓存条目。
+pub fn clear_image_cache() {
+    IMG_CACHE.with(|c| c.borrow_mut().clear());
+}
+
 fn probe_image(src: &str) -> Option<(f64, f64)> {
-    if let Some(v) = IMG_CACHE.with(|c| c.borrow().get(src).copied()) {
+    let dir = IMG_DIR.with(|d| d.borrow().clone())?;
+    let key = (dir.clone(), src.to_string());
+    if let Some(v) = IMG_CACHE.with(|c| c.borrow().get(&key).copied()) {
         return Some(v);
     }
-    let dir = IMG_DIR.with(|d| d.borrow().clone())?;
     let (w0, h0) = image::image_dimensions(dir.join(src)).ok()?;
     let v = (w0 as f64, h0 as f64);
-    IMG_CACHE.with(|c| c.borrow_mut().insert(src.to_string(), v));
+    IMG_CACHE.with(|c| c.borrow_mut().insert(key, v));
     Some(v)
 }
 
@@ -1028,4 +1009,63 @@ fn expand_raw(
         bottom: own(bottom).unwrap_or_else(|| order[2].to_string()),
         left: own(left).unwrap_or_else(|| order[3].to_string()),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn temp_project(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "vb-layout-imgcache-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .elapsed()
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("建临时项目目录");
+        dir
+    }
+
+    fn write_png(dir: &Path, name: &str, w: u32, h: u32) {
+        let img = image::RgbaImage::from_fn(w, h, |x, y| {
+            image::Rgba([(x * 7 % 256) as u8, (y * 11 % 256) as u8, 0, 255])
+        });
+        img.save(dir.join(name)).expect("写探测用 PNG");
+    }
+
+    /// COUP-07:同线程先后两个项目的**同名**图片,缓存不得串项目——
+    /// 键含项目根绝对路径;clear_image_cache 显式清空后复测仍正确。
+    #[test]
+    fn image_cache_keys_by_project_root() {
+        let a = temp_project("a");
+        let b = temp_project("b");
+        write_png(&a, "probe.png", 4, 3);
+        write_png(&b, "probe.png", 20, 10);
+
+        set_image_dir(Some(&a));
+        assert_eq!(probe_image("probe.png"), Some((4.0, 3.0)), "项目 A 尺寸");
+        set_image_dir(Some(&b));
+        assert_eq!(
+            probe_image("probe.png"),
+            Some((20.0, 10.0)),
+            "同名图片在项目 B 必须取 B 的尺寸(旧实现命中 A 的缓存)"
+        );
+
+        // 清空后再探测:两项目各自仍正确
+        clear_image_cache();
+        set_image_dir(Some(&a));
+        assert_eq!(probe_image("probe.png"), Some((4.0, 3.0)));
+        set_image_dir(Some(&b));
+        assert_eq!(probe_image("probe.png"), Some((20.0, 10.0)));
+
+        // 清理后缓存为空
+        clear_image_cache();
+        IMG_CACHE.with(|c| assert!(c.borrow().is_empty(), "clear 后缓存必须为空"));
+
+        let _ = std::fs::remove_dir_all(&a);
+        let _ = std::fs::remove_dir_all(&b);
+    }
 }

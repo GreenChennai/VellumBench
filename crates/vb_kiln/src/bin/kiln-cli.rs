@@ -888,7 +888,10 @@ fn run_export(
     // 项目 webfont(@font-face)注册:家庭+字重 → 字体文件。
     // woff2(压缩容器,ttf 解析器不识别)自动尝试同名 .ttf/.otf——
     // GEO 存量项目 @font-face 全为 woff2,不回退则中文整篇走系统兜底
-    vb_render::text::clear_font_registry();
+    // COUP-06:字体注册收进本任务私有实例并进入线程作用域(布局/光栅在
+    // 本线程随后进行);实例随 run_export 结束销毁,跨项目零残留。
+    // DOC-10:读盘失败不再静默——如实打 warn 行(CLI 契约 stderr JSON)。
+    let fonts = std::sync::Arc::new(vb_render::text::FontRegistry::new());
     for f in &imported.font_faces {
         let path = dir.join(&f.src);
         let is_woff2 = path
@@ -901,7 +904,9 @@ fn run_export(
             for ext in ["ttf", "otf"] {
                 let cand = path.with_extension(ext);
                 if cand.is_file() {
-                    vb_render::text::register_font_file(&f.family, f.weight, cand);
+                    if let Err(e) = fonts.register_font_file(&f.family, f.weight, cand) {
+                        eprintln!("{{\"warn\":\"{}\"}}", jesc(&e));
+                    }
                     registered = true;
                     break;
                 }
@@ -910,8 +915,11 @@ fn run_export(
                 continue;
             }
         }
-        vb_render::text::register_font_file(&f.family, f.weight, path);
+        if let Err(e) = fonts.register_font_file(&f.family, f.weight, path) {
+            eprintln!("{{\"warn\":\"{}\"}}", jesc(&e));
+        }
     }
+    let _font_scope = vb_render::text::enter_font_scope(fonts);
 
     // 文档流布局求值(M1.0):flow/flex/absolute → 具体矩形写回 geom;
     // 矢量模式文档(全显式定位)求值结果与作者输入一致,无副作用

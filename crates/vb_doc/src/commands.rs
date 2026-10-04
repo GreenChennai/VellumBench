@@ -1128,10 +1128,23 @@ impl Command {
                     match c.apply(doc) {
                         Ok(_) => done += 1,
                         Err(e) => {
+                            // AGT-06:回滚自身失败**如实上报**——吞错会让
+                            // 半条事务固化在文档上还装作干净回滚,调用方
+                            // 必须知道文档已处于可疑态
+                            let mut revert_errs: Vec<String> = Vec::new();
                             for prev in cmds[..done].iter_mut().rev() {
-                                let _ = prev.revert(doc);
+                                if let Err(re) = prev.revert(doc) {
+                                    revert_errs.push(re.to_string());
+                                }
                             }
-                            return Err(e);
+                            if revert_errs.is_empty() {
+                                return Err(e);
+                            }
+                            return Err(VbError::Conflict(format!(
+                                "Compound 回滚不完整({} 项回滚失败,文档可能处于不一致态): {};原始错误: {e}",
+                                revert_errs.len(),
+                                revert_errs.join("; ")
+                            )));
                         }
                     }
                 }

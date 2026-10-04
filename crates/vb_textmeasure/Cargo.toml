@@ -1,0 +1,26 @@
+[package]
+name = "vb_textmeasure"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+description = "Vellum Bench 文本量测与整形(fontique 选字 + swash 整形/轮廓):布局与渲染共用的底层"
+
+# COUP-01(2026-10-05 迭代审查):原 vb_render::text 整体上收为本 crate。
+# 动机:vb_layout 仅为 `measure_text_weighted` 一处调用被反向拖进
+# vello/wgpu/swash/fontique 编译面,破坏「布局不依赖渲染」分层。
+# 本 crate 只依赖 vb_common + 字体引擎,布局层与渲染层共同下依赖,
+# 依赖方向恢复为 vb_common ← vb_textmeasure ← (vb_layout, vb_render)。
+# 完整决策见 docs/adr/0053-text-measure-crate.md。
+
+[features]
+default = ["fontconfig-dlopen"]
+# 与 vb_render 同名特性转发(vb_render 保留特性名以兼容下游):Linux 上
+# fontique 的 fontconfig 绑定走 dlopen,构建期不再要求 pkg-config。
+fontconfig-dlopen = ["fontique/fontconfig-dlopen"]
+
+[dependencies]
+fontique = "0.11.1"
+swash = "0.2.10"
+zeno = "0.3"
+vb_common = { workspace = true }

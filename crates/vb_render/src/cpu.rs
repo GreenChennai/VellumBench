@@ -255,6 +255,9 @@ fn draw_item(
                 let mut visual = 0usize;
                 let mut byte_base = 0usize;
                 for (hard, run, lines) in &hard_lines {
+                    // PERF-01:字符序 → 字节偏移前缀表一次建表;此前行内每
+                    // 字形 `chars().take(gi).map(len_utf8).sum()` 为 O(n²)
+                    let char_offs = crate::text::char_offsets(hard);
                     for line in lines {
                         if line.is_empty() {
                             continue;
@@ -264,8 +267,7 @@ fn draw_item(
                         for &gi in line {
                             let g = &run.glyphs[gi];
                             // 行内字符序 → 全文字节偏移(富文本段按字节区间)
-                            let b = byte_base
-                                + hard.chars().take(gi).map(|c| c.len_utf8()).sum::<usize>();
+                            let b = byte_base + char_offs.get(gi).copied().unwrap_or(hard.len());
                             let color = t
                                 .segments
                                 .iter()

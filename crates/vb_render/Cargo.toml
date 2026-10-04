@@ -14,15 +14,17 @@ default = ["fontconfig-dlopen"]
 # (如 Windows 上 `cargo check --target x86_64-unknown-linux-gnu`)与极简
 # 容器内构建都能通过;任何 Linux 桌面发行版运行时都自带 libfontconfig。
 # 该特性在 Windows/macOS 目标上是空操作(依赖本身仅 Linux/FreeBSD 生效)。
-fontconfig-dlopen = ["fontique/fontconfig-dlopen"]
+# COUP-01 后特性转发到 vb_textmeasure(fontique 依赖已随文本管线上收)。
+fontconfig-dlopen = ["vb_textmeasure/fontconfig-dlopen"]
 
 [dependencies]
-fontique = "0.11.1"
 image.workspace = true
-swash = "0.2.10"
 tiny-skia = "0.12.0"
 vb_common = { workspace = true }
 vb_css = { workspace = true }
 vb_doc = { workspace = true }
+# COUP-01(ADR-0053):fontique/swash/zeno 文本管线整体上收至 vb_textmeasure;
+# `vb_render::text` 保留为纯 re-export 门面(vb_kiln/vb_export/vb_web/vb_app
+# 调用点零改动),本 crate 不再直接依赖字体引擎。
+vb_textmeasure = { workspace = true }
 vello = "0.10.0"
-zeno = "0.3"

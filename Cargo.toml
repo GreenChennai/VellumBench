@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "crates/vb_common",
     "crates/vb_css",
+    # COUP-01(ADR-0053):文本量测/整形底层,vb_layout 与 vb_render 共同下依赖
+    "crates/vb_textmeasure",
     "crates/vb_html",
     "crates/vb_doc",
     "crates/vb_layout",
@@ -53,6 +55,7 @@ vb_session = { path = "crates/vb_session" }
 vb_kit = { path = "crates/vb_kit" }
 vb_shell = { path = "crates/vb_shell" }
 vb_render = { path = "crates/vb_render" }
+vb_textmeasure = { path = "crates/vb_textmeasure" }
 
 # R0 换宿主(22 篇 §3.6 版本锁定):sable 门面,rev 与 cutforge 同锁;
 # 升级 = 显式提交带 diff 审查,勿随手改。
