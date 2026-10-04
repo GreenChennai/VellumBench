@@ -50,6 +50,36 @@ pub struct Tokens {
     pub danger: Color32,
     pub warn: Color32,
     pub success: Color32,
+
+    // ── 审查 2026-10-04 §8.3 扩展(JSON:color.ext.*)──
+    /// accent 按下(比 hover 深)。
+    pub accent_press: Color32,
+    /// 选中底/Tab 选中底(accent 14%;S4 起接替 `accent_dim`)。
+    pub accent_subtle: Color32,
+    /// accent 描边(accent 50%)。
+    pub accent_border: Color32,
+    /// 非破坏提示(与 accent 区分;不作小号正文,见 JSON desc)。
+    pub info: Color32,
+
+    // ── §8.3.1 中性色阶(JSON:color.neutral.*,n0..n12)──
+    /// 13 档中性阶。深色 n0(机身最底)→n12(主文字)由深到浅;
+    /// 浅色反向独立调校,n0(最高反射面)→n12(主文字)由亮到暗。
+    /// 文字级档位(N12/N10/禁用)须过 WCAG AA(见 `dark_theme_text_meets_wcag_aa`)。
+    pub neutral: [Color32; 13],
+
+    // ── §8.3.3 状态层(JSON:state-layer.*;半透明 overlay,经 [`state`] 合成)──
+    /// 悬停 overlay(深色白 6% / 浅色黑 4%)。
+    pub state_hover: Color32,
+    /// 按下 overlay(深色白 10% / 浅色黑 8%)。
+    pub state_press: Color32,
+    /// 选中 overlay(accent 14%)。
+    pub state_selected: Color32,
+    /// 焦点环外描边(accent 全强,1.5px,见 [`stroke::FOCUS`])。
+    pub focus_ring: Color32,
+    /// 焦点环内侧隔离环。
+    pub focus_ring_inner: Color32,
+    /// 禁用前景(只降前景不降容器;= text_3 的 AA 达标值,不取 N9)。
+    pub disabled_fg: Color32,
 }
 
 impl Tokens {
@@ -76,6 +106,39 @@ impl Tokens {
             danger: Color32::from_rgb(0xF2, 0x48, 0x22),
             warn: Color32::from_rgb(0xFF, 0xC7, 0x00),
             success: Color32::from_rgb(0x14, 0xAE, 0x5C),
+
+            // ── §8.3.4 功能色扩展(JSON:color.ext.dark)──
+            accent_press: Color32::from_rgb(0x0B, 0x87, 0xE5),
+            accent_subtle: Color32::from_rgba_unmultiplied(0x0D, 0x99, 0xFF, 36),
+            accent_border: Color32::from_rgba_unmultiplied(0x0D, 0x99, 0xFF, 128),
+            // #5E5CE6:对 bg_panel 仅 ≈2.7:1 —— 只作图标/容器底,不作小号正文
+            info: Color32::from_rgb(0x5E, 0x5C, 0xE6),
+
+            // ── §8.3.1 中性色阶(JSON:color.neutral.dark;审查文档数值原样)──
+            neutral: [
+                Color32::from_rgb(0x0E, 0x0E, 0x10), // n0  窗口/机身最底
+                Color32::from_rgb(0x16, 0x16, 0x18), // n1  画布外
+                Color32::from_rgb(0x1C, 0x1C, 0x1E), // n2  画布
+                Color32::from_rgb(0x23, 0x23, 0x26), // n3  面板底
+                Color32::from_rgb(0x2A, 0x2A, 0x2E), // n4  面板
+                Color32::from_rgb(0x31, 0x31, 0x36), // n5  凸起/输入
+                Color32::from_rgb(0x3A, 0x3A, 0x40), // n6  悬停基准
+                Color32::from_rgb(0x45, 0x45, 0x4C), // n7  按下基准
+                Color32::from_rgb(0x55, 0x55, 0x5E), // n8  分隔强
+                Color32::from_rgb(0x6E, 0x6E, 0x78), // n9  弱文字(装饰级)
+                Color32::from_rgb(0x9A, 0x9A, 0xA4), // n10 次文字
+                Color32::from_rgb(0xC7, 0xC7, 0xCE), // n11 强调次文字
+                Color32::from_rgb(0xFF, 0xFF, 0xFF), // n12 主文字
+            ],
+
+            // ── §8.3.3 状态层(JSON:state-layer.dark)──
+            state_hover: Color32::from_rgba_unmultiplied(0xFF, 0xFF, 0xFF, 15),
+            state_press: Color32::from_rgba_unmultiplied(0xFF, 0xFF, 0xFF, 26),
+            state_selected: Color32::from_rgba_unmultiplied(0x0D, 0x99, 0xFF, 36),
+            focus_ring: Color32::from_rgba_unmultiplied(0x0D, 0x99, 0xFF, 255),
+            focus_ring_inner: Color32::from_rgba_unmultiplied(0x00, 0x00, 0x00, 102),
+            // 禁用前景不取 N9(#6E6E78 对面板 2.76:1 不达 AA),沿用 U-6 走查值
+            disabled_fg: Color32::from_rgb(0x96, 0x96, 0x9B),
         }
     }
 
@@ -110,6 +173,39 @@ impl Tokens {
             // (#B58200 对白底 3.41:1 → #8F6700 = 5.11:1,达 WCAG AA)
             warn: Color32::from_rgb(0x8F, 0x67, 0x00),
             success: Color32::from_rgb(0x0E, 0x7C, 0x42),
+
+            // ── §8.3.4 功能色扩展(JSON:color.ext.light)──
+            accent_press: Color32::from_rgb(0x0B, 0x87, 0xE5),
+            accent_subtle: Color32::from_rgba_unmultiplied(0x0D, 0x99, 0xFF, 36),
+            accent_border: Color32::from_rgba_unmultiplied(0x0D, 0x99, 0xFF, 128),
+            info: Color32::from_rgb(0x4B, 0x49, 0xCC),
+
+            // ── §8.3.1 中性色阶(JSON:color.neutral.light)──
+            // **不是深色反相**:独立调校,由亮到暗(浅色里"更深"="更靠文字端")。
+            // 锚点取审查文档给出的 #F7F7F8/#FFFFFF/#F1F1F3/#E8E8EB/#DDDDE1/#1B1B1F。
+            neutral: [
+                Color32::from_rgb(0xFF, 0xFF, 0xFF), // n0  画布/画板/面板(最高反射面)
+                Color32::from_rgb(0xF7, 0xF7, 0xF8), // n1  机身/窗口底
+                Color32::from_rgb(0xF1, 0xF1, 0xF3), // n2  画布外
+                Color32::from_rgb(0xED, 0xED, 0xF0), // n3  面板内嵌面
+                Color32::from_rgb(0xE8, 0xE8, 0xEB), // n4  输入/凸起底
+                Color32::from_rgb(0xDD, 0xDD, 0xE1), // n5  悬停基准
+                Color32::from_rgb(0xCF, 0xCF, 0xD5), // n6  按下基准
+                Color32::from_rgb(0xB4, 0xB4, 0xBC), // n7  分隔强/图标弱
+                Color32::from_rgb(0x98, 0x98, 0x9F), // n8  分隔/描边
+                Color32::from_rgb(0x8A, 0x8A, 0x92), // n9  弱文字(装饰级)
+                Color32::from_rgb(0x6B, 0x6B, 0x6B), // n10 次文字(= text_2)
+                Color32::from_rgb(0x3E, 0x3E, 0x44), // n11 图标/强次文字
+                Color32::from_rgb(0x1B, 0x1B, 0x1F), // n12 主文字
+            ],
+
+            // ── §8.3.3 状态层(JSON:state-layer.light)──
+            state_hover: Color32::from_rgba_unmultiplied(0x00, 0x00, 0x00, 10),
+            state_press: Color32::from_rgba_unmultiplied(0x00, 0x00, 0x00, 20),
+            state_selected: Color32::from_rgba_unmultiplied(0x0D, 0x99, 0xFF, 36),
+            focus_ring: Color32::from_rgba_unmultiplied(0x0D, 0x99, 0xFF, 255),
+            focus_ring_inner: Color32::from_rgba_unmultiplied(0xFF, 0xFF, 0xFF, 230),
+            disabled_fg: Color32::from_rgb(0x76, 0x76, 0x76),
         }
     }
 
@@ -144,6 +240,294 @@ impl Tokens {
             ("warn", self.warn),
             ("success", self.success),
         ]
+    }
+
+    /// 焦点环描边(外描边 accent 全强 1.5px;内侧隔离环色见
+    /// [`Tokens::focus_ring_inner`] —— 键盘焦点环真接线在 S5,当前仅规格就位)。
+    pub fn focus_ring_stroke(&self) -> Stroke {
+        Stroke::new(stroke::FOCUS, self.focus_ring)
+    }
+}
+
+// ─────────────────── 材质 / Elevation 阶梯(§8.3.2,UI-04) ───────────────────
+
+/// 五档材质阶梯。
+///
+/// **UI-04 的令牌面**:深色此前 `Shadow::NONE`,面板全平。深色层级改由
+/// 「elevation 底色 + 顶部高光发丝线 + 三档阴影」表达,不靠灰色描边堆叠。
+/// egui 只有 `window_shadow`/`popup_shadow` 两个阴影槽(见
+/// `apply_impl`),L2/L4 由 S4 组件经本模块消费。
+pub mod elevation {
+    use egui::epaint::Shadow;
+
+    use super::{Color32, Tokens};
+
+    /// 层级常量(L0 画布外 → L4 提示)。
+    pub const L0: usize = 0;
+    /// 见 [`L0`]。
+    pub const L1: usize = 1;
+    /// 见 [`L0`]。
+    pub const L2: usize = 2;
+    /// 见 [`L0`]。
+    pub const L3: usize = 3;
+    /// 见 [`L0`]。
+    pub const L4: usize = 4;
+
+    /// 各层底色在 [`Tokens::neutral`] 里的下标(L0..L4),**按主题分表**:
+    /// 深色阶由深到浅、浅色阶由亮到暗,同一"角色"落在不同档位 ——
+    /// 深色 L0 画布外=N1、面板底=N3;浅色画布外=N2、面板白=N0。
+    /// 与 JSON `elevation.*.base` 的 `{color.neutral.*}` 引用同源,
+    /// 由 `tokens_sync_elevation_with_json` 钉住。
+    pub const BASE_NEUTRAL_DARK: [usize; 5] = [1, 3, 5, 6, 7];
+    /// 见 [`BASE_NEUTRAL_DARK`]。
+    pub const BASE_NEUTRAL_LIGHT: [usize; 5] = [2, 0, 4, 0, 1];
+
+    /// 当前主题的底色下标表。
+    pub fn base_neutral(dark: bool) -> &'static [usize; 5] {
+        if dark {
+            &BASE_NEUTRAL_DARK
+        } else {
+            &BASE_NEUTRAL_LIGHT
+        }
+    }
+
+    /// 层底色(按主题取对应中性档)。
+    pub fn base(level: usize, t: &Tokens) -> Color32 {
+        t.neutral[base_neutral(t.dark)[level]]
+    }
+
+    /// 顶部高光发丝线:深色白 5%(提亮上缘,机身高光感);
+    /// 浅色白底上高光不可见,改用极淡的黑(内上缘压暗,同一语义)。
+    pub fn hairline(dark: bool) -> Color32 {
+        if dark {
+            Color32::from_white_alpha(13) // rgba(255,255,255,0.05)
+        } else {
+            Color32::from_black_alpha(10) // rgba(0,0,0,0.04)
+        }
+    }
+
+    /// L2 凸起:`0 1px 2px`(输入框/Tab 选中/下拉)。
+    pub fn shadow_l2(dark: bool) -> Shadow {
+        if dark {
+            Shadow {
+                offset: [0, 1],
+                blur: 2,
+                spread: 0,
+                color: Color32::from_black_alpha(89),
+            }
+        } else {
+            Shadow {
+                offset: [0, 1],
+                blur: 2,
+                spread: 0,
+                color: Color32::from_black_alpha(26),
+            }
+        }
+    }
+
+    /// L3 浮层:`0 8px 24px`(对话框/菜单/命令面板 —— egui 两阴影槽映射档)。
+    pub fn shadow_l3(dark: bool) -> Shadow {
+        if dark {
+            Shadow {
+                offset: [0, 8],
+                blur: 24,
+                spread: 0,
+                color: Color32::from_black_alpha(115),
+            }
+        } else {
+            Shadow {
+                offset: [0, 8],
+                blur: 24,
+                spread: 0,
+                color: Color32::from_black_alpha(36),
+            }
+        }
+    }
+
+    /// L4 提示:`0 4px 16px`(tooltip/浮动工具条/数值浮层)。
+    pub fn shadow_l4(dark: bool) -> Shadow {
+        if dark {
+            Shadow {
+                offset: [0, 4],
+                blur: 16,
+                spread: 0,
+                color: Color32::from_black_alpha(128),
+            }
+        } else {
+            Shadow {
+                offset: [0, 4],
+                blur: 16,
+                spread: 0,
+                color: Color32::from_black_alpha(41),
+            }
+        }
+    }
+
+    /// L4 表面不透明度(深色 92% / 浅色 96%;浮层微透出底层,材质感来源)。
+    pub fn surface_alpha_l4(dark: bool) -> f32 {
+        if dark {
+            0.92
+        } else {
+            0.96
+        }
+    }
+}
+
+// ─────────────────────────── 状态层(§8.3.3) ───────────────────────────
+
+/// 状态层合成。
+///
+/// 悬停/按下/选中**不再换灰阶常量**,而是把一枚半透明状态色叠加到任意
+/// 基础色上 —— 同一枚 overlay 在面板底、凸起底、浮层底上都给出正确的
+/// 层次(§8.3.3 的核心主张)。
+pub mod state {
+    use egui::Color32;
+
+    /// src-over 合成:把 `overlay`(可带 α)叠到**不透明** `base` 上,
+    /// 返回不透明结果色。
+    ///
+    /// ⚠️ egui 的 `Color32` 内部是**预乘 alpha** 存储(`.r()` 拿到的是
+    /// 预乘值),混色前必须经 `to_srgba_unmultiplied()` 往返,否则白色
+    /// overlay 会按低亮度预乘值参与运算,悬停反而变暗(实测踩过)。
+    pub fn over(base: Color32, overlay: Color32) -> Color32 {
+        let a = overlay.a() as f32 / 255.0;
+        let b = base.to_srgba_unmultiplied();
+        let o = overlay.to_srgba_unmultiplied();
+        let mix = |i: usize| (o[i] as f32 * a + b[i] as f32 * (1.0 - a)).round() as u8;
+        Color32::from_rgb(mix(0), mix(1), mix(2))
+    }
+
+    /// 把 overlay 的 α 缩放到 `t`(0..1),供悬停过渡动画使用。
+    ///
+    /// 组件迁移的「行为等价」由它承接:动画曲线不变(hover_t 0→1),
+    /// 只是终态色值从"换灰阶常量"升级为状态 overlay。RGB 通道保持
+    /// overlay 本色(经非预乘往返),只动 α。
+    pub fn fade(overlay: Color32, t: f32) -> Color32 {
+        let t = t.clamp(0.0, 1.0);
+        let [r, g, b, _] = overlay.to_srgba_unmultiplied();
+        Color32::from_rgba_unmultiplied(r, g, b, (overlay.a() as f32 * t).round() as u8)
+    }
+}
+
+impl Tokens {
+    /// 第 `i` 档中性色(`neutral[i]`;`i` 0..=12,越界 panic 是编程错误)。
+    pub fn neutral_step(&self, i: usize) -> Color32 {
+        self.neutral[i]
+    }
+
+    /// 悬停态:状态 overlay 叠加到 `base`。
+    pub fn with_hover(&self, base: Color32) -> Color32 {
+        state::over(base, self.state_hover)
+    }
+
+    /// 按下态:状态 overlay 叠加到 `base`。
+    pub fn with_press(&self, base: Color32) -> Color32 {
+        state::over(base, self.state_press)
+    }
+
+    /// 选中态:accent 14% overlay 叠加到 `base`。
+    pub fn with_selected(&self, base: Color32) -> Color32 {
+        state::over(base, self.state_selected)
+    }
+}
+
+// ─────────────────────────── 排版系统(§8.4) ───────────────────────────
+
+/// 排版七档(G-UI-A 第四表,与 JSON `typography.*` 逐值同步)。
+///
+/// `line_height` 是**布局真相**:egui 的 `FontId` 没有行高,组件侧经
+/// 行高派生公式([`row_height`])与密度档消费;`weight` 经独立
+/// [`FontFamily`](crate::fonts) 实现(egui FontId 无字重)。
+pub mod typography {
+    use egui::FontId;
+
+    use super::fonts::{self, Weight};
+
+    /// 一档字规。
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct Spec {
+        /// 字号(px)。
+        pub size: f32,
+        /// 行高(px;布局真相,egui 渲染不直接消费)。
+        pub line_height: f32,
+        /// 字重。
+        pub weight: Weight,
+    }
+
+    /// 启动器标题/空态主标题(现状缺,新增档)。
+    pub const DISPLAY: Spec = Spec {
+        size: 24.0,
+        line_height: 32.0,
+        weight: Weight::Semibold,
+    };
+    /// 对话框标题/面板组标题。
+    pub const TITLE: Spec = Spec {
+        size: 15.0,
+        line_height: 22.0,
+        weight: Weight::Semibold,
+    };
+    /// 分组头/选中项。
+    pub const BODY_STRONG: Spec = Spec {
+        size: 13.0,
+        line_height: 20.0,
+        weight: Weight::Semibold,
+    };
+    /// 默认正文。
+    pub const BODY: Spec = Spec {
+        size: 13.0,
+        line_height: 20.0,
+        weight: Weight::Regular,
+    };
+    /// 字段标签/图层行。
+    pub const LABEL: Spec = Spec {
+        size: 12.0,
+        line_height: 18.0,
+        weight: Weight::Medium,
+    };
+    /// 状态栏/tooltip 副行。
+    pub const CAPTION: Spec = Spec {
+        size: 11.0,
+        line_height: 16.0,
+        weight: Weight::Regular,
+    };
+    /// 十六进制/数值框/代码。
+    ///
+    /// **tabular-nums 实现路径**(egui 0.35 无 OpenType 特性接口,
+    /// `FontTweak` 只有 scale/y_offset 等视觉项):数字对齐经「数值一律走
+    /// `vb-mono` 等宽族」达成 —— JetBrains Mono 的数字天然等宽(即
+    /// tabular);NumField 等数值场景统一解析到本档([`mono_font_id`])。
+    pub const MONO: Spec = Spec {
+        size: 12.0,
+        line_height: 18.0,
+        weight: Weight::Regular,
+    };
+
+    /// `(JSON 键, 档)` 清单 —— `tokens_sync_typography_with_json` 逐值比对。
+    pub const ALL: [(&str, Spec); 7] = [
+        ("display", DISPLAY),
+        ("title", TITLE),
+        ("body-strong", BODY_STRONG),
+        ("body", BODY),
+        ("label", LABEL),
+        ("caption", CAPTION),
+        ("mono", MONO),
+    ];
+
+    /// 按档取 `FontId`(比例字体族;`scale` = 界面缩放)。
+    pub fn font_id(spec: Spec, scale: f32) -> FontId {
+        FontId::new(
+            spec.size * scale,
+            match spec.weight {
+                Weight::Regular => fonts::family_regular(),
+                Weight::Medium => fonts::family_medium(),
+                Weight::Semibold => fonts::family_semibold(),
+            },
+        )
+    }
+
+    /// mono 档的 `FontId`(数值场景;族用等宽族 —— tabular-nums 的落点)。
+    pub fn mono_font_id(scale: f32) -> FontId {
+        FontId::new(MONO.size * scale, fonts::family_mono())
     }
 }
 
@@ -418,26 +802,12 @@ fn apply_impl(ctx: &egui::Context, dark: bool, scale: f32, _motion: bool) {
             stroke::HAIRLINE,
             if dark { t.border } else { t.border_strong },
         );
-        s.visuals.window_shadow = if dark {
-            egui::epaint::Shadow::NONE
-        } else {
-            egui::epaint::Shadow {
-                offset: [0, 2],
-                blur: 8,
-                spread: 0,
-                color: Color32::from_black_alpha(28),
-            }
-        };
-        s.visuals.popup_shadow = if dark {
-            egui::epaint::Shadow::NONE
-        } else {
-            egui::epaint::Shadow {
-                offset: [0, 4],
-                blur: 12,
-                spread: 0,
-                color: Color32::from_black_alpha(32),
-            }
-        };
+        // ── 材质/elevation(§8.3.2;UI-04 修复:深色不再 Shadow::NONE)──
+        // egui 只有 window/popup 两个阴影槽,按文档 L3「对话框/菜单/命令面板」
+        // 接入;tooltip 专属 L4 由 S4 组件经 elevation::shadow_l4 消费。
+        // 深色窗口从此有 0 8px 24px 的浮层阴影 + 面板靠 L1 层次区分。
+        s.visuals.window_shadow = elevation::shadow_l3(dark);
+        s.visuals.popup_shadow = elevation::shadow_l3(dark);
 
         // ── 圆角（业余感来源之一，必须改） ──
         s.visuals.window_corner_radius = radius::xl();
@@ -487,35 +857,38 @@ fn apply_impl(ctx: &egui::Context, dark: bool, scale: f32, _motion: bool) {
         // ── 动效(H-1:总开关关闭时全部过渡立即到位) ──
         s.animation_time = anim;
 
-        // ── 排版 ──
+        // ── 排版(§8.4 七档;字号/字重唯一来源 = typography 模块 = JSON typography.*)──
         s.text_styles.insert(
             TextStyle::Small,
-            FontId::new(11.0 * scale, fonts::family_regular()),
+            typography::font_id(typography::CAPTION, scale),
         );
         s.text_styles.insert(
             TextStyle::Body,
-            FontId::new(13.0 * scale, fonts::family_regular()),
+            typography::font_id(typography::BODY, scale),
         );
         s.text_styles.insert(
             TextStyle::Button,
-            FontId::new(13.0 * scale, fonts::family_semibold()),
+            typography::font_id(typography::BODY_STRONG, scale),
         );
         s.text_styles.insert(
             TextStyle::Heading,
-            FontId::new(15.0 * scale, fonts::family_semibold()),
+            typography::font_id(typography::TITLE, scale),
         );
-        s.text_styles.insert(
-            TextStyle::Monospace,
-            FontId::new(12.0 * scale, fonts::family_mono()),
-        );
-        // egui 的 TextStyle 槽位不够表达 6 档字号，多出来的两档用具名 style
+        // 数值/代码走等宽族(= tabular-nums 的落点,见 typography::MONO 注)
+        s.text_styles
+            .insert(TextStyle::Monospace, typography::mono_font_id(scale));
+        // egui 的 TextStyle 槽位不够表达 7 档字号，多出来的用具名 style
         s.text_styles.insert(
             fonts::style_label(),
-            FontId::new(12.0 * scale, fonts::family_medium()),
+            typography::font_id(typography::LABEL, scale),
         );
         s.text_styles.insert(
             fonts::style_body_strong(),
-            FontId::new(13.0 * scale, fonts::family_semibold()),
+            typography::font_id(typography::BODY_STRONG, scale),
+        );
+        s.text_styles.insert(
+            fonts::style_display(),
+            typography::font_id(typography::DISPLAY, scale),
         );
 
         // ── 去掉 egui 默认的"UI 感"开关 ──
@@ -695,6 +1068,340 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── G-UI-A:令牌同步扩展(审查 2026-10-04 §8.12;四张新表逐值比对)──
+    //
+    // JSON 是唯一真相,theme.rs 消费。新表一律走独立键集(color.neutral /
+    // color.ext / elevation / state-layer / typography),不动被 vb_kit
+    // tokens_sync2 镜像冻结的 color.dark/light 与 font.size 键集。
+
+    fn tokens_json() -> serde_json::Value {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/design/assets/vb-ui-tokens.json");
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("读不到设计令牌文件 {}: {e}", path.display()));
+        serde_json::from_str(&raw).expect("vb-ui-tokens.json 不是合法 JSON")
+    }
+
+    /// 解析 `24px` → 24.0。
+    fn parse_px(v: &str) -> f32 {
+        v.trim()
+            .strip_suffix("px")
+            .and_then(|s| s.parse::<f32>().ok())
+            .unwrap_or_else(|| panic!("非法 px 值 {v}"))
+    }
+
+    /// 解析 egui 阴影对象(offset 单位 px;颜色 rgba,α×255 四舍五入)。
+    fn parse_shadow(v: &serde_json::Value) -> egui::epaint::Shadow {
+        let offset = v["offset"].as_array().expect("shadow.offset 数组");
+        assert_eq!(offset.len(), 2);
+        let color = parse_color(v["color"].as_str().expect("shadow.color"));
+        egui::epaint::Shadow {
+            offset: [
+                offset[0].as_i64().expect("offset.x") as i8,
+                offset[1].as_i64().expect("offset.y") as i8,
+            ],
+            blur: v["blur"].as_u64().expect("blur") as u8,
+            spread: v["spread"].as_u64().expect("spread") as u8,
+            color,
+        }
+    }
+
+    /// §8.3.1 中性色阶:13 档 × 双主题逐值比对。
+    #[test]
+    fn tokens_sync_neutral_with_json() {
+        let json = tokens_json();
+        for (theme_key, tokens) in [("dark", Tokens::dark()), ("light", Tokens::light())] {
+            for (i, expected) in tokens.neutral.iter().enumerate() {
+                let name = format!("n{i}");
+                let node = json["color"]["neutral"][theme_key][&name]
+                    .get("value")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_else(|| panic!("color.neutral.{theme_key}.{name} 缺失"));
+                assert_eq!(
+                    parse_color(node),
+                    *expected,
+                    "中性阶 {theme_key}.{name} 两处真相不一致(JSON {node})"
+                );
+            }
+            assert_eq!(
+                json["color"]["neutral"][theme_key]
+                    .as_object()
+                    .map(|o| o.len()),
+                Some(13),
+                "{theme_key} 中性阶必须恰好 13 档"
+            );
+        }
+    }
+
+    /// §8.3.4 功能色扩展(color.ext):四枚新色 × 双主题逐值比对。
+    #[test]
+    fn tokens_sync_functional_ext_with_json() {
+        let json = tokens_json();
+        for (theme_key, t) in [("dark", Tokens::dark()), ("light", Tokens::light())] {
+            for (name, expected) in [
+                ("accent-press", t.accent_press),
+                ("accent-subtle", t.accent_subtle),
+                ("accent-border", t.accent_border),
+                ("info", t.info),
+            ] {
+                let node = json["color"]["ext"][theme_key][name]
+                    .get("value")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_else(|| panic!("color.ext.{theme_key}.{name} 缺失"));
+                assert_eq!(
+                    parse_color(node),
+                    expected,
+                    "功能色 {theme_key}.{name} 两处真相不一致(JSON {node})"
+                );
+            }
+        }
+    }
+
+    /// §8.3.3 状态层(state-layer):六枚 overlay × 双主题逐值比对。
+    #[test]
+    fn tokens_sync_state_layer_with_json() {
+        let json = tokens_json();
+        for (theme_key, t) in [("dark", Tokens::dark()), ("light", Tokens::light())] {
+            for (name, expected) in [
+                ("hover", t.state_hover),
+                ("press", t.state_press),
+                ("selected", t.state_selected),
+                ("focus-ring", t.focus_ring),
+                ("focus-ring-inner", t.focus_ring_inner),
+                ("disabled-fg", t.disabled_fg),
+            ] {
+                let node = json["state-layer"][theme_key][name]
+                    .get("value")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_else(|| panic!("state-layer.{theme_key}.{name} 缺失"));
+                assert_eq!(
+                    parse_color(node),
+                    expected,
+                    "状态层 {theme_key}.{name} 两处真相不一致(JSON {node})"
+                );
+            }
+        }
+    }
+
+    /// §8.3.2 材质阶梯(elevation):五层的 base 引用/发丝线/三档阴影/表面
+    /// 不透明度与 `elevation` 模块逐值比对(深浅双验)。
+    #[test]
+    fn tokens_sync_elevation_with_json() {
+        let json = tokens_json();
+        for (theme_key, dark) in [("dark", true), ("light", false)] {
+            let t = Tokens::get(dark);
+            let base_idx = elevation::base_neutral(dark);
+            for (level, name) in base_idx.iter().enumerate() {
+                let node = &json["elevation"][theme_key][format!("L{level}")];
+                // base:JSON 以 {color.neutral.<theme>.n<i>} 引用 → 校验下标映射一致
+                let base_ref = node["base"].as_str().expect("elevation.base");
+                let expect_ref = format!("{{color.neutral.{theme_key}.n{name}}}");
+                assert_eq!(
+                    base_ref, expect_ref,
+                    "elevation.{theme_key}.L{level} 的 base 引用与 BASE_NEUTRAL 映射不一致"
+                );
+                // hairline / shadow:L0..L1 无阴影;发丝线 L0 亦无
+                let hairline = node["hairline"].as_str().expect("hairline");
+                let shadow = &node["shadow"];
+                if level == elevation::L0 {
+                    assert_eq!(hairline, "none", "L0 无发丝线");
+                    assert_eq!(shadow.as_str(), Some("none"), "L0 无阴影");
+                } else {
+                    assert_eq!(
+                        parse_color(hairline),
+                        elevation::hairline(dark),
+                        "elevation.{theme_key}.L{level} 发丝线不一致"
+                    );
+                    match level {
+                        elevation::L1 => {
+                            assert_eq!(shadow.as_str(), Some("none"), "L1 靠层次不靠阴影");
+                        }
+                        elevation::L2 => {
+                            assert_eq!(parse_shadow(shadow), elevation::shadow_l2(dark));
+                        }
+                        elevation::L3 => {
+                            assert_eq!(parse_shadow(shadow), elevation::shadow_l3(dark));
+                        }
+                        _ => {
+                            assert_eq!(parse_shadow(shadow), elevation::shadow_l4(dark));
+                            let alpha = node["surface_alpha"].as_f64().expect("surface_alpha");
+                            assert!(
+                                (alpha - elevation::surface_alpha_l4(dark) as f64).abs() < 1e-6,
+                                "L4 surface_alpha 不一致"
+                            );
+                        }
+                    }
+                }
+                // 底色数值本身已被 neutral 同步测试钉住,这里再复述一层:
+                assert_eq!(
+                    elevation::base(level, &t),
+                    t.neutral[*name],
+                    "elevation 底色取档与中性阶不一致"
+                );
+            }
+        }
+    }
+
+    /// §8.4 排版七档(typography)逐值比对,并与被 vb_kit 冻结的
+    /// `font.size` 六档 size 交叉钉住(两表 size 不许漂移)。
+    #[test]
+    fn tokens_sync_typography_with_json() {
+        let json = tokens_json();
+        for (name, spec) in typography::ALL {
+            let node = &json["typography"][name];
+            assert_eq!(
+                parse_px(node["size"].as_str().expect("typography.size")),
+                spec.size,
+                "typography.{name} 字号两处真相不一致"
+            );
+            assert_eq!(
+                parse_px(
+                    node["line-height"]
+                        .as_str()
+                        .unwrap_or_else(|| panic!("typography.{name} 缺 line-height"))
+                ),
+                spec.line_height,
+                "typography.{name} 行高两处真相不一致"
+            );
+            let weight = node["weight"].as_u64().expect("typography.weight");
+            let expected_w = match spec.weight {
+                fonts::Weight::Regular => 400,
+                fonts::Weight::Medium => 500,
+                fonts::Weight::Semibold => 600,
+            };
+            assert_eq!(weight, expected_w, "typography.{name} 字重不一致");
+        }
+        // 与 font.size(冻结表)的 size 交叉一致 —— 单一真相不许两表漂移
+        for (name, spec) in typography::ALL {
+            let Some(node) = json["font"]["size"].get(name) else {
+                continue; // display 是新增档,冻结表里没有
+            };
+            assert_eq!(
+                parse_px(node["size"].as_str().expect("font.size value")),
+                spec.size,
+                "font.size.{name} 与 typography.{name} 字号漂移"
+            );
+        }
+    }
+
+    // ── G-UI-E:对比度门禁·深色侧(审查 2026-10-04 §8.10.4)──
+
+    /// 中性阶必须单调:深色由深到浅,浅色由亮到暗(两套方向相反,
+    /// 正是「浅色不是深色反相」的又一佐证)。
+    #[test]
+    fn neutral_ramps_are_monotonic() {
+        let lum = |c: Color32| rel_luminance(c);
+        let d = Tokens::dark();
+        for i in 0..12 {
+            assert!(
+                lum(d.neutral[i]) < lum(d.neutral[i + 1]),
+                "深色中性阶在 n{i}→n{} 处不单调",
+                i + 1
+            );
+        }
+        let l = Tokens::light();
+        for i in 0..12 {
+            assert!(
+                lum(l.neutral[i]) > lum(l.neutral[i + 1]),
+                "浅色中性阶在 n{i}→n{} 处不单调",
+                i + 1
+            );
+        }
+    }
+
+    /// G-UI-E:深色主题**正文/次级/禁用级文字**与承载底 ≥4.5:1(WCAG AA),
+    /// 中性阶文字档(N12/N10)对同义面板底(n4)同样 ≥4.5:1。
+    ///
+    /// 已知限制(记录不拦截):disabled_fg 对凸起浮层底(bg_raised)3.85:1
+    /// —— 禁用文字只允许出现在面板底;语义色 danger 对深色面板 3.8:1,
+    /// 仅达大字号/图标档(3:1),S5 文字样式落地时一并处理。
+    #[test]
+    fn dark_theme_text_meets_wcag_aa() {
+        let d = Tokens::dark();
+        for (name, fg) in [
+            ("正文", d.text),
+            ("次级文字", d.text_2),
+            ("禁用前景", d.disabled_fg),
+        ] {
+            for (bg_name, bg) in [("面板", d.bg_panel), ("凸起", d.bg_raised)] {
+                // 禁用前景只承诺面板底(见测试文档注释)
+                if name == "禁用前景" && bg_name == "凸起" {
+                    continue;
+                }
+                let c = contrast(fg, bg);
+                assert!(
+                    c >= 4.5,
+                    "深色 {name} 在 {bg_name} 底上对比度 {c:.2}:1 < 4.5(WCAG AA)"
+                );
+            }
+        }
+        for (name, i) in [("主文字 n12", 12), ("次文字 n10", 10)] {
+            let c = contrast(d.neutral[i], d.neutral[4]);
+            assert!(c >= 4.5, "深色 {name} 对面板档 n4 对比度 {c:.2}:1 < 4.5");
+        }
+        let c = contrast(d.disabled_fg, d.neutral[4]);
+        assert!(c >= 4.5, "深色禁用前景对面板档 n4 对比度 {c:.2}:1 < 4.5");
+    }
+
+    /// G-UI-E:浅色侧中性阶文字档对最高反射面(n0 白)同样 ≥4.5:1
+    /// (既有浅色断言的中性阶扩展)。
+    #[test]
+    fn light_theme_neutral_text_meets_wcag_aa() {
+        let l = Tokens::light();
+        for (name, fg) in [
+            ("主文字 n12", l.neutral[12]),
+            ("次文字 n10", l.neutral[10]),
+            ("禁用前景(state-layer)", l.disabled_fg),
+        ] {
+            let c = contrast(fg, l.neutral[0]);
+            assert!(c >= 4.5, "浅色 {name} 对 n0 对比度 {c:.2}:1 < 4.5");
+        }
+    }
+
+    /// G-UI-E:焦点环属非文字对比(WCAG 1.4.11 ≥3:1)。深色侧 accent
+    /// 环对面板/画布底达标;浅色侧对白底 2.75:1 是**已知限制**
+    /// (JSON state-layer 注),S5 需经隔离环/加深评审,不在本轮硬拦。
+    #[test]
+    fn dark_theme_focus_ring_meets_non_text_contrast() {
+        let d = Tokens::dark();
+        for (bg_name, bg) in [
+            ("面板", d.bg_panel),
+            ("画布", d.bg_canvas),
+            ("凸起", d.bg_raised),
+        ] {
+            let c = contrast(d.focus_ring, bg);
+            assert!(c >= 3.0, "深色焦点环对 {bg_name} {c:.2}:1 < 3.0(1.4.11)");
+        }
+    }
+
+    /// 状态层合成语义:src-over 数学正确、fade 缩放 α、with_selected 走
+    /// accent 14% —— 组件 hover 迁移(行为等价)的依据面。
+    #[test]
+    fn state_layer_composites_correctly() {
+        let d = Tokens::dark();
+        let base = d.bg_panel;
+        // 白 6% 叠加:每个通道严格落在 base 与纯白之间
+        let hovered = d.with_hover(base);
+        for ch in 0..3 {
+            let b = [base.r(), base.g(), base.b()][ch];
+            let h = [hovered.r(), hovered.g(), hovered.b()][ch];
+            assert!(h > b && h < 255, "hover 合成应严格提亮通道 {ch}");
+        }
+        // 选中:与手工 src-over 等价
+        let manual = state::over(base, d.state_selected);
+        assert_eq!(d.with_selected(base), manual);
+        // fade:α 随 t 缩放,t=0 不可见、t=1 等于 overlay 本体、越界夹取
+        assert_eq!(state::fade(d.state_hover, 0.0).a(), 0);
+        assert_eq!(state::fade(d.state_hover, 1.0), d.state_hover);
+        // 15 × 0.5 = 7.5,四舍五入到 8(与整数截断的 7 区分,钉住 round 语义)
+        assert_eq!(state::fade(d.state_hover, 0.5).a(), 8);
+        assert_eq!(state::fade(d.state_hover, -1.0).a(), 0);
+        assert_eq!(state::fade(d.state_hover, 2.0), d.state_hover);
+        // 焦点环描边宽度 = stroke::FOCUS
+        assert_eq!(d.focus_ring_stroke().width, stroke::FOCUS);
+        assert_eq!(d.focus_ring_stroke().color, d.focus_ring);
     }
 
     /// 04-3-1:行高必须从字号派生 —— 至少包住正文字形的实际排高度(+边距),

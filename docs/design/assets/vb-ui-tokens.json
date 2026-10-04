@@ -2,9 +2,10 @@
   "$schema": "https://design-tokens.github.io/community-group/format/",
   "$description": "Vellum Bench UI 设计令牌 — 设计侧单一真相。与 crates/vb_ui/src/theme.rs 必须保持一致（CI 校验）。命名空间 --vb-ui-* 为界面主题，与文档令牌 --vb-brand-* 严格分离。",
   "meta": {
-    "version": "0.1.0",
-    "source_of_truth_for": "docs/design/14-下一阶段迭代方案-UI重制与AI心智对齐.md §3.2",
-    "generated_for": "crates/vb_ui/src/theme.rs"
+    "version": "0.2.0",
+    "source_of_truth_for": "docs/design/14-下一阶段迭代方案-UI重制与AI心智对齐.md §3.2 + 迭代审查 2026-10-04 §8.3/§8.4(UI 地基 S3)",
+    "generated_for": "crates/vb_ui/src/theme.rs",
+    "vb_kit_note": "color.dark/color.light/font.size 键集被 vb_kit tests/tokens_sync2.rs 精确镜像(冻结),新增令牌一律走新表(color.neutral/color.ext/elevation/state-layer/typography),不得往这三表加键。"
   },
 
   "color": {
@@ -53,6 +54,56 @@
       "guide-grid":       { "value": "#3A3A3A", "light": "#DADADA", "desc": "网格线" },
       "snap-threshold":   { "value": "6px", "desc": "吸附阈值，屏幕空间，不随缩放变化", "unit": "screen-px" },
       "handle-hit-radius":{ "value": "6px", "desc": "手柄命中半径，屏幕空间", "unit": "screen-px" }
+    },
+
+    "neutral": {
+      "$note": "审查 2026-10-04 §8.3.1:中性色阶 13 档(N0~N12),替代「只有 3 档文字色」。深色从深到浅(机身→文字);浅色反向独立调校(不是深色反相),从亮到暗。文字级达标口径:N12/N10/disabled-fg 对承载底 ≥4.5:1(WCAG AA);N9 为装饰级弱文字,禁用文字一律走 state-layer.disabled-fg。",
+      "dark": {
+        "n0":  { "value": "#0E0E10", "desc": "窗口/机身最底" },
+        "n1":  { "value": "#161618", "desc": "画布外区域(画板外更暗)" },
+        "n2":  { "value": "#1C1C1E", "desc": "画布" },
+        "n3":  { "value": "#232326", "desc": "面板底(坞/状态栏)" },
+        "n4":  { "value": "#2A2A2E", "desc": "面板" },
+        "n5":  { "value": "#313136", "desc": "凸起/输入" },
+        "n6":  { "value": "#3A3A40", "desc": "悬停基准" },
+        "n7":  { "value": "#45454C", "desc": "按下基准" },
+        "n8":  { "value": "#55555E", "desc": "分隔强" },
+        "n9":  { "value": "#6E6E78", "desc": "弱文字(装饰级;对 n4 仅 2.76:1,禁用文字走 state-layer.disabled-fg)" },
+        "n10": { "value": "#9A9AA4", "desc": "次文字(对 n4 ≈5.0:1,达 AA)" },
+        "n11": { "value": "#C7C7CE", "desc": "强调次文字/代码" },
+        "n12": { "value": "#FFFFFF", "desc": "主文字(对 n4 ≈15:1)" }
+      },
+      "light": {
+        "n0":  { "value": "#FFFFFF", "desc": "画布/画板/面板(最高反射面)" },
+        "n1":  { "value": "#F7F7F8", "desc": "机身/窗口底" },
+        "n2":  { "value": "#F1F1F3", "desc": "画布外区域" },
+        "n3":  { "value": "#EDEDF0", "desc": "面板内嵌面(卡片/分组)" },
+        "n4":  { "value": "#E8E8EB", "desc": "输入/凸起底" },
+        "n5":  { "value": "#DDDDE1", "desc": "悬停基准" },
+        "n6":  { "value": "#CFCFD5", "desc": "按下基准" },
+        "n7":  { "value": "#B4B4BC", "desc": "分隔强/图标弱" },
+        "n8":  { "value": "#98989F", "desc": "分隔/描边" },
+        "n9":  { "value": "#8A8A92", "desc": "弱文字(装饰级;对 n0 仅 3.43:1,禁用文字走 state-layer.disabled-fg)" },
+        "n10": { "value": "#6B6B6B", "desc": "次文字(对 n0 ≈5.3:1,达 AA;= color.light.text-2)" },
+        "n11": { "value": "#3E3E44", "desc": "图标/强次文字" },
+        "n12": { "value": "#1B1B1F", "desc": "主文字(对 n0 ≈17:1)" }
+      }
+    },
+
+    "ext": {
+      "$note": "审查 2026-10-04 §8.3.4 功能色扩展。独立于上面两套冻结键集(vb_kit 镜像),由 vb_ui tokens_sync 功能色测试逐值校验。语义色(智能参考线品红等)保持不可变,不在此表。",
+      "dark": {
+        "accent-press":  { "value": "#0B87E5", "desc": "accent 按下(比 hover 深)" },
+        "accent-subtle": { "value": "rgba(13,153,255,0.14)", "desc": "选中底/Tab 选中底(#0D99FF24);S4 起接替 accent-dim" },
+        "accent-border": { "value": "rgba(13,153,255,0.50)", "desc": "accent 描边(#0D99FF80)" },
+        "info":          { "value": "#5E5CE6", "desc": "非破坏提示(与 accent 区分);对 n4 仅 ≈2.7:1,只作图标/容器底,不作小号正文" }
+      },
+      "light": {
+        "accent-press":  { "value": "#0B87E5", "desc": "accent 按下" },
+        "accent-subtle": { "value": "rgba(13,153,255,0.14)", "desc": "选中底(两套共用,设计规范 §8.3.3)" },
+        "accent-border": { "value": "rgba(13,153,255,0.50)", "desc": "accent 描边" },
+        "info":          { "value": "#4B49CC", "desc": "非破坏提示(浅色加深保对比)" }
+      }
     }
   },
 
@@ -82,6 +133,56 @@
     "canvas-select": { "value": "1px", "color": "{color.semantic.select-box}" }
   },
 
+  "elevation": {
+    "$note": "审查 2026-10-04 §8.3.2 材质阶梯(UI-04 的令牌面)。深色靠 elevation 阶梯 + 顶部高光发丝线分层,不靠描边堆叠。base 引用 color.neutral.*(单一真相);阴影 offset 单位 px,color 为 rgba(解析后 α×255 四舍五入)。egui 仅 window_shadow/popup_shadow 两槽(§8.3.2 L3「对话框/菜单/命令面板」),tooltip 专属 L4 由 S4 组件消费。",
+    "dark": {
+      "L0": { "base": "{color.neutral.dark.n1}", "hairline": "none", "shadow": "none", "use": "画布外区域" },
+      "L1": { "base": "{color.neutral.dark.n3}", "hairline": "rgba(255,255,255,0.05)", "shadow": "none", "use": "工具箱/坞/状态栏(靠层次不靠阴影)" },
+      "L2": { "base": "{color.neutral.dark.n5}", "hairline": "rgba(255,255,255,0.05)", "shadow": { "offset": [0, 1], "blur": 2,  "spread": 0, "color": "rgba(0,0,0,0.35)" }, "use": "输入框/Tab 选中/下拉" },
+      "L3": { "base": "{color.neutral.dark.n6}", "hairline": "rgba(255,255,255,0.05)", "shadow": { "offset": [0, 8], "blur": 24, "spread": 0, "color": "rgba(0,0,0,0.45)" }, "use": "对话框/菜单/命令面板", "egui": "visuals.window_shadow + visuals.popup_shadow" },
+      "L4": { "base": "{color.neutral.dark.n7}", "hairline": "rgba(255,255,255,0.05)", "surface_alpha": 0.92, "shadow": { "offset": [0, 4], "blur": 16, "spread": 0, "color": "rgba(0,0,0,0.50)" }, "use": "tooltip/浮动工具条/数值浮层(S4 组件消费)" }
+    },
+    "light": {
+      "$note": "浅色阴影独立调校(更轻):面板白底靠 window_shadow + 描边分层,阴影值压低避免脏灰。",
+      "L0": { "base": "{color.neutral.light.n2}", "hairline": "none", "shadow": "none", "use": "画布外区域" },
+      "L1": { "base": "{color.neutral.light.n0}", "hairline": "rgba(0,0,0,0.04)", "shadow": "none", "use": "工具箱/坞/状态栏" },
+      "L2": { "base": "{color.neutral.light.n4}", "hairline": "rgba(0,0,0,0.04)", "shadow": { "offset": [0, 1], "blur": 2,  "spread": 0, "color": "rgba(0,0,0,0.10)" }, "use": "输入框/Tab 选中/下拉" },
+      "L3": { "base": "{color.neutral.light.n0}", "hairline": "rgba(0,0,0,0.04)", "shadow": { "offset": [0, 8], "blur": 24, "spread": 0, "color": "rgba(0,0,0,0.14)" }, "use": "对话框/菜单/命令面板", "egui": "visuals.window_shadow + visuals.popup_shadow" },
+      "L4": { "base": "{color.neutral.light.n1}", "hairline": "rgba(0,0,0,0.04)", "surface_alpha": 0.96, "shadow": { "offset": [0, 4], "blur": 16, "spread": 0, "color": "rgba(0,0,0,0.16)" }, "use": "tooltip/浮动工具条/数值浮层(S4 组件消费)" }
+    }
+  },
+
+  "state-layer": {
+    "$note": "审查 2026-10-04 §8.3.3:状态一律 **alpha 叠加于基础色**,不再换灰阶常量。overlay 为半透明状态色,经 theme::state::over(base, overlay) 合成;组件过渡动画用 theme::state::fade 缩放 α。focus-ring = accent 全强 1.5px 外描边,inner 为隔离环。disabled 只降前景不降容器饱和度;disabled-fg 沿用 U-6 走查的 AA 达标值(N9 对面板仅 2.76:1 不达标,故不取 N9)。",
+    "dark": {
+      "hover":            { "value": "rgba(255,255,255,0.06)", "desc": "悬停:白 6% 叠加" },
+      "press":            { "value": "rgba(255,255,255,0.10)", "desc": "按下:白 10% 叠加" },
+      "selected":         { "value": "rgba(13,153,255,0.14)",  "desc": "选中:accent 14%(#0D99FF24)" },
+      "focus-ring":       { "value": "rgba(13,153,255,1.00)",  "desc": "焦点环外描边(accent 全强,1.5px);对 n4 ≈5.1:1 达 1.4.11(≥3:1)" },
+      "focus-ring-inner": { "value": "rgba(0,0,0,0.40)",       "desc": "焦点环内侧隔离环" },
+      "disabled-fg":      { "value": "#96969B",                "desc": "禁用前景(= text-3;对 n4/n5 ≥4.5:1)" }
+    },
+    "light": {
+      "hover":            { "value": "rgba(0,0,0,0.04)",       "desc": "悬停:黑 4% 叠加" },
+      "press":            { "value": "rgba(0,0,0,0.08)",       "desc": "按下:黑 8% 叠加" },
+      "selected":         { "value": "rgba(13,153,255,0.14)",  "desc": "选中:accent 14%" },
+      "focus-ring":       { "value": "rgba(13,153,255,1.00)",  "desc": "焦点环外描边;已知限制:对白底 2.75:1 <3:1,S5 需经隔离环/加深评审" },
+      "focus-ring-inner": { "value": "rgba(255,255,255,0.90)", "desc": "焦点环内侧隔离环(浅色用白隔离)" },
+      "disabled-fg":      { "value": "#767676",                "desc": "禁用前景(= text-3;对白底 4.54:1)" }
+    }
+  },
+
+  "typography": {
+    "$note": "审查 2026-10-04 §8.4 排版七档(G-UI-A 第四表)。行高是布局真相(egui FontId 无行高,组件经 row-height 公式消费);字重经独立 FontFamily(vb-ui-regular/medium/semibold)实现。本表与上方 font.size 六档的 size 必须一致(有测试钉住;font.size 因 vb_kit 镜像冻结而保留)。",
+    "display":     { "size": "24px", "line-height": "32px", "weight": 600, "use": "启动器标题/空态主标题", "egui": "vb-display 具名 style" },
+    "title":       { "size": "15px", "line-height": "22px", "weight": 600, "use": "对话框标题/面板组标题", "egui": "TextStyle::Heading" },
+    "body-strong": { "size": "13px", "line-height": "20px", "weight": 600, "use": "分组头/选中项", "egui": "vb-body-strong 具名 style + TextStyle::Button" },
+    "body":        { "size": "13px", "line-height": "20px", "weight": 400, "use": "默认正文", "egui": "TextStyle::Body" },
+    "label":       { "size": "12px", "line-height": "18px", "weight": 500, "use": "字段标签/图层行", "egui": "vb-label 具名 style" },
+    "caption":     { "size": "11px", "line-height": "16px", "weight": 400, "use": "状态栏/tooltip 副行", "egui": "TextStyle::Small" },
+    "mono":        { "size": "12px", "line-height": "18px", "weight": 400, "use": "十六进制/数值框/代码;数字一律走 vb-mono 等宽族实现 tabular-nums", "egui": "TextStyle::Monospace" }
+  },
+
   "font": {
     "family": {
       "latin":  { "value": "Inter", "license": "SIL OFL 1.1", "weights": ["Regular", "Medium", "SemiBold"] },
@@ -92,6 +193,7 @@
     "fallback_chain": ["Inter", "MiSans", "system-cjk"],
     "egui_families": ["vb-ui-regular", "vb-ui-medium", "vb-ui-semibold", "vb-mono", "vb-icon"],
     "size": {
+      "$note": "vb_kit tokens_sync2 镜像冻结表(仅 6 档 size);行高/字重真相在 typography.* 表,vb_ui 测试钉住两者 size 一致。",
       "caption":       { "size": "11px", "line_height": "16px", "weight": 400, "style": "Small",     "use": "状态栏/tooltip 副行" },
       "label":         { "size": "12px", "line_height": "18px", "weight": 500, "style": "Small",     "use": "字段标签/图层行" },
       "body":          { "size": "13px", "line_height": "20px", "weight": 400, "style": "Body",      "use": "默认正文/输入内容" },
@@ -141,6 +243,8 @@
     "不支持自定义光标图片 → 旋转光标只能用最接近的内置图标 + 视觉提示兜底",
     "无合成层 → 做不了多层阴影 + 背景模糊的玻璃质感，不做",
     "ImeComposition.legacy_visuals 在 Windows 默认 true → 中文优先建议显式设 false 并实测",
-    "visuals.widgets.*.expansion 默认 > 0，产生立体感 → 必须归零"
+    "visuals.widgets.*.expansion 默认 > 0，产生立体感 → 必须归零",
+    "tabular-nums:egui 0.35 无 OpenType 特性接口（FontTweak 仅 scale/y_offset 等视觉项）→ 数字对齐经「数值一律走 vb-mono 等宽族」达成（JetBrains Mono 数字天然等宽）；DragValue/NumField 等数值场景统一 TextStyle::Monospace 或 family_mono()",
+    "阴影槽位只有 visuals.window_shadow/popup_shadow 两个 → elevation L2/L4 由组件层(S4)经 elevation::shadow_* 消费"
   ]
 }
