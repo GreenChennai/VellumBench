@@ -138,12 +138,12 @@ pub const L1_PROPS: &[&str] = &[
     "cursor",
 ];
 
-/// 属性输出顺序档位:白名单内 = 表内下标;白名单外 = 10_000 + 字母序(确定性,保证 L1 幂等)。
+/// 属性输出顺序档位:白名单内 = 表内下标;白名单外 = 统一档位 10_000
+/// (DOC-16:同级次序由 [`sort_decls`] 的**真字典序**决胜 —— 此前用
+/// 「字节和散列」冒充字母序,散列碰撞会让两未知属性的相对序随输入序
+/// 漂移,与契约「确定性、保证 L1 幂等」不符)。
 pub fn prop_rank(prop: &str) -> usize {
-    L1_PROPS
-        .iter()
-        .position(|p| *p == prop)
-        .unwrap_or(10_000 + prop.as_bytes().iter().map(|b| *b as usize).sum::<usize>() % 10_000)
+    L1_PROPS.iter().position(|p| *p == prop).unwrap_or(10_000)
 }
 
 pub fn is_known_prop(prop: &str) -> bool {
@@ -203,7 +203,23 @@ impl Decl {
 
     pub fn to_css(&self) -> String {
         let imp = if self.important { " !important" } else { "" };
-        format!("{}: {}{imp}", self.prop, self.value)
+        // PERF-08:按部件长度预留容量,单次分配(format! 多轮扫描)
+        let mut s = String::with_capacity(self.prop.len() + self.value.len() + imp.len() + 2);
+        s.push_str(&self.prop);
+        s.push_str(": ");
+        s.push_str(&self.value);
+        s.push_str(imp);
+        s
+    }
+
+    /// 直接写入调用方缓冲(PERF-08:导出热路径逐声明调用,免中间 String)。
+    pub fn push_css(&self, out: &mut String) {
+        out.push_str(&self.prop);
+        out.push_str(": ");
+        out.push_str(&self.value);
+        if self.important {
+            out.push_str(" !important");
+        }
     }
 
     pub fn is_unknown(&self) -> bool {
@@ -254,23 +270,42 @@ const ZERO_KEEPS_UNIT: &[&str] = &["deg", "grad", "rad", "turn", "s", "ms"];
 /// - 数字保留 ≤4 位小数去尾 0;`0px` → `0`(角度/时间单位除外,见
 ///   [`ZERO_KEEPS_UNIT`]);单位小写
 /// - 函数名小写;引号内不改动
+///
+/// PERF-08:字节扫描替代 `Vec<char>` 全量收集 —— 全部 token 判定都是
+/// ASCII 谓词(多字节字符只出现在「原样推送」分支,按 UTF-8 逐字解码),
+/// 字节下标与字符边界在此等价;token 切片直接借用 `raw`(不再逐 token
+/// collect String),规范输出与旧实现逐字节一致。
 pub fn canonical_value(raw: &str) -> String {
+    /// 当前字节下标处的字符(i 恒落在 UTF-8 边界:ASCII 前进 1 字节,
+    /// 多字节按 `len_utf8` 前进)。
+    fn char_at(raw: &str, i: usize) -> Option<char> {
+        raw.get(i..).and_then(|s| s.chars().next())
+    }
+
     let mut out = String::with_capacity(raw.len());
-    let chars: Vec<char> = raw.chars().collect();
-    let mut i = 0;
+    let bytes = raw.as_bytes();
+    let mut i = 0usize;
     let mut in_string: Option<char> = None;
     let mut last_ws = false;
     // 函数调用栈:url(#id) 里的 # 是 SVG 引用不是颜色,不能缩短
     let mut fn_stack: Vec<String> = Vec::new();
 
-    while i < chars.len() {
-        let c = chars[i];
+    while i < bytes.len() {
+        let b = bytes[i];
+        let c = if b.is_ascii() {
+            b as char
+        } else {
+            match char_at(raw, i) {
+                Some(c) => c,
+                None => break,
+            }
+        };
         if let Some(q) = in_string {
             out.push(c);
             if c == q {
                 in_string = None;
             }
-            i += 1;
+            i += c.len_utf8();
             continue;
         }
         match c {
@@ -301,9 +336,12 @@ pub fn canonical_value(raw: &str) -> String {
                 out.push_str(", ");
                 last_ws = true;
                 i += 1;
-                // 跳过逗号后空白
-                while i < chars.len() && chars[i].is_whitespace() {
-                    i += 1;
+                // 跳过逗号后空白(Unicode 口径与旧实现一致)
+                while i < bytes.len() {
+                    match char_at(raw, i) {
+                        Some(w) if w.is_whitespace() => i += w.len_utf8(),
+                        _ => break,
+                    }
                 }
             }
             c if c.is_whitespace() => {
@@ -311,40 +349,40 @@ pub fn canonical_value(raw: &str) -> String {
                     out.push(' ');
                     last_ws = true;
                 }
-                i += 1;
+                i += c.len_utf8();
             }
             '#' => {
                 let start = i + 1;
                 let mut end = start;
-                while end < chars.len() && chars[end].is_ascii_hexdigit() {
+                while end < bytes.len() && bytes[end].is_ascii_hexdigit() {
                     end += 1;
                 }
-                let hexs: String = chars[start..end].iter().collect();
+                let hexs: &str = &raw[start..end];
                 if fn_stack.last().map(|f| f == "url").unwrap_or(false) {
                     // url(#fragment):SVG/clip-path 引用,逐字保留
                     out.push('#');
-                    out.push_str(&hexs);
-                } else if let Some(rgba) = parse_hex_len(&hexs) {
+                    out.push_str(hexs);
+                } else if let Some(rgba) = parse_hex_len(hexs) {
                     out.push_str(&rgba.to_shortest_hex());
                 } else {
                     out.push('#');
-                    out.push_str(&hexs);
+                    out.push_str(hexs);
                 }
                 i = end;
                 last_ws = false;
             }
             c if c.is_ascii_digit()
                 || ((c == '-' || c == '+')
-                    && chars
+                    && bytes
                         .get(i + 1)
-                        .map(|n| n.is_ascii_digit() || *n == '.')
+                        .map(|n| n.is_ascii_digit() || *n == b'.')
                         .unwrap_or(false)
                     && (out.is_empty()
                         || out.ends_with(' ')
                         || out.ends_with('(')
                         || out.ends_with(',')))
                 || (c == '.'
-                    && chars
+                    && bytes
                         .get(i + 1)
                         .map(|n| n.is_ascii_digit())
                         .unwrap_or(false)
@@ -355,42 +393,50 @@ pub fn canonical_value(raw: &str) -> String {
             {
                 // 数字 token(含符号/小数点开头)
                 let mut j = i;
-                if chars[j] == '-' || chars[j] == '+' {
+                if bytes[j] == b'-' || bytes[j] == b'+' {
                     j += 1;
                 }
                 let mut seen_dot = false;
-                while j < chars.len()
-                    && (chars[j].is_ascii_digit()
-                        || (chars[j] == '.' && !seen_dot)
-                        || ((chars[j] == 'e' || chars[j] == 'E')
-                            && j + 1 < chars.len()
-                            && (chars[j + 1].is_ascii_digit() || chars[j + 1] == '-')))
+                while j < bytes.len()
+                    && (bytes[j].is_ascii_digit()
+                        || (bytes[j] == b'.' && !seen_dot)
+                        || ((bytes[j] == b'e' || bytes[j] == b'E')
+                            && j + 1 < bytes.len()
+                            && (bytes[j + 1].is_ascii_digit() || bytes[j + 1] == b'-')))
                 {
-                    if chars[j] == '.' {
+                    if bytes[j] == b'.' {
                         seen_dot = true;
                     }
                     j += 1;
                 }
-                let num_s: String = chars[i..j].iter().collect();
+                let num_s: &str = &raw[i..j];
                 // 单位
                 let mut k = j;
-                while k < chars.len() && (chars[k].is_ascii_alphabetic() || chars[k] == '%') {
+                while k < bytes.len() && (bytes[k].is_ascii_alphabetic() || bytes[k] == b'%') {
                     k += 1;
                 }
-                let unit: String = chars[j..k].iter().collect::<String>().to_ascii_lowercase();
+                let unit_raw: &str = &raw[j..k];
+                // 单位小写(与旧实现同规):本就小写时零分配
+                let unit_lower;
+                let unit: &str = if unit_raw.bytes().any(|b| b.is_ascii_uppercase()) {
+                    unit_lower = unit_raw.to_ascii_lowercase();
+                    &unit_lower
+                } else {
+                    unit_raw
+                };
                 match num_s.parse::<f64>() {
                     Ok(n) if n.is_finite() => {
-                        if n == 0.0 && !ZERO_KEEPS_UNIT.contains(&unit.as_str()) {
+                        if n == 0.0 && !ZERO_KEEPS_UNIT.contains(&unit) {
                             // 0 不带单位(设计文档 04 §5.2)
                             out.push('0');
                         } else {
                             out.push_str(&vb_common::units::fmt_num(n));
-                            out.push_str(&unit);
+                            out.push_str(unit);
                         }
                     }
                     _ => {
-                        out.push_str(&num_s);
-                        out.push_str(&unit);
+                        out.push_str(num_s);
+                        out.push_str(unit);
                     }
                 }
                 i = k;
@@ -400,21 +446,21 @@ pub fn canonical_value(raw: &str) -> String {
                 // 函数名:ident 后紧跟 '(' → 小写
                 if c.is_ascii_alphabetic() || c == '-' {
                     let mut j = i;
-                    while j < chars.len()
-                        && (chars[j].is_ascii_alphanumeric() || chars[j] == '-' || chars[j] == '_')
+                    while j < bytes.len()
+                        && (bytes[j].is_ascii_alphanumeric()
+                            || bytes[j] == b'-'
+                            || bytes[j] == b'_')
                     {
                         j += 1;
                     }
-                    if j < chars.len() && chars[j] == '(' {
-                        let name: String =
-                            chars[i..j].iter().collect::<String>().to_ascii_lowercase();
+                    if j < bytes.len() && bytes[j] == b'(' {
+                        let name: String = raw[i..j].to_ascii_lowercase();
                         out.push_str(&name);
                         fn_stack.push(name);
                         i = j;
                         continue;
                     } else {
-                        let word: String = chars[i..j].iter().collect();
-                        out.push_str(&word);
+                        out.push_str(&raw[i..j]);
                         i = j.max(i + 1);
                         last_ws = false;
                         continue;
@@ -422,7 +468,7 @@ pub fn canonical_value(raw: &str) -> String {
                 }
                 out.push(c);
                 last_ws = false;
-                i += 1;
+                i += c.len_utf8();
             }
         }
     }
@@ -529,18 +575,26 @@ pub fn split_top_level(text: &str, sep: char) -> Vec<String> {
     out
 }
 
-/// 按输出顺序(PROP_ORDER)稳定排序;白名单外按确定性散列档位排在其后。
+/// 按输出顺序(PROP_ORDER)稳定排序;白名单外同级按**真字典序**决胜
+/// (DOC-16:同名属性之间次序与输入序无关,canonical 输出跨路径一致)。
 pub fn sort_decls(decls: &mut [Decl]) {
-    decls.sort_by_key(|d| prop_rank(&d.prop));
+    decls.sort_by(|a, b| {
+        prop_rank(&a.prop)
+            .cmp(&prop_rank(&b.prop))
+            .then_with(|| a.prop.cmp(&b.prop))
+    });
 }
 
-/// 声明列表 → 内联 style 属性值(`"a: 1px; b: 2px"`)。
+/// 声明列表 → 内联 style 属性值(`"a: 1px; b: 2px"`;PERF-08:单缓冲直写)。
 pub fn decls_to_style_attr(decls: &[Decl]) -> String {
-    decls
-        .iter()
-        .map(|d| d.to_css())
-        .collect::<Vec<_>>()
-        .join("; ")
+    let mut out = String::new();
+    for (i, d) in decls.iter().enumerate() {
+        if i > 0 {
+            out.push_str("; ");
+        }
+        d.push_css(&mut out);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -661,6 +715,37 @@ mod tests {
             let d2 = Decl::parse(&d.to_css()).expect("to_css 应可再解析");
             assert_eq!(d, d2, "{p} 往返不等值");
         }
+    }
+
+    /// DOC-16(验收):白名单外属性按**真字典序**输出,且与输入序无关
+    /// (旧实现按字节和散列,碰撞时次序随输入漂移)。
+    #[test]
+    fn unknown_props_sort_true_lexicographic_order_independent() {
+        let mk = |src: &str| {
+            let mut v = parse_decls(src);
+            sort_decls(&mut v);
+            v.iter().map(|d| d.prop.clone()).collect::<Vec<_>>()
+        };
+        // z-序 + a-序 两种输入序必须产出同一输出序(字典序)
+        let forward = mk("z-index-unknown: 1; alpha-custom: 2; midx: 3; color: red");
+        let backward = mk("color: red; midx: 3; alpha-custom: 2; z-index-unknown: 1");
+        let expect_tail = vec![
+            "color".to_string(),
+            "alpha-custom".to_string(),
+            "midx".to_string(),
+            "z-index-unknown".to_string(),
+        ];
+        assert_eq!(forward, expect_tail, "白名单外按字典序:{forward:?}");
+        assert_eq!(backward, forward, "次序必须与输入序无关");
+        // 幂等
+        assert_eq!(
+            mk(&forward
+                .iter()
+                .map(|p| format!("{p}: 1"))
+                .collect::<Vec<_>>()
+                .join("; ")),
+            forward
+        );
     }
 
     /// 白名单内不得出现重复项:重复会让 sort_decls 的稳定序对同一文档

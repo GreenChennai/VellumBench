@@ -399,13 +399,41 @@ impl Document {
     }
 
     pub fn alloc_sid(&mut self) -> StableId {
+        // 占用表快照一次(RB 审查 PERF-06):旧实现每候选一次全表线性扫,
+        // 冲突链一长即 O(n²);快照后每候选 O(1)。快照而非常驻索引:
+        // `nodes` 是 pub 字段,vb_app/vb_agent 直接 insert(见其 assets/
+        // breakpoints/align 面板),常驻 sid→NodeId 索引无法保证失效同步。
+        let used: std::collections::HashSet<&str> =
+            self.nodes.values().map(|n| n.sid.as_str()).collect();
         loop {
             let id = StableId::from_seed(self.sid_next);
             self.sid_next += 1;
-            if !self.sid_in_use(id.as_str()) {
+            if !used.contains(id.as_str()) {
                 return id;
             }
         }
+    }
+
+    /// 批量分配伴侣(PERF-06):`used` 由调用方以 [`Document::sid_set`]
+    /// 初始化并**随导入全程更新** —— 导入期节点逐个入 arena,每分配一次
+    /// 重扫全表是 O(n²);走本入口后每分配 O(1) 摊销。
+    /// 语义与 [`Document::alloc_sid`] 完全一致(冲突即跳 seed)。
+    pub fn alloc_sid_tracked(&mut self, used: &mut std::collections::HashSet<String>) -> StableId {
+        loop {
+            let id = StableId::from_seed(self.sid_next);
+            self.sid_next += 1;
+            if used.insert(id.as_str().to_string()) {
+                return id;
+            }
+        }
+    }
+
+    /// 全文档占用 sid 集合快照(导入期批量分配的初始 [`HashSet`])。
+    pub fn sid_set(&self) -> std::collections::HashSet<String> {
+        self.nodes
+            .values()
+            .map(|n| n.sid.as_str().to_string())
+            .collect()
     }
 
     pub fn alloc_sid_for_dup(&mut self) -> StableId {
@@ -494,27 +522,38 @@ impl Document {
             .unwrap_or((0.0, 0.0))
     }
 
-    /// 节点相对其画板原点的 bbox。
-    pub fn local_bbox(&self, id: NodeId) -> kurbo::Rect {
-        let n = self.nodes.get(id).expect("node");
-        kurbo::Rect::new(n.geom.x, n.geom.y, n.geom.x + n.geom.w, n.geom.y + n.geom.h)
+    /// 节点相对其画板原点的 bbox(DOC-12:无效 id 走 Option 出口,不 panic)。
+    pub fn local_bbox(&self, id: NodeId) -> Option<kurbo::Rect> {
+        let n = self.nodes.get(id)?;
+        Some(kurbo::Rect::new(
+            n.geom.x,
+            n.geom.y,
+            n.geom.x + n.geom.w,
+            n.geom.y + n.geom.h,
+        ))
     }
 
     /// 深度优先收集子树(含自身)。
+    ///
+    /// 显式栈迭代(RB-02/DOC-01:访问序 = 前序 DFS,与旧递归版一致;
+    /// 导出 CSS 规则序依赖本序,不得改变)。
     pub fn subtree(&self, id: NodeId, out: &mut Vec<NodeId>) {
-        out.push(id);
-        if let Some(n) = self.nodes.get(id) {
-            for &c in &n.children {
-                self.subtree(c, out);
+        let mut stack = vec![id];
+        while let Some(x) = stack.pop() {
+            out.push(x);
+            if let Some(n) = self.nodes.get(x) {
+                for &c in n.children.iter().rev() {
+                    stack.push(c);
+                }
             }
         }
     }
 
     /// 深拷贝子树为新节点(保留 sid 之外的属性;sid 重新分配,sid 是唯一身份——
     /// 复制体是新元素,按 ADR-0010 语义必须拿到自己的稳定 id)。
-    pub fn clone_subtree(&mut self, id: NodeId, new_parent: NodeId) -> NodeId {
-        let src = self.nodes.get(id).expect("src").clone();
-        self.insert_cloned_rec(&src, new_parent)
+    pub fn clone_subtree(&mut self, id: NodeId, new_parent: NodeId) -> Option<NodeId> {
+        let src = self.nodes.get(id)?.clone();
+        Some(self.insert_cloned_rec(&src, new_parent))
     }
 
     fn insert_cloned_rec(&mut self, src: &Node, parent: NodeId) -> NodeId {
@@ -582,22 +621,48 @@ pub struct NodeTree {
 }
 
 impl NodeTree {
+    /// 从 arena 抽取子树快照。
+    ///
+    /// 显式栈迭代 + 自底向上组装(RB-02/DOC-01):旧递归版在异常深
+    /// 文档上会栈溢出。语义不变 —— 只跟随 `parent` 指回自身的孩子,
+    /// 快照节点自身的 `children` id 列表清空(重插时由快照 children 重建)。
     pub fn from_document(doc: &Document, id: NodeId) -> Option<NodeTree> {
-        let node = doc.nodes.get(id)?.clone();
-        let children = node
-            .children
-            .iter()
-            .filter_map(|&c| {
-                // 只跟随自己名下的孩子(parent 指回自己)
-                doc.nodes
+        doc.nodes.get(id)?;
+        let mut stack: Vec<(NodeId, bool)> = vec![(id, false)];
+        let mut built: std::collections::HashMap<NodeId, NodeTree> =
+            std::collections::HashMap::new();
+        while let Some((nid, done)) = stack.pop() {
+            if done {
+                let mut node = doc.nodes.get(nid)?.clone();
+                let children = node
+                    .children
+                    .iter()
+                    .filter(|&&c| {
+                        doc.nodes
+                            .get(c)
+                            .map(|n| n.parent == Some(nid))
+                            .unwrap_or(false)
+                    })
+                    .filter_map(|&c| built.remove(&c))
+                    .collect::<Vec<_>>();
+                node.children = Vec::new(); // 重插时由 children 重建(语义同旧实现)
+                built.insert(nid, NodeTree { node, children });
+                continue;
+            }
+            stack.push((nid, true));
+            let n = doc.nodes.get(nid)?;
+            for &c in &n.children {
+                if doc
+                    .nodes
                     .get(c)
-                    .filter(|n| n.parent == Some(id))
-                    .and_then(|_| NodeTree::from_document(doc, c))
-            })
-            .collect();
-        let mut t = NodeTree { node, children };
-        t.node.children = Vec::new(); // 重插时由 children 重建
-        Some(t)
+                    .map(|cn| cn.parent == Some(nid))
+                    .unwrap_or(false)
+                {
+                    stack.push((c, false));
+                }
+            }
+        }
+        built.remove(&id)
     }
 
     pub fn root_sid(&self) -> &str {

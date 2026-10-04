@@ -13,9 +13,17 @@ pub mod geom;
 /// 编译期内嵌,t/t_args/set_language,缺词回退链显式可见。
 pub mod i18n;
 pub mod id;
+/// 文本小工具(BOM 剥除、percent 解码;跨 crate 单源)。
+pub mod text;
 /// `transform` 平移分量解析(导入折算与导出补偿的**唯一口径**)。
 pub mod transform;
 pub mod units;
+
+/// 树形结构统一递归深度上限(RB-02 / 审查 DOC-01 的单一真相):
+/// HTML 解析/序列化、文档建树、子树立、calc 括号深度一律以本值为准,
+/// 超限必须显式报错或告警,**不许静默截断**。512 对合法文档余量充足
+/// (浏览器同款嵌套上限量级),对线程栈亦安全(512 帧远小于栈空间)。
+pub const MAX_TREE_DEPTH: usize = 512;
 
 pub use color::Rgba;
 pub use id::{SidAllocator, StableId};

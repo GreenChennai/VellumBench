@@ -10,6 +10,7 @@
 //! 流式页面的自动布局换算是 v0.8「导入兼容」的范围;当前会把无 left/top 的元素
 //! 摆到画布原点并给出警告,不静默失败。
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use vb_css::{parse_decls, Decl};
@@ -29,49 +30,32 @@ const FROZEN_TAGS: &[&str] = &[
     "svg", "iframe", "video", "audio", "canvas", "object", "embed", "template", "map", "math",
     "pre",
 ];
-/// 块级容器标签:打断行内分组,子内容递归建树(浏览器默认 display:block 语义)。
-const BLOCK_TAGS: &[&str] = &[
-    "div",
-    "section",
-    "article",
-    "header",
-    "footer",
-    "main",
-    "aside",
-    "nav",
-    "ul",
-    "ol",
-    "li",
-    "table",
-    "thead",
-    "tbody",
-    "tfoot",
-    "tr",
-    "td",
-    "th",
-    "form",
-    "fieldset",
-    "blockquote",
-    "pre",
-    "figure",
-    "figcaption",
-    "details",
-    "summary",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "p",
-    "address",
-    "dl",
-    "dt",
-    "dd",
-    "figure",
-    "figcaption",
-    "center",
+/// 块级容器标签(打断行内分组,子内容递归建树;浏览器默认 display:block 语义)。
+///
+/// **单一真相**(COUP-R5 / 审查 COUP-03):判定派生自 `vb_html::BLOCK_TAGS`
+/// (序列化分行集合),再扣去文档骨架/透传标签(导入侧另有专门分流,
+/// 见 [`DOCUMENT_SHELL_TAGS`])与历史上按行内流处理的标签
+/// ([`INLINE_FLOW_TAGS`],行为兼容保留),加上导入特有补集
+/// [`IMPORT_EXTRA_BLOCK_TAGS`]。禁止再抄一份全量清单手工对齐。
+const IMPORT_EXTRA_BLOCK_TAGS: &[&str] = &["center"];
+/// 文档骨架/透传标签:虽在 `vb_html::BLOCK_TAGS` 中(序列化需独立成行),
+/// 但不参与导入建树的块级边界判定 —— body/head 由导入顶层处理,
+/// script/style/link/meta/title 在 head/body 收集各有专门路径。
+const DOCUMENT_SHELL_TAGS: &[&str] = &[
+    "html", "head", "body", "script", "style", "link", "meta", "title",
 ];
+/// 历史上按**行内流**导入的标签(行为兼容):button/textarea/dialog 在
+/// 旧清单中不是块边界,并入会改变建树形态(破坏既有项目往返)。
+const INLINE_FLOW_TAGS: &[&str] = &["button", "textarea", "dialog"];
+
+/// 块级边界判定(COUP-03 单一真相的入口)。
+fn is_block_tag(name: &str) -> bool {
+    if DOCUMENT_SHELL_TAGS.contains(&name) || INLINE_FLOW_TAGS.contains(&name) {
+        return false;
+    }
+    vb_html::BLOCK_TAGS.contains(&name) || IMPORT_EXTRA_BLOCK_TAGS.contains(&name)
+}
+
 /// 即便只含行内内容也保持为容器 Box 的标签(承载自身视觉/层级语义)。
 const CONTAINER_BOX_TAGS: &[&str] = &[
     "div", "section", "article", "header", "footer", "main", "aside", "nav", "ul", "ol", "form",
@@ -122,11 +106,22 @@ pub fn import_project(path: &Path) -> Result<ImportResult> {
         )
     };
     let html = std::fs::read_to_string(&html_path)?;
-    import_html(&html, &project_dir)
+    // 剥 UTF-8 BOM(HTML 与 CSS 同一口径,DOC-05):留着的 BOM 会被
+    // 当成文本内容/首选择器的一部分,静默劣化解析
+    let html = vb_common::text::strip_bom(&html);
+    import_html(html, &project_dir)
 }
 
 pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
+    let html = vb_common::text::strip_bom(html);
     let dom = HtmlDom::parse(html);
+    // DOC-01/RB-02:解析侧深度超限 = 显式结构化错误,绝不静默吃掉
+    // 被截断的子树(验收口径:1024 层嵌套导入报错而非崩溃)
+    if dom.depth_exceeded {
+        return Err(VbError::DepthExceeded(
+            "HTML 嵌套深度超限,已中止导入(上限见 vb_common::MAX_TREE_DEPTH)".into(),
+        ));
+    }
     let mut warnings = Vec::new();
 
     // ---- head:标题 / 语言 / 样式表 / head_extra ----
@@ -184,15 +179,17 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
                         && !href.starts_with("http")
                         && !href.starts_with("//")
                     {
-                        let css_path = project_dir.join(href.trim_start_matches("./"));
-                        match std::fs::read_to_string(&css_path) {
-                            Ok(t) => {
-                                // 剥 UTF-8 BOM:Windows 记事本等编辑器出品
-                                // 的 CSS 常带 BOM,留着会把首条选择器
-                                // (如 `:root`/`.hero`)匹配失败,整表静默降级
-                                css_texts.push(t.strip_prefix('\u{FEFF}').unwrap_or(&t).to_string())
-                            }
-                            Err(_) => warnings.push(format!("样式表缺失:{href}(按无该表导入)")),
+                        // DOC-06:href 必须**规范落点在项目根内**才读盘 ——
+                        // `..` / 绝对路径 / 反斜杠 / `%20` 等形态此前原样
+                        // join,越界读与路径不匹配并存。canonicalize 后
+                        // 前缀校验,越界/不存在 → 显式告警按缺表导入。
+                        match resolve_stylesheet_path(project_dir, href) {
+                            Ok(css_path) => match std::fs::read_to_string(&css_path) {
+                                Ok(t) => css_texts.push(vb_common::text::strip_bom(&t).to_string()),
+                                Err(_) => warnings.push(format!("样式表缺失:{href}(按无该表导入)")),
+                            },
+                            Err(reason) => warnings
+                                .push(format!("样式表 {href} 未导入({reason};按无该表导入)")),
                         }
                     } else {
                         head_extra.push(serialize_node(child));
@@ -263,15 +260,19 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
     let body = dom
         .body()
         .ok_or_else(|| VbError::Parse("无 <body>".into()))?;
+    // 先取快照再进入 doc 的可变借用(结构体字面量内不可先借 &mut 再读)
+    let sid_used = doc.sid_set();
     let mut importer = NodeImporter {
         doc: &mut doc,
         sheet: &sheet,
+        class_index: ClassIndex::build(&sheet),
         warnings: &mut warnings,
         tag_counter: Default::default(),
         pending_comments: Vec::new(),
         matched_classes: Default::default(),
         ancestors: vec![("body".to_string(), Vec::new())],
         matched_rules: Default::default(),
+        sid_used,
     };
 
     let mut artboard_nodes: Vec<NodeIdT> = Vec::new();
@@ -286,7 +287,10 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
                 }
                 if is_symbol_def(el) {
                     // 05-8:主件定义区 → defs_root(不参与画板/游离内容分流)
-                    let _ = importer.build_symbol_def(child);
+                    // DOC-04:构建失败必须收集进导入告警清单,不许整条吞掉
+                    if let Err(e) = importer.build_symbol_def(child) {
+                        importer.warnings.push(format!("主件符号定义导入失败:{e}"));
+                    }
                 } else if is_artboard(el) {
                     let id = importer.build_artboard(child);
                     artboard_nodes.push(id);
@@ -450,7 +454,11 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
                 break;
             }
             for id in hits {
-                let sid = doc.nodes.get(id).unwrap().sid.as_str().to_string();
+                // DOC-12:nodes_by_primary_class 保证存在,仍走 Option 出口
+                let Some(node) = doc.nodes.get(id) else {
+                    continue;
+                };
+                let sid = node.sid.as_str().to_string();
                 mapped.push((sid, decls.clone()));
             }
         }
@@ -474,7 +482,11 @@ pub fn import_html(html: &str, project_dir: &Path) -> Result<ImportResult> {
             doc.raw_css.push(hr.raw.clone());
         }
         for id in hits {
-            let sid = doc.nodes.get(id).unwrap().sid.as_str().to_string();
+            // DOC-12:同上,Option 出口
+            let Some(node) = doc.nodes.get(id) else {
+                continue;
+            };
+            let sid = node.sid.as_str().to_string();
             doc.pseudo_rules.push(crate::model::PseudoRule {
                 sid,
                 pseudo: hr.pseudo.clone(),
@@ -596,6 +608,33 @@ fn body_explicit_size(css_texts: &[String]) -> (Option<f64>, Option<f64>) {
 
 type NodeIdT = crate::model::NodeId;
 
+/// 解析样式表 href → 项目内的绝对路径(DOC-06)。
+///
+/// - percent 解码(`%20` 等)+ 反斜杠归一(Windows 手编 href);
+/// - canonicalize(解析符号链接/联接)后**强制落在项目根内**,越界
+///   (`..` 逃逸、绝对路径外指)返回 Err —— 调用方记 warning 按缺表
+///   导入,绝不静默跳过。
+fn resolve_stylesheet_path(project_dir: &Path, href: &str) -> std::result::Result<PathBuf, String> {
+    let decoded = vb_common::text::percent_decode(href);
+    let rel = decoded.trim().replace('\\', "/");
+    if rel.is_empty() {
+        return Err("空路径".into());
+    }
+    let rel = rel.trim_start_matches("./");
+    if rel.starts_with('/') || rel.starts_with("../") || rel.split('/').any(|seg| seg == "..") {
+        return Err("路径越出项目根".into());
+    }
+    let joined = project_dir.join(rel);
+    let canon_root = project_dir.canonicalize().map_err(|e| e.to_string())?;
+    let canon = joined
+        .canonicalize()
+        .map_err(|e| format!("解析失败({e})"))?;
+    if !canon.starts_with(&canon_root) {
+        return Err("路径越出项目根".into());
+    }
+    Ok(canon)
+}
+
 /// 按首类定位节点(与导出选择器同一口径:`finalize_classes` 保证首类
 /// 唯一;导入源若首类重复 → None,规则保持冻结,不做歧义改写)。
 /// 首类命中的**全部**节点(导入顺序 = 文档序,确定稳定)。
@@ -650,6 +689,8 @@ fn write_fragment(node: &HtmlNode, out: &mut String) {
         doctype: None,
         leading_comments: vec![],
         root: node.clone(),
+        // 来源为限深解析的 dom,片段级透传不存在超限输入
+        depth_exceeded: false,
     };
     let s = dom.serialize();
     out.push_str(s.trim_end());
@@ -1248,9 +1289,64 @@ impl InlineGroup {
     }
 }
 
+/// 类名 → 规则下标预索引(PERF-07)。`merged_class_decls` 每元素调用,
+/// 旧实现对全部类规则/链规则线性扫(O(元素 × 规则));索引后每元素
+/// 只取候选,且按规则下标升序遍历 = 原样式表声明序,级联语义不变。
+struct ClassIndex {
+    /// 简单类规则:类名 → class_rules 下标(声明序)。
+    simple: std::collections::HashMap<String, Vec<usize>>,
+    /// 链规则:类名 → rules 下标(按 chain 末位复合中的每个类登记)。
+    chain: std::collections::HashMap<String, Vec<usize>>,
+    /// 末位复合无类的链规则(`*`/纯 tag;无法按类索引 → 每元素必看)。
+    chain_tail_no_class: Vec<usize>,
+}
+
+impl ClassIndex {
+    fn build(sheet: &Stylesheet) -> ClassIndex {
+        let mut simple: std::collections::HashMap<String, Vec<usize>> =
+            std::collections::HashMap::new();
+        for (i, (c, _, _)) in sheet.class_rules.iter().enumerate() {
+            simple.entry(c.clone()).or_default().push(i);
+        }
+        let mut chain: std::collections::HashMap<String, Vec<usize>> =
+            std::collections::HashMap::new();
+        let mut chain_tail_no_class = Vec::new();
+        for (i, rule) in sheet.rules.iter().enumerate() {
+            match rule.chain.last() {
+                Some(last) if !last.classes.is_empty() => {
+                    for c in &last.classes {
+                        chain.entry(c.clone()).or_default().push(i);
+                    }
+                }
+                _ => chain_tail_no_class.push(i),
+            }
+        }
+        ClassIndex {
+            simple,
+            chain,
+            chain_tail_no_class,
+        }
+    }
+
+    /// 元素类集 → 候选链规则下标(升序去重 = 样式表序)。
+    fn chain_candidates(&self, classes: &[&str]) -> Vec<usize> {
+        let mut out: Vec<usize> = classes
+            .iter()
+            .filter_map(|c| self.chain.get(*c))
+            .flat_map(|v| v.iter().copied())
+            .collect();
+        out.extend_from_slice(&self.chain_tail_no_class);
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+}
+
 struct NodeImporter<'a> {
     doc: &'a mut Document,
     sheet: &'a Stylesheet,
+    /// PERF-07 预索引(sheet 构建后一次性建立)。
+    class_index: ClassIndex,
     warnings: &'a mut Vec<String>,
     tag_counter: std::collections::HashMap<String, u32>,
     pending_comments: Vec<String>,
@@ -1261,6 +1357,9 @@ struct NodeImporter<'a> {
     ancestors: Vec<(String, Vec<String>)>,
     /// 已匹配的链规则索引(孤儿判定)
     matched_rules: std::collections::BTreeSet<usize>,
+    /// PERF-06:导入期 sid 占用集(初始快照 = 入口 arena,随分配/认领
+    /// 全程更新)—— 每分配/查重 O(1),不再逐次重扫全表。
+    sid_used: HashSet<String>,
 }
 
 impl<'a> NodeImporter<'a> {
@@ -1330,7 +1429,7 @@ impl<'a> NodeImporter<'a> {
             .filter(|c| !ARTBOARD_CLASSES.contains(c))
             .map(str::to_string)
             .collect();
-        let (attrs, sid) = split_attrs(el, self.doc);
+        let (attrs, sid) = split_attrs(el, self.doc, &mut self.sid_used);
         let comment = self.take_pending_comments();
         let id = self.new_artboard_named(
             &name,
@@ -1362,8 +1461,11 @@ impl<'a> NodeImporter<'a> {
     /// `defs_root` 下的容器节点;原型子树按普通节点管线构建(真实节点、
     /// 真实样式 —— 「编辑主件 → 同步实例」能用现有命令底座的前提)。
     /// 容器本身不参与画布/布局;`hidden` 属性经 split_attrs 保真透传。
-    fn build_symbol_def(&mut self, el_node: &HtmlNode) -> NodeIdT {
-        let el = el_node.as_element().expect("build_symbol_def: 元素节点");
+    /// DOC-04:失败走 `Result` 显式出口(调用方进告警清单),不 panic 不吞。
+    fn build_symbol_def(&mut self, el_node: &HtmlNode) -> Result<NodeIdT> {
+        let Some(el) = el_node.as_element() else {
+            return Err(VbError::Parse("主件定义容器不是元素节点".into()));
+        };
         for c in el.class_list() {
             self.matched_classes.insert(c.to_string());
         }
@@ -1371,7 +1473,7 @@ impl<'a> NodeImporter<'a> {
         let inline = el.attr("style").map(parse_decls).unwrap_or_default();
         let mut style = merge_decls(class_rule_decls, inline);
         expand_font_shorthand(&mut style);
-        let (attrs, sid) = split_attrs(el, self.doc);
+        let (attrs, sid) = split_attrs(el, self.doc, &mut self.sid_used);
         let name = el
             .attr("data-vb-name")
             .map(str::to_string)
@@ -1394,7 +1496,7 @@ impl<'a> NodeImporter<'a> {
         let id = self.attach(defs_root, n);
         let children: Vec<&HtmlNode> = el_node.children.iter().collect();
         self.build_children(id, &children);
-        id
+        Ok(id)
     }
 
     fn merged_class_decls(&mut self, el: &Element) -> Vec<Decl> {
@@ -1405,13 +1507,26 @@ impl<'a> NodeImporter<'a> {
         // (类数, tag数) 升序(特异性高的排后面,合并时后写胜)。
         // (b, c, 规则序, 声明) —— 简单类规则特异度 = (1, tag_qualified)。
         let mut matched: Vec<((usize, usize), &Vec<Decl>)> = Vec::new();
-        for (c, tag_qualified, decls) in &self.sheet.class_rules {
+        // PERF-07:类名 → 规则下标预索引(导入一次构建)。旧实现每元素
+        // 遍历全部规则,O(元素数 × 规则数);索引后每元素只看候选,
+        // 下标升序遍历 = 原样式表声明序(级联语义不变)。
+        let mut simple_hits: Vec<usize> = classes
+            .iter()
+            .filter_map(|c| self.class_index.simple.get(*c))
+            .flat_map(|v| v.iter().copied())
+            .collect();
+        simple_hits.sort_unstable();
+        simple_hits.dedup();
+        for i in simple_hits {
+            let (c, tag_qualified, decls) = &self.sheet.class_rules[i];
             if classes.iter().any(|k| k == c) && !is_marker(c) {
                 matched.push(((1usize, usize::from(*tag_qualified)), decls));
             }
         }
-        // 链规则:自身复合匹配 + 祖先贪心向近到远
-        for (ri, rule) in self.sheet.rules.iter().enumerate() {
+        // 链规则:自身复合匹配 + 祖先贪心向近到远(候选经预索引,仍按
+        // 规则下标升序 = 样式表序遍历)
+        for ri in self.class_index.chain_candidates(&classes) {
+            let rule = &self.sheet.rules[ri];
             let last = rule.chain.len() - 1;
             if !compound_matches_el(&rule.chain[last], el) {
                 continue;
@@ -1591,7 +1706,8 @@ impl<'a> NodeImporter<'a> {
         let Some((text, segments)) = Self::finalize_group(&g) else {
             return;
         };
-        let sid = self.doc.alloc_sid();
+        // PERF-06:导入期分配走占用集(每分配 O(1),不再重扫 arena)
+        let sid = self.doc.alloc_sid_tracked(&mut self.sid_used);
         let mut n = Node::new(
             NodeKind::Text {
                 text,
@@ -1639,7 +1755,8 @@ impl<'a> NodeImporter<'a> {
                 _ => return true,
             }
         }
-        BLOCK_TAGS.contains(&el.name.as_str())
+        // COUP-03:块级边界判定 = vb_html::BLOCK_TAGS 派生(is_block_tag)
+        is_block_tag(&el.name)
     }
 
     /// 行内元素的样式覆盖(color/粗斜体/字号/字族)。
@@ -1732,7 +1849,7 @@ impl<'a> NodeImporter<'a> {
         let mut style = merge_decls(class_rule_decls, inline);
         expand_font_shorthand(&mut style);
 
-        let (attrs, sid) = split_attrs(el, self.doc);
+        let (attrs, sid) = split_attrs(el, self.doc, &mut self.sid_used);
         let name = el
             .attr("data-vb-name")
             .map(str::to_string)
@@ -1957,6 +2074,7 @@ fn foldable_abs_geom(style: &[Decl]) -> bool {
 fn split_attrs(
     el: &Element,
     doc: &mut Document,
+    sid_used: &mut HashSet<String>,
 ) -> (
     std::collections::BTreeMap<String, String>,
     vb_common::StableId,
@@ -1968,9 +2086,17 @@ fn split_attrs(
             "class" | "style" => {}
             "data-vb-id" => {
                 // sid 是全文档唯一身份:手编 HTML 的重复 data-vb-id(或与
-                // 短码撞码)会让 find_by_sid 命中错误节点,弃用并重分配
-                let parsed = vb_common::StableId::parse(v).filter(|s| !doc.sid_in_use(s.as_str()));
-                sid = Some(parsed.unwrap_or_else(|| doc.alloc_sid()));
+                // 短码撞码)会让 find_by_sid 命中错误节点,弃用并重分配。
+                // PERF-06:查重/分配走导入期占用集,不再逐次全表扫。
+                let parsed =
+                    vb_common::StableId::parse(v).filter(|s| !sid_used.contains(s.as_str()));
+                sid = Some(match parsed {
+                    Some(s) => {
+                        sid_used.insert(s.as_str().to_string());
+                        s
+                    }
+                    None => doc.alloc_sid_tracked(sid_used),
+                });
             }
             "data-vb-name" => {}
             _ => {
@@ -1978,7 +2104,10 @@ fn split_attrs(
             }
         }
     }
-    (attrs, sid.unwrap_or_else(|| doc.alloc_sid()))
+    (
+        attrs,
+        sid.unwrap_or_else(|| doc.alloc_sid_tracked(sid_used)),
+    )
 }
 
 /// class 规则在前,inline 在后覆盖(同 prop 保留后者)。
@@ -2079,5 +2208,111 @@ impl Document {
     /// 导入器内部使用的追加画板。
     fn doc_new_artboard(&mut self, name: &str) -> NodeIdT {
         self.new_artboard(name, 1440.0, 900.0)
+    }
+}
+
+// ─────────────────────── 单测(导入边界:深度上限 / BOM) ───────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// DOC-01/RB-02(验收):1024 层嵌套 `<div>` 导入必须返回**结构化
+    /// 错误**(`VbError::DepthExceeded`),而非栈溢出崩溃或静默截断。
+    #[test]
+    fn import_1024_deep_nesting_returns_structured_error() {
+        let n = 1024usize; // 超过 vb_common::MAX_TREE_DEPTH(512)
+        let mut html = String::from("<!DOCTYPE html><html><body>");
+        for i in 0..n {
+            html.push_str(&format!("<div class=\"d{i}\">"));
+        }
+        html.push_str("deep");
+        for _ in 0..n {
+            html.push_str("</div>");
+        }
+        html.push_str("</body></html>");
+
+        let dir = std::env::temp_dir();
+        let err = match import_html(&html, &dir) {
+            Err(e) => e,
+            Ok(_) => panic!("超限导入必须报错"),
+        };
+        assert!(
+            matches!(err, VbError::DepthExceeded(_)),
+            "必须是结构化深度错误:{err}"
+        );
+    }
+
+    /// 上限内的嵌套正常导入(降级不影响合法输入)。
+    #[test]
+    fn import_within_depth_limit_still_works() {
+        let n = 64usize;
+        let mut html = String::from("<!DOCTYPE html><html><body>");
+        for i in 0..n {
+            html.push_str(&format!("<div class=\"d{i}\">"));
+        }
+        html.push_str("fine");
+        for _ in 0..n {
+            html.push_str("</div>");
+        }
+        html.push_str("</body></html>");
+        let dir = std::env::temp_dir();
+        let r = match import_html(&html, &dir) {
+            Ok(r) => r,
+            Err(e) => panic!("上限内导入必须成功:{e}"),
+        };
+        assert!(r.doc.nodes.iter().any(|(_, nd)| nd.name.contains('d')));
+    }
+
+    /// DOC-05(验收):带 UTF-8 BOM 的 HTML 读入,BOM 必须被剥除,
+    /// 不得混进首标签/文本。
+    #[test]
+    fn import_strips_utf8_bom() {
+        let html = "\u{FEFF}<!DOCTYPE html><html><body><p class=\"a\">标题</p></body></html>";
+        let dir = std::env::temp_dir();
+        let r = match import_html(html, &dir) {
+            Ok(r) => r,
+            Err(e) => panic!("BOM 文档必须可导入:{e}"),
+        };
+        // 首个文本内容不含 BOM
+        let has_bom = r
+            .doc
+            .nodes
+            .iter()
+            .any(|(_, nd)| nd.name.starts_with('\u{FEFF}'));
+        assert!(!has_bom, "节点名不得携带 BOM");
+    }
+
+    /// DOC-06(验收):href 越出项目根(`../`)与不存在路径 → 显式告警
+    /// 且不读盘,按无该表导入,导入整体成功。
+    #[test]
+    fn href_escaping_project_root_is_warned_and_skipped() {
+        let proj = std::env::temp_dir().join(format!("vb-import-esc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&proj);
+        std::fs::create_dir_all(&proj).unwrap();
+        let html = concat!(
+            "<!DOCTYPE html><html><head>",
+            "<link rel=\"stylesheet\" href=\"../outside.css\">",
+            "<link rel=\"stylesheet\" href=\"styles/main.css\">",
+            "</head><body><p class=\"a\">正文</p></body></html>"
+        );
+        std::fs::create_dir_all(proj.join("styles")).unwrap();
+        std::fs::write(proj.join("styles/main.css"), ".a { color: red; }").unwrap();
+        let r = match import_html(html, proj.as_path()) {
+            Ok(r) => r,
+            Err(e) => panic!("越界 href 跳过后导入必须成功:{e}"),
+        };
+        assert!(
+            r.warnings.iter().any(|w| w.contains("../outside.css")),
+            "越界 href 必须进告警清单:{:?}",
+            r.warnings
+        );
+        // 合法表照常并入
+        assert!(
+            r.warnings.iter().all(|w| !w.contains("main.css")),
+            "项目内样式表不受影响:{:?}",
+            r.warnings
+        );
+        let _ = std::fs::remove_dir_all(&proj);
     }
 }

@@ -17,7 +17,8 @@ const MERGE_WINDOW: Duration = Duration::from_millis(500);
 /// undo 栈内存软上限(字节)。超过即从栈底丢弃,保证新操作永远可撤销。
 pub const MAX_UNDO_BYTES: usize = 200 * 1024 * 1024;
 
-#[derive(Default)]
+/// `Default` 为手写实现(见下):derive 版会把 `cap_bytes` 置 0,
+/// 直接废掉内存上限语义 —— 以手写版为准。
 pub struct UndoStack {
     undo: Vec<Command>,
     redo: Vec<Command>,
@@ -28,6 +29,15 @@ pub struct UndoStack {
     /// 会话期间合并不看 500ms 窗口 —— 慢速拖动/逐字键入拆条才是 bug;
     /// `end_session` 时清 `last_merge`,会话外的相邻编辑不误并。
     session_merge: bool,
+    /// 内存软上限实际生效值(默认 [`MAX_UNDO_BYTES`];测试注入小上限
+    /// 验证 DOC-02 场景,免 200MB 级测试载荷)。
+    cap_bytes: usize,
+}
+
+impl Default for UndoStack {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl UndoStack {
@@ -38,7 +48,16 @@ impl UndoStack {
             last_merge: None,
             merging_enabled: true,
             session_merge: false,
+            cap_bytes: MAX_UNDO_BYTES,
         }
+    }
+
+    /// 测试注入:小上限复现「单条超大命令清栈」路径(DOC-02)。
+    #[cfg(test)]
+    fn with_cap(cap_bytes: usize) -> Self {
+        let mut st = Self::new();
+        st.cap_bytes = cap_bytes;
+        st
     }
 
     /// 应用并入栈。返回是否实际应用。
@@ -60,21 +79,37 @@ impl UndoStack {
         let cs = if mergeable {
             // 合并:只更新栈顶的 new 值(old 保留最初状态),不重复 apply 到文档外对象——
             // 文档已经处于中间态,直接按新值改写即可。
-            let top = self.undo.last_mut().expect("merge 需要栈顶");
-            replace_new(top, &cmd);
-            cmd.apply(doc)? // 正常 apply(old 已被首条捕获时不会覆盖;此处 cmd 是新命令)
+            // DOC-02:栈可能刚被内存上限回收清空(enforce_memory_cap),此时
+            // **不得 expect**(旧实现 panic 中断整个编辑会话),回退非合并路径
+            // 正常入栈 —— undo 语义等价(空栈上的「合并」本来就是新条目)。
+            match self.undo.last_mut() {
+                Some(top) => {
+                    replace_new(top, &cmd);
+                    cmd.apply(doc)? // 正常 apply(old 已被首条捕获时不会覆盖;此处 cmd 是新命令)
+                }
+                None => {
+                    let cs = cmd.apply(doc)?;
+                    self.undo.push(cmd);
+                    self.enforce_memory_cap();
+                    cs
+                }
+            }
         } else {
             let cs = cmd.apply(doc)?;
             self.undo.push(cmd);
             self.enforce_memory_cap();
-            self.last_merge = key.clone().map(|(k, t)| (k, t, Instant::now()));
             cs
         };
-        if mergeable {
-            if let Some((k, t)) = &key {
-                self.last_merge = Some((*k, t.clone(), Instant::now()));
-            }
-        }
+        // DOC-02:合并标记**统一在内存回收之后**收口 —— 仅当栈顶存活时
+        // 才指向它;单条超限把整栈清空时保持 `None`。旧实现两处无条件
+        // `last_merge = Some(...)`(先于/无视回收),把标记指向已被回收
+        // 的空栈 —— 下一条可合并命令带着 Some 进 merge 分支,对空栈
+        // `expect` panic。标记与栈态的一致性是本函数的唯一不变量。
+        self.last_merge = if self.undo.is_empty() {
+            None
+        } else {
+            key.map(|(k, t)| (k, t, Instant::now()))
+        };
         self.redo.clear();
         doc.rev += 1;
         Ok(cs)
@@ -217,23 +252,29 @@ impl UndoStack {
         self.undo.iter().map(command_bytes).sum()
     }
 
-    /// 内存上限执行:超 [`MAX_UNDO_BYTES`] 时从栈底(最旧)丢弃。
+    /// 内存上限执行:超上限时从栈底(最旧)丢弃。
     /// 只丢 undo 不动 redo——新操作压栈必然清 redo,redo 的存量在下次
     /// push 前仍可重做,属活跃数据;丢弃不计通知(历史面板自然变短)。
     fn enforce_memory_cap(&mut self) {
         let mut total: usize = self.undo.iter().map(command_bytes).sum();
-        if total <= MAX_UNDO_BYTES {
+        if total <= self.cap_bytes {
             return;
         }
         let mut drop_from = 0usize;
         for (i, cmd) in self.undo.iter().enumerate() {
             drop_from = i + 1; // 至少保留当前条目之后的新历史
             total -= command_bytes(cmd);
-            if total <= MAX_UNDO_BYTES {
+            if total <= self.cap_bytes {
                 break;
             }
         }
         self.undo.drain(..drop_from);
+        // DOC-02:整栈清空(单条命令即超限)时合并标记必须同步失效,
+        // 否则下一条可合并命令会带着 Some(last_merge) 进 merge 分支,
+        // 对空栈取栈顶(旧实现 expect panic)。
+        if self.undo.is_empty() {
+            self.last_merge = None;
+        }
     }
 }
 
@@ -305,17 +346,18 @@ fn command_bytes(cmd: &Command) -> usize {
         }
 }
 
-/// NodeTree 快照字节(递归;节点文本/attrs 按长度,树骨架按节点数 × 96B)。
+/// NodeTree 快照字节(节点文本/attrs 按长度,树骨架按节点数 × 96B)。
+/// 显式栈迭代(RB-02):快照可来自任意深的文档,递归版有栈溢出面。
 fn tree_bytes(tree: &crate::model::NodeTree) -> usize {
-    fn rec(t: &crate::model::NodeTree, acc: &mut usize) {
-        *acc += std::mem::size_of::<crate::model::NodeTree>() + 96;
-        *acc += t.node.name.len() + t.node.text().map(str::len).unwrap_or(0);
+    let mut acc = 0usize;
+    let mut stack = vec![tree];
+    while let Some(t) = stack.pop() {
+        acc += std::mem::size_of::<crate::model::NodeTree>() + 96;
+        acc += t.node.name.len() + t.node.text().map(str::len).unwrap_or(0);
         for c in &t.children {
-            rec(c, acc);
+            stack.push(c);
         }
     }
-    let mut acc = 0;
-    rec(tree, &mut acc);
     acc
 }
 
@@ -458,5 +500,107 @@ mod memory_cap_tests {
             "估算必须计入 String 堆载体:{}",
             command_bytes(&cmd)
         );
+    }
+
+    /// DOC-02(验收):单条超大命令把栈清空后,后续**可合并**命令进入
+    /// merge 判定 —— 旧实现 `expect("merge 需要栈顶")` panic 中断整个
+    /// 编辑会话;现在必须不 panic 且 undo 语义正确。
+    #[test]
+    fn oversized_command_then_mergeable_command_does_not_panic() {
+        let mut doc = Document::new_default();
+        let root_sid = doc.nodes.get(doc.root).unwrap().sid.as_str().to_string();
+        // 上限相对 size_of::<Command>() 取值:command_bytes 的常数项就是
+        // 枚举本身的大小(Delete 携带内联子树捕获,可达数百字节)——
+        // 常数取值会让「小命令」也触发整栈回收,淹没被测语义。这里
+        // cap = 4 × 常数项,大命令载荷 = 16 × 常数项。
+        let base = std::mem::size_of::<Command>();
+        let mut st = UndoStack::with_cap(base * 4);
+
+        // ① 单条超大命令:入栈即触发回收,整栈清空,合并标记同步失效
+        let big = Command::Rename {
+            sid: root_sid.clone(),
+            new: "x".repeat(base * 16),
+            old: None,
+        };
+        st.push(&mut doc, big).unwrap();
+        assert!(!st.can_undo(), "单条即超限必须被整体回收");
+        assert!(st.undo_label().is_none());
+
+        // ② 后续可合并命令(同 kind + 同 target):不得 panic(旧实现
+        // 在此 `expect` 崩溃)。该命令 apply 时捕获 ① 写入的超大 old →
+        // 自身也超限:效果落盘、历史被回收 —— 上限的既有语义(超出部分
+        // 的历史不可再撤销),关键回归点是**不 panic + 标记不指向空栈**。
+        let small = Command::Rename {
+            sid: root_sid.clone(),
+            new: "改名甲".to_string(),
+            old: None,
+        };
+        st.push(&mut doc, small).unwrap();
+        assert_eq!(
+            doc.node(doc.root).unwrap().name,
+            "改名甲",
+            "超限回收只影响历史,不影响命令效果"
+        );
+
+        // ③ 再来一条常规命令:old 已回落(= ② 的落盘值),正常入栈
+        st.push(
+            &mut doc,
+            Command::Rename {
+                sid: root_sid.clone(),
+                new: "改名乙".to_string(),
+                old: None,
+            },
+        )
+        .unwrap();
+        assert!(st.can_undo(), "常规命令必须正常入栈");
+        assert_eq!(st.undo_len(), 1);
+        assert_eq!(
+            doc.node(doc.root).unwrap().name,
+            "改名乙",
+            "文档值 = 最新命令"
+        );
+
+        // ④ undo 语义正确:一次撤销回到 ③ 捕获的 old(= ② 的落盘值)
+        st.undo(&mut doc).unwrap();
+        assert!(!st.can_undo());
+        assert_eq!(
+            doc.node(doc.root).unwrap().name,
+            "改名甲",
+            "撤销还原到栈内命令捕获的 old"
+        );
+    }
+
+    /// DOC-02:部分回收(超限但栈未清空)时合并标记必须仍然有效 ——
+    /// 栈顶存活、last_merge 保留,窗口内同目标命令照常合并。
+    #[test]
+    fn partial_cap_drop_keeps_top_mergeable() {
+        let mut doc = Document::new_default();
+        let root_sid = doc.nodes.get(doc.root).unwrap().sid.as_str().to_string();
+        let mut st = UndoStack::with_cap(1024);
+        for i in 0..8 {
+            let cmd = Command::Rename {
+                sid: root_sid.clone(),
+                new: format!("n{i}-{}", "y".repeat(96)),
+                old: None,
+            };
+            st.push(&mut doc, cmd).unwrap();
+        }
+        assert!(
+            st.bytes_estimated() <= 1024,
+            "预置条件:必须触发过回收:{}",
+            st.bytes_estimated()
+        );
+        assert!(st.can_undo(), "部分回收必须保留近期条目");
+        let before = st.undo_len();
+        st.push(
+            &mut doc,
+            Command::Rename {
+                sid: root_sid.clone(),
+                new: "latest".to_string(),
+                old: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(st.undo_len(), before, "栈顶存活的合并不得新增条目");
     }
 }

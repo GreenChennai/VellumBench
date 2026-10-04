@@ -14,6 +14,13 @@
 use html5ever::parse_document;
 use html5ever::tendril::TendrilSink;
 use markup5ever_rcdom::{Handle, NodeData as Rd, RcDom};
+use std::fmt::Write as _;
+
+/// 递归深度上限(单一真相 [`vb_common::MAX_TREE_DEPTH`];RB-02 / DOC-01)。
+/// 解析建树、序列化(块级行内两路)一律以此为界:解析超限记入
+/// [`HtmlDom::depth_exceeded`](导入层必须显式报错),写出超限插可见
+/// 注释标记 —— 均不静默截断。
+pub const MAX_DEPTH: usize = vb_common::MAX_TREE_DEPTH;
 
 pub const VOID_TAGS: &[&str] = &[
     "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source",
@@ -24,6 +31,11 @@ pub const VOID_TAGS: &[&str] = &[
 pub const RAWTEXT_TAGS: &[&str] = &["script", "style", "pre", "textarea"];
 
 /// 块级元素:序列化时独立成行。
+///
+/// **单一真相**(COUP-R5 / 审查 COUP-03):本表是块级标签的权威清单,
+/// `vb_doc` 导入器的建树边界判定**派生自本表**(加上极少量导入特有
+/// 条目,见其 `IMPORT_EXTRA_BLOCK_TAGS`);禁止在任何 crate 里再抄一份
+/// 全量清单手工对齐。
 pub const BLOCK_TAGS: &[&str] = &[
     "html",
     "head",
@@ -118,6 +130,10 @@ pub struct HtmlDom {
     /// 文档级注释(`<!DOCTYPE html>` 与 `<html>` 之间的注释)。
     pub leading_comments: Vec<String>,
     pub root: HtmlNode, // <html>
+    /// 解析时命中 [`MAX_DEPTH`] 的**显式标志**(DOC-01):导入层看到
+    /// true 必须报结构化错误(不静默吃掉被截断的子树);canonical 序列化
+    /// 对应位置会写入可见注释标记。
+    pub depth_exceeded: bool,
 }
 
 impl Element {
@@ -190,21 +206,32 @@ impl HtmlNode {
     }
 
     /// 深度优先遍历(含自身)。
+    ///
+    /// 显式栈迭代(前序 DFS,访问序与旧递归版一致):遍历入口对任意
+    /// 来源的树开放,递归版在深树上会栈溢出(RB-02)。
     pub fn walk<'a>(&'a self, f: &mut impl FnMut(&'a HtmlNode)) {
-        f(self);
-        for c in &self.children {
-            c.walk(f);
+        let mut stack = vec![self];
+        while let Some(n) = stack.pop() {
+            f(n);
+            for c in n.children.iter().rev() {
+                stack.push(c);
+            }
         }
     }
 }
 
 impl HtmlDom {
     /// 解析 HTML(html5ever,忠实模式)。
+    ///
+    /// 建树(`convert`)带 [`MAX_DEPTH`] 深度上限:超限**不丢弃标志**,
+    /// 记入 [`HtmlDom::depth_exceeded`](同时超限子树被截断)—— 导入层
+    /// 必须检查本标志并显式报错(DOC-01:不静默)。
     pub fn parse(html: &str) -> HtmlDom {
         let dom: RcDom = parse_document(RcDom::default(), Default::default()).one(html);
         let mut doctype = None;
         let mut leading_comments = Vec::new();
         let mut root_node: Option<HtmlNode> = None;
+        let mut depth_exceeded = false;
 
         for child in dom.document.children.borrow().iter() {
             match &child.data {
@@ -213,7 +240,9 @@ impl HtmlDom {
                 Rd::Element { .. } => {
                     // 规范上只有一个 <html>;多个时保留第一个
                     if root_node.is_none() {
-                        root_node = Some(convert(child));
+                        let mut depth_hit = false;
+                        root_node = Some(convert(child, 0, &mut depth_hit));
+                        depth_exceeded |= depth_hit;
                     }
                 }
                 Rd::Text { .. } | Rd::ProcessingInstruction { .. } => {}
@@ -224,6 +253,7 @@ impl HtmlDom {
             doctype: doctype.or(Some("html".to_string())),
             leading_comments,
             root: root_node.unwrap_or_else(|| HtmlNode::element("html", vec![])),
+            depth_exceeded,
         }
     }
 
@@ -242,15 +272,23 @@ impl HtmlDom {
     }
 
     /// canonical 序列化(纯函数,L1 幂等的来源)。
+    ///
+    /// 写出带 [`MAX_DEPTH`] 上限(RB-02):手写构造的异常深树超限时在
+    /// 对应位置写入**可见注释标记**,不静默截断;经 [`HtmlDom::parse`]
+    /// 构造的树深 ≤ MAX_DEPTH(超限已在解析侧标记),正常路径字节不变。
     pub fn serialize(&self) -> String {
         let mut out = String::new();
         if let Some(d) = &self.doctype {
-            out.push_str(&format!("<!DOCTYPE {}>\n", d.to_ascii_lowercase()));
+            let _ = writeln!(out, "<!DOCTYPE {}>", d.to_ascii_lowercase());
         }
         for c in &self.leading_comments {
-            out.push_str(&format!("<!--{}-->\n", c));
+            let _ = writeln!(out, "<!--{c}-->");
         }
-        write_node(&self.root, 0, &mut out);
+        if self.depth_exceeded {
+            out.push_str("<!--vb:depth-limit-exceeded-->\n");
+        }
+        let mut pad = String::new();
+        write_node(&self.root, 0, &mut pad, &mut out);
         out
     }
 }
@@ -260,7 +298,9 @@ pub fn canonicalize(html: &str) -> String {
     HtmlDom::parse(html).serialize()
 }
 
-fn convert(h: &Handle) -> HtmlNode {
+/// rcdom 树 → HtmlNode(带深度上限;超限截断并置 `*depth_hit`,导入层
+/// 必须显式报错 —— DOC-01/RB-02,不许静默)。
+fn convert(h: &Handle, depth: usize, depth_hit: &mut bool) -> HtmlNode {
     match &h.data {
         Rd::Document => HtmlNode::element("#document", vec![]),
         Rd::Doctype { name, .. } => HtmlNode {
@@ -283,8 +323,12 @@ fn convert(h: &Handle) -> HtmlNode {
                 .map(|a| (a.name.local.to_string(), a.value.to_string()))
                 .collect();
             let mut node = HtmlNode::element(name.local.as_ref(), attr_list);
+            if depth >= MAX_DEPTH {
+                *depth_hit = true;
+                return node;
+            }
             for c in h.children.borrow().iter() {
-                node.children.push(convert(c));
+                node.children.push(convert(c, depth + 1, depth_hit));
             }
             node
         }
@@ -293,8 +337,8 @@ fn convert(h: &Handle) -> HtmlNode {
 
 // ---------- 序列化 ----------
 
-fn escape_text(s: &str) -> String {
-    let mut o = String::with_capacity(s.len());
+/// 文本转义,直接写入输出缓冲(PERF-08:热路径不产中间 String)。
+fn escape_text_into(s: &str, o: &mut String) {
     for c in s.chars() {
         match c {
             '&' => o.push_str("&amp;"),
@@ -303,13 +347,13 @@ fn escape_text(s: &str) -> String {
             c => o.push(c),
         }
     }
-    o
 }
 
-fn escape_attr(s: &str) -> String {
-    // 属性值内的换行/制表是数据(alt/title/data-*),原样保留 ——
-    // 此前改写为空格造成字节级 L0 漂移
-    let mut o = String::with_capacity(s.len());
+/// 属性值转义,直接写入输出缓冲。
+///
+/// 属性值内的换行/制表是数据(alt/title/data-*),原样保留 ——
+/// 此前改写为空格造成字节级 L0 漂移。
+fn escape_attr_into(s: &str, o: &mut String) {
     for c in s.chars() {
         match c {
             '&' => o.push_str("&amp;"),
@@ -317,7 +361,6 @@ fn escape_attr(s: &str) -> String {
             c => o.push(c),
         }
     }
-    o
 }
 
 /// HTML 可折叠空白 = ASCII 空白(U+00A0 不换行空格是内容,折叠或剥除
@@ -357,12 +400,20 @@ fn canonical_attrs(el: &Element) -> Vec<(String, String)> {
 
 fn write_attrs(el: &Element, out: &mut String) {
     for (k, v) in canonical_attrs(el) {
-        out.push_str(&format!(" {}=\"{}\"", k, escape_attr(&v)));
+        let _ = write!(out, " {}=\"", k);
+        escape_attr_into(&v, out);
+        out.push('"');
     }
 }
 
 /// 判断子树是否可整体行内化:无块级后代、无 Raw。
-fn can_inline(node: &HtmlNode) -> bool {
+///
+/// 带 [`MAX_DEPTH`] 上限(RB-02):异常深树不再内联(退回块级路径,
+/// 由 `write_node` 的深度上限兜底),防 `can_inline` 递归栈溢出。
+fn can_inline(node: &HtmlNode, depth: usize) -> bool {
+    if depth >= MAX_DEPTH {
+        return false;
+    }
     match &node.data {
         NodeData::Raw(_) => false,
         NodeData::Element(e) => {
@@ -376,7 +427,7 @@ fn can_inline(node: &HtmlNode) -> bool {
                 NodeData::Doctype(_) => false,
                 NodeData::Element(ce) => {
                     !ce.is_block()
-                        && can_inline(c)
+                        && can_inline(c, depth + 1)
                         && ce.name != "script"
                         && ce.name != "style"
                         && ce.name != "pre"
@@ -389,10 +440,13 @@ fn can_inline(node: &HtmlNode) -> bool {
 }
 
 /// 行内序列化:空白折叠,兄弟节点间由源空白决定是否补单空格(保真渲染语义)。
-fn write_inline(node: &HtmlNode, out: &mut String) {
+/// 深度上限同 `can_inline`(RB-02)。
+fn write_inline(node: &HtmlNode, depth: usize, out: &mut String) {
     match &node.data {
         NodeData::Text(t) => out.push_str(&collapse_ws(t)),
-        NodeData::Comment(c) => out.push_str(&format!("<!--{c}-->")),
+        NodeData::Comment(c) => {
+            let _ = write!(out, "<!--{c}-->");
+        }
         NodeData::Raw(r) => out.push_str(r),
         NodeData::Doctype(_) => {}
         NodeData::Element(e) => {
@@ -404,8 +458,8 @@ fn write_inline(node: &HtmlNode, out: &mut String) {
                 return;
             }
             out.push('>');
-            write_inline_content(node, out);
-            out.push_str(&format!("</{}>", e.name));
+            write_inline_content(node, depth, out);
+            let _ = write!(out, "</{}>", e.name);
         }
     }
 }
@@ -413,7 +467,7 @@ fn write_inline(node: &HtmlNode, out: &mut String) {
 /// 元素子内容的行内序列化:
 /// - 文本折叠;仅空白的文本节点贡献"待补空格"标记
 /// - 相邻兄弟间源空白 → 输出一个空格;源无空白(如 `</b>!`)则不加
-fn write_inline_content(node: &HtmlNode, out: &mut String) {
+fn write_inline_content(node: &HtmlNode, depth: usize, out: &mut String) {
     let mut pending_ws = false;
     for c in &node.children {
         match &c.data {
@@ -431,14 +485,16 @@ fn write_inline_content(node: &HtmlNode, out: &mut String) {
                 if (pending_ws || leading) && !out.is_empty() && !out.ends_with(' ') {
                     out.push(' ');
                 }
-                out.push_str(&escape_text(&content));
+                escape_text_into(&content, out);
                 pending_ws = trailing;
             }
             NodeData::Comment(_) | NodeData::Element(_) => {
                 if pending_ws && !out.is_empty() && !out.ends_with(' ') {
                     out.push(' ');
                 }
-                write_inline(c, out);
+                if depth < MAX_DEPTH {
+                    write_inline(c, depth + 1, out);
+                }
                 pending_ws = false;
             }
             _ => {}
@@ -446,8 +502,14 @@ fn write_inline_content(node: &HtmlNode, out: &mut String) {
     }
 }
 
-fn write_node(node: &HtmlNode, indent: usize, out: &mut String) {
-    let pad = "  ".repeat(indent);
+/// 块级序列化(缩进版)。`pad` 是**复用缓冲**(PERF-08:每层节点重填,
+/// 不再 `"  ".repeat(indent)` 逐节点分配);深度超 [`MAX_DEPTH`] 写可见
+/// 注释标记后截断(RB-02,不静默)。
+fn write_node(node: &HtmlNode, indent: usize, pad: &mut String, out: &mut String) {
+    pad.clear();
+    for _ in 0..indent {
+        pad.push_str("  ");
+    }
     match &node.data {
         NodeData::Doctype(_) => {}
         NodeData::Raw(r) => {
@@ -457,7 +519,7 @@ fn write_node(node: &HtmlNode, indent: usize, out: &mut String) {
             // 落在开标签之前,不进入下次捕获,是安全的。
             let mut lines = r.lines();
             if let Some(first) = lines.next() {
-                out.push_str(&pad);
+                out.push_str(pad);
                 out.push_str(first.trim_end());
                 out.push('\n');
             }
@@ -470,17 +532,23 @@ fn write_node(node: &HtmlNode, indent: usize, out: &mut String) {
             }
         }
         NodeData::Comment(c) => {
-            out.push_str(&format!("{pad}<!--{c}-->\n"));
+            let _ = writeln!(out, "{pad}<!--{c}-->");
         }
         NodeData::Text(t) => {
             let t = collapse_ws(t);
             if !t.is_empty() {
-                out.push_str(&format!("{pad}{}\n", escape_text(&t)));
+                out.push_str(pad);
+                escape_text_into(&t, out);
+                out.push('\n');
             }
         }
         NodeData::Element(e) => {
+            if indent >= MAX_DEPTH {
+                let _ = writeln!(out, "{pad}<!--vb:depth-limit-exceeded <{}>-->", e.name);
+                return;
+            }
             if e.is_void() {
-                out.push_str(&pad);
+                out.push_str(pad);
                 out.push('<');
                 out.push_str(&e.name);
                 write_attrs(e, out);
@@ -502,29 +570,27 @@ fn write_node(node: &HtmlNode, indent: usize, out: &mut String) {
                     .any(|c| !matches!(&c.data, NodeData::Text(_)));
                 if !has_element_child {
                     let entity_decoded = matches!(e.name.as_str(), "pre" | "textarea");
-                    out.push_str(&pad);
+                    out.push_str(pad);
                     out.push('<');
                     out.push_str(&e.name);
                     write_attrs(e, out);
                     out.push('>');
-                    let inner: String = node
-                        .children
-                        .iter()
-                        .filter_map(|c| match &c.data {
-                            NodeData::Text(t) => Some(t.clone()),
-                            _ => None,
-                        })
-                        .collect();
+                    let mut inner = String::new();
+                    for c in &node.children {
+                        if let NodeData::Text(t) = &c.data {
+                            inner.push_str(t);
+                        }
+                    }
                     if entity_decoded {
-                        out.push_str(&escape_text(&inner));
+                        escape_text_into(&inner, out);
                     } else {
                         out.push_str(&inner);
                     }
-                    out.push_str(&format!("</{}>\n", e.name));
+                    let _ = writeln!(out, "</{}>", e.name);
                     return;
                 }
             }
-            out.push_str(&pad);
+            out.push_str(pad);
             out.push('<');
             out.push_str(&e.name);
             write_attrs(e, out);
@@ -536,23 +602,30 @@ fn write_node(node: &HtmlNode, indent: usize, out: &mut String) {
                 return;
             }
             // 行内化:子内容无块级/原始片段 → 单行
-            if can_inline(node)
+            if can_inline(node, indent)
                 && !node
                     .children
                     .iter()
                     .any(|c| matches!(&c.data, NodeData::Comment(c) if c.contains('\n')))
             {
                 out.push('>');
-                write_inline_content(node, out);
-                out.push_str(&format!("</{}>\n", e.name));
+                write_inline_content(node, indent, out);
+                let _ = writeln!(out, "</{}>", e.name);
                 return;
             }
             out.push_str(">\n");
             for c in &node.children {
-                write_node(c, indent + 1, out);
+                write_node(c, indent + 1, pad, out);
             }
-            out.push_str(&pad);
-            out.push_str(&format!("</{}>\n", e.name));
+            // 子节点递归复用了同一 pad 缓冲(PERF-08),此处必须按本层
+            // 缩进**重填**再用 —— 否则闭合标签会带上最后一个子节点的
+            // 缩进(L1 字节幂等被打破,此即 l1_idempotent_basic 曾红的原因)。
+            pad.clear();
+            for _ in 0..indent {
+                pad.push_str("  ");
+            }
+            out.push_str(pad);
+            let _ = writeln!(out, "</{}>", e.name);
         }
     }
 }
@@ -688,5 +761,58 @@ mod tests {
         let out = canonicalize(src);
         assert!(out.contains('中'));
         assert!(out.contains("🎨"));
+    }
+
+    /// DOC-01/RB-02:超过 MAX_DEPTH 的嵌套,解析必须置显式标志
+    /// (导入层据此报结构化错误),序列化不得 panic 且有可见标记。
+    #[test]
+    fn depth_over_limit_is_flagged_and_serialize_never_panics() {
+        let n = MAX_DEPTH * 3; // 1536 层,深超上限
+        let mut src = String::from("<html><body>");
+        for _ in 0..n {
+            src.push_str("<div class=\"d\">");
+        }
+        src.push_str("deep");
+        for _ in 0..n {
+            src.push_str("</div>");
+        }
+        src.push_str("</body></html>");
+        let dom = HtmlDom::parse(&src);
+        assert!(dom.depth_exceeded, "超限必须有显式标志(不静默)");
+        // 序列化:深度截断但有可见标记;不 panic
+        let out = dom.serialize();
+        assert!(out.contains("vb:depth-limit-exceeded"));
+        // 深度恰好在上限内的文档:标志不置位,内容完整(L0 不受影响)
+        let ok_n = 64;
+        let mut ok = String::from("<html><body>");
+        for _ in 0..ok_n {
+            ok.push_str("<div>");
+        }
+        ok.push_str("fine");
+        for _ in 0..ok_n {
+            ok.push_str("</div>");
+        }
+        ok.push_str("</body></html>");
+        let ok_dom = HtmlDom::parse(&ok);
+        assert!(!ok_dom.depth_exceeded);
+        assert!(ok_dom.serialize().contains("fine"));
+    }
+
+    /// walk 迭代版与旧递归版同序(前序 DFS):访问序是 collect_text 等
+    /// 保真路径的行为契约。
+    #[test]
+    fn walk_visits_preorder() {
+        let dom = HtmlDom::parse("<html><body><div>a<span>b</span>c<i>d</i></div></body></html>");
+        let mut seen = Vec::new();
+        dom.body().unwrap().walk(&mut |n| match &n.data {
+            NodeData::Text(t) => seen.push(t.clone()),
+            NodeData::Element(e) => seen.push(format!("<{}>", e.name)),
+            _ => {}
+        });
+        assert_eq!(
+            seen,
+            vec!["<body>", "<div>", "a", "<span>", "b", "c", "<i>", "d"],
+            "walk 必须保持前序 DFS 访问序"
+        );
     }
 }

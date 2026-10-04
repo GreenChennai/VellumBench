@@ -24,6 +24,12 @@ pub fn fmt_num(v: f64) -> String {
         return "0".to_string();
     }
     let r = (v * 10_000.0).round() / 10_000.0;
+    // 复检(DOC-14):极大值 ×10_000 会溢出为 inf,缩放后不再是有限数
+    // → 按原值输出(数值本身合法,只是超出 4 位小数口径;归零会让
+    // 几何静默跳变,违反「降级必须显式」)。
+    if !r.is_finite() {
+        return format!("{v}");
+    }
     if r == 0.0 {
         return "0".to_string();
     }
@@ -107,6 +113,17 @@ mod tests {
         assert_eq!(fmt_num(0.30000000000000004), "0.3");
         assert_eq!(fmt_num(1.00004), "1"); // 4 位内舍入
         assert_eq!(fmt_num(f64::NAN), "0");
+    }
+
+    /// DOC-14:极大值缩放溢出 inf 时按原值输出,不得归零(几何跳变)。
+    #[test]
+    fn fmt_num_does_not_emit_inf_or_zero_on_overflow() {
+        let huge = 1.5e305;
+        let out = fmt_num(huge);
+        assert!(!out.contains("inf"), "缩放溢出不得输出 inf:{out}");
+        assert_eq!(out, format!("{huge}"), "溢出时按原值输出");
+        // 常规大值不受影响
+        assert_eq!(fmt_num(12345.6789), "12345.6789");
     }
 
     #[test]

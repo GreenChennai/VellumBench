@@ -7,5 +7,6 @@ repository.workspace = true
 description = "Vellum Bench HTML 忠实解析与 canonical 序列化(往返保真的基石)"
 
 [dependencies]
+vb_common = { workspace = true }
 html5ever = "0.35"
 markup5ever_rcdom = "0.35"

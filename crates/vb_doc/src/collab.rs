@@ -31,6 +31,7 @@ use vb_css::Decl;
 
 use crate::commands::Command;
 use crate::model::Document;
+use crate::VbError;
 
 /// 会话交换目录名(项目内;与 `.vb-autosave` 同族的辅助目录)。
 pub const COLLAB_DIR: &str = ".vb-collab";
@@ -204,7 +205,7 @@ impl SessionWriter {
     /// 把合并后的状态应用到文档(命令路径:SetGeom / SetStyle,rev 随
     /// 每条成功应用递增 —— 与撤销栈 push 同规)。只写「文档当前值 ≠
     /// CRDT 胜出值」的元素;返回应用的条数。
-    pub fn apply_to_doc(&self, doc: &mut Document) -> Result<usize, String> {
+    pub fn apply_to_doc(&self, doc: &mut Document) -> crate::Result<usize> {
         let pending: Vec<CollabOp> = self
             .state
             .to_ops()
@@ -272,11 +273,19 @@ fn doc_value(doc: &Document, sid: &str, prop: CollabProp) -> Option<f64> {
 }
 
 /// 单条 op 应用到文档(命令路径;rev 与撤销栈 push 同规递增)。
-fn apply_op(doc: &mut Document, op: &CollabOp) -> Result<(), String> {
+///
+/// DOC-13:顶层 `match` 穷举全部 [`CollabProp`] 变体 —— 旧实现外层分流后
+/// 内层再 `unreachable!("已排除 Opacity")`,未来枚举扩展即崩溃点;现在
+/// 新增变体会在这里得到编译期穷举错误,而非运行期 panic。
+/// DOC-15:错误并入 `VbError`,不再用 `String` 糊弄。
+fn apply_op(doc: &mut Document, op: &CollabOp) -> crate::Result<()> {
     let nid = doc
         .find_by_sid(&op.sid)
-        .ok_or_else(|| format!("sid 不存在:{}", op.sid))?;
-    let n = doc.nodes.get(nid).ok_or("节点缺失")?;
+        .ok_or_else(|| VbError::NoSuchNode(format!("sid 不存在:{}", op.sid)))?;
+    let n = doc
+        .nodes
+        .get(nid)
+        .ok_or_else(|| VbError::NoSuchNode(format!("sid {} 的 arena 节点缺失", op.sid)))?;
     match op.prop {
         CollabProp::PosX | CollabProp::PosY | CollabProp::SizeW | CollabProp::SizeH => {
             let mut g = n.geom;
@@ -285,7 +294,7 @@ fn apply_op(doc: &mut Document, op: &CollabOp) -> Result<(), String> {
                 CollabProp::PosY => g.y = op.value,
                 CollabProp::SizeW => g.w = op.value,
                 CollabProp::SizeH => g.h = op.value,
-                _ => unreachable!("上面的 match 已排除 Opacity"),
+                CollabProp::Opacity => {}
             }
             // old 捕获当前几何;old_declared = Some(当前)与桌面「显式移动
             // 兑换声明几何(materialize)」同语义,撤销可精确还原
@@ -295,8 +304,7 @@ fn apply_op(doc: &mut Document, op: &CollabOp) -> Result<(), String> {
                 old: Some(n.geom),
                 old_declared: Some(n.geom_declared),
             }
-            .apply(doc)
-            .map_err(|e| format!("SetGeom({} {}):{e}", op.sid, op.prop.name()))?;
+            .apply(doc)?;
             doc.rev += 1;
             Ok(())
         }
@@ -319,8 +327,7 @@ fn apply_op(doc: &mut Document, op: &CollabOp) -> Result<(), String> {
                 new: style,
                 old: Some(n.style.clone()),
             }
-            .apply(doc)
-            .map_err(|e| format!("SetStyle(opacity {}):{e}", op.sid))?;
+            .apply(doc)?;
             doc.rev += 1;
             Ok(())
         }
@@ -334,38 +341,65 @@ pub fn session_dir(project: &Path) -> std::path::PathBuf {
     project.join(COLLAB_DIR)
 }
 
+/// writer id → 文件名安全段(DOC-07)。`ops-<writer>.json` 直接拼文件名,
+/// 含 `/`、`\`、`..` 即可写出目录外。只保留 `[A-Za-z0-9_-]`,其余压成
+/// `_`;限长 64;空/全无效回退 `writer`。**CRDT 内的 writer id 不改**
+/// (LWW 同钟决胜键是原字符串),归一只作用于落盘文件名。
+fn sanitize_writer_id(id: &str) -> String {
+    let mut out = String::with_capacity(id.len().min(64));
+    for c in id.chars().take(64) {
+        if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+            out.push(c);
+        } else {
+            out.push('_');
+        }
+    }
+    if !out.chars().any(|c| c.is_ascii_alphanumeric()) {
+        out.clear();
+        out.push_str("writer");
+    }
+    out
+}
+
 /// 把本端状态写到共享目录(`ops-<writer>.json`;tmp+rename 原子替换,
 /// 与 autosave 同纪律)。全量状态(非增量)—— LWW 合并幂等,重复收发
 /// 无害,实现最简。
-pub fn write_state(project: &Path, writer: &SessionWriter) -> Result<std::path::PathBuf, String> {
+/// DOC-15:错误并入 `VbError`(IO 走 `#[from]`,序列化走 Parse)。
+pub fn write_state(project: &Path, writer: &SessionWriter) -> crate::Result<std::path::PathBuf> {
     let dir = session_dir(project);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("创建会话目录失败:{e}"))?;
+    std::fs::create_dir_all(&dir)?;
     let ops = writer.state.to_ops();
-    let json = serde_json::to_string_pretty(&ops).map_err(|e| e.to_string())?;
-    let dst = dir.join(format!("ops-{}.json", writer.id));
-    let tmp = dir.join(format!("ops-{}.json.tmp", writer.id));
-    std::fs::write(&tmp, json).map_err(|e| format!("会话 op 写入失败:{e}"))?;
-    std::fs::rename(&tmp, &dst).map_err(|e| format!("会话 op 换名失败:{e}"))?;
+    let json = serde_json::to_string_pretty(&ops)
+        .map_err(|e| VbError::Parse(format!("会话 op 序列化失败:{e}")))?;
+    // 文件名经 sanitize + 大小写归一(Windows 文件名大小写不敏感,
+    // 两个仅大小写不同的 id 会写同一文件 → 归一避免互相覆盖的错觉)。
+    let stem = sanitize_writer_id(&writer.id).to_ascii_lowercase();
+    let dst = dir.join(format!("ops-{stem}.json"));
+    let tmp = dir.join(format!("ops-{stem}.json.tmp"));
+    std::fs::write(&tmp, json)?;
+    std::fs::rename(&tmp, &dst)?;
     Ok(dst)
 }
 
 /// 从共享目录读所有同伴状态(跳过自己与坏文件 —— 坏文件记日志不静默,
-/// 单端损坏不拖垮整场会话)。
+/// 单端损坏不拖垮整场会话)。文件名 stem 与 own_writer 均按 sanitize+
+/// 小写归一口径比对(与 [`write_state`] 的落盘名对齐)。
 pub fn load_peer_states(project: &Path, own_writer: &str) -> Vec<CollabState> {
     let dir = session_dir(project);
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return Vec::new();
     };
+    let own_stem = sanitize_writer_id(own_writer).to_ascii_lowercase();
     let mut peers = Vec::new();
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        let Some(writer_id) = name
+        let Some(writer_stem) = name
             .strip_prefix("ops-")
             .and_then(|s| s.strip_suffix(".json"))
         else {
             continue; // 非 op 文件(README 等)不管
         };
-        if writer_id == own_writer {
+        if writer_stem.to_ascii_lowercase() == own_stem {
             continue;
         }
         match std::fs::read_to_string(entry.path())
@@ -673,5 +707,80 @@ mod tests {
         assert_eq!(peers.len(), 1);
         assert_eq!(peers[0].value("n1", CollabProp::PosX), Some(5.0));
         let _ = std::fs::remove_dir_all(&proj);
+    }
+
+    /// DOC-07(验收):恶意 writer id(路径穿越/分隔符)不得写出会话
+    /// 目录之外;文件名 sanitize + 大小写归一后,自己的文件仍被正确跳过。
+    #[test]
+    fn hostile_writer_id_cannot_escape_session_dir() {
+        let proj = std::env::temp_dir().join(format!("vb-collab-esc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&proj);
+        std::fs::create_dir_all(session_dir(&proj)).unwrap();
+
+        let mut w = SessionWriter::new(r#"../../evil\..\wri"ter "#);
+        w.record("n1", CollabProp::PosX, 7.0);
+        let path = write_state(&proj, &w).unwrap();
+        // 文件必须落在会话目录内(无 ..、无分隔符、无引号)
+        assert!(path.starts_with(session_dir(&proj)), "落点越界:{path:?}");
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        assert!(
+            name.chars().all(|c| c.is_ascii_alphanumeric()
+                || matches!(c, '-' | '_' | '.' | 'j' | 's' | 'o' | 'n')),
+            "文件名必须已 sanitize:{name}"
+        );
+        assert!(!name.contains(".."), "文件名不得含路径点段:{name}");
+        // 大小写归一:同 id 不同大小写 → 同一落盘名
+        let mut w2 = SessionWriter::new(w.id.to_ascii_uppercase());
+        w2.record("n1", CollabProp::PosX, 7.0);
+        let path2 = write_state(&proj, &w2).unwrap();
+        assert_eq!(
+            path.file_name().unwrap(),
+            path2.file_name().unwrap(),
+            "大小写归一必须消除 Windows 同名异写"
+        );
+        // sanitize 后的 stem 与自身对齐:自己的文件不被当同伴读回
+        assert!(load_peer_states(&proj, &w.id).is_empty());
+        // 空 id / 纯无效字符回退安全名
+        assert_eq!(sanitize_writer_id(""), "writer");
+        assert_eq!(sanitize_writer_id("///.."), "writer");
+        let _ = std::fs::remove_dir_all(&proj);
+    }
+
+    /// DOC-13(验收):`apply_op` 顶层穷举全部 `CollabProp` 变体 ——
+    /// 每个变体走全路径(找到节点 → 命令应用 → rev 推进)都不 panic;
+    /// 旧实现内层 `unreachable!("已排除 Opacity")` 是未来枚举扩展的
+    /// 崩溃点,现为编译期穷举错误。
+    #[test]
+    fn apply_op_covers_all_prop_variants_without_panic() {
+        let mut doc = fixture_doc();
+        let sid = sid_of(&doc, "甲");
+        let base = doc.nodes.get(doc.find_by_sid(&sid).unwrap()).unwrap().geom;
+        for (prop, value) in [
+            (CollabProp::PosX, 11.0),
+            (CollabProp::PosY, 22.0),
+            (CollabProp::SizeW, 33.0),
+            (CollabProp::SizeH, 44.0),
+            (CollabProp::Opacity, 0.25),
+        ] {
+            let op = CollabOp {
+                sid: sid.clone(),
+                prop,
+                value,
+                lamport: 1,
+                writer: "X".into(),
+            };
+            apply_op(&mut doc, &op).unwrap_or_else(|e| panic!("apply_op({prop:?}) 不得失败:{e}"));
+        }
+        let n = doc.nodes.get(doc.find_by_sid(&sid).unwrap()).unwrap();
+        assert_eq!(n.geom.x, 11.0);
+        assert_eq!(n.geom.y, 22.0);
+        assert_eq!(n.geom.w, 33.0);
+        assert_eq!(n.geom.h, 44.0);
+        assert_eq!(
+            n.style_get("opacity")
+                .and_then(|v| v.trim().parse::<f64>().ok()),
+            Some(0.25)
+        );
+        assert_eq!(base.x + base.y + base.w + base.h, 170.0, "夹具基线自检");
     }
 }
