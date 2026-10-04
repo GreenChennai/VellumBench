@@ -552,7 +552,6 @@ mod tests {
             signal: Arc::new(Condvar::new()),
             stdin: Arc::new(Mutex::new(None)),
             next_id: AtomicU64::new(1),
-            #[cfg(windows)]
             job: None,
             sandbox_note: None,
         };
@@ -572,7 +571,6 @@ mod tests {
             signal: Arc::new(Condvar::new()),
             stdin: Arc::new(Mutex::new(None)),
             next_id: AtomicU64::new(1),
-            #[cfg(windows)]
             job: None,
             sandbox_note: None,
         };
@@ -604,7 +602,6 @@ mod tests {
             signal: signal.clone(),
             stdin: Arc::new(Mutex::new(None)),
             next_id: AtomicU64::new(1),
-            #[cfg(windows)]
             job: None,
             sandbox_note: None,
         };
@@ -638,7 +635,6 @@ mod tests {
             signal: Arc::new(Condvar::new()),
             stdin: Arc::new(Mutex::new(None)),
             next_id: AtomicU64::new(1),
-            #[cfg(windows)]
             job: None,
             sandbox_note: None,
         };
