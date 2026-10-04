@@ -22,7 +22,7 @@ pub(crate) mod proofread;
 mod properties;
 mod tokens;
 
-use vb_ui::components::{icon_button, PanelTabs};
+use vb_ui::components::{icon_button, progress_pill, PanelTabs};
 use vb_ui::dock;
 use vb_ui::icons::{self, Name};
 use vb_ui::theme;
@@ -168,13 +168,13 @@ impl VellumApp {
         }
     }
 
-    /// 底部状态栏(04-4 三层分离:**只留状态**)。
+    /// 底部状态栏(04-4 三层分离:**只留状态**;§8.7 窄窗分级折叠)。
     ///
-    /// 画板切换 / 缩放 / 坐标 / 选中数 / rev / 诚实标注(降级渲染、
-    /// 近似渲染);教学提示 → 提示条([`Self::hint_bar`]),调试数据 →
-    /// 开发者统计([`Self::show_dev_stats`])。最窄窗口(1024)不换行:
-    /// 全部条目为等宽小标签,超长坐标截断由 egui 单行裁剪兜底。
+    /// 画板切换 / 缩放是常驻锚点;其余条目按 [`status_tiers`] 的窗口宽
+    /// 分级让位 —— **诚实标注(降级/近似/外部改动)永不消失**,窄窗只
+    /// 换短文案。导出进行中追加不确定进度 pill(§8.9 加载态)。
     pub(crate) fn status_bar(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let tiers = status_tiers(ui.ctx().viewport_rect().width());
         // 画板导航 ◀ 1/N ▶(S1-d 02-5-4):当前序号从选中画板**派生**
         // (画布改选 → 状态栏自动同步);◀▶ 复用 view.prev/next_artboard
         // 命令(选中 + 视口跳转),与画布/面板双向联动。
@@ -216,11 +216,19 @@ impl VellumApp {
                 if zoom_resp.clicked() {
                     self.run_command("view.fit", false, false);
                 }
+                // ── §8.9 加载态:后台导出进行中 = 不确定进度 pill ──
+                if self.export_job.is_some() {
+                    ui.separator();
+                    if progress_pill(ui, "导出中…")
+                        .on_hover_text("导出在后台线程执行;完成后经 toast 与状态栏提示")
+                        .clicked()
+                    {
+                        self.say("导出仍在后台进行(关闭对话框不会取消)");
+                    }
+                }
                 ui.separator();
-                // ── 05-5:断点切换器(响应式预览宽度)──
-                // 文档存在可用断点(meta/媒体规则/冻结块查询)时出现;
-                // 切到断点 → 画布视宽即断点宽,属性面板进入覆盖编辑。
-                {
+                // ── 05-5:断点切换器(响应式预览宽度;窄窗第一档让位)──
+                if tiers.breakpoint {
                     let bps = crate::app::breakpoints::available(&self.doc);
                     if !bps.is_empty() {
                         let cur = self.active_breakpoint;
@@ -251,36 +259,44 @@ impl VellumApp {
                         ui.separator();
                     }
                 }
-                ui.label(format!(
-                    "⌖ {:.0}, {:.0}",
-                    self.cursor_world.0, self.cursor_world.1
-                ));
-                ui.separator();
-                ui.label(format!("选中 {}", self.selection.len()));
-                if self.outline_mode {
+                if tiers.cursor {
+                    ui.label(format!(
+                        "⌖ {:.0}, {:.0}",
+                        self.cursor_world.0, self.cursor_world.1
+                    ));
                     ui.separator();
-                    ui.label("轮廓");
                 }
-                ui.separator();
-                // rev 保留在状态栏(状态语义);渲染后端属调试数据 → 开发者统计
-                ui.label(format!("rev {}", self.doc.rev));
-                // 07-A:自动保存印记(轻量常驻;悬停说明落盘位置)
-                if let Some(stamp) = self.autosave_stamp_text() {
+                if tiers.counters {
+                    ui.label(format!("选中 {}", self.selection.len()));
+                    if self.outline_mode {
+                        ui.separator();
+                        ui.label("轮廓");
+                    }
                     ui.separator();
-                    ui.label(stamp).on_hover_text(
-                        "自动保存快照写入项目 .vb-autosave/(滚动保留 3 份;不覆盖 index.html)",
-                    );
+                    // rev 保留在状态栏(状态语义);渲染后端属调试数据 → 开发者统计
+                    ui.label(format!("rev {}", self.doc.rev));
+                    // 07-A:自动保存印记(轻量常驻;悬停说明落盘位置)
+                    if let Some(stamp) = self.autosave_stamp_text() {
+                        ui.separator();
+                        ui.label(stamp).on_hover_text(
+                            "自动保存快照写入项目 .vb-autosave/(滚动保留 3 份;不覆盖 index.html)",
+                        );
+                    }
                 }
-                // 07-R:外部改动印记(Agent/其他进程改盘 → 热重载;点击看详情)
+                // 07-R:外部改动印记(Agent/其他进程改盘 → 热重载;点击看详情)。
+                // 诚实标注:窄窗换短文案,不消失。
                 if let Some(ext) = &self.external_change {
                     ui.separator();
-                    let (text, tip) = if ext.adopted {
-                        ("外部已改动(已重载)", "点击查看最近外部改动的时间与触发文件")
+                    let (long, short) = if ext.adopted {
+                        ("外部已改动(已重载)", "外部已改")
                     } else {
-                        (
-                            "外部已改动(未采用)",
-                            "本地有未保存编辑,未自动采用 —— 点击查看触发文件",
-                        )
+                        ("外部已改动(未采用)", "外部未采用")
+                    };
+                    let text = if tiers.long_labels { long } else { short };
+                    let tip = if ext.adopted {
+                        "点击查看最近外部改动的时间与触发文件"
+                    } else {
+                        "本地有未保存编辑,未自动采用 —— 点击查看触发文件"
                     };
                     let color = if ext.adopted {
                         theme::tokens(ui.ctx()).warn
@@ -309,13 +325,23 @@ impl VellumApp {
                 // 提示级走主题 warn 令牌(07-I 口径,两主题可读)。
                 if self.gpu.is_none() {
                     ui.separator();
-                    ui.colored_label(theme::tokens(ui.ctx()).warn, "⚠ 降级渲染")
+                    let text = if tiers.long_labels {
+                        "⚠ 降级渲染"
+                    } else {
+                        "⚠ 降级"
+                    };
+                    ui.colored_label(theme::tokens(ui.ctx()).warn, text)
                         .on_hover_text("GPU/渲染器不可用,画布内容未按完整管线渲染");
                 }
                 // X-2 口径:画布文字为 egui 近似(常驻低对比标注,与画布
                 // 角落提示一致;真实字形见导出,校对见「视图 → 浏览器校对」)
                 ui.separator();
-                ui.label("近似渲染").on_hover_text(
+                let text = if tiers.long_labels {
+                    "近似渲染"
+                } else {
+                    "近似"
+                };
+                ui.label(text).on_hover_text(
                     "画布文字为近似渲染(ADR-0017);导出为真字形,可用「视图 → 浏览器校对」对拍",
                 );
             });
@@ -487,5 +513,68 @@ fn paint_hover_underline(ui: &egui::Ui, resp: &egui::Response) {
             ],
             egui::Stroke::new(1.0, theme::tokens(ui.ctx()).text_2),
         );
+    }
+}
+
+// ───────────────── §8.7:状态栏窄窗分级(纯函数;单测钉住) ─────────────────
+
+/// 状态栏分级可见性(§8.7「窄窗分级折叠」的判定面)。
+///
+/// 优先级:**诚实标注永不消失**(03-5-3/X-2 口径)—— 降级/近似/外部
+/// 改动在最窄窗也可见,只是换短文案;先让位的是断点切换器,然后是
+/// 坐标,最后是选中数/rev/自动保存印记。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct StatusTiers {
+    /// 断点切换器(响应式预览;有断点的文档才有,门再乘宽度)。
+    pub breakpoint: bool,
+    /// 光标世界坐标。
+    pub cursor: bool,
+    /// 选中数 + 轮廓 + rev + 自动保存印记。
+    pub counters: bool,
+    /// 诚实标注用长文案(< 阈值换短文案,不消失)。
+    pub long_labels: bool,
+}
+
+/// 分级函数(阈值全部 4 基数):≥1200 全量;800–1199 丢断点切换器、
+/// 长文案换短;640–799 再丢坐标;<640 只剩画板导航/缩放/诚实标注。
+pub(crate) fn status_tiers(width: f32) -> StatusTiers {
+    StatusTiers {
+        breakpoint: width >= 1200.0,
+        cursor: width >= 800.0,
+        counters: width >= 640.0,
+        long_labels: width >= 1200.0,
+    }
+}
+
+#[cfg(test)]
+mod status_tier_tests {
+    use super::*;
+
+    /// 分级表逐行:全量 → 逐档让位;诚实标注永不消失(long_labels 只
+    /// 控制文案长度,不控制可见性 —— 见 status_bar 的标注分支)。
+    #[test]
+    fn tiers_narrow_monotonically() {
+        let wide = status_tiers(1920.0);
+        assert!(wide.breakpoint && wide.cursor && wide.counters && wide.long_labels);
+        let mid = status_tiers(1024.0);
+        assert!(!mid.breakpoint, "1024(最窄支持窗)已收起断点切换器");
+        assert!(mid.cursor && mid.counters);
+        let narrow = status_tiers(760.0);
+        assert!(!narrow.cursor && narrow.counters);
+        let least = status_tiers(600.0);
+        assert!(!least.counters, "最窄档丢计数");
+        // 单调:宽窗可见的,窄档不再出现
+        for w in [400.0, 600.0, 760.0, 900.0, 1024.0, 1200.0, 1920.0] {
+            let t = status_tiers(w);
+            if w < 640.0 {
+                assert!(!t.counters);
+            }
+            if w < 800.0 {
+                assert!(!t.cursor);
+            }
+            if w < 1200.0 {
+                assert!(!t.breakpoint);
+            }
+        }
     }
 }

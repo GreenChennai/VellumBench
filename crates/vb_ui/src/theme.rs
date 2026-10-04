@@ -665,6 +665,46 @@ pub mod space {
     pub const DOCK_WIDTH: f32 = 280.0;
     /// 低于此宽度右侧坞自动折叠。
     pub const COLLAPSE_BELOW: f32 = 1200.0;
+    /// 工具箱单列宽(§8.7:44 单列,按钮 36 + 两侧余量)。
+    pub const TOOLBOX_WIDTH: f32 = 44.0;
+}
+
+/// 密度档(审查 2026-10-04 §8.3.5:S4 新增)。
+///
+/// 列表行(图层行/下拉项)两档行高:**compact 24 / comfortable 28**,
+/// 默认 comfortable。开关是 egui 持久数据上的显式设置项(与动效开关
+/// 同一模式:egui/winit 无跨平台「系统密度偏好」读取口),宿主负责
+/// 持久化(选一次写一次,读经 [`density_compact`])。
+pub mod density {
+    use egui::Id;
+
+    fn flag_id() -> Id {
+        Id::new("vb_density_compact")
+    }
+
+    /// compact 行高。
+    pub const COMPACT_ROW: f32 = 24.0;
+    /// comfortable 行高(默认)。
+    pub const COMFORTABLE_ROW: f32 = 28.0;
+
+    /// 写密度开关(true = compact)。
+    pub fn set_compact(ctx: &egui::Context, compact: bool) {
+        ctx.data_mut(|d| d.insert_temp(flag_id(), compact));
+    }
+
+    /// 读密度开关(未注入过 = comfortable)。
+    pub fn is_compact(ctx: &egui::Context) -> bool {
+        ctx.data_mut(|d| d.get_temp(flag_id()).unwrap_or(false))
+    }
+
+    /// 当前密度下的列表行高(纯函数语义:开关 → 档位行高)。
+    pub fn row_height(ctx: &egui::Context) -> f32 {
+        if is_compact(ctx) {
+            COMPACT_ROW
+        } else {
+            COMFORTABLE_ROW
+        }
+    }
 }
 
 /// 圆角刻度（单位 px，喂给 `CornerRadius::same`）。
@@ -681,6 +721,9 @@ pub mod radius {
     pub const LG: u8 = 8;
     /// 底部工具条、浮层、窗口。
     pub const XL: u8 = 12;
+    /// 药丸(badge/开关/进度条;取 u8 上限的一半 —— 对一切 ≤254px 高的
+    /// 控件都是全圆角,§8.3.5 的 `pill 999` 在 u8 圆角下的等价值)。
+    pub const PILL: u8 = 127;
 
     pub fn sm() -> CornerRadius {
         CornerRadius::same(SM)
@@ -693,6 +736,9 @@ pub mod radius {
     }
     pub fn xl() -> CornerRadius {
         CornerRadius::same(XL)
+    }
+    pub fn pill() -> CornerRadius {
+        CornerRadius::same(PILL)
     }
 }
 
@@ -1565,5 +1611,33 @@ mod tests {
         assert_eq!(anim_time(&ctx, motion::PANEL), 0.0);
         set_motion_enabled(&ctx, true);
         assert!((anim_time(&ctx, motion::STATE) - motion::STATE).abs() < f32::EPSILON);
+    }
+
+    /// 密度档(§8.3.5):默认 comfortable(28);compact = 24;两档都是
+    /// 4 基数刻度。列表行(图层行等)按它取高。
+    #[test]
+    fn density_defaults_comfortable_and_switches() {
+        assert_eq!(density::COMFORTABLE_ROW, 28.0);
+        assert_eq!(density::COMPACT_ROW, 24.0);
+        let ctx = egui::Context::default();
+        ctx.begin_pass(egui::RawInput::default());
+        assert!(!density::is_compact(&ctx), "未注入过 = comfortable");
+        assert_eq!(density::row_height(&ctx), density::COMFORTABLE_ROW);
+        density::set_compact(&ctx, true);
+        assert!(density::is_compact(&ctx));
+        assert_eq!(density::row_height(&ctx), density::COMPACT_ROW);
+    }
+
+    /// 工具箱列宽是 4 基数且与浮动工具条/控制条同刻度族(§8.7)。
+    #[test]
+    fn layout_bar_heights_follow_spacing_scale() {
+        for v in [
+            space::TOOLBOX_WIDTH,
+            space::FLOATING_TOOLBAR_HEIGHT,
+            space::CONTROL_BAR_HEIGHT,
+            space::STATUS_BAR_HEIGHT,
+        ] {
+            assert_eq!(v % 4.0, 0.0, "布局条高 {v} 不是 4 的倍数");
+        }
     }
 }

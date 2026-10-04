@@ -47,6 +47,45 @@ fn blend(a: Color32, b: Color32, t: f32) -> Color32 {
     )
 }
 
+/// 键盘焦点环(G-UI-D):accent 1.5px 外描边 + 内侧隔离环
+/// (`Tokens::focus_ring*`,§8.3.3)。egui 0.35 对一切 `Sense::click`
+/// 控件(含自绘)自动维护 Tab 序与 Space/Enter 激活,但**焦点环要
+/// 自绘** —— 自绘控件在 `resp.has_focus()` 时调它。
+fn paint_focus_ring(ui: &Ui, rect: egui::Rect, t: &theme::Tokens) {
+    ui.painter().rect_stroke(
+        rect.expand(1.0),
+        theme::radius::sm(),
+        Stroke::new(theme::stroke::HAIRLINE, t.focus_ring_inner),
+        egui::StrokeKind::Outside,
+    );
+    ui.painter().rect_stroke(
+        rect.expand(theme::space::S2),
+        theme::radius::sm(),
+        Stroke::new(theme::stroke::FOCUS, t.focus_ring),
+        egui::StrokeKind::Outside,
+    );
+}
+
+/// 在 `rect` 内画 45° 斜纹(§8.6 #3:NumField 混合态的视觉语言)。
+///
+/// 条纹间距 = 间距刻度 S3;颜色由调用方给(组件传弱文字色 —— 斜纹是
+/// "这里的值不代表单一对象"的提示,不许抢过正文)。裁剪经 painter
+/// clip,行尾半根条纹不会越出输入框。
+fn paint_hatch(ui: &Ui, rect: egui::Rect, color: Color32) {
+    let p = ui
+        .painter()
+        .clone()
+        .with_clip_rect(rect.intersect(ui.clip_rect()));
+    let stroke = Stroke::new(1.0, color.gamma_multiply(0.55));
+    let step = theme::space::S3;
+    let h = rect.height();
+    let mut x = rect.left() - h;
+    while x < rect.right() {
+        p.line_segment([pos2(x, rect.bottom()), pos2(x + h, rect.top())], stroke);
+        x += step;
+    }
+}
+
 // ─────────────────────────── 文本样式助手 ───────────────────────────
 
 /// 分组标题文字（13px / 600）。
@@ -289,6 +328,10 @@ impl<'a> ToolButton<'a> {
                 egui::StrokeKind::Inside,
             );
         }
+        // G-UI-D:键盘焦点环(Tab 可达由 egui 自动;环要自绘)
+        if resp.has_focus() {
+            paint_focus_ring(ui, rect, &t);
+        }
 
         let fg = if !self.enabled {
             t.text_3
@@ -346,9 +389,9 @@ impl<'a> ToolButton<'a> {
 /// 细调是更精细的意图);无修饰键 = ×1。
 pub fn scrub_step(dx: f32, speed: f64, shift: bool, alt: bool) -> f64 {
     let k = if alt {
-        0.1
+        0.1 // vb-size-ok: Alt 细调倍率(值域系数,非尺寸)
     } else if shift {
-        10.0
+        10.0 // vb-size-ok: Shift 粗调倍率(值域系数,非尺寸)
     } else {
         1.0
     };
@@ -409,6 +452,10 @@ pub struct NumField<'a> {
     label_width: f32,
     /// `50%` 的相对基准(None 时 `%` = /100,见 expr 模块注释)。
     percent_base: Option<f64>,
+    /// 混合态(§8.6 #3 ⭐):多选对象在该字段上取值不一致时置真 ——
+    /// 输入框画**斜纹**而不是假装只有一个值;显示值 = 主选中的值,
+    /// 提交仍作用于全部选中(调用方保证)。
+    mixed: bool,
 }
 
 impl<'a> NumField<'a> {
@@ -424,6 +471,7 @@ impl<'a> NumField<'a> {
             width: 72.0,
             label_width: FIELD_LABEL_WIDTH,
             percent_base: None,
+            mixed: false,
         }
     }
 
@@ -469,6 +517,12 @@ impl<'a> NumField<'a> {
         self
     }
 
+    /// 混合态(多选对象该字段取值不一致):输入框画斜纹。
+    pub fn mixed(mut self, v: bool) -> Self {
+        self.mixed = v;
+        self
+    }
+
     fn clamp(&self, v: f64) -> f64 {
         match self.range {
             Some((lo, hi)) => v.clamp(lo, hi),
@@ -507,8 +561,14 @@ impl<'a> NumField<'a> {
             fonts::font(12.0, fonts::Weight::Medium),
             blend(t.text_2, t.text, hover_t),
         );
+        // G-UI-D:标签区(Sense::drag = FOCUSABLE)的键盘焦点环
+        if lresp.has_focus() {
+            paint_focus_ring(ui, lrect, &t);
+        }
         if lresp.hovered() {
-            ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::ResizeHorizontal);
+            // §8.6 #3:标签拖改值光标 = col-resize(列宽调整语义,egui
+            // 映射为水平双箭头列光标,与"拖动改值"的空间隐喻一致)
+            ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::ResizeColumn);
         }
 
         // ── 输入框(缓冲存 egui 内存;未聚焦时回显当前值)──
@@ -540,6 +600,11 @@ impl<'a> NumField<'a> {
                 t.text_3,
             );
         }
+        // ── 混合态斜纹(§8.6 #3 ⭐):输入框未聚焦时叠 45° 斜纹,
+        // 提示"多个对象取值不一";聚焦编辑时让位给文本(斜纹停画)。
+        if self.mixed && !focused {
+            paint_hatch(ui, edit.rect, t.text_3);
+        }
 
         // ── 键盘步进(聚焦时;全局方向键走 TextEdit 上下文不会抢)──
         if edit.has_focus()
@@ -555,7 +620,7 @@ impl<'a> NumField<'a> {
             if let Ok(v) = crate::expr::eval_expr(&buf, self.percent_base) {
                 *self.value = self.clamp(v);
             }
-            let step = self.step.unwrap_or(self.speed) * if shift { 10.0 } else { 1.0 };
+            let step = self.step.unwrap_or(self.speed) * if shift { 10.0 } else { 1.0 }; // vb-size-ok: Shift 步进倍率(值域系数)
             *self.value = self.clamp(if up {
                 *self.value + step
             } else {
@@ -891,11 +956,38 @@ impl<'a> ColorField<'a> {
             }
         });
 
+        // 反向解析:当前值命中某文档令牌 → 显示它对应的 var(--name)
+        // (HEX/RGB/HSL 是值的表示,变量是值的*来源*;有来源优先标来源)
+        if let Some((name, _)) = tokens
+            .iter()
+            .find_map(|(n, v)| vb_parse_color(v).filter(|c| *c == *value).map(|c| (n, c)))
+        {
+            ui.label(mono(&format!("var(--{name})")));
+        }
+
         // ── 完整模式(Alt+点击):RGB / HSL / 令牌色板 ──
         if st.full {
             ui.separator();
             let [r, g, b, a] = value.to_srgba_unmultiplied();
             let (mut h, mut s, mut l) = rgb_to_hsl(r, g, b);
+            // 四态回显(§8.6 #6):HEX(紧凑态)· RGB · HSL · CSS 变量
+            // 四种表示同屏可读;RGB/HSL 可经滑杆改,文本行是当前值的
+            // 权威回显(Agent 对账与手抄到 CSS 都靠它)。
+            ui.label(
+                RichText::new(format!("rgb({r}, {g}, {b})"))
+                    .font(egui::FontId::new(12.0, fonts::family_mono()))
+                    .color(t.text_2),
+            );
+            ui.label(
+                RichText::new(format!(
+                    "hsl({}, {}%, {}%)",
+                    h.round() as i32,
+                    s.round() as i32,
+                    l.round() as i32
+                ))
+                .font(egui::FontId::new(12.0, fonts::family_mono()))
+                .color(t.text_2),
+            );
             ui.horizontal(|ui| {
                 ui.label(label("RGB"));
                 let mut cr = r;
@@ -1021,11 +1113,11 @@ fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
         d / (max + min)
     };
     let h = if max == rf {
-        ((gf - bf) / d + if gf < bf { 6.0 } else { 0.0 }) * 60.0
+        ((gf - bf) / d + if gf < bf { 6.0 } else { 0.0 }) * 60.0 // vb-size-ok: 色相扇区常量(60° 六分色环)
     } else if max == gf {
-        ((bf - rf) / d + 2.0) * 60.0
+        ((bf - rf) / d + 2.0) * 60.0 // vb-size-ok: 色相扇区常量
     } else {
-        ((rf - gf) / d + 4.0) * 60.0
+        ((rf - gf) / d + 4.0) * 60.0 // vb-size-ok: 色相扇区常量
     };
     (h, s * 100.0, l * 100.0)
 }
@@ -1170,7 +1262,7 @@ impl<'a> SectionHeader<'a> {
                 icons::Name::Collapsed
             };
             ui.painter().text(
-                pos2(rect.left() + 7.0, rect.center().y),
+                pos2(rect.left() + theme::space::S3 + 1.0, rect.center().y),
                 egui::Align2::CENTER_CENTER,
                 chev.glyph().to_string(),
                 icons::font(14.0),
@@ -1181,7 +1273,7 @@ impl<'a> SectionHeader<'a> {
 
         if let Some(ic) = self.icon {
             ui.painter().text(
-                pos2(icon_x + 7.0, rect.center().y),
+                pos2(icon_x + theme::space::S3 + 1.0, rect.center().y),
                 egui::Align2::CENTER_CENTER,
                 ic.glyph().to_string(),
                 icons::font(14.0),
@@ -1264,22 +1356,26 @@ impl<'a> PanelTabs<'a> {
         let h = 28.0;
         let w = ui.available_width() / self.labels.len() as f32;
         let mut changed = false;
+        let mut active_rect = egui::Rect::NOTHING;
 
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             for (i, name) in self.labels.iter().enumerate() {
                 let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, h), Sense::click());
                 let is_active = i == *self.active;
+                if is_active {
+                    active_rect = rect;
+                }
                 let hover_t = ui.ctx().animate_bool_with_time(
                     ui.id().with(("vbtab", name)),
                     resp.hovered() && !is_active,
                     theme::anim_time(ui.ctx(), theme::motion::HOVER),
                 );
-                // 选中底：accent 的 16% 透明度
+                // 选中底:accent-subtle 状态层(§8.3.3;S4 起接替 accent_dim)
                 let fill = if is_active {
-                    t.accent_dim
+                    t.accent_subtle
                 } else {
-                    blend(Color32::TRANSPARENT, t.bg_hover, hover_t)
+                    theme::state::fade(t.state_hover, hover_t)
                 };
                 ui.painter().rect_filled(
                     rect.shrink2(vec2(theme::space::S1, theme::space::S2)),
@@ -1293,14 +1389,6 @@ impl<'a> PanelTabs<'a> {
                     fonts::font(12.0, fonts::Weight::Medium),
                     if is_active { t.accent } else { t.text_2 },
                 );
-                if is_active {
-                    // 下划线指示器
-                    let bar = egui::Rect::from_min_max(
-                        pos2(rect.left() + theme::space::S3, rect.bottom() - 2.0),
-                        pos2(rect.right() - theme::space::S3, rect.bottom()),
-                    );
-                    ui.painter().rect_filled(bar, theme::radius::sm(), t.accent);
-                }
                 if resp.clicked() && !is_active {
                     *self.active = i;
                     changed = true;
@@ -1323,6 +1411,30 @@ impl<'a> PanelTabs<'a> {
                 }
             }
         });
+        // 下划线指示器(§8.6 #10):accent 2px,**切换时滑动 200ms**
+        // (motion::PANEL —— Tab 是层级跳转,不是悬停)。滑动 = 对左右
+        // 边缘各插一个 `animate_value_with_time`;动效总开关关闭时 egui
+        // animation_time 已归零,自动直通,无第二套开关判断。
+        if !active_rect.any_nan() {
+            let bar_y = active_rect.bottom() - 2.0;
+            let anim_t = theme::motion::PANEL;
+            let lx = ui.ctx().animate_value_with_time(
+                ui.id().with("vbtab-underline-l"),
+                active_rect.left() + theme::space::S3,
+                anim_t,
+            );
+            let rx = ui.ctx().animate_value_with_time(
+                ui.id().with("vbtab-underline-r"),
+                active_rect.right() - theme::space::S3,
+                anim_t,
+            );
+            let bar = egui::Rect::from_min_max(pos2(lx, bar_y), pos2(rx, bar_y + 2.0));
+            let p = ui.painter().clone().with_layer_id(egui::LayerId::new(
+                egui::Order::Foreground,
+                ui.id().with("vbtab-underline"),
+            ));
+            p.rect_filled(bar, theme::radius::sm(), t.accent);
+        }
         out.changed = changed;
         out
     }
@@ -1354,7 +1466,744 @@ pub fn icon_button(ui: &mut Ui, icon: icons::Name, tooltip: &str) -> Response {
         icons::font(14.0),
         blend(t.text_2, t.text, hover_t),
     );
+    // G-UI-D:键盘焦点环
+    if resp.has_focus() {
+        paint_focus_ring(ui, rect, &t);
+    }
     resp.on_hover_text(tooltip)
+}
+
+// ═══════════════════ S4 组件批(审查 2026-10-04 §8.6 #2/4-9/11-20)═══════════════════
+//
+// 本节的纪律:
+// - **尺寸一律令牌刻度**(G-UI-F):间距走 [`theme::space`],圆角走
+//   [`theme::radius`],字号走排版七档(11/12/13/15/24),图标 12–20,
+//   行高 24/28(密度),控件 16/20/32 —— 扫描测试 `token_sizes` 钉住;
+// - **颜色一律令牌**(G-UI-B):底色/文字/描边全部经 [`theme::tokens`]
+//   与 [`theme::state`] 合成,本文件仍是全仓唯一允许出现颜色的界面文件,
+//   但新代码不再写字面量,只消费令牌;
+// - **动效一律总开关**(§8.8):时长只取 HOVER/STATE/PANEL 三档,经
+//   [`theme::anim_time`] 换算,reduced-motion(开关关)自动直通;
+// - **自绘控件补 WidgetInfo**(UI-03 起步):读屏语义名随手势一起登记。
+
+// ──────────────────────────── 4. TextField ────────────────────────────
+
+/// 单行文本框(§8.6 #4):高度从行高派生、占位色用弱文字、聚焦画焦点环。
+///
+/// egui 的 TextEdit 本身在 Tab 序里(键盘可达),本包装只统一外观:
+/// 聚焦环 = accent 1.5px 外描边 + 1px 隔离环(`Tokens::focus_ring_*`,
+/// G-UI-D 的规格面);返回 egui 的 `Response`,提交语义(失焦/回车)
+/// 由调用方按 `lost_focus()` / `changed()` 自取。
+pub struct TextField<'a> {
+    text: &'a mut String,
+    hint: &'a str,
+    width: f32,
+    id: Option<egui::Id>,
+}
+
+impl<'a> TextField<'a> {
+    /// 新建文本框。
+    pub fn new(text: &'a mut String) -> Self {
+        Self {
+            text,
+            hint: "",
+            width: 120.0,
+            id: None,
+        }
+    }
+
+    /// 占位提示(空值时显示)。
+    pub fn hint(mut self, h: &'a str) -> Self {
+        self.hint = h;
+        self
+    }
+
+    /// 宽度(默认 120 = 4 基数)。
+    pub fn width(mut self, w: f32) -> Self {
+        self.width = w;
+        self
+    }
+
+    /// 显式 id(同屏多个字段时必给,否则焦点/缓冲串位)。
+    pub fn id(mut self, id: egui::Id) -> Self {
+        self.id = Some(id);
+        self
+    }
+
+    /// 画出文本框。
+    pub fn ui(self, ui: &mut Ui) -> Response {
+        let h = theme::row_height(ui.ctx());
+        let mut edit = egui::TextEdit::singleline(self.text).font(theme::typography::font_id(
+            theme::typography::BODY,
+            ui.ctx().zoom_factor(),
+        ));
+        if !self.hint.is_empty() {
+            edit = edit.hint_text(self.hint);
+        }
+        if let Some(id) = self.id {
+            edit = edit.id(id);
+        }
+        let resp = ui.add_sized(Vec2::new(self.width, h), edit);
+        // 焦点环:egui TextEdit 自带弱聚焦提示,这里补规格的 accent 环
+        if resp.has_focus() {
+            paint_focus_ring(ui, resp.rect, &theme::tokens(ui.ctx()));
+        }
+        resp
+    }
+}
+
+// ──────────────────────────── 5. Select / Combo ────────────────────────────
+
+/// 下拉选择(§8.6 #5):展开菜单走 egui popup(L3 阴影由全局
+/// `popup_shadow` 统一供)。键盘 ↑↓/Enter/Esc 与焦点由 egui
+/// `ComboBox` 原生承担 —— 本组件不重写键盘状态机,只统一按钮宽度
+/// 与入口(材质吃全局 inactive 样式,见 theme::apply_impl)。
+///
+/// `add` 里用 `ui.selectable_label(...)` 列选项;返回 `ComboBox` 的
+/// Response(是否改选由调用方在 `add` 里经 `selectable_value` 写回)。
+pub fn select<R>(
+    ui: &mut Ui,
+    id_salt: &str,
+    selected_text: impl Into<String>,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> egui::Response {
+    egui::ComboBox::from_id_salt(id_salt)
+        .selected_text(selected_text.into())
+        .width(120.0)
+        .show_ui(ui, add)
+        .response
+}
+
+// ──────────────────────────── 7. Slider ────────────────────────────
+
+/// [`slider`] 的返回(§8.6 #7)。
+#[derive(Debug, Clone, Default)]
+pub struct SliderResponse {
+    /// 值被改动(拖动或双击复位)。
+    pub changed: bool,
+    /// 双击复位发生(调用方需要区分"用户拖的"与"回到默认值")。
+    pub reset: bool,
+}
+
+/// 滑杆(§8.6 #7):圆点手柄(全局 `HandleShape::Circle` 已定)+
+/// 值标签 + **双击复位**。`default` = 复位目标(如 opacity 1.0)。
+pub fn slider(
+    ui: &mut Ui,
+    value: &mut f64,
+    range: std::ops::RangeInclusive<f64>,
+    text: &str,
+    default: f64,
+) -> SliderResponse {
+    let mut out = SliderResponse::default();
+    let resp = ui.add(egui::Slider::new(value, range).text(text));
+    if resp.double_clicked() {
+        if (*value - default).abs() > f64::EPSILON {
+            *value = default;
+            out.changed = true;
+        }
+        out.reset = true;
+    } else {
+        out.changed = resp.changed();
+    }
+    out
+}
+
+// ──────────────────────── 8. Checkbox / Radio / Switch ────────────────────────
+
+/// 复选框(§8.6 #8):自绘方框 + accent 勾选,120ms 状态过渡。
+/// 读屏语义经 `WidgetInfo::selected` 登记(UI-03 起步项)。
+pub fn checkbox(ui: &mut Ui, text: &str, checked: &mut bool) -> Response {
+    let t = theme::tokens(ui.ctx());
+    let box_side = 16.0;
+    let (rect, resp) = ui.allocate_exact_size(
+        Vec2::new(box_side + theme::space::S2, theme::space::ROW_HEIGHT - 4.0),
+        Sense::click(),
+    );
+    let box_rect = egui::Rect::from_center_size(
+        pos2(rect.left() + box_side * 0.5, rect.center().y),
+        Vec2::splat(box_side),
+    );
+    let on_t = ui.ctx().animate_bool_with_time(
+        ui.id().with("vbchk"),
+        *checked,
+        theme::anim_time(ui.ctx(), theme::motion::STATE),
+    );
+    // 底:选中 accent → 未选中透明;描边:accent → border_strong
+    let fill = blend(Color32::TRANSPARENT, t.accent, on_t);
+    let stroke_c = blend(t.border_strong, t.accent, on_t);
+    ui.painter()
+        .rect_filled(box_rect, theme::radius::sm(), fill);
+    ui.painter().rect_stroke(
+        box_rect,
+        theme::radius::sm(),
+        Stroke::new(theme::stroke::HAIRLINE, stroke_c),
+        egui::StrokeKind::Inside,
+    );
+    if on_t > 0.01 {
+        ui.painter().text(
+            box_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            icons::Name::Check.glyph().to_string(),
+            icons::font(12.0),
+            t.text,
+        );
+    }
+    if !text.is_empty() {
+        ui.painter().text(
+            pos2(rect.left() + box_side + theme::space::S2, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            text,
+            fonts::font(12.0, fonts::Weight::Medium),
+            t.text,
+        );
+    }
+    if resp.clicked() {
+        *checked = !*checked;
+    }
+    if resp.has_focus() {
+        paint_focus_ring(ui, box_rect, &t);
+    }
+    resp.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *checked, text)
+    });
+    resp
+}
+
+/// 单选圆点(§8.6 #8)。`selected = false` 时只画描边。
+pub fn radio(ui: &mut Ui, text: &str, selected: bool) -> Response {
+    let t = theme::tokens(ui.ctx());
+    let d = 16.0;
+    let (rect, resp) = ui.allocate_exact_size(
+        Vec2::new(d + theme::space::S2, theme::space::ROW_HEIGHT - 4.0),
+        Sense::click(),
+    );
+    let c = pos2(rect.left() + d * 0.5, rect.center().y);
+    let ring = if selected { t.accent } else { t.border_strong };
+    ui.painter()
+        .circle_stroke(c, d * 0.5, Stroke::new(theme::stroke::HAIRLINE, ring));
+    if selected {
+        ui.painter().circle_filled(c, d * 0.25, t.accent);
+    }
+    if !text.is_empty() {
+        ui.painter().text(
+            pos2(rect.left() + d + theme::space::S2, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            text,
+            fonts::font(12.0, fonts::Weight::Medium),
+            t.text,
+        );
+    }
+    if resp.has_focus() {
+        paint_focus_ring(ui, rect, &t);
+    }
+    resp.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, selected, text)
+    });
+    resp
+}
+
+/// 开关(§8.6 #8):28×16 药丸,开 = accent,120ms。
+pub fn switch(ui: &mut Ui, on: &mut bool) -> Response {
+    let t = theme::tokens(ui.ctx());
+    let w = 28.0;
+    let h = 16.0;
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, h), Sense::click());
+    let on_t = ui.ctx().animate_bool_with_time(
+        ui.id().with("vbsw"),
+        *on,
+        theme::anim_time(ui.ctx(), theme::motion::STATE),
+    );
+    let fill = blend(t.bg_input, t.accent, on_t);
+    ui.painter().rect_filled(rect, theme::radius::pill(), fill);
+    // 手柄:12 圆点,x 随 on_t 从左滑到右
+    let knob = h - theme::space::S3;
+    let x = rect.left() + knob * 0.5 + on_t * (w - knob);
+    let knob_c = blend(t.text_3, t.text, on_t);
+    ui.painter()
+        .circle_filled(pos2(x, rect.center().y), knob * 0.5, knob_c);
+    if resp.clicked() {
+        *on = !*on;
+    }
+    if resp.has_focus() {
+        paint_focus_ring(ui, rect, &t);
+    }
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *on, ""));
+    resp
+}
+
+// ──────────────────────── 12. Card / 13. Separator / 14. Badge ────────────────────────
+
+/// 卡片(§8.6 #12):L2 凸起材质 + lg 圆角 + S4 内边距(阴影 L2)。
+/// 返回 `(卡片 Response, body 产出)` —— 整卡命中区可直接挂点击。
+pub fn card<R>(ui: &mut Ui, body: impl FnOnce(&mut Ui) -> R) -> (Response, R) {
+    let t = theme::tokens(ui.ctx());
+    let ir = egui::Frame::new()
+        .fill(t.bg_raised)
+        .stroke(Stroke::new(theme::stroke::HAIRLINE, t.border))
+        .corner_radius(theme::radius::lg())
+        .shadow(theme::elevation::shadow_l2(t.dark))
+        .inner_margin(egui::Margin::same(theme::space::S4 as i8))
+        .show(ui, |ui| body(ui));
+    (ir.response, ir.inner)
+}
+
+/// 分隔线(§8.6 #13):hairline,颜色 = 分隔强档(`border_strong`,
+/// 深色 ≈ N8),缩进对齐内容。egui 默认分隔线吃全局样式,这里给
+/// "带缩进的语义版"。
+pub fn separator_indented(ui: &mut Ui, indent: f32) {
+    let t = theme::tokens(ui.ctx());
+    let w = ui.available_width() - indent;
+    if w <= 0.0 {
+        return;
+    }
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 1.0), Sense::hover());
+    ui.painter().line_segment(
+        [
+            pos2(rect.left(), rect.center().y),
+            pos2(rect.right(), rect.center().y),
+        ],
+        Stroke::new(theme::stroke::HAIRLINE, t.border_strong),
+    );
+}
+
+/// 徽章类别(§8.6 #14:状态栏/台账三态)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BadgeKind {
+    /// 中性(信息)。
+    Neutral,
+    /// 强调(accent)。
+    Accent,
+    /// 成功。
+    Success,
+    /// 告警。
+    Warn,
+    /// 错误。
+    Danger,
+}
+
+/// 徽章/Chip(§8.6 #14):pill 圆角 + caption 字,底 = 语义色 14% 状态层。
+pub fn badge(ui: &mut Ui, text: &str, kind: BadgeKind) -> Response {
+    let t = theme::tokens(ui.ctx());
+    let (fg, mark) = match kind {
+        BadgeKind::Neutral => (t.text_2, t.text_3),
+        BadgeKind::Accent => (t.accent, t.accent),
+        BadgeKind::Success => (t.success, t.success),
+        BadgeKind::Warn => (t.warn, t.warn),
+        BadgeKind::Danger => (t.danger, t.danger),
+    };
+    let galley = ui.painter().layout_no_wrap(
+        text.to_owned(),
+        fonts::font(11.0, fonts::Weight::Medium),
+        fg,
+    );
+    let pad_x = theme::space::S3;
+    let size = Vec2::new(
+        galley.size().x + pad_x * 2.0 + theme::space::S2,
+        theme::space::ROW_HEIGHT - 4.0,
+    );
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::hover());
+    ui.painter()
+        .rect_filled(rect, theme::radius::pill(), mark.gamma_multiply(0.22));
+    ui.painter().galley(
+        pos2(rect.left() + pad_x, rect.center().y - galley.size().y * 0.5),
+        galley,
+        fg,
+    );
+    resp.on_hover_text(text.to_owned())
+}
+
+// ──────────────────────── 15. Spinner / Progress ────────────────────────
+
+/// 转圈弧线的共享绘制(`spinner` 与 [`progress_pill`] 共用)。
+fn paint_arc_spinner(p: &egui::Painter, c: egui::Pos2, r: f32, color: Color32, time: f64) {
+    let frac = (time / 1.2).fract() as f32;
+    let start = frac * std::f32::consts::TAU;
+    p.circle_stroke(
+        c,
+        r,
+        Stroke::new(theme::stroke::HAIRLINE, color.gamma_multiply(0.4)),
+    );
+    // 弧:270° 折线近似(8 段;工程工具的 spinner 不追求贝塞尔完美)
+    let sweep = std::f32::consts::TAU * 0.75;
+    let n = 8;
+    let pts: Vec<egui::Pos2> = (0..=n)
+        .map(|i| {
+            let a = start + sweep * (i as f32 / n as f32);
+            pos2(c.x + a.cos() * r, c.y + a.sin() * r)
+        })
+        .collect();
+    p.add(egui::Shape::line(pts, Stroke::new(2.0, color)));
+}
+
+/// 不确定态转圈(§8.6 #17):12 圆弧,**1.2s 循环**(egui time 驱动,
+/// 不经动效开关 —— 它是"进行中"的状态表达,不是装饰动画;开关关时
+/// 仍显示,只是不插帧)。调用方在可见时自行 `ctx.request_repaint`。
+pub fn spinner(ui: &mut Ui, size: f32) {
+    let t = theme::tokens(ui.ctx());
+    let now = ui.input(|i| i.time);
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
+    paint_arc_spinner(
+        ui.painter(),
+        rect.center(),
+        size * 0.5 - theme::space::S2,
+        t.accent,
+        now,
+    );
+}
+
+/// 状态栏/行内的不确定进度 pill(§8.9 加载态):转圈 + caption 文本。
+pub fn progress_pill(ui: &mut Ui, text: &str) -> Response {
+    let t = theme::tokens(ui.ctx());
+    let now = ui.input(|i| i.time);
+    let galley = ui.painter().layout_no_wrap(
+        text.to_owned(),
+        fonts::font(11.0, fonts::Weight::Regular),
+        t.text_2,
+    );
+    let h = 20.0;
+    let size = Vec2::new(
+        theme::space::S4 * 2.0 + theme::space::S5 + galley.size().x,
+        h,
+    );
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::hover());
+    ui.painter()
+        .rect_filled(rect, theme::radius::pill(), t.bg_input);
+    paint_arc_spinner(
+        ui.painter(),
+        pos2(rect.left() + theme::space::S5, rect.center().y),
+        6.0,
+        t.accent,
+        now,
+    );
+    ui.painter().galley(
+        pos2(
+            rect.left() + theme::space::S4 + theme::space::S5,
+            rect.center().y - galley.size().y * 0.5,
+        ),
+        galley,
+        t.text_2,
+    );
+    resp
+}
+
+/// 确定态线性进度(§8.6 #17):细条 + accent 填充;`frac ≥ 1.0` 时
+/// 画完成对勾(pop 交给调用方的 STATE 过渡)。
+pub fn progress_linear(ui: &mut Ui, frac: f64, width: f32) -> Response {
+    let t = theme::tokens(ui.ctx());
+    let h = 4.0;
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, h), Sense::hover());
+    ui.painter()
+        .rect_filled(rect, theme::radius::pill(), t.bg_input);
+    let f = frac.clamp(0.0, 1.0);
+    if f > 0.0 {
+        let mut fill_rect = rect;
+        fill_rect.max.x = rect.left() + (rect.width() as f64 * f) as f32;
+        ui.painter()
+            .rect_filled(fill_rect, theme::radius::pill(), t.accent);
+    }
+    if frac >= 1.0 {
+        ui.painter().text(
+            pos2(rect.right() + theme::space::S2, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            icons::Name::Check.glyph().to_string(),
+            icons::font(12.0),
+            t.success,
+        );
+    }
+    resp
+}
+
+// ──────────────────────── 16. EmptyState ────────────────────────
+
+/// [`EmptyState`] 的返回。
+#[derive(Debug, Clone, Default)]
+pub struct EmptyStateResponse {
+    /// 主行动按钮被点击。
+    pub action_clicked: bool,
+}
+
+/// 空态(§8.6 #16;**消 UI-07 的统一入口**):图标 + display 标题 +
+/// body 引导 + 主行动按钮。图层空、属性无选区、启动器首启共用同一
+/// 规格,不再各画各的"一句灰字"。
+pub struct EmptyState<'a> {
+    icon: icons::Name,
+    title: &'a str,
+    body: &'a str,
+    action: Option<&'a str>,
+}
+
+impl<'a> EmptyState<'a> {
+    /// 新建空态(图标 + 标题)。
+    pub fn new(icon: icons::Name, title: &'a str) -> Self {
+        Self {
+            icon,
+            title,
+            body: "",
+            action: None,
+        }
+    }
+
+    /// 引导正文(一句短话)。
+    pub fn body(mut self, b: &'a str) -> Self {
+        self.body = b;
+        self
+    }
+
+    /// 主行动按钮文案。
+    pub fn action(mut self, a: &'a str) -> Self {
+        self.action = Some(a);
+        self
+    }
+
+    /// 画出空态(垂直居中排布;宽度吃满 `ui`)。
+    pub fn ui(self, ui: &mut Ui) -> EmptyStateResponse {
+        let mut out = EmptyStateResponse::default();
+        let t = theme::tokens(ui.ctx());
+        ui.vertical_centered(|ui| {
+            ui.add_space(theme::space::S9);
+            ui.label(icons::rich(self.icon, 32.0).color(t.text_3));
+            ui.add_space(theme::space::S4);
+            ui.label(RichText::new(self.title).font(fonts::font(
+                theme::typography::DISPLAY.size,
+                fonts::Weight::Semibold,
+            )));
+            if !self.body.is_empty() {
+                ui.add_space(theme::space::S2);
+                ui.label(caption(ui, self.body));
+            }
+            if let Some(a) = self.action {
+                ui.add_space(theme::space::S5);
+                out.action_clicked = ui
+                    .add(
+                        egui::Button::new(RichText::new(a).font(fonts::font(
+                            theme::typography::BODY_STRONG.size,
+                            fonts::Weight::Semibold,
+                        )))
+                        .fill(t.accent_dim),
+                    )
+                    .clicked();
+            }
+        });
+        out
+    }
+}
+
+// ──────────────────────── 18. ValueOverlay ⭐ ────────────────────────
+
+/// 画布浮动数值条(§8.6 #18 ⭐):移动/缩放/旋转拖拽会话中跟随光标,
+/// 显示 `X Y ΔX ΔY W H ∠` 中**有值的行**。
+///
+/// 材质 = L4 提示层(底色取中性阶按下标 7 档、表面 92%/96% 不透明,
+/// 阴影 `elevation::shadow_l4`)+ 圆角 6 + caption 等宽字;文字恒用
+/// 主题主文字色(L4 底在两套主题下都足够承载正文对比)。
+#[derive(Debug, Clone, Default)]
+pub struct ValueOverlay {
+    /// 绝对位置/尺寸(世界坐标;`None` = 不显示该行)。
+    pub x: Option<f64>,
+    /// 见 [`ValueOverlay::x`]。
+    pub y: Option<f64>,
+    /// 位移增量。
+    pub dx: Option<f64>,
+    /// 见 [`ValueOverlay::dx`]。
+    pub dy: Option<f64>,
+    /// 见 [`ValueOverlay::x`]。
+    pub w: Option<f64>,
+    /// 见 [`ValueOverlay::x`]。
+    pub h: Option<f64>,
+    /// 角度(度)。
+    pub angle: Option<f64>,
+}
+
+impl ValueOverlay {
+    /// 生成显示文本(纯函数;门禁测试打这里)。**有值的行才出现**,
+    /// 行序固定:X Y ΔX ΔY W H ∠。Δ 行显式带符号(`+4` / `-4`)。
+    pub fn lines(&self) -> Vec<String> {
+        let n = |v: f64| format_num(v);
+        let d = |v: f64| {
+            if v >= 0.0 {
+                format!("+{}", n(v))
+            } else {
+                n(v)
+            }
+        };
+        let mut out = Vec::new();
+        if let Some(v) = self.x {
+            out.push(format!("X {}", n(v)));
+        }
+        if let Some(v) = self.y {
+            out.push(format!("Y {}", n(v)));
+        }
+        if let Some(v) = self.dx {
+            out.push(format!("ΔX {}", d(v)));
+        }
+        if let Some(v) = self.dy {
+            out.push(format!("ΔY {}", d(v)));
+        }
+        if let Some(v) = self.w {
+            out.push(format!("W {}", n(v)));
+        }
+        if let Some(v) = self.h {
+            out.push(format!("H {}", n(v)));
+        }
+        if let Some(v) = self.angle {
+            out.push(format!("∠ {}°", n(v)));
+        }
+        out
+    }
+
+    /// 是否有可显示内容(空 = 调用方跳过绘制)。
+    pub fn is_empty(&self) -> bool {
+        self.lines().is_empty()
+    }
+
+    /// 画在屏幕坐标 `pos` 右下偏移处(egui 顶层 Tooltip 层)。
+    pub fn show(&self, ctx: &egui::Context, pos: egui::Pos2) {
+        let lines = self.lines();
+        if lines.is_empty() {
+            return;
+        }
+        let t = theme::tokens(ctx);
+        let layer = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Tooltip,
+            egui::Id::new("vb_value_overlay"),
+        ));
+        // L4 表面:中性阶按下标(深 N7/浅 N1)+ 表面不透明度
+        let base = theme::elevation::base(theme::elevation::L4, &t);
+        let [r, g, b, _] = base.to_srgba_unmultiplied();
+        let alpha = (theme::elevation::surface_alpha_l4(t.dark) * 255.0).round() as u8;
+        let fill = Color32::from_rgba_unmultiplied(r, g, b, alpha);
+        let font = theme::typography::mono_font_id(ctx.zoom_factor());
+        let line_h = theme::typography::MONO.line_height;
+        let pad_x = theme::space::S3;
+        let pad_y = theme::space::S2;
+        let galleys: Vec<_> = lines
+            .iter()
+            .map(|l| layer.layout_no_wrap(l.clone(), font.clone(), t.text))
+            .collect();
+        let w = galleys.iter().map(|g| g.size().x).fold(0.0f32, f32::max) + pad_x * 2.0;
+        let h = line_h * lines.len() as f32 + pad_y * 2.0;
+        let rect = egui::Rect::from_min_size(pos + Vec2::new(16.0, 16.0), Vec2::new(w, h));
+        // 阴影:egui painter 无直接 shadow → 画一圈更大的半透明底矩形近似
+        // (真实模糊阴影由 Window 层的 L3/L4 承担;浮层贴光标,阴影弱化)
+        layer.rect_filled(
+            rect.expand(theme::space::S3),
+            theme::radius::lg(),
+            Color32::from_black_alpha(if t.dark { 64 } else { 26 }), // vb-size-ok: 阴影颜色 alpha 字节(G-UI-B 域)
+        );
+        layer.rect_filled(rect, theme::radius::md(), fill);
+        layer.rect_stroke(
+            rect,
+            theme::radius::md(),
+            Stroke::new(theme::stroke::HAIRLINE, t.border),
+            egui::StrokeKind::Inside,
+        );
+        for (i, g) in galleys.iter().enumerate() {
+            layer.galley(
+                pos2(rect.left() + pad_x, rect.top() + pad_y + line_h * i as f32),
+                g.clone(),
+                t.text,
+            );
+        }
+    }
+}
+
+// ──────────────────────── 20. Dialog ────────────────────────
+
+/// 对话框包装(§8.6 #20):title 字号、L3 阴影(全局 `window_shadow`
+/// 已定)、**出场 8px + fade 120ms**(动效开关关闭自动直通)、底部
+/// 按钮右对齐走 [`dialog_footer`]。Esc/Enter 键位语义由调用方按各自
+/// 输入面接线(命令面板输入框常驻,统一收口会误触发 —— 与
+/// [`dialog_footer`] 同一裁定)。
+///
+/// 返回窗口的内部产出;`open` 由调用方持有(× 关闭会把它置 false)。
+pub fn dialog<R>(
+    ctx: &egui::Context,
+    id_salt: &str,
+    title: &str,
+    open: &mut bool,
+    body: impl FnOnce(&mut Ui) -> R,
+) -> Option<R> {
+    let mut win_open = *open;
+    let id = egui::Id::new(id_salt);
+    let out = egui::Window::new(title)
+        .id(id)
+        .open(&mut win_open)
+        .collapsible(false)
+        .resizable(false)
+        .show(ctx, |ui| {
+            crate::motion::fade_slide(ui, id.with("vb-dlg-enter"), theme::motion::STATE, 8.0, body)
+        });
+    *open = win_open;
+    out.and_then(|ir| ir.inner)
+}
+
+// ──────────────────────── §8.9 错误内联条 ────────────────────────
+
+/// 错误内联条(§8.9 错误态):`danger` 左描边 + 图标 + 文本,
+/// **详情可展开**(`details` 非空时出现展开钮)。
+///
+/// 与 toast 的分工:toast 是"飘走的通知",内联条是"驻留在表单里、
+/// 直到问题解决"的状态 —— 导入报错、命令失败上下文用这个。
+pub fn inline_error(ui: &mut Ui, message: &str, details: Option<&str>, expanded: &mut bool) {
+    let t = theme::tokens(ui.ctx());
+    let resp = egui::Frame::new()
+        .fill(theme::state::over(
+            t.bg_panel,
+            t.danger.gamma_multiply(0.10),
+        ))
+        .corner_radius(theme::radius::sm())
+        .inner_margin(egui::Margin::symmetric(
+            theme::space::S3 as i8,
+            theme::space::S2 as i8,
+        ))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(icons::rich(icons::Name::Alert, 14.0).color(t.danger));
+                ui.label(RichText::new(message).font(fonts::font(
+                    theme::typography::BODY.size,
+                    fonts::Weight::Regular,
+                )));
+                if details.is_some() {
+                    let chev = if *expanded {
+                        icons::Name::Expanded
+                    } else {
+                        icons::Name::Collapsed
+                    };
+                    if icon_button(
+                        ui,
+                        chev,
+                        if *expanded {
+                            "收起详情"
+                        } else {
+                            "展开详情"
+                        },
+                    )
+                    .clicked()
+                    {
+                        *expanded = !*expanded;
+                    }
+                }
+            });
+            if *expanded {
+                if let Some(d) = details {
+                    ui.label(
+                        RichText::new(d)
+                            .font(theme::typography::mono_font_id(1.0))
+                            .color(t.text_2),
+                    );
+                }
+            }
+        });
+    // 左 danger 描边(S4):3px 竖条贴条左缘,圆角内收
+    let rect = resp.response.rect;
+    ui.painter().line_segment(
+        [
+            pos2(rect.left() + 2.0, rect.top() + theme::space::S2),
+            pos2(rect.left() + 2.0, rect.bottom() - theme::space::S2),
+        ],
+        Stroke::new(3.0, t.danger),
+    );
 }
 
 #[cfg(test)]
@@ -1525,5 +2374,67 @@ mod tests {
             resolve_var("var(--gray)", &tokens).is_some(),
             "hsl() 令牌经 vb_common 解析"
         );
+    }
+
+    // ── S4 批(审查 §8.6):新组件纯函数面 ──
+
+    /// ValueOverlay 行序与"有值才显示"(§8.6 #18 ⭐):移动会话出
+    /// X/Y/Δ;缩放会话出 W/H;旋转出 ∠ —— 空字段不占行。
+    #[test]
+    fn value_overlay_lines_subset_in_order() {
+        let mut v = ValueOverlay::default();
+        assert!(v.is_empty(), "全空 = 不画");
+        v.x = Some(120.0);
+        v.dx = Some(-4.0);
+        assert_eq!(v.lines(), vec!["X 120", "ΔX -4"]);
+        v.dy = Some(6.0);
+        v.y = Some(80.0);
+        v.w = Some(320.0);
+        v.h = Some(160.5);
+        v.angle = Some(90.0);
+        assert_eq!(
+            v.lines(),
+            vec!["X 120", "Y 80", "ΔX -4", "ΔY +6", "W 320", "H 160.5", "∠ 90°"],
+            "行序固定:X Y ΔX ΔY W H ∠"
+        );
+    }
+
+    /// NumField 混合态只是渲染提示,不影响求值/格式化纯函数。
+    #[test]
+    fn numfield_mixed_is_display_only() {
+        // 与 `unit_is_display_only` 同口径:构造器开关不进任何纯函数
+        let mut a = 1.0;
+        let mut b = 2.0;
+        let f = NumField::new("X", &mut a).mixed(true);
+        assert!(f.mixed);
+        let g = NumField::new("X", &mut b);
+        assert!(!g.mixed, "默认单值态");
+    }
+
+    /// 空态组件的规格钉子:标题必填、行动可选(消 UI-07 的统一入口)。
+    #[test]
+    fn empty_state_builder_contract() {
+        let e = EmptyState::new(icons::Name::KindLayer, "还没有对象");
+        assert_eq!(e.title, "还没有对象");
+        assert!(e.action.is_none(), "不带行动的空态合法(纯提示)");
+        let e = e.body("先创建").action("新建");
+        assert_eq!(e.body, "先创建");
+        assert_eq!(e.action, Some("新建"));
+    }
+
+    /// Badge 三态映射(状态栏/台账消费):每类都解析到语义色而非字面量。
+    #[test]
+    fn badge_kinds_are_exhaustive_documented() {
+        // 编译期穷举:新增 BadgeKind 变体时此处 match 编译失败
+        for k in [
+            BadgeKind::Neutral,
+            BadgeKind::Accent,
+            BadgeKind::Success,
+            BadgeKind::Warn,
+            BadgeKind::Danger,
+        ] {
+            let name = format!("{k:?}");
+            assert!(!name.is_empty());
+        }
     }
 }

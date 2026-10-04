@@ -25,6 +25,8 @@ impl eframe::App for VellumApp {
         // 主题逐帧应用(幂等;P2.7 支持 深/浅 切换)。H-1:带动效总开关
         // —— 关闭时 egui animation_time 归零,组件侧动画同步冻结。
         theme::apply_ex(ui.ctx(), self.theme_dark, 1.0, self.motion_enabled);
+        // §8.3.5 密度档:行高 24/28 的开关面(图层行等经 density::row_height 读)
+        theme::density::set_compact(ui.ctx(), self.density_compact);
         // 04-3:UI 缩放因子。egui 的 pixels_per_point = zoom_factor × 系统 DPI,
         // 所以把缩放表达成 zoom_factor:随系统 DPI(150% 屏自动 1.5×),
         // 手调档位(视图 → 界面缩放)与系统缩放正交;egui-winit 在显示器
@@ -115,6 +117,11 @@ impl eframe::App for VellumApp {
             }
         }
         self.canvas(ui, frame);
+        // §8.7 ⭐:底部浮动工具条(Figma UI3 标志设计)。工具箱停靠在
+        // 底部时不画(同一排工具不重复);Tab 隐藏面板时一起隐藏。
+        if !self.panels_hidden && self.toolbar_dock != dock_layout::DockSide::Bottom {
+            self.floating_toolbar(ui);
+        }
         // U-4:工具长按同族弹层(独立 Area,最上层;无弹层时零开销)
         self.family_popup_ui(ui);
         // 04-5-1:打开/新建项目后自动「适合窗口」。fit 依赖画布矩形,

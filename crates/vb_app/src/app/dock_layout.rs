@@ -89,7 +89,11 @@ impl DockSide {
 pub fn toolbar_size(side: DockSide, columns: u8) -> (f32, f32) {
     let cols = columns.clamp(1, 2) as f32;
     match side {
-        DockSide::Left | DockSide::Right => (60.0 + (cols - 1.0) * 28.0, 0.0),
+        // §8.7:工具箱单列 44(图标钮 32 + 两侧余量);双列 +32
+        DockSide::Left | DockSide::Right => (
+            vb_ui::theme::space::TOOLBOX_WIDTH + (cols - 1.0) * 32.0,
+            0.0,
+        ),
         DockSide::Top | DockSide::Bottom => (0.0, vb_ui::theme::space::CONTROL_BAR_HEIGHT),
     }
 }
@@ -292,6 +296,9 @@ pub struct WorkspaceConfig {
     pub sec_dock_collapsed: bool,
     /// H-1 动效总开关(true = 开;首选项「常规」页/视图菜单可关)。
     pub motion_enabled: bool,
+    /// §8.3.5 密度档(true = compact 行高 24;false = comfortable 28)。
+    /// v2 内追加字段,serde(default) 兼容旧文件,不抬版本。
+    pub density_compact: bool,
 }
 
 impl Default for WorkspaceConfig {
@@ -338,6 +345,7 @@ impl Default for WorkspaceConfig {
             sec_dock_width: super::panel_dock::SEC_DOCK_WIDTH,
             sec_dock_collapsed: false,
             motion_enabled: true,
+            density_compact: false,
         }
     }
 }
@@ -572,8 +580,8 @@ mod tests {
 
     #[test]
     fn toolbar_sizes_follow_side_and_columns() {
-        assert_eq!(toolbar_size(DockSide::Left, 1).0, 60.0);
-        assert_eq!(toolbar_size(DockSide::Right, 2).0, 88.0);
+        assert_eq!(toolbar_size(DockSide::Left, 1).0, 44.0, "§8.7 单列 44");
+        assert_eq!(toolbar_size(DockSide::Right, 2).0, 76.0);
         assert!(toolbar_size(DockSide::Top, 2).1 > 0.0);
         assert_eq!(
             toolbar_size(DockSide::Bottom, 1).1,

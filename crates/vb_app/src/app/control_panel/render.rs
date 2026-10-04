@@ -57,9 +57,12 @@ impl VellumApp {
                                     self.control_field_ui(ui, field);
                                 }
                                 // 需要选区的态没有对象时给引导,不画死控件
-                                // (不做"点了没反应")
+                                // (不做"点了没反应";§8.9:引导带键位,
+                                // 与属性面板空态同一套话术)
                                 if needs_selection(spec.state) && self.selection.is_empty() {
-                                    ui.weak("先选中对象");
+                                    ui.weak(
+                                        "先选中对象(按 V 点选 · M 拖框创建 · 双击文字进入编辑)",
+                                    );
                                 }
                             });
                         });

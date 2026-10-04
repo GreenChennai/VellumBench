@@ -99,6 +99,15 @@ impl VellumApp {
                 let _ = tx.send(crate::shell::ShellRequest::MotionChanged(motion));
             }
         }
+        // §8.3.5:密度档(图层行等列表行高 24/28;默认 comfortable)
+        let mut compact = self.density_compact;
+        if ui
+            .checkbox(&mut compact, "紧凑密度(列表行高 24;默认 comfortable 28)")
+            .changed()
+        {
+            self.density_compact = compact;
+            self.save_workspace();
+        }
         let mut show_tools = self.show_all_tools;
         if ui
             .checkbox(&mut show_tools, "显示未支持工具(置灰展示,点击见计划说明)")
@@ -398,6 +407,8 @@ impl VellumApp {
         }
         self.ui_scale = d.ui_scale;
         self.hints = d.hints;
+        // §8.3.5:密度回 comfortable
+        self.density_compact = d.density_compact;
         self.autosave_interval_secs = d.autosave_interval_secs;
         self.autosave_keep = d.autosave_keep;
         // 05-7:界面语言回默认(中文)

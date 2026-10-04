@@ -412,9 +412,32 @@ impl VellumApp {
     }
 
     pub(crate) fn show_command_palette(&mut self, ui: &mut egui::Ui) {
-        // 命令面板(P3.2,Ctrl+K;04-1 重制:开→聚焦→过滤→↑↓→Enter→Esc)
+        // 命令面板(P3.2,Ctrl+K;04-1 重制 + §8.6 #19 ⭐:背板 80ms 淡入、
+        // 面板 120ms 下滑、模糊/拼音首字母容错)
         if !self.palette_open {
             return;
+        }
+        let ctx = ui.ctx();
+        // ── 背板:全视口压暗,80ms 淡入(motion::HOVER;总开关关=直通)──
+        {
+            let backdrop_a = vb_ui::motion::enter_alpha(
+                ctx,
+                egui::Id::new("vb-palette-backdrop"),
+                vb_ui::theme::motion::HOVER,
+            );
+            let vp = ctx.viewport_rect();
+            // Middle:压住面板与先创建的窗口,但不盖住本帧随后创建的
+            // 命令面板 Window(同序层后建者在上);用 Foreground 会连
+            // 面板自己一起压暗并挡输入(实测口径:Order 语义)
+            let dim = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Middle,
+                egui::Id::new("vb-palette-dim"),
+            ));
+            dim.rect_filled(
+                vp,
+                0.0,
+                egui::Color32::from_black_alpha((140.0 * backdrop_a).round() as u8),
+            );
         }
         let mut open = true;
         let mut close = false;
@@ -427,12 +450,12 @@ impl VellumApp {
             .pivot(egui::Align2::CENTER_CENTER)
             .default_pos(vp_center - egui::vec2(0.0, 60.0))
             .show(ui.ctx(), |ui| {
-                // H-1:入场淡入(80ms —— 面板是"高频轻弹"的浮层,比对话框更快)
+                // §8.6 #19:下滑 120ms(motion::STATE,8px —— 对话框档)
                 vb_ui::motion::fade_slide(
                     ui,
                     egui::Id::new("vb-dlg-palette"),
-                    vb_ui::theme::motion::HOVER,
-                    2.0,
+                    vb_ui::theme::motion::STATE,
+                    8.0,
                     |ui| {
                         let search = ui.add_sized(
                             [360.0, vb_ui::theme::row_height(ui.ctx())],
@@ -691,14 +714,122 @@ impl VellumApp {
 
 // ─────────────────────── 命令面板纯函数(04-1 状态机;门禁测试打这里) ───────────────────────
 
-/// 关键字过滤:标签 / 命令 id 的大小写不敏感子串匹配,保持注册表顺序。
+/// 拼音首字母容错表(§8.6 #19 ⭐):`(中文词, 拼音首字母小写)`。
+///
+/// **覆盖口径**:命令面板高频词全表;查询 `bc` 命中含「保存」的命令。
+/// 同首字母的词(如 缩放/首选项 → sx)各自成行,匹配取并集 —— 容错
+/// 本来就是"多给几条候选",不是精确检索。表按词匹配(标签包含该词),
+/// 不逐字注音:全字库拼音映射是一份数据资产,不值得为本功能引入。
+pub const PINYIN_INITIALS: &[(&str, &str)] = &[
+    ("新建", "xj"),
+    ("打开", "dk"),
+    ("保存", "bc"),
+    ("导出", "dc"),
+    ("打印", "dy"),
+    ("退出", "tc"),
+    ("撤销", "cx"),
+    ("重做", "cz"),
+    ("全选", "qx"),
+    ("复制", "fz"),
+    ("剪切", "jq"),
+    ("粘贴", "nt"),
+    ("删除", "sc"),
+    ("编组", "bz"),
+    ("解组", "jz"),
+    ("上移", "sy"),
+    ("下移", "xy"),
+    ("缩放", "sf"),
+    ("放大", "fd"),
+    ("缩小", "sx"),
+    ("旋转", "xz"),
+    ("镜像", "jx"),
+    ("自由变换", "zybh"),
+    ("文字", "wz"),
+    ("对齐", "dq"),
+    ("图层", "tc"),
+    ("画板", "hb"),
+    ("属性", "sx"),
+    ("令牌", "lp"),
+    ("网格", "wg"),
+    ("参考线", "ckx"),
+    ("智能", "zn"),
+    ("标尺", "bc"),
+    ("主题", "zt"),
+    ("插件", "cj"),
+    ("历史", "ls"),
+    ("健康", "jk"),
+    ("工作区", "gzq"),
+    ("偏好", "ph"),
+    ("首选项", "skx"),
+    ("统计", "tj"),
+    ("键位", "jw"),
+    ("符号", "fh"),
+    ("渐变", "jb"),
+    ("切片", "qp"),
+    ("轮廓", "lk"),
+    ("像素", "xs"),
+    ("度量", "dl"),
+    ("时间轴", "sjz"),
+    ("动画", "dh"),
+];
+
+/// 模糊子序列匹配(纯函数):`needle` 的每个字符按序出现在
+/// `haystack` 中(大小写不敏感)即命中 —— "缩到两条击键"的容错层。
+/// 单字符查询不走子序列(会几乎全命中,失去过滤意义)。
+fn fuzzy_subsequence(haystack: &str, needle: &str) -> bool {
+    let n = needle.chars().count();
+    if n < 2 {
+        return false;
+    }
+    let hay_l = haystack.to_lowercase();
+    let mut it = hay_l.chars();
+    let mut matched = 0usize;
+    for nc in needle.to_lowercase().chars() {
+        let mut found = false;
+        for hc in it.by_ref() {
+            if hc == nc {
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return false;
+        }
+        matched += 1;
+    }
+    matched == n
+}
+
+/// 拼音首字母命中(纯函数):query(小写)== 某词首字母,或以其为前缀,
+/// 且标签包含该词。`zybh` 命中「自由变换」,`bc` 命中「保存/标尺」。
+fn pinyin_initial_hit(label: &str, query: &str) -> bool {
+    let q = query.trim().to_lowercase();
+    if q.chars().count() < 2 {
+        return false;
+    }
+    PINYIN_INITIALS.iter().any(|(word, initials)| {
+        label.contains(word) && (initials.starts_with(&q) || q.starts_with(*initials))
+    })
+}
+
+/// 关键字过滤:标签 / 命令 id 的大小写不敏感子串,或模糊子序列,
+/// 或拼音首字母(§8.6 #19);保持注册表顺序。
 /// `pub`:04-1 门禁测试(过滤语义)直接调用。
 pub fn palette_filter(query: &str) -> Vec<(&'static str, &'static str)> {
     let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return shortcuts::CMD_LABELS.to_vec();
+    }
     shortcuts::CMD_LABELS
         .iter()
         .copied()
-        .filter(|&(id, label)| q.is_empty() || label.to_lowercase().contains(&q) || id.contains(&q))
+        .filter(|&(id, label)| {
+            label.to_lowercase().contains(&q)
+                || id.to_lowercase().contains(&q)
+                || fuzzy_subsequence(label, &q)
+                || fuzzy_subsequence(id, &q)
+                || pinyin_initial_hit(label, &q)
+        })
         .collect()
 }
 
@@ -912,6 +1043,42 @@ mod tests {
         assert_eq!(palette_move_sel(7, 3, &ctx), 2, "越界游标夹回末项");
         // 无按键 = 保持(且夹回合法域)
         assert_eq!(palette_move_sel(1, 5, &ctx), 1);
+    }
+
+    /// §8.6 #19 ⭐:拼音首字母容错(bc→保存、xj→新建、zybh→自由变换)
+    /// 与模糊子序列(fsv→file.save)。单字符查询不走容错(防全命中)。
+    #[test]
+    fn palette_filter_pinyin_and_fuzzy() {
+        assert!(
+            palette_filter("bc")
+                .iter()
+                .any(|&(id, _)| id == "file.save"),
+            "bc 必须命中「保存」"
+        );
+        assert!(
+            palette_filter("xj").iter().any(|&(id, _)| id == "file.new"),
+            "xj 必须命中「新建项目」"
+        );
+        assert!(
+            palette_filter("zybh")
+                .iter()
+                .any(|&(_, label)| label.contains("变换")),
+            "四字词首字母全拼命中"
+        );
+        assert!(
+            palette_filter("fsv")
+                .iter()
+                .any(|&(id, _)| id == "file.save"),
+            "子序列模糊命中 id"
+        );
+        // 容错不破坏精确语义:完整子串仍然命中,垃圾串仍为空
+        assert!(palette_filter("保存")
+            .iter()
+            .any(|&(id, _)| id == "file.save"));
+        assert!(palette_filter("不存在的命令xyzzy").is_empty());
+        // 单字符不走子序列/拼音(否则失去过滤意义)
+        assert!(!fuzzy_subsequence("file.save", "s"));
+        assert!(!pinyin_initial_hit("保存", "b"));
     }
 
     /// H-5 门禁:命令面板高亮分段 —— 命中段被单独标出(渲染层据此
