@@ -91,16 +91,20 @@ public class VbWin32 {
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int Left, Top, Right, Bottom; }
 
-    // 主窗判定:属于该 PID、可见、宽 > 400 的窗口里取最宽的一个。
+    // 主窗判定:属于该 PID、可见的窗口里取满足「宽 > 900 且高 > 560」的
+    // 最宽者。旧口径只看宽 > 400:控制台子系统的宿主控制台窗(~986×527)
+    // 会先于 wgpu 初始化完成的 GUI 窗(≥1024×640)命中,把基线拍成黑屏
+    // 控制台 —— 2026-10-05 实测踩坑,加高阈值 + 高度下界双重过滤。
     public static IntPtr FindMainWindow(int pid) {
         IntPtr best = IntPtr.Zero;
-        int bestW = 400;
+        int bestW = 900;
         EnumWindows(delegate(IntPtr h, IntPtr _l) {
             uint wpid; GetWindowThreadProcessId(h, out wpid);
             if (wpid == (uint)pid && IsWindowVisible(h)) {
                 RECT r; GetWindowRect(h, out r);
                 int w = r.Right - r.Left;
-                if (w > bestW) { bestW = w; best = h; }
+                int hh = r.Bottom - r.Top;
+                if (w > bestW && hh > 560) { bestW = w; best = h; }
             }
             return true;
         }, IntPtr.Zero);
