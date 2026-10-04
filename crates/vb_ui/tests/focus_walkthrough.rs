@@ -65,6 +65,36 @@ fn custom_controls_register_widget_info() {
     );
 }
 
+/// S5 清单 ③(§8.5 扫尾):自绘可交互点的读屏登记逐类点名 ——
+/// 凡组件层自绘的可交互控件(ToolButton / NumField 标签滑杆 /
+/// ColorField 色块 + 令牌色板 / SectionHeader / PanelTabs / icon_button /
+/// 进度指示)都必须有语义登记;非交互点(静态标签、分隔线、悬停文本)
+/// 不登记是**有意豁免**(egui Label 无事件语义,登记噪音大于收益)。
+#[test]
+fn interactive_widgets_register_widget_info() {
+    let total = count(COMPONENTS, "widget_info(");
+    assert!(
+        total >= 12,
+        "G-UI-D:WidgetInfo 登记点不足(找到 {total},需 ≥12)—— \
+         新增自绘可交互控件必须登记读屏语义"
+    );
+    for ty in [
+        "WidgetType::Button",            // ToolButton(带激活态)+ icon_button + 进度 pill
+        "WidgetInfo::slider(",           // NumField 标签区(scrubby 拖改值,slider 语义)
+        "WidgetType::ColorButton",       // ColorField 色块 + 取色器令牌色板
+        "WidgetType::CollapsingHeader",  // SectionHeader 可折叠标题
+        "WidgetType::SelectableLabel",   // PanelTabs Tab 页
+        "WidgetType::ProgressIndicator", // 线性进度
+        "WidgetType::Checkbox",          // checkbox / switch
+        "WidgetType::RadioButton",       // radio
+    ] {
+        assert!(
+            COMPONENTS.contains(ty),
+            "G-UI-D:组件层缺 {ty} 的读屏登记(S5 清单 ③ 回归)"
+        );
+    }
+}
+
 /// Tab 序的机制面:自绘控件一律经 `Sense::click` / `Sense::drag` /
 /// `Sense::click_and_drag` 分配 —— egui 0.35 三者都含 FOCUSABLE 位,
 /// 因此"自定义控件不在 Tab 序"这类回归只可能来自改用 `Sense::hover()`。

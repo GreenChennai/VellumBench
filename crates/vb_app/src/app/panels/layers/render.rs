@@ -275,6 +275,10 @@ impl VellumApp {
         if resp.has_focus() {
             vb_ui::components::paint_focus_ring(ui, rect, &t);
         }
+        // S5 清单 ③:行读屏语义 = 图层名 + 选中态。
+        resp.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &r.name)
+        });
 
         // 布局:缩进 | 展开箭头 | 类型图标 | 标记点 | 名称 | ↑ ↓ 👁 🔒
         let center = rect.center().y;

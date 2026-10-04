@@ -375,6 +375,16 @@ impl<'a> ToolButton<'a> {
             );
         }
 
+        // S5 清单 ③:读屏语义 —— 工具名(+键位徽章)登记为 labelled
+        // Button,激活态进 selected 位(工具 = 单选模式)。
+        resp.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::Button,
+                self.enabled,
+                self.active,
+                self.tooltip_text(),
+            )
+        });
         let resp = resp.on_hover_text(self.tooltip_text());
         if self.enabled {
             resp
@@ -569,6 +579,10 @@ impl<'a> NumField<'a> {
         if lresp.has_focus() {
             paint_focus_ring(ui, lrect, &t);
         }
+        // S5 清单 ③:标签区是「拖拽改值」的 scrubby 滑杆语义 —— 读屏
+        // 登记为 Slider(带当前值与字段名);输入框本体是 egui 原生
+        // TextEdit(自动登记)。
+        lresp.widget_info(|| egui::WidgetInfo::slider(true, *self.value, self.label));
         if lresp.hovered() {
             // §8.6 #3:标签拖改值光标 = col-resize(列宽调整语义,egui
             // 映射为水平双箭头列光标,与"拖动改值"的空间隐喻一致)
@@ -814,6 +828,11 @@ impl<'a> ColorField<'a> {
                 ),
                 egui::StrokeKind::Inside,
             );
+            // S5 清单 ③:色块 = 点击开取色器的按钮,读屏登记字段名
+            // (Alt+点击 = 完整取色器的指针手势限制见 ui-focus-a11y.md)。
+            resp.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::ColorButton, true, self.label)
+            });
             if resp.clicked() {
                 let full = ui.ctx().input(|i| i.modifiers.alt);
                 ui.ctx().memory_mut(|m| {
@@ -1040,6 +1059,14 @@ impl<'a> ColorField<'a> {
                         }
                         let (srect, sresp) =
                             ui.allocate_exact_size(Vec2::splat(18.0), Sense::click());
+                        // S5 清单 ③:令牌色板色块的可点语义(采用 var 名)
+                        sresp.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::WidgetType::ColorButton,
+                                true,
+                                format!("--{name}"),
+                            )
+                        });
                         ui.painter().rect_filled(srect, theme::radius::sm(), *c);
                         ui.painter().rect_stroke(
                             srect,
@@ -1298,6 +1325,16 @@ impl<'a> SectionHeader<'a> {
             if resp.clicked() {
                 *open = !*open;
             }
+            // S5 清单 ③:可折叠标题的读屏语义(展开态进 selected 位);
+            // 不可折叠分支(Sense::hover)是纯静态标题,不登记。
+            resp.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::CollapsingHeader,
+                    true,
+                    *open,
+                    self.title,
+                )
+            });
             return Some(*open);
         }
         None
@@ -1402,6 +1439,15 @@ impl<'a> PanelTabs<'a> {
                 if resp.has_focus() {
                     paint_focus_ring(ui, rect, &t);
                 }
+                // S5 清单 ③:Tab 页读屏语义(页名 + 激活态)。
+                resp.widget_info(|| {
+                    egui::WidgetInfo::selected(
+                        egui::WidgetType::SelectableLabel,
+                        true,
+                        is_active,
+                        *name,
+                    )
+                });
                 if self.reorderable {
                     let mut reorder: Option<(usize, i32)> = None;
                     resp.context_menu(|ui| {
@@ -1479,6 +1525,9 @@ pub fn icon_button(ui: &mut Ui, icon: icons::Name, tooltip: &str) -> Response {
     if resp.has_focus() {
         paint_focus_ring(ui, rect, &t);
     }
+    // S5 清单 ③:自绘图标钮的读屏语义 —— tooltip 文本即语义名
+    // (此前有 tooltip 无登记,归属 S5 的扫尾项)。
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tooltip));
     resp.on_hover_text(tooltip)
 }
 
@@ -1818,6 +1867,10 @@ pub fn badge(ui: &mut Ui, text: &str, kind: BadgeKind) -> Response {
         galley,
         fg,
     );
+    // S5 清单 ③:进度 pill 非交互(Sense::hover),读屏登记文本语义。
+    resp.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::ProgressIndicator, true, &text)
+    });
     resp.on_hover_text(text.to_owned())
 }
 
@@ -1919,6 +1972,8 @@ pub fn progress_linear(ui: &mut Ui, frac: f64, width: f32) -> Response {
             t.success,
         );
     }
+    // S5 清单 ③:进度指示非交互(Sense::hover),但读屏要知道它在。
+    resp.widget_info(|| egui::WidgetInfo::new(egui::WidgetType::ProgressIndicator));
     resp
 }
 

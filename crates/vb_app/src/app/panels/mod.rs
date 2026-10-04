@@ -371,6 +371,10 @@ impl VellumApp {
                         galley,
                         color,
                     );
+                    // S5 清单 ③:印记读屏语义 = 完整 tooltip 文本。
+                    ext_resp.widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &tip)
+                    });
                     // U-9:可点项 hover 手势 —— 手型光标 + 下划线,tooltip 提示可点
                     if ext_resp.hovered() {
                         ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);

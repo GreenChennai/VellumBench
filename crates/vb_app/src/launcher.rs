@@ -371,6 +371,15 @@ impl LauncherUi {
         if resp.has_focus() {
             vb_ui::components::paint_focus_ring(ui, rect, t);
         }
+        // S5 清单 ③:卡片读屏语义 = 项目名 + 选中态。
+        resp.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::SelectableLabel,
+                true,
+                selected,
+                &item.name,
+            )
+        });
 
         // ── 卡片内容(缩略图 | 名称/路径 | 时间+操作)──
         // 右列预留宽度:操作显现时给足一排按钮,静息时只留相对时间 ——
@@ -653,7 +662,7 @@ impl LauncherUi {
                     let resp = ui
                         .interact(
                             picked.rect,
-                            egui::Id::new("vb-home-card").with(title),
+                            egui::Id::new("vb-home-card").with(&title),
                             egui::Sense::click(),
                         )
                         .on_hover_text(desc);
@@ -666,6 +675,10 @@ impl LauncherUi {
                             &vb_ui::theme::tokens(ui.ctx()),
                         );
                     }
+                    // S5 清单 ③:卡片读屏语义 = 标题。
+                    resp.widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &title)
+                    });
                     if resp.hovered() {
                         ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
                     }
