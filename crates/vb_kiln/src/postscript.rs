@@ -229,8 +229,9 @@ fn draw_item_ps(s: &mut String, item: &DrawItem, page_h: f64) {
                         fnum(c[1] as f64),
                         fnum(c[2] as f64)
                     ));
+                    // 空行守卫(EXP-06):跳过空行而非 expect panic
+                    let Some(&last) = line.last() else { return };
                     let s0: usize = hard.chars().take(line[0]).map(|ch| ch.len_utf8()).sum();
-                    let last = *line.last().expect("nonempty");
                     let s1: usize = hard.chars().take(last + 1).map(|ch| ch.len_utf8()).sum();
                     let sub = &hard[s0..s1];
                     outline_text_ps(

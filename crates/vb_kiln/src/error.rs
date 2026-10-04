@@ -83,6 +83,11 @@ pub enum KilnWarning {
     ClipShapeApproximated { shape: String, count: usize },
     /// SVG 导入跳过的对象类别聚合(VB-4):效果丢失但内容不丢。
     ImportObjectSkipped { kind: String, count: usize },
+    /// 字体子集化失败,回退嵌入全量字体(EXP-01):CID 恒等映射保内容正确,
+    /// 文件更大;计数进报告不静默(RB-06)。
+    FontSubsetFallback { count: usize },
+    /// 字形未入子集重映射表(EXP-01 防御):按原 GID 直发,可能缺字。
+    GlyphRemapMiss { count: usize },
 }
 
 impl KilnWarning {
@@ -103,6 +108,8 @@ impl KilnWarning {
             KilnWarning::InlineSvgRasterized { .. } => "inline_svg_rasterized",
             KilnWarning::ClipShapeApproximated { .. } => "clip_shape_approximated",
             KilnWarning::ImportObjectSkipped { .. } => "import_object_skipped",
+            KilnWarning::FontSubsetFallback { .. } => "font_subset_fallback",
+            KilnWarning::GlyphRemapMiss { .. } => "glyph_remap_miss",
         }
     }
 
@@ -115,6 +122,7 @@ impl KilnWarning {
                 | KilnWarning::InlineSvgRasterized { .. }
                 | KilnWarning::ClipShapeApproximated { .. }
                 | KilnWarning::ImportObjectSkipped { .. }
+                | KilnWarning::GlyphRemapMiss { .. }
         )
     }
 
@@ -153,6 +161,12 @@ impl KilnWarning {
             }
             KilnWarning::ImportObjectSkipped { kind, count } => {
                 format!("导入跳过 {kind}×{count}(内容已导入,效果不带)")
+            }
+            KilnWarning::FontSubsetFallback { count } => {
+                format!("{count} 个字体子集化失败,已回退全量嵌入(CID 恒等映射,内容正确;文件更大)")
+            }
+            KilnWarning::GlyphRemapMiss { count } => {
+                format!("{count} 个字形未入子集重映射表,按原 GID 直发(可能缺字,请检查字体文件)")
             }
         }
     }
