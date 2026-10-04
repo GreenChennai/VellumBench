@@ -2,6 +2,12 @@
 //!
 //! 事件与响应共用一条连接:`call` 等待匹配 id 的响应,途中收到的事件排队;
 //! `drain_events` 由上层(PageSession)消费并维护状态标志。
+//!
+//! 并发评估(PERF-10,结论:维持同步串行):单标签页的 CDP 命令在内核侧
+//! 按到达序执行,连接内多路复用不会让截图/求值并行;真正的跨页并行 =
+//! 多浏览器实例,动画分段实测为负收益且 ≥4 段触发 HTTP 读超时(数据见
+//! `vb_kiln::animlane` 分段注释:w1 10.6 → w2 5.9 → w3 1.8 帧/s),默认
+//! workers=1、并发显式 opt-in。在此之上引入异步运行时只增复杂度不加吞吐。
 
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};

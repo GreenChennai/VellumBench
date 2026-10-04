@@ -167,14 +167,8 @@ pub fn export_anim_webcodecs(source: &Path, opts: &AnimPipeOpts) -> Result<AnimL
     guard_lane(&opts.cancel, "WebCodecs 车道入口")?;
     let t_start = std::time::Instant::now();
     let (mount_dir, html_path) = crate::domexport::resolve_source(source)?;
-    let sink = std::env::temp_dir().join(format!(
-        "kiln-wc-{}-{}.h264",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.subsec_nanos())
-            .unwrap_or(0)
-    ));
+    // EXP-10:落盘点统一经 limits::temp_name
+    let sink = std::env::temp_dir().join(vb_browser::limits::temp_name("wc", ".h264"));
     let srv = vb_browser::staticsrv::StaticServer::start_with_upload(&mount_dir, sink.clone())?;
     let url = if source.is_dir() {
         srv.url_for_dir()?

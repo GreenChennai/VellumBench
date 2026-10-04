@@ -59,13 +59,24 @@ pub fn export_dom(
     scale: u32,
     height: u32,
 ) -> Result<DomExportResult, String> {
-    export_dom_with_cancel(source, format, transparent, width, scale, height, None)
+    export_dom_with_cancel(
+        source,
+        format,
+        transparent,
+        width,
+        scale,
+        height,
+        None,
+        None,
+    )
 }
 
 /// 可取消版单源导出(硬骨头 #3 静态快照车道收口):`cancel = Some` 时,
 /// 入口/采集/写出三段边界 + 浏览器内全部 CDP 长等待(≤100ms 泵片轮询,
 /// 见 `vb_browser::cancel`)均可协作中止;取消错误串带「导出已取消」
 /// 前缀,三态可判;浏览器随作用域 Drop 整树收割,产物不写半截。
+/// `max_wait`(EXP-02,`--max-wait`)= 采集/长等待总预算,收口同静态车道。
+#[allow(clippy::too_many_arguments)]
 pub fn export_dom_with_cancel(
     source: &Path,
     format: Format,
@@ -74,6 +85,7 @@ pub fn export_dom_with_cancel(
     scale: u32,
     height: u32,
     cancel: Option<crate::cancel::CancelToken>,
+    max_wait: Option<std::time::Duration>,
 ) -> Result<DomExportResult, String> {
     // 入口边界:预取消不起静态服务、不拉浏览器(与 cancel_lanes 同风格)
     if let Some(t) = &cancel {
@@ -104,6 +116,10 @@ pub fn export_dom_with_cancel(
         let t = t.clone();
         page.set_cancel_probe(std::sync::Arc::new(move || t.is_cancelled()));
     }
+    // EXP-02:--max-wait 总预算(采集/长等待统一收口)
+    if let Some(d) = max_wait {
+        page.set_overall_deadline(std::time::Instant::now() + d);
+    }
     // 采集视口(P0-3 尺寸门):显式 --width/--height 优先,否则按画板声明
     // 尺寸取景(abprobe,与导入器同一识别口径),再否则历史兜底 1080。
     // 此前视口宽固定 1080:1920 宽内容被裁掉 44%(PDF 页只剩 1080×1080)。
@@ -112,7 +128,9 @@ pub fn export_dom_with_cancel(
     // 采集 DSF:位图降级裁剪的分辨率上限;超长页(易拉宝 11812px)按 1 兜底,
     // 否则整页截图会超过浏览器单帧上限。矢量与图片项不受影响(后者原生分辨率)。
     let mut dsf = scale.clamp(1, 8);
-    if (vh as u64 * dsf as u64) > 15_000 || (vw as u64 * dsf as u64) > 15_000 {
+    if (vh as u64 * dsf as u64) > vb_browser::limits::CAPTURE_MAX_EDGE_PX
+        || (vw as u64 * dsf as u64) > vb_browser::limits::CAPTURE_MAX_EDGE_PX
+    {
         dsf = 1;
     }
     page.set_device_metrics(vw, vh, dsf)?;
@@ -140,13 +158,7 @@ pub fn export_dom_with_cancel(
 
     if std::env::var("KILN_DUMP_PAINTLIST").is_ok() {
         // 调试转储落系统临时目录(K4:不写源工程目录)
-        let dump = std::env::temp_dir().join(format!(
-            "kiln-paintlist-{}.json",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|t| t.as_nanos())
-                .unwrap_or(0)
-        ));
+        let dump = std::env::temp_dir().join(vb_browser::limits::temp_name("paintlist", ".json"));
         eprintln!("{{\"domwarn\":\"paintlist dump: {}\"}}", dump.display());
         let _ = std::fs::write(
             dump,
@@ -444,10 +456,12 @@ pub fn export_dom_pages(
     scale: u32,
     height: u32,
 ) -> Result<DomExportResult, String> {
-    export_dom_pages_with_cancel(sources, transparent, width, scale, height, None)
+    export_dom_pages_with_cancel(sources, transparent, width, scale, height, None, None)
 }
 
 /// 可取消版多源导出(硬骨头 #3):逐源采集/写出边界 + CDP 长等待可中止。
+/// `max_wait` 为**每个源**的采集预算(EXP-02;与单源口径一致)。
+#[allow(clippy::too_many_arguments)]
 pub fn export_dom_pages_with_cancel(
     sources: &[PathBuf],
     transparent: bool,
@@ -455,6 +469,7 @@ pub fn export_dom_pages_with_cancel(
     scale: u32,
     height: u32,
     cancel: Option<crate::cancel::CancelToken>,
+    max_wait: Option<std::time::Duration>,
 ) -> Result<DomExportResult, String> {
     if sources.is_empty() {
         return Err("多源导出至少需要一个 --source".into());
@@ -468,6 +483,7 @@ pub fn export_dom_pages_with_cancel(
             scale,
             height,
             cancel,
+            max_wait,
         );
     }
     let mut page_pdfs: Vec<Vec<u8>> = Vec::new();
@@ -488,7 +504,7 @@ pub fn export_dom_pages_with_cancel(
             }
         }
         // 逐源走单页导出(浏览器会话各自起落;效率列 carry-forward)
-        let r = export_dom_pdf_bytes(src, transparent, width, height, cancel.as_ref())?;
+        let r = export_dom_pdf_bytes(src, transparent, width, height, cancel.as_ref(), max_wait)?;
         meta.line_count += r.meta.line_count;
         meta.clip_demand += r.meta.clip_demand;
         meta.raster_count += r.meta.raster_count;
@@ -536,6 +552,7 @@ fn export_dom_pdf_bytes(
     width: u32,
     height: u32,
     cancel: Option<&crate::cancel::CancelToken>,
+    max_wait: Option<std::time::Duration>,
 ) -> Result<DomPageOut, String> {
     let (mount_dir, html_path) = resolve_source(src)?;
     let srv = vb_browser::staticsrv::StaticServer::start(&mount_dir)?;
@@ -557,6 +574,9 @@ fn export_dom_pdf_bytes(
     if let Some(t) = cancel {
         let t = t.clone();
         page.set_cancel_probe(std::sync::Arc::new(move || t.is_cancelled()));
+    }
+    if let Some(d) = max_wait {
+        page.set_overall_deadline(std::time::Instant::now() + d);
     }
     // P0-3:逐源取画板声明尺寸(多画板按各自尺寸),显式 --width/--height 优先
     let (vw, vh, artboard) = viewport_plan(src, width, height);

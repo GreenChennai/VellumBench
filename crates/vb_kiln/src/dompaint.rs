@@ -537,11 +537,8 @@ fn ensure_raster_dir(slot: &mut Option<PathBuf>) -> Result<PathBuf, String> {
     if let Some(d) = slot {
         return Ok(d.clone());
     }
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|t| t.as_nanos())
-        .unwrap_or(0);
-    let d = std::env::temp_dir().join(format!("kiln-raster-{}-{}", std::process::id(), nanos));
+    // EXP-10:落盘点统一经 limits::temp_name
+    let d = std::env::temp_dir().join(vb_browser::limits::temp_name("raster", ""));
     std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
     *slot = Some(d.clone());
     Ok(d)

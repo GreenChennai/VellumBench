@@ -25,14 +25,45 @@ pub const WAIT_CANCELLED_PREFIX: &str = "导出已取消";
 /// 实现,本 crate 不依赖 vb_kiln——依赖方向 vb_kiln → vb_browser)。
 pub type CancelProbe = Arc<dyn Fn() -> bool + Send + Sync>;
 
+/// 车道错误三态的类型化判定(COUP-05/COUP-R2:跨 crate 契约用**类型**
+/// 而非字符串前缀)。vb_kiln 动画车道以 `String` 报错、取消与失败共用
+/// 错误通道——下游(kiln-cli 退出码、分段收割判定)一律经本枚举分类;
+/// 前缀串降级为编码细节(仅 [`wait_cancelled`] 编码 + [`CancelState::of_error`]
+/// 解码,两处之外不得裸 `starts_with`)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancelState {
+    /// 协作取消(外部意志:CancelToken / stdin 'c')——收割、不留产物、
+    /// 退出码 130。
+    Cancelled,
+    /// 真失败——按错误上报。
+    Failed,
+}
+
+impl CancelState {
+    /// 从车道错误串判定(静态快照与动画两条车道的取消标记统一识别)。
+    pub fn of_error(err: &str) -> Self {
+        if err.starts_with(WAIT_CANCELLED_PREFIX) {
+            CancelState::Cancelled
+        } else {
+            CancelState::Failed
+        }
+    }
+
+    /// 是否取消(链式判定用)。
+    pub fn is_cancelled(self) -> bool {
+        self == CancelState::Cancelled
+    }
+}
+
 /// 构造车道取消错误(带位置标注,便于日志定位取消生效点)。
 pub fn wait_cancelled(what: &str) -> String {
     format!("{}(浏览器等待中止:{what})", WAIT_CANCELLED_PREFIX)
 }
 
-/// 判定错误串是否为取消(区别于真失败)。
+/// 判定错误串是否为取消(区别于真失败)。内部走 [`CancelState::of_error`]
+/// 单解码点;新代码建议直接用枚举。
 pub fn is_wait_cancelled(err: &str) -> bool {
-    err.starts_with(WAIT_CANCELLED_PREFIX)
+    CancelState::of_error(err).is_cancelled()
 }
 
 #[cfg(test)]
@@ -46,6 +77,23 @@ mod tests {
         assert!(e.contains("Page.captureScreenshot"), "位置标注应保留:{e}");
         assert!(!is_wait_cancelled("Page.navigate 传输失败: 连接断开"));
         assert!(!is_wait_cancelled("截图数据解码失败: bad base64"));
+    }
+
+    /// COUP-05:三态判定走类型化枚举(跨 crate 契约不再裸前缀比对)。
+    #[test]
+    fn cancel_state_classifies_typed() {
+        let e = wait_cancelled("Page.printToPDF 等待响应");
+        assert_eq!(CancelState::of_error(&e), CancelState::Cancelled);
+        assert!(CancelState::of_error(&e).is_cancelled());
+        assert_eq!(
+            CancelState::of_error("--max-wait 总预算已耗尽,放弃等待 Page.printToPDF"),
+            CancelState::Failed,
+            "预算耗尽是失败不是取消(参数契约 ≠ 外部意志)"
+        );
+        assert_eq!(
+            CancelState::of_error("截图数据解码失败: bad base64"),
+            CancelState::Failed
+        );
     }
 
     #[test]

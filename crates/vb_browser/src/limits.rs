@@ -48,6 +48,63 @@ pub const ARTBOARD_REFLOW_DELAY_MS: u64 = 150;
 /// 无画板取景时 artboard 分支前的固定等待(经验值)。
 pub const BODY_MARGIN_RESET_DELAY_MS: u64 = 120;
 
+/// CDP 长等待上限(EXP-12 集中):截图 180s / printToPDF 300s /
+/// beginFrame 60s / 页面 enable 与 attach 30s。此前字面量散落
+/// page.rs/print.rs 多处,调整一处漏一处。
+pub const SCREENSHOT_WAIT: Duration = Duration::from_secs(180);
+pub const PRINT_PDF_WAIT: Duration = Duration::from_secs(300);
+pub const BEGIN_FRAME_WAIT: Duration = Duration::from_secs(60);
+pub const ATTACH_ENABLE_WAIT: Duration = Duration::from_secs(30);
+
+/// navigate 后 networkidle 静默判定的外层等待上限(EXP-12;内层静默窗
+/// 见 [`NETWORK_IDLE_SILENCE_MS`])。
+pub const NETWORK_IDLE_CAP: Duration = Duration::from_secs(3);
+
+// `--max-wait` 语义(EXP-02):显式给出时作为浏览器车道**总 deadline**
+// —— settle 预算与全部 CDP 长等待(截图/printToPDF/beginFrame)各自被
+// min(默认上限, 剩余预算) 收口;预算耗尽的调用立即失败(错误串可判),
+// 不再静默挂满 180s/300s。未给出(None)= 维持各阶段默认上限。
+
+/// 临时产物命名(EXP-10 落盘点集中注册):一切落 %TEMP% 的工作目录/文件
+/// **必须**经 [`temp_name`] 生成 —— `kiln-{kind}-{pid}-{nanos}-{seq}{ext}`。
+/// 扫描回收按 `kiln-` 前缀命中 + 第二段解析存活 pid:pid 已死立即回收
+/// (崩溃残留不再等 6h),解析不出 pid(历史/外来目录)退回 6h mtime 规则。
+/// 新增落盘点 = 新 kind 字符串,命名约定即注册,无独立清单可漏。
+pub fn temp_name(kind: &str, ext: &str) -> String {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    format!("kiln-{kind}-{}-{nanos}-{seq}{ext}", std::process::id())
+}
+
+/// 临时目录前缀(扫描命中范围;精确解析见 [`parse_temp_pid`])。
+pub const TEMP_PREFIX: &str = "kiln-";
+
+/// 历史目录(解析不出存活 pid)的 mtime 回收阈值。
+pub const TEMP_LEGACY_MTIME_SECS: u64 = 6 * 3600;
+
+/// 单次清扫最多探活的目录数(RB-05:一切循环有上限;异常环境下 %TEMP%
+/// 被灌满时不把启动拖成分钟级)。
+pub const TEMP_SWEEP_PROBE_MAX: usize = 64;
+
+/// 从 `kiln-{kind}-{pid}-…` 解析落盘 pid(第二段须全数字)。
+pub fn parse_temp_pid(name: &str) -> Option<u32> {
+    let rest = name.strip_prefix(TEMP_PREFIX)?;
+    let mut it = rest.split('-');
+    let kind = it.next()?;
+    if kind.is_empty() || kind.bytes().any(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let pid = it.next()?;
+    if pid.is_empty() || !pid.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    pid.parse().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -61,5 +118,32 @@ mod tests {
         assert_eq!(ASSET_FONTS_CAP_MS, 3_000);
         assert_eq!(ASSET_IMGS_CAP_MS, 5_000);
         assert_eq!(SCROLL_REVEAL_MAX_STEPS, 40);
+        assert_eq!(SCREENSHOT_WAIT, Duration::from_secs(180));
+        assert_eq!(PRINT_PDF_WAIT, Duration::from_secs(300));
+        assert_eq!(BEGIN_FRAME_WAIT, Duration::from_secs(60));
+    }
+
+    /// EXP-10:temp_name 产出可被 parse_temp_pid 还原本进程 pid。
+    #[test]
+    fn temp_name_roundtrips_pid() {
+        let n = temp_name("browser", "");
+        assert!(n.starts_with("kiln-browser-"), "{n}");
+        assert_eq!(parse_temp_pid(&n), Some(std::process::id()), "{n}");
+        let f = temp_name("wc", ".h264");
+        assert!(f.ends_with(".h264") && f.starts_with("kiln-wc-"), "{f}");
+        assert_eq!(parse_temp_pid(&f), Some(std::process::id()));
+        // 唯一性(同 kind 同瞬间两次调用)
+        assert_ne!(temp_name("anim", ""), temp_name("anim", ""));
+    }
+
+    /// EXP-10:外来/畸形名字解析为 None(退回 mtime 规则,宁留勿删)。
+    #[test]
+    fn parse_rejects_foreign_names() {
+        assert_eq!(parse_temp_pid("not-kiln-123"), None);
+        assert_eq!(parse_temp_pid("kiln-123-456"), None, "kind 含数字拒绝");
+        assert_eq!(parse_temp_pid("kiln-browser-"), None);
+        assert_eq!(parse_temp_pid("kiln-browser-x-1"), None);
+        // 但合法的其他 kind 可解析(命名约定即注册,无清单可漏)
+        assert_eq!(parse_temp_pid("kiln-somefuture-99-1-2"), Some(99));
     }
 }

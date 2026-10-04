@@ -108,7 +108,11 @@ mod tests {
         assert_eq!(decode("Zg=").unwrap(), b"f");
         assert_eq!(decode("Zg").unwrap(), b"f");
         assert_eq!(decode("Zm8").unwrap(), b"fo");
-        assert_eq!(decode("Zm9vZm9").unwrap(), b"foofo", "mod 4 == 3 是合法尾块");
+        assert_eq!(
+            decode("Zm9vZm9").unwrap(),
+            b"foofo",
+            "mod 4 == 3 是合法尾块"
+        );
         // 空白容忍保持(CDP 载荷偶带换行)
         assert_eq!(decode("Zm9v\n").unwrap(), b"foo");
     }

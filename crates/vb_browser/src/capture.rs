@@ -6,8 +6,8 @@ use serde_json::Value;
 
 use crate::limits;
 use crate::page::{
-    PageSession, ARTBOARD_RECT_JS, BODY_MARGIN_RESET_JS, CONTENT_SIZE_JS, FREEZE_ANIMATIONS_JS,
-    RAF_THROTTLE_JS, wait_assets_js,
+    wait_assets_js, PageSession, ARTBOARD_RECT_JS, BODY_MARGIN_RESET_JS, CONTENT_SIZE_JS,
+    FREEZE_ANIMATIONS_JS, RAF_THROTTLE_JS,
 };
 
 /// 捕获参数(与 WPI CLI 参数面一致)。
@@ -209,8 +209,14 @@ pub struct SettleOutcome {
 }
 
 /// 完整 settle(要素 5-8 编排;WPI `settle` 时序),总预算 [`settle_budget`]。
+/// 设过总 deadline 时(EXP-02,`--max-wait`)预算 = min(默认, 剩余):
+/// 资源等待/滚动/定格/稳定探测全部计入同一收口,超预算按当前帧导出并
+/// 显式留痕(下方告警)。
 pub fn settle(page: &mut PageSession) -> Result<SettleOutcome, String> {
-    let budget = settle_budget();
+    let budget = page
+        .deadline_remaining()
+        .map(|rem| rem.min(settle_budget()))
+        .unwrap_or_else(settle_budget);
     let t0 = Instant::now();
     let deadline = t0 + budget;
     let mut warnings = Vec::new();
@@ -327,8 +333,8 @@ pub fn capture_png(
         )?
     } else {
         let below_fold_canvas = page.has_below_fold_canvas();
-        let fits_limit = (opts.width as u64 * opts.scale as u64) <= 15_000
-            && (sh as u64 * opts.scale as u64) <= 15_000;
+        let fits_limit = (opts.width as u64 * opts.scale as u64) <= limits::CAPTURE_MAX_EDGE_PX
+            && (sh as u64 * opts.scale as u64) <= limits::CAPTURE_MAX_EDGE_PX;
         if fits_limit && !below_fold_canvas {
             // 单拍:captureBeyondViewport(要素 4 优先路径)
             page.screenshot(
@@ -349,7 +355,7 @@ pub fn capture_png(
     }
     let out_w = img.width();
     let out_h = img.height();
-    let bytes = encode_png(&img, rgba && opts.transparent)?;
+    let bytes = encode_png(img, rgba && opts.transparent)?;
     let _ = viewport_h;
     Ok(CaptureOutcome {
         png: bytes,
@@ -389,6 +395,9 @@ pub fn artboard_clip_rect(
 }
 
 /// 分块滚动截图 + 纵向拼接(WPI `capture_highres` 协议)。
+/// 拼接(PERF-04):画布按已知总尺寸一次分配,逐片落地即 overlay,
+/// 编码吃掉画布所有权 —— 消此前「tiles 全量驻留 + 画布」的双份峰值与
+/// `encode_png` 内的整页 clone。
 fn capture_tiled(
     page: &mut PageSession,
     opts: &CaptureOptions,
@@ -403,7 +412,7 @@ fn capture_tiled(
     let mut first = true;
     while y < total {
         page.scroll_to(y);
-        page.sleep(400);
+        page.sleep(limits::TILE_SETTLE_DELAY_MS);
         page.wait_two_raf();
         let actual = page.scroll_y();
         let rel = y.saturating_sub(actual);
@@ -447,7 +456,7 @@ fn capture_tiled(
         ty += t.height();
     }
     let _ = sw;
-    encode_png(&canvas, true)
+    encode_png(canvas, true)
 }
 
 fn decode_rgba(png: &[u8]) -> Result<(image::RgbaImage, bool), String> {
@@ -478,7 +487,8 @@ fn flatten_white(img: &mut image::RgbaImage) {
     }
 }
 
-fn encode_png(img: &image::RgbaImage, keep_alpha: bool) -> Result<Vec<u8>, String> {
+/// 按值接图(PERF-04):不透明分支直接消费 `img` 转 RGB,免整页 clone。
+fn encode_png(img: image::RgbaImage, keep_alpha: bool) -> Result<Vec<u8>, String> {
     let mut out = Vec::with_capacity(1024 * 1024);
     let encoder = image::codecs::png::PngEncoder::new_with_quality(
         std::io::Cursor::new(&mut out),
@@ -495,7 +505,7 @@ fn encode_png(img: &image::RgbaImage, keep_alpha: bool) -> Result<Vec<u8>, Strin
         )
         .map_err(|e| format!("PNG 编码失败: {e}"))?;
     } else {
-        let flat = image::DynamicImage::ImageRgba8(img.clone()).to_rgb8();
+        let flat = image::DynamicImage::ImageRgba8(img).to_rgb8();
         image::ImageEncoder::write_image(
             encoder,
             flat.as_raw(),
