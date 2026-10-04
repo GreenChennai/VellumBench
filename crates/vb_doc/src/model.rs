@@ -307,11 +307,24 @@ pub struct PseudoRule {
 #[derive(Debug, Clone)]
 pub struct Document {
     /// 修订号:每次命令应用 +1(Agent 乐观锁)。
+    ///
+    /// COUP-02:读取走 [`Document::rev`],保存路径的落盘后自增走
+    /// [`Document::bump_rev`] —— 字段仍 `pub`(存量调用面大,P1 收口进行时,
+    /// 台账 `docs/design/coup02-followup.md`)。
     pub rev: u64,
     pub meta: Meta,
+    /// 场景图 arena。**COUP-02**:新代码请走 [`Document::nodes`] /
+    /// [`Document::nodes_mut`] 访问器(受控出口,方法与字段同名,
+    /// `doc.nodes()` 即访问器);字段保留 pub 供存量调用面
+    /// (vb_app/vb_kiln/vb_kit 面板与导入路径),`#[doc(hidden)]`
+    /// 让文档与 IDE 不再鼓励直达。存量清单与收口口径见
+    /// `docs/design/coup02-followup.md`。
+    #[doc(hidden)]
     pub nodes: SlotMap<NodeId, Node>,
+    #[doc(hidden)]
     pub root: NodeId,
-    /// 画板顺序 = 导出顺序。
+    /// 画板顺序 = 导出顺序。COUP-02:读取走 [`Document::artboards`]。
+    #[doc(hidden)]
     pub artboards: Vec<NodeId>,
     /// 05-8 符号主件定义区(ADR-VB-L10):与 `root` 平级的第二棵 arena 树,
     /// **不在任何画板下** —— 画布/布局/导出页面内容都只走 `artboards`,
@@ -325,15 +338,22 @@ pub struct Document {
     /// 设计令牌 → `:root` CSS 变量(不带 `--` 前缀存储)。
     pub tokens: Vec<(String, String)>,
     /// 白名单外/复杂选择器 CSS 块(verbatim 保底)。
+    ///
+    /// COUP-02:vb_kiln/vb_app 有存量读者(断点/时间轴/资产面板),保持
+    /// pub;收口随 vb_app 面板批次走(台账 `docs/design/coup02-followup.md`)。
     pub raw_css: Vec<String>,
-    /// body 末尾原样透传片段(`<script>` 等)。
-    pub trailing_raw: Vec<String>,
+    /// body 末尾原样透传片段(`<script>` 等)。COUP-02:零外部使用者 →
+    /// `pub(crate)`(文档构成只经 import/export 命令路径改写)。
+    pub(crate) trailing_raw: Vec<String>,
     /// head 中无法建模的原样透传片段(meta/link 等,除 charset/viewport/title 外)。
+    ///
+    /// COUP-02:vb_app(断点/文档设置)有存量读者,保持 pub(同 `raw_css`)。
     pub head_extra: Vec<String>,
-    /// `<html>` 元素除 lang 外的保真属性(B5)。
-    pub extra_html_attrs: Vec<(String, String)>,
-    /// `<body>` 元素的保真属性(B5)。
-    pub extra_body_attrs: Vec<(String, String)>,
+    /// `<html>` 元素除 lang 外的保真属性(B5)。COUP-02:零外部使用者 →
+    /// `pub(crate)`。
+    pub(crate) extra_html_attrs: Vec<(String, String)>,
+    /// `<body>` 元素的保真属性(B5)。COUP-02:零外部使用者 → `pub(crate)`。
+    pub(crate) extra_body_attrs: Vec<(String, String)>,
     /// 05-5:断点覆盖规则(`@media (max-width: Npx)` 内的类规则,可编辑)。
     pub media_rules: Vec<MediaRule>,
     /// 05-5:伪类规则(最小闭环 :hover;可编辑)。
@@ -607,6 +627,162 @@ impl Document {
         let mut created = Vec::new();
         Some(tree.insert_into(self, parent, index, &mut created))
     }
+
+    // ── COUP-02(2026-10-05,S6):访问器 API + 只读视图 ──
+    //
+    // 口径(诚实评估,不为翻字段而破坏编译面):
+    // - 访问器是**推荐出口**;`nodes`/`root`/`defs_root`/`artboards` 因
+    //   vb_app/vb_kiln/vb_kit 存量调用面大(数百处),字段保持 pub +
+    //   `#[doc(hidden)]`,清零是进行时(台账 `docs/design/coup02-followup.md`);
+    // - 零外部使用者的字段已翻 `pub(crate)`;
+    // - 跨 crate 只读遍历走 [`DocumentView`] trait(未来可换实现)。
+
+    /// 修订号(命令应用计数;Agent 乐观锁比对用)。
+    pub fn rev(&self) -> u64 {
+        self.rev
+    }
+
+    /// 落盘后自增修订号(vb_agent 保存路径;命令路径不走这里 ——
+    /// 命令应用在 [`crate::commands`] 内部推进)。
+    pub fn bump_rev(&mut self) -> u64 {
+        self.rev += 1;
+        self.rev
+    }
+
+    /// 文档元信息(只读)。
+    pub fn meta(&self) -> &Meta {
+        &self.meta
+    }
+
+    /// 文档元信息(受控可变出口:标题/语言/输出模式)。
+    pub fn meta_mut(&mut self) -> &mut Meta {
+        &mut self.meta
+    }
+
+    /// 场景图 arena(只读)。
+    pub fn nodes(&self) -> &SlotMap<NodeId, Node> {
+        &self.nodes
+    }
+
+    /// 场景图 arena(受控可变出口:插入/逐点改节点;结构性变更加完
+    /// 请调 [`Document::sync_artboards`] 保持画板注册表一致)。
+    pub fn nodes_mut(&mut self) -> &mut SlotMap<NodeId, Node> {
+        &mut self.nodes
+    }
+
+    /// 文档根(`root` 哨兵,不在任何画板内;寻址校验用)。
+    pub fn root(&self) -> NodeId {
+        self.root
+    }
+
+    /// 符号主件定义区根(ADR-VB-L10;与 [`Document::root`] 平级)。
+    pub fn defs_root(&self) -> NodeId {
+        self.defs_root
+    }
+
+    /// 画板序(导出序;只读)。
+    pub fn artboards(&self) -> &[NodeId] {
+        &self.artboards
+    }
+
+    /// 画板序(受控可变出口:重排导出顺序用;增删请走
+    /// [`Document::new_artboard`] / 命令层 + [`Document::sync_artboards`])。
+    pub fn artboards_mut(&mut self) -> &mut Vec<NodeId> {
+        &mut self.artboards
+    }
+
+    /// 断点覆盖规则(只读;05-5)。
+    pub fn media_rules(&self) -> &[MediaRule] {
+        &self.media_rules
+    }
+
+    /// 断点覆盖规则(受控可变出口)。
+    pub fn media_rules_mut(&mut self) -> &mut Vec<MediaRule> {
+        &mut self.media_rules
+    }
+
+    /// 伪类规则(只读;05-5)。
+    pub fn pseudo_rules(&self) -> &[PseudoRule] {
+        &self.pseudo_rules
+    }
+
+    /// 伪类规则(受控可变出口)。
+    pub fn pseudo_rules_mut(&mut self) -> &mut Vec<PseudoRule> {
+        &mut self.pseudo_rules
+    }
+}
+
+/// 跨 crate **只读**视图(COUP-02 / COUP-R3:跨 crate 只读访问走访问器
+/// / trait,不暴露可变内部)。
+///
+/// 用途:vb_agent / vb_plugin / vb_session 等下层 crate 的遍历型代码
+/// (投影/校验/统计)以 `impl DocumentView` / `&dyn DocumentView` 收参,
+/// 不与 `Document` 具体类型绑定 —— 未来 arena 换型或加校验层时不破调用面。
+/// 只含读;写一律走 [`Document`] 受控出口或命令层。
+pub trait DocumentView {
+    /// 修订号。
+    fn rev(&self) -> u64;
+    /// 文档元信息。
+    fn meta(&self) -> &Meta;
+    /// 场景图 arena(只读)。
+    fn nodes(&self) -> &SlotMap<NodeId, Node>;
+    /// 文档根哨兵。
+    fn root(&self) -> NodeId;
+    /// 符号定义区根。
+    fn defs_root(&self) -> NodeId;
+    /// 画板序(导出序)。
+    fn artboards(&self) -> &[NodeId];
+    /// 按 id 取节点。
+    fn node(&self, id: NodeId) -> Option<&Node>;
+    /// 按 sid 查 NodeId。
+    fn find_by_sid(&self, sid: &str) -> Option<NodeId>;
+    /// sid 是否已被占用。
+    fn sid_in_use(&self, sid: &str) -> bool;
+    /// `target` 是否为 `ancestor` 自身或其后代。
+    fn is_descendant_or_self(&self, ancestor: NodeId, target: NodeId) -> bool;
+    /// 画板原点(画板本地几何的参照)。
+    fn artboard_origin(&self, artboard: NodeId) -> (f64, f64);
+    /// 深度优先收集子树(含自身,前序)。
+    fn subtree(&self, id: NodeId, out: &mut Vec<NodeId>);
+}
+
+impl DocumentView for Document {
+    fn rev(&self) -> u64 {
+        Document::rev(self)
+    }
+    fn meta(&self) -> &Meta {
+        Document::meta(self)
+    }
+    fn nodes(&self) -> &SlotMap<NodeId, Node> {
+        Document::nodes(self)
+    }
+    fn root(&self) -> NodeId {
+        Document::root(self)
+    }
+    fn defs_root(&self) -> NodeId {
+        Document::defs_root(self)
+    }
+    fn artboards(&self) -> &[NodeId] {
+        Document::artboards(self)
+    }
+    fn node(&self, id: NodeId) -> Option<&Node> {
+        self.nodes.get(id)
+    }
+    fn find_by_sid(&self, sid: &str) -> Option<NodeId> {
+        Document::find_by_sid(self, sid)
+    }
+    fn sid_in_use(&self, sid: &str) -> bool {
+        Document::sid_in_use(self, sid)
+    }
+    fn is_descendant_or_self(&self, ancestor: NodeId, target: NodeId) -> bool {
+        Document::is_descendant_or_self(self, ancestor, target)
+    }
+    fn artboard_origin(&self, artboard: NodeId) -> (f64, f64) {
+        Document::artboard_origin(self, artboard)
+    }
+    fn subtree(&self, id: NodeId, out: &mut Vec<NodeId>) {
+        Document::subtree(self, id, out)
+    }
 }
 
 /// 便于测试/工具的节点访问别名。
@@ -698,5 +874,82 @@ impl NodeTree {
             c.insert_into(doc, id, usize::MAX, created);
         }
         id
+    }
+}
+
+// ─────────────────────── COUP-02 门禁(单测) ───────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 访问器与字段同值(访问器是推荐出口,字段为存量兼容保留)。
+    #[test]
+    fn accessors_agree_with_fields() {
+        let doc = Document::new_default();
+        assert_eq!(doc.rev(), doc.rev);
+        assert_eq!(doc.root(), doc.root);
+        assert_eq!(doc.defs_root(), doc.defs_root);
+        assert_eq!(doc.artboards(), doc.artboards.as_slice());
+        assert_eq!(doc.nodes().len(), doc.nodes.len());
+        assert_eq!(doc.meta().title, doc.meta.title);
+        assert_eq!(doc.media_rules().len(), doc.media_rules.len());
+        assert_eq!(doc.pseudo_rules().len(), doc.pseudo_rules.len());
+    }
+
+    /// 受控可变出口与直改同效(nodes_mut / artboards_mut / meta_mut /
+    /// bump_rev),并保持派生状态一致。
+    #[test]
+    fn mutable_accessors_roundtrip() {
+        let mut doc = Document::new_default();
+        let ab = doc.artboards()[0];
+        let sid = doc.alloc_sid();
+        let id = doc
+            .nodes_mut()
+            .insert(Node::new(NodeKind::Box, "x", sid.clone()));
+        doc.nodes_mut().get_mut(ab).unwrap().children.push(id);
+        doc.nodes_mut().get_mut(id).unwrap().parent = Some(ab);
+        doc.meta_mut().title = "受控出口".into();
+        doc.media_rules_mut().push(MediaRule {
+            max_width: 640,
+            sid: sid.as_str().to_string(),
+            decls: Vec::new(),
+        });
+        assert_eq!(doc.meta().title, "受控出口");
+        assert_eq!(doc.media_rules()[0].max_width, 640);
+        assert_eq!(doc.node(id).map(|n| n.name.as_str()), Some("x"));
+        // bump_rev:保存路径自增(命令路径不经过它)
+        let before = doc.rev;
+        assert_eq!(doc.bump_rev(), before + 1);
+    }
+
+    /// 只读视图 trait 与固有方法同值(跨 crate 遍历的稳定出口)。
+    #[test]
+    fn document_view_trait_matches_inherent() {
+        let doc = Document::new_default();
+        fn view_summary(v: &impl DocumentView) -> (u64, usize, String) {
+            let mut out = Vec::new();
+            for &ab in v.artboards() {
+                v.subtree(ab, &mut out);
+            }
+            (
+                v.rev(),
+                out.len(),
+                v.find_by_sid("nonexistent")
+                    .map(|_| "x".to_string())
+                    .unwrap_or_else(|| "无".into()),
+            )
+        }
+        let (rev, nodes, miss) = view_summary(&doc);
+        assert_eq!(rev, doc.rev());
+        assert!(nodes >= 1, "子树遍历至少含画板自身");
+        assert_eq!(miss, "无");
+        // 动态派发同样可用(对象安全)
+        let dyn_view: &dyn DocumentView = &doc;
+        assert_eq!(dyn_view.artboards(), doc.artboards());
+        assert!(dyn_view.sid_in_use(doc.node(doc.artboards()[0]).unwrap().sid.as_str()));
+        let ab = doc.artboards()[0];
+        assert!(dyn_view.is_descendant_or_self(doc.root(), ab));
+        assert_eq!(dyn_view.artboard_origin(ab), doc.artboard_origin(ab));
     }
 }
