@@ -120,7 +120,7 @@ fn read_line_capped(reader: &mut impl BufRead, cap: usize) -> std::io::Result<Li
                     // 然后断连
                     loop {
                         match reader.fill_buf() {
-                            Ok(a) if a.is_empty() => break,
+                            Ok([]) => break,
                             Ok(a) => {
                                 let done = a.contains(&b'\n');
                                 let n2 = a.len();
@@ -256,15 +256,12 @@ impl PluginProcess {
                 .name("vb-plugin-stderr".into())
                 .spawn(move || {
                     let mut reader = BufReader::new(stderr);
-                    loop {
-                        match read_line_capped(&mut reader, MAX_LINE_BYTES) {
-                            Ok(LineRead::Line(line)) => {
-                                let mut q = lock_shared(&shared);
-                                if q.stderr.len() < 500 {
-                                    q.stderr.push_back(line);
-                                }
-                            }
-                            Ok(LineRead::TooLong) | Ok(LineRead::Eof) | Err(_) => break,
+                    while let Ok(LineRead::Line(line)) =
+                        read_line_capped(&mut reader, MAX_LINE_BYTES)
+                    {
+                        let mut q = lock_shared(&shared);
+                        if q.stderr.len() < 500 {
+                            q.stderr.push_back(line);
                         }
                     }
                     // stderr 退出不置 dead(stdout 才是生命周期信号)

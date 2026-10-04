@@ -139,8 +139,7 @@ pub fn attach(child: &std::process::Child) -> Result<JobGuard, String> {
         return Err("SetInformationJobObject 失败(限额未设置)".into());
     }
     // SAFETY:child 存活期内句柄有效;assign 后子进程(及其子孙)受 job 管辖。
-    let ok =
-        unsafe { AssignProcessToJobObject(handle, child.as_raw_handle() as *mut std::ffi::c_void) };
+    let ok = unsafe { AssignProcessToJobObject(handle, child.as_raw_handle()) };
     if ok == 0 {
         // SAFETY:同上。
         unsafe { CloseHandle(handle) };
