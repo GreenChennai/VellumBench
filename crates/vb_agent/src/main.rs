@@ -200,7 +200,7 @@ fn open_doc(path: &Path) -> Result<(Document, UndoStack, PathBuf), CliError> {
     let mut doc = r.doc;
     tracing::info!(
         dir = %dir.display(),
-        nodes = doc.nodes.len(),
+        nodes = doc.nodes().len(),
         warnings = r.warnings.len(),
         duration_ms = t0.elapsed().as_millis() as u64,
         "project imported"
@@ -233,17 +233,17 @@ fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Bench { objects } => {
             let t0 = std::time::Instant::now();
             let mut doc = Document::new("Bench", "zh-CN");
-            let Some(ab) = doc.artboards.first().copied() else {
+            let Some(ab) = doc.artboards().first().copied() else {
                 return Err(CliError::Other("内部状态异常:bench 文档没有画板".into()));
             };
             let ab_sid = doc
-                .nodes
+                .nodes()
                 .get(ab)
                 .ok_or_else(|| CliError::Other("内部状态异常:画板节点缺失".into()))?
                 .sid
                 .as_str()
                 .to_string();
-            let Some(ab_node) = doc.nodes.get_mut(ab) else {
+            let Some(ab_node) = doc.nodes_mut().get_mut(ab) else {
                 return Err(CliError::Other("内部状态异常:画板节点缺失".into()));
             };
             ab_node.geom.h = (objects as f64 / 20.0 + 10.0) * 40.0;
@@ -273,12 +273,12 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 let pid = doc
                     .find_by_sid(&ab_sid)
                     .ok_or_else(|| CliError::Other("内部状态异常:画板 sid 失效".into()))?;
-                let id = doc.nodes.insert(n);
-                let Some(ins) = doc.nodes.get_mut(id) else {
+                let id = doc.nodes_mut().insert(n);
+                let Some(ins) = doc.nodes_mut().get_mut(id) else {
                     return Err(CliError::Other("内部状态异常:新节点缺失".into()));
                 };
                 ins.parent = Some(pid);
-                let Some(pn) = doc.nodes.get_mut(pid) else {
+                let Some(pn) = doc.nodes_mut().get_mut(pid) else {
                     return Err(CliError::Other("内部状态异常:画板节点缺失".into()));
                 };
                 pn.children.push(id);
@@ -419,8 +419,10 @@ fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Tree { depth } => {
             let (doc, _, _) = open_doc(&doc_path)?;
             let mut out = String::new();
-            for &ab in &doc.artboards {
-                let Some(n) = doc.nodes.get(ab) else { continue };
+            for &ab in doc.artboards() {
+                let Some(n) = doc.nodes().get(ab) else {
+                    continue;
+                };
                 out.push_str(&format!(
                     "{} {} [{}]  {}×{}  sid={}\n",
                     "  ".repeat(0),
@@ -448,11 +450,13 @@ fn run(cli: Cli) -> Result<(), CliError> {
             let (doc, _, _) = open_doc(&doc_path)?;
             let mut hits: Vec<String> = Vec::new();
             let mut ids = Vec::new();
-            for &ab in &doc.artboards {
+            for &ab in doc.artboards() {
                 doc.subtree(ab, &mut ids);
             }
             for id in ids {
-                let Some(n) = doc.nodes.get(id) else { continue };
+                let Some(n) = doc.nodes().get(id) else {
+                    continue;
+                };
                 if let Some(q) = &name {
                     if !n.name.contains(q) {
                         continue;
@@ -492,7 +496,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 return Err(CliError::Usage(format!("sid {id} 不存在")));
             };
             let n = doc
-                .nodes
+                .nodes()
                 .get(nid)
                 .ok_or_else(|| CliError::Usage(format!("sid {id} 内部节点缺失(悬挂 id)")))?;
             if cli.json {
@@ -607,7 +611,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 let (doc, _, dir) = open_doc(&doc_path)?;
                 let _ab_id = match &artboard {
                     Some(a) => resolve_artboard(&doc, a),
-                    None => doc.artboards.first().copied(),
+                    None => doc.artboards().first().copied(),
                 }
                 .ok_or_else(|| CliError::Export("未找到画板".into()))?;
                 let Some(wpi_dir) = vb_export::wpi::resolve_wpi_dir() else {
@@ -663,7 +667,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             let (doc, _, dir) = open_doc(&doc_path)?;
             let ab_id = match &artboard {
                 Some(a) => resolve_artboard(&doc, a),
-                None => doc.artboards.first().copied(),
+                None => doc.artboards().first().copied(),
             }
             .ok_or_else(|| CliError::Export("未找到画板".into()))?;
             // ── 05-2(09-C):切片出图(--slice <名> 单个 / --slices 全部)──
@@ -742,9 +746,9 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 return Ok(());
             }
             let targets: Vec<(String, vb_doc::model::NodeId)> = if all {
-                doc.artboards
+                doc.artboards()
                     .iter()
-                    .filter_map(|&a| doc.nodes.get(a).map(|n| (n.name.clone(), a)))
+                    .filter_map(|&a| doc.nodes().get(a).map(|n| (n.name.clone(), a)))
                     .collect()
             } else {
                 let Some(a) = &artboard else {
@@ -755,7 +759,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 match resolve_artboard(&doc, a) {
                     Some(id) => {
                         let name =
-                            doc.nodes.get(id).map(|n| n.name.clone()).ok_or_else(|| {
+                            doc.nodes().get(id).map(|n| n.name.clone()).ok_or_else(|| {
                                 CliError::Export(format!("画板 {a} 内部节点缺失"))
                             })?;
                         vec![(name, id)]
@@ -769,7 +773,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             for (i, (name, id)) in targets.iter().enumerate() {
                 let file_name = vb_export::expand_name_template(
                     template,
-                    &doc.meta.title,
+                    &doc.meta().title,
                     name,
                     scale,
                     ext,
@@ -834,7 +838,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             let (doc, _, dir) = open_doc(&doc_path)?;
             let id = match artboard.or(None) {
                 Some(a) => resolve_artboard(&doc, &a),
-                None => doc.artboards.first().copied(),
+                None => doc.artboards().first().copied(),
             }
             .ok_or_else(|| CliError::Export("未找到画板".into()))?;
             let list = vb_render::encode::encode_artboard(&doc, id)
@@ -867,15 +871,15 @@ fn run(cli: Cli) -> Result<(), CliError> {
             if cli.json {
                 println!(
                     "{}",
-                    json!({"title": doc.meta.title, "lang": doc.meta.lang, "rev": doc.rev,
-                           "artboards": doc.artboards.len(), "project_dir": dir.display().to_string()})
+                    json!({"title": doc.meta().title, "lang": doc.meta().lang, "rev": doc.rev(),
+                           "artboards": doc.artboards().len(), "project_dir": dir.display().to_string()})
                 );
             } else {
                 println!(
                     "「{}」 rev={} 画板={} 目录={}",
-                    doc.meta.title,
-                    doc.rev,
-                    doc.artboards.len(),
+                    doc.meta().title,
+                    doc.rev(),
+                    doc.artboards().len(),
                     dir.display()
                 );
             }
@@ -891,11 +895,11 @@ fn save_doc(doc: &mut Document, path: &Path) -> Result<(), CliError> {
         .map_err(|e| CliError::Other(format!("保存失败:{e}")))?;
     tracing::info!(
         dir = %path.display(),
-        rev = doc.rev,
+        rev = doc.rev(),
         duration_ms = t0.elapsed().as_millis() as u64,
         "project saved"
     );
-    doc.rev += 1;
+    doc.bump_rev();
     Ok(())
 }
 
@@ -905,8 +909,8 @@ fn resolve_artboard(doc: &Document, key: &str) -> Option<vb_doc::model::NodeId> 
         return Some(id);
     }
     // 2) 名称(大小写不敏感)/ 3) 类名(hero ← vb-artboard hero)
-    doc.artboards.iter().copied().find(|&a| {
-        doc.nodes
+    doc.artboards().iter().copied().find(|&a| {
+        doc.nodes()
             .get(a)
             .map(|n| {
                 n.name.eq_ignore_ascii_case(key)
@@ -926,9 +930,9 @@ fn outline_children(
     if depth > max {
         return;
     }
-    let Some(n) = doc.nodes.get(id) else { return };
+    let Some(n) = doc.nodes().get(id) else { return };
     for &c in &n.children {
-        if let Some(cn) = doc.nodes.get(c) {
+        if let Some(cn) = doc.nodes().get(c) {
             out.push_str(&format!(
                 "{}{} [{}]  sid={}\n",
                 "  ".repeat(depth),
@@ -948,7 +952,7 @@ fn tree_json(doc: &Document, depth: usize) -> String {
         id: vb_doc::model::NodeId,
         depth: usize,
     ) -> Option<serde_json::Value> {
-        let n = doc.nodes.get(id)?;
+        let n = doc.nodes().get(id)?;
         let children: Vec<serde_json::Value> = if depth > 1 {
             n.children
                 .iter()
@@ -964,11 +968,11 @@ fn tree_json(doc: &Document, depth: usize) -> String {
         }))
     }
     let arts: Vec<serde_json::Value> = doc
-        .artboards
+        .artboards()
         .iter()
         .filter_map(|&a| node_json(doc, a, depth))
         .collect();
-    json!({"rev": doc.rev, "artboards": arts}).to_string()
+    json!({"rev": doc.rev(), "artboards": arts}).to_string()
 }
 
 /// 门禁 7 · 输出校验(10 篇:W3C Nu + prettier 的本地等价实现,免外部依赖):
@@ -1108,7 +1112,7 @@ fn validate(doc_path: &Path, json: bool) -> Result<(), CliError> {
 fn selfcheck(as_json: bool) -> Result<(), CliError> {
     // 空文档 → 渲染 → 写临时 PNG → 校验
     let doc = Document::new_default();
-    let ab = doc.artboards[0];
+    let ab = doc.artboards()[0];
     let list = vb_render::encode::encode_artboard(&doc, ab)
         .map_err(|e| CliError::Export(e.to_string()))?;
     let res = vb_render::cpu::render_png(&list, 1.0, false, None).map_err(CliError::Export)?;

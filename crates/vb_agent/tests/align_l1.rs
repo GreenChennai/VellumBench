@@ -113,7 +113,7 @@ fn align_left_is_exact_in_absolute_frame() {
     assert_eq!(after[1].w(), 40.0);
     // 乙的**自身** geom 仍是"父相对":110 - 500 = -390
     let b_id = doc.find_by_sid("bb0001").unwrap();
-    assert_eq!(doc.nodes.get(b_id).unwrap().geom.x, -390.0);
+    assert_eq!(doc.nodes().get(b_id).unwrap().geom.x, -390.0);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

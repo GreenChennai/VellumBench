@@ -13,9 +13,12 @@
 //! 子项目窗口可独立关闭,互不影响(02-5 验收)。eframe 多 viewport 不做
 //! "隐藏后唤出",只做"并存 + 关闭"(副文档 02 §6 风险)。
 //!
-//! **共享配置写竞争**(02-5-3):`recent.json` 只有外壳一个写入者;
-//! `workspace.json` 仍由各窗口写(停靠偏好随窗口),**最后写入胜**,
-//! 写入均为原子替换,不存在半截文件。
+//! **共享配置写策略**(02-5-3;UI-12 改版):`recent.json` 只有外壳一个
+//! 写入者;`workspace.json` 承载**进程级偏好**(主题/缩放/语言/动效等,
+//! 语义本就是进程级,最后写入胜无害),**窗口布局**(停靠/面板坞/坞宽)
+//! 自 S6 起写每窗口独立层文件 `workspace.win-<视口id>.json`,互不覆盖;
+//! 开窗时经 `dock_layout::load_for_window` 聚合读取(全局偏好 + 窗口层),
+//! 层文件损坏回退全局(RB-08)。所有写入均为原子替换,不存在半截文件。
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -281,6 +284,8 @@ pub struct ShellApp {
     /// 已同步到 egui 的主题(None=尚未同步;与 VellumApp.frame 同款,
     /// B4 主题单一真相 —— 主页此前跟随系统主题,深色机器上会画成浅色)。
     theme_synced: Option<bool>,
+    /// PERF-05/UI-02:主页侧样式注入指纹((深色, 动效);None = 首帧必注)。
+    style_applied: Option<(bool, bool)>,
     /// 06-3:idle / 冷启动探针(VB_FPS_LOG=1;与 VellumApp 的同族钩子互补 ——
     /// 主页根视口由外壳渲染,项目窗口由 VellumApp 渲染,两边各报各的)。
     probe_born: Option<std::time::Instant>,
@@ -337,6 +342,7 @@ impl ShellApp {
             // H-1:动效总开关随 workspace.json 初始化(主页侧与窗口侧同源)
             motion_enabled: ws_cfg.motion_enabled,
             theme_synced: None,
+            style_applied: None,
             root_title_sent: None,
             // 06-3:VB_FPS_LOG=1 探针(未设置时零开销)
             probe_born: std::env::var("VB_FPS_LOG")
@@ -375,6 +381,8 @@ impl ShellApp {
             app.viewport_id = ViewportId::ROOT;
             app.theme_dark = shell.theme_dark;
             app.theme_synced = None;
+            // UI-12:根视口不产生窗口层文件(attach 内部按 is_root_window 跳过)
+            app.attach_window_layer();
             shell.root = Some(ProjectWindow {
                 id: ViewportId::ROOT,
                 app,
@@ -520,6 +528,8 @@ impl ShellApp {
                 app.viewport_id = id;
                 app.theme_dark = self.theme_dark;
                 app.theme_synced = None; // 强制向 egui 同步一次
+                                         // UI-12:聚合读取本窗口布局层(缺失 = 全局默认;损坏 = 告警回退)
+                app.attach_window_layer();
                 self.wins.push(ProjectWindow {
                     id,
                     app,
@@ -657,6 +667,7 @@ impl ShellApp {
     fn broadcast_theme(&mut self, dark: bool) {
         self.theme_dark = dark;
         self.theme_synced = None; // 强制下一帧向 egui 重新同步
+        self.style_applied = None; // PERF-05:set_theme 重建 style → 强制重注入
         if let Some(root) = &mut self.root {
             root.app.set_theme_dark(dark);
         }
@@ -756,7 +767,11 @@ impl eframe::App for ShellApp {
         }
         // 主题单一真相在外壳(主页与窗口共用;vb_ui::theme 幂等)。
         // H-1:带动效总开关 —— 主页侧的过渡/toast 同样可关。
-        vb_ui::theme::apply_ex(&ctx, self.theme_dark, 1.0, self.motion_enabled);
+        // PERF-05/UI-02:指纹(深色, 动效)不变 → 零重注入(与 frame.rs 同口径)。
+        if self.style_applied != Some((self.theme_dark, self.motion_enabled)) {
+            self.style_applied = Some((self.theme_dark, self.motion_enabled));
+            vb_ui::theme::apply_ex(&ctx, self.theme_dark, 1.0, self.motion_enabled);
+        }
 
         self.drain_requests(&ctx);
 

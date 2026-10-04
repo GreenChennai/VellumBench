@@ -282,35 +282,17 @@ fn log_missing_once(lang: Lang, key: &str) {
 /// 缺词在 debug 构建直接断言红(开发期暴露资源缺口);release 返回 key
 /// 本身,显式可见、不静默、不 panic。
 pub fn t(key: &str) -> String {
-    match try_t_inner(key, None) {
-        Some(v) => v,
-        None => {
-            debug_assert!(
-                false,
-                "i18n 缺词:key={key}(请在 i18n/zh.ftl 与 en.ftl 补齐)"
-            );
-            key.to_string()
-        }
-    }
+    t_in(language(), key)
 }
 
 /// 带变量插值取词:`t_args("msg-hello", &[("name", "Vellum".into())])`。
 pub fn t_args<'a>(key: &str, args: &[(&'a str, FluentValue<'a>)]) -> String {
-    match try_t_args(key, args) {
-        Some(v) => v,
-        None => {
-            debug_assert!(
-                false,
-                "i18n 缺词:key={key}(请在 i18n/zh.ftl 与 en.ftl 补齐)"
-            );
-            key.to_string()
-        }
-    }
+    t_args_in(language(), key, args)
 }
 
 /// `t` 的显式版:缺词返回 None(测试与"允许缺省"的调用方用)。
 pub fn try_t(key: &str) -> Option<String> {
-    try_t_inner(key, None)
+    try_lang_inner(language(), key, None)
 }
 
 /// `t_args` 的显式版:缺词返回 None。
@@ -319,11 +301,66 @@ pub fn try_t_args<'a>(key: &str, args: &[(&'a str, FluentValue<'a>)]) -> Option<
     for (k, v) in args {
         fa.set(*k, v.clone());
     }
-    try_t_inner(key, Some(&fa))
+    try_lang_inner(language(), key, Some(&fa))
 }
 
-fn try_t_inner(key: &str, args: Option<&FluentArgs>) -> Option<String> {
-    let lang = language();
+// ── COUP-08(2026-10-05,S6):显式语言取词 ──
+// 语言态原本只有进程级 `AtomicU8` 单一维度,多窗口/多会话无法各用一种语言。
+// 本组 `_in` 出口把「语言」提升为显式参数:进程级默认(`language()`)语义
+// 原样保留,vb_session 在其上叠实例级覆盖层(`LangPref`),两实例不同语言
+// 互不干扰(互不写全局态)。
+
+/// 以**显式语言**取词(不经进程级 LANG;回退链同 `t`:指定语言 → 中文 → key)。
+pub fn t_in(lang: Lang, key: &str) -> String {
+    match try_lang_inner(lang, key, None) {
+        Some(v) => v,
+        None => {
+            debug_assert!(
+                false,
+                "i18n 缺词:key={key}(请在 i18n/zh.ftl 与 en.ftl 补齐)"
+            );
+            key.to_string()
+        }
+    }
+}
+
+/// 以显式语言带变量插值取词(语义同 [`t_args`])。
+pub fn t_args_in<'a>(lang: Lang, key: &str, args: &[(&'a str, FluentValue<'a>)]) -> String {
+    let mut fa = FluentArgs::new();
+    for (k, v) in args {
+        fa.set(*k, v.clone());
+    }
+    match try_lang_inner(lang, key, Some(&fa)) {
+        Some(v) => v,
+        None => {
+            debug_assert!(
+                false,
+                "i18n 缺词:key={key}(请在 i18n/zh.ftl 与 en.ftl 补齐)"
+            );
+            key.to_string()
+        }
+    }
+}
+
+/// 以显式语言取词,缺词返回 `None`(语义同 [`try_t`])。
+pub fn try_t_in(lang: Lang, key: &str) -> Option<String> {
+    try_lang_inner(lang, key, None)
+}
+
+/// 以显式语言带变量插值取词,缺词返回 `None`(语义同 [`try_t_args`])。
+pub fn try_t_args_in<'a>(
+    lang: Lang,
+    key: &str,
+    args: &[(&'a str, FluentValue<'a>)],
+) -> Option<String> {
+    let mut fa = FluentArgs::new();
+    for (k, v) in args {
+        fa.set(*k, v.clone());
+    }
+    try_lang_inner(lang, key, Some(&fa))
+}
+
+fn try_lang_inner(lang: Lang, key: &str, args: Option<&FluentArgs>) -> Option<String> {
     match lookup_in(catalogs(), lang, key, args) {
         Some(v) => Some(v),
         None => {

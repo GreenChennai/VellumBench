@@ -21,7 +21,7 @@ pub mod symbol;
 pub mod undo;
 
 pub use commands::{ChangeSet, CmdKind, Command};
-pub use model::{Document, Node, NodeKind, NodeSlot, OutputMode, TextMode};
+pub use model::{Document, DocumentView, Node, NodeKind, NodeSlot, OutputMode, TextMode};
 pub use undo::UndoStack;
 
 #[derive(Debug, thiserror::Error)]

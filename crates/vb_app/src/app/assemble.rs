@@ -119,7 +119,11 @@ impl VellumApp {
             dock_collapsed: ws.dock_collapsed,
             panel_order: ws_panel_order,
             panels_hidden: ws.panels_hidden,
-            num_commit_open: false,
+            num_commit: None,
+            // PERF-05:样式注入指纹(None = 首帧必注入)
+            style_applied: None,
+            density_synced: None,
+            // PERF-05:首帧必注入样式(指纹 None)
             prop_groups_open: [true; 7],
             layer_search: String::new(),
             layer_expanded: std::collections::HashSet::new(),
@@ -156,6 +160,8 @@ impl VellumApp {
             motion_enabled: ws.motion_enabled,
             density_compact: ws.density_compact,
             workspace_saved: ws.clone(),
+            // UI-12:窗口布局层基线 = 构造配置(避免首帧误报脏)
+            window_layer_saved: dock_layout::LayoutSnapshot::from_config(&ws),
             transform_panel_open: false,
             transform_ref: transform_panel::RefPoint::MC,
             transform_lock_ratio: false,

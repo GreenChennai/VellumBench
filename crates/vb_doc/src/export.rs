@@ -3,6 +3,7 @@
 //! 输出保证:属性顺序固定、CSS 声明按 PROP_ORDER、数值 ≤4 位小数、LF 结尾
 //! —— diff 最小、L1 幂等。导出经 `vb_html` 的 canonical 序列化器完成。
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::path::Path;
 
@@ -19,26 +20,57 @@ pub struct ExportResult {
 }
 
 /// 生成 index.html 与 styles/main.css(不落盘)。
+///
+/// PERF-03(2026-10-05):**零整树克隆**。旧实现在这里 `doc.clone()`
+/// (整棵 arena + 全部声明列表)只为让 `finalize_classes` 就地改类名;
+/// 现在类名定稿改为**纯函数求解**( [`resolve_final_classes`] 产出
+/// `NodeId → 定稿 classes` 侧表),渲染全程借用 `&Document` ——
+/// 调用方的文档在导出期间零改动、零复制(只读导出路径;
+/// 不可变语义由 `export_does_not_mutate_document` 单测钉住)。
 pub fn render_project(doc: &Document) -> ExportResult {
     // 类名定稿(生成/去重)必须在 CSS 与 HTML 渲染之前
-    let mut doc = doc.clone();
-    finalize_classes(&mut doc);
-    let css = render_css(&doc);
-    let html = render_html(&mut doc, &css);
+    let classes = resolve_final_classes(doc);
+    let css = render_css(doc, &classes);
+    let html = render_html(doc, &classes, &css);
     let mut files = vec![("index.html".to_string(), html)];
-    if matches!(doc.meta.output, OutputMode::ExternalCss) {
+    if matches!(doc.meta().output, OutputMode::ExternalCss) {
         files.push(("styles/main.css".to_string(), css));
     }
     ExportResult { files }
 }
 
-/// 类名定稿:无 class 的节点按命名策略生成;primary class(首类)全文档唯一
-/// —— CSS 规则选择器 = 首类,冲突节点把生成的唯一类插到首位。
-/// 幂等性:再导入时首类已唯一,不会再动。
-fn finalize_classes(doc: &mut Document) {
+/// 节点定稿类表:NodeId → 最终 classes(未参与定稿的节点不在表内,
+/// 渲染层回退节点自身 classes)。
+type FinalClasses = std::collections::HashMap<NodeId, Vec<String>>;
+
+/// 按节点 id 取定稿 classes(表未命中 → 节点自身 classes)。
+fn classes_of<'a>(
+    resolved: &'a FinalClasses,
+    doc: &'a Document,
+    id: NodeId,
+) -> Option<&'a [String]> {
+    let n = doc.node(id)?;
+    Some(
+        resolved
+            .get(&id)
+            .map(|v| v.as_slice())
+            .unwrap_or(n.classes.as_slice()),
+    )
+}
+
+/// 类名定稿(纯函数版,PERF-03):无 class 的节点按命名策略生成;
+/// primary class(首类)全文档唯一 —— CSS 规则选择器 = 首类,冲突节点把
+/// 生成的唯一类插到首位。幂等性:再导入时首类已唯一,不会再动。
+///
+/// 旧实现(`finalize_classes`)在 `doc.clone()` 上**就地改** `classes`;
+/// 本版把同一套规则改写为「读取 → 侧表」求解,返回
+/// `NodeId → 定稿 classes`。逐分支与旧实现对齐(单测
+/// `resolved_classes_match_legacy_inplace` 用就地版对照钉住等价)。
+fn resolve_final_classes(doc: &Document) -> FinalClasses {
     use std::collections::HashSet;
     let mut used: HashSet<String> = HashSet::new();
     let ids = ordered_source(doc);
+    let mut resolved: FinalClasses = HashMap::new();
 
     // ② 占名预扫(P0-2):Frozen 节点参与「类名占额」但**不造类/不改名**。
     // Frozen 的 HTML 是原样裸片段(无处写 class 属性),然而 `render_css` 对
@@ -47,7 +79,7 @@ fn finalize_classes(doc: &mut Document) {
     // 两条规则同选择器互相折叠:重导入时 Frozen 也吃到该规则样式,下一轮便
     // 多出一条重复规则(两步收敛,单步 L1 门假绿)。
     for &id in &ids {
-        if let Some(n) = doc.nodes.get(id) {
+        if let Some(n) = doc.node(id) {
             if matches!(n.kind, NodeKind::Frozen { .. }) {
                 for c in &n.classes {
                     used.insert(c.clone());
@@ -58,7 +90,7 @@ fn finalize_classes(doc: &mut Document) {
 
     // ① 造类 / ③ 改名:首类(规则选择器)类成员级全局唯一。
     for id in ids {
-        let node = match doc.nodes.get_mut(id) {
+        let node = match doc.node(id) {
             Some(n) => n,
             None => continue,
         };
@@ -70,20 +102,25 @@ fn finalize_classes(doc: &mut Document) {
         // 05-8:主件定义容器同理 —— 标记类 vb-symbol-defs 由导出侧补写,
         // 容器本身不造类(多个容器同标记类会互相冲突触发改名,反而破坏
         // 定义区识别);其原型子树节点照常定稿。
-        let is_def_container = node.parent == Some(doc.defs_root);
+        let is_def_container = node.parent == Some(doc.defs_root());
         if node.tag == "#text" || is_def_container || matches!(node.kind, NodeKind::Frozen { .. }) {
             continue;
         }
-        if node.classes.is_empty() {
+        // 工作副本:先继承当前 classes(可能已被前序定稿写入侧表)
+        let mut classes: Vec<String> = resolved
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| node.classes.clone());
+        if classes.is_empty() {
             let slug = slugify(&node.name);
             let base = if slug.is_empty() {
                 format!("vb-el-{}", node.sid.as_str())
             } else {
                 slug
             };
-            node.classes.push(base);
+            classes.push(base);
         }
-        let primary = node.classes[0].clone();
+        let primary = classes[0].clone();
         if used.contains(&primary) {
             // 05-8 符号同步的产物:实例是主件子树的克隆,二者类列表相同;
             // 主件此前被定稿出的生成类(vb-el-<主件 sid>)会与克隆体撞名,
@@ -92,21 +129,23 @@ fn finalize_classes(doc: &mut Document) {
             // 修复:gen 与已有类/已用类冲突时,确定性追加序号后缀兜底。
             let mut gen = format!("vb-el-{}", node.sid.as_str());
             let mut seq = 2usize;
-            while node.classes.iter().any(|c| c == &gen) || used.contains(&gen) {
+            while classes.iter().any(|c| c == &gen) || used.contains(&gen) {
                 gen = format!("vb-el-{}-{seq}", node.sid.as_str());
                 seq += 1;
             }
-            node.classes.insert(0, gen.clone());
+            classes.insert(0, gen.clone());
             used.insert(gen);
             // 主类冲突即移除冲突类(P0-1 L1 稳定化的另一半):节点样式已
             // 包含该类合并后的全部声明,唯一类规则完整承载;若保留冲突类,
             // 下一轮导入会把「首个认领者的完整规则」(含其几何)误并入本
             // 节点的级联 —— 共享类漂移,L1 字节幂等被打破。
-            node.classes.retain(|c| c != &primary);
+            classes.retain(|c| c != &primary);
         } else {
             used.insert(primary);
         }
+        resolved.insert(id, classes);
     }
+    resolved
 }
 
 /// 落盘到项目目录(断电安全 · 原子写 v0.2,已落地)。
@@ -195,8 +234,9 @@ fn atomic_write(target: &Path, content: &str) -> Result<()> {
 
 // ---------- HTML ----------
 
-fn render_html(doc: &mut Document, css: &str) -> String {
-    let mut html_attrs = vec![("lang".into(), doc.meta.lang.clone())];
+fn render_html(doc: &Document, resolved: &FinalClasses, css: &str) -> String {
+    let meta = doc.meta();
+    let mut html_attrs = vec![("lang".into(), meta.lang.clone())];
     html_attrs.extend(doc.extra_html_attrs.clone());
     let mut html_el = HtmlNode::element("html", html_attrs);
     let mut head = HtmlNode::element("head", vec![]);
@@ -214,15 +254,15 @@ fn render_html(doc: &mut Document, css: &str) -> String {
             ),
         ],
     ));
-    if !doc.meta.title.is_empty() {
+    if !meta.title.is_empty() {
         let mut title = HtmlNode::element("title", vec![]);
-        title.children.push(HtmlNode::text(doc.meta.title.clone()));
+        title.children.push(HtmlNode::text(meta.title.clone()));
         head.children.push(title);
     }
     for raw in &doc.head_extra {
         head.children.push(HtmlNode::raw(raw.clone()));
     }
-    match doc.meta.output {
+    match meta.output {
         OutputMode::ExternalCss => {
             head.children.push(HtmlNode::element(
                 "link",
@@ -240,44 +280,40 @@ fn render_html(doc: &mut Document, css: &str) -> String {
     }
 
     let mut body = HtmlNode::element("body", doc.extra_body_attrs.clone());
-    let artboard_ids = doc.artboards.clone();
+    let artboard_ids = doc.artboards().to_vec();
     for ab in artboard_ids {
-        if let Some(n) = doc.nodes.get(ab) {
+        if let Some(n) = doc.node(ab) {
             for c in &n.comment_before {
                 body.children.push(HtmlNode {
                     data: NodeData::Comment(c.clone()),
                     children: vec![],
                 });
             }
-            let n = n.clone();
-            body.children.extend(render_node(doc, ab, &n));
+            body.children.extend(render_node(doc, resolved, ab, n));
         }
     }
     // ── 05-8 主件定义区(ADR-VB-L10):画板内容之后、透传之前 ──
     // 容器 = `<div class="vb-symbol-defs" hidden …>`,hidden 为原生属性,
     // 浏览器不渲染;原型子树是真实节点,CSS 规则照常输出(见 ordered_source)。
     {
-        let defs_root = doc.defs_root;
+        let defs_root = doc.defs_root();
         let def_ids = doc
-            .nodes
-            .get(defs_root)
+            .node(defs_root)
             .map(|r| r.children.clone())
             .unwrap_or_default();
         for did in def_ids {
-            if let Some(n) = doc.nodes.get(did) {
+            if let Some(n) = doc.node(did) {
                 for c in &n.comment_before {
                     body.children.push(HtmlNode {
                         data: NodeData::Comment(c.clone()),
                         children: vec![],
                     });
                 }
-                let n = n.clone();
-                body.children.extend(render_node(doc, did, &n));
+                body.children.extend(render_node(doc, resolved, did, n));
             }
         }
     }
-    let trailing = doc.trailing_raw.clone();
-    for raw in &trailing {
+    for raw in &doc.trailing_raw {
         body.children.push(HtmlNode::raw(raw.clone()));
     }
 
@@ -293,9 +329,12 @@ fn render_html(doc: &mut Document, css: &str) -> String {
     dom.serialize()
 }
 
-/// 确定节点导出的 class 列表(已由 [`finalize_classes`] 定稿)。
-fn export_classes(_doc: &mut Document, _id: NodeId, node: &Node) -> Vec<String> {
-    node.classes.clone()
+/// 确定节点导出的 class 列表(已由 [`resolve_final_classes`] 定稿)。
+/// PERF-03:定稿改走侧表,不再就地改树。
+fn export_classes(resolved: &FinalClasses, doc: &Document, id: NodeId) -> Vec<String> {
+    classes_of(resolved, doc, id)
+        .map(<[String]>::to_vec)
+        .unwrap_or_default()
 }
 
 fn slugify(name: &str) -> String {
@@ -323,7 +362,7 @@ fn slugify(name: &str) -> String {
     out
 }
 
-fn render_node(doc: &mut Document, id: NodeId, node: &Node) -> Vec<HtmlNode> {
+fn render_node(doc: &Document, resolved: &FinalClasses, id: NodeId, node: &Node) -> Vec<HtmlNode> {
     match &node.kind {
         NodeKind::Frozen { html } => vec![HtmlNode::raw(html.clone())],
         NodeKind::Text { text, segments, .. } if node.tag == "#text" => {
@@ -334,7 +373,7 @@ fn render_node(doc: &mut Document, id: NodeId, node: &Node) -> Vec<HtmlNode> {
             text_fragment(text, segments)
         }
         _ => {
-            let mut classes = export_classes(doc, id, node);
+            let mut classes = export_classes(resolved, doc, id);
             // 容器标记类(导入器据此识别;ADR-0014)
             let marker = match node.kind {
                 NodeKind::Artboard => Some("vb-artboard"),
@@ -343,7 +382,7 @@ fn render_node(doc: &mut Document, id: NodeId, node: &Node) -> Vec<HtmlNode> {
                 // 05-8:主件定义容器(defs_root 直接子节点)补写标记类 ——
                 // 导入侧按 class 识别定义区,标记类不进节点 classes
                 // (不参与类定稿与 CSS 级联),导出时在此统一回写。
-                _ if node.parent == Some(doc.defs_root) => Some(crate::symbol::SYMBOL_DEF_CLASS),
+                _ if node.parent == Some(doc.defs_root()) => Some(crate::symbol::SYMBOL_DEF_CLASS),
                 _ => None,
             };
             if let Some(m) = marker {
@@ -372,17 +411,15 @@ fn render_node(doc: &mut Document, id: NodeId, node: &Node) -> Vec<HtmlNode> {
             if let NodeKind::Text { text, segments, .. } = &node.kind {
                 el.children.extend(text_fragment(text, segments));
             }
-            let child_ids = node.children.clone();
-            for &c in &child_ids {
-                if let Some(cn) = doc.nodes.get(c) {
+            for &c in &node.children {
+                if let Some(cn) = doc.node(c) {
                     for cm in &cn.comment_before {
                         el.children.push(HtmlNode {
                             data: NodeData::Comment(cm.clone()),
                             children: vec![],
                         });
                     }
-                    let cn = cn.clone();
-                    el.children.extend(render_node(doc, c, &cn));
+                    el.children.extend(render_node(doc, resolved, c, cn));
                 }
             }
             vec![el]
@@ -572,7 +609,7 @@ fn node_decls(node: &Node) -> Vec<vb_css::Decl> {
     d
 }
 
-fn render_css(doc: &Document) -> String {
+fn render_css(doc: &Document, resolved: &FinalClasses) -> String {
     let mut out = String::new();
 
     // :root 令牌
@@ -596,17 +633,19 @@ fn render_css(doc: &Document) -> String {
     let ids = ordered_source(doc);
     let mut ordered: Vec<&Node> = Vec::new();
     for &id in &ids {
-        if let Some(n) = doc.nodes.get(id) {
+        if let Some(n) = doc.node(id) {
             ordered.push(n);
         }
     }
 
-    for node in ordered {
-        // `#text` 没有 class 属性(见 finalize_classes),自然也不该有 CSS 规则。
+    for (idx, node) in ordered.iter().enumerate() {
+        let node_id = ids[idx];
+        // `#text` 没有 class 属性(见 resolve_final_classes),自然也不该有 CSS 规则。
         if node.tag == "#text" {
             continue;
         }
-        if node.classes.is_empty() {
+        let classes = classes_of(resolved, doc, node_id).unwrap_or_default();
+        if classes.is_empty() {
             continue;
         }
         let mut decls = node_decls(node);
@@ -636,8 +675,8 @@ fn render_css(doc: &Document) -> String {
         if decls.is_empty() {
             continue;
         }
-        // 选择器 = 首类(finalize_classes 保证唯一)
-        let selector = format!(".{}", node.classes[0]);
+        // 选择器 = 首类(resolve_final_classes 保证唯一)
+        let selector = format!(".{}", classes[0]);
         let _ = writeln!(out, "{selector} {{");
         for d in &decls {
             // PERF-08:声明直写缓冲,免逐条中间 String
@@ -659,7 +698,7 @@ fn render_css(doc: &Document) -> String {
         for w in widths.into_iter().rev() {
             let _ = writeln!(out, "@media (max-width: {w}px) {{");
             for r in doc.media_rules.iter().filter(|r| r.max_width == w) {
-                let Some((selector, decls)) = media_rule_target(doc, r) else {
+                let Some((selector, decls)) = media_rule_target(doc, resolved, r) else {
                     continue;
                 };
                 let _ = writeln!(out, "  {selector} {{");
@@ -676,7 +715,7 @@ fn render_css(doc: &Document) -> String {
     // ── 05-5:伪类规则(最小闭环 :hover)──
     // 伪类特异性高于基规则,与位置无关;同样放在节点规则之后,canonical 一致。
     for pr in &doc.pseudo_rules {
-        let Some((selector, decls)) = pseudo_rule_target(doc, pr) else {
+        let Some((selector, decls)) = pseudo_rule_target(doc, resolved, pr) else {
             continue;
         };
         let _ = writeln!(out, "{selector} {{");
@@ -697,44 +736,54 @@ fn render_css(doc: &Document) -> String {
 }
 
 /// 断点规则 → (选择器, 排序后的声明)。目标节点必须仍存在、有首类
-/// (finalize_classes 之后必有),且不是 `#text` / 冻结块(无 class 载体)。
+/// (resolve_final_classes 之后必有),且不是 `#text` / 冻结块(无 class 载体)。
 fn media_rule_target(
     doc: &Document,
+    resolved: &FinalClasses,
     r: &crate::model::MediaRule,
 ) -> Option<(String, Vec<vb_css::Decl>)> {
     let id = doc.find_by_sid(&r.sid)?;
-    let n = doc.nodes.get(id)?;
-    if n.tag == "#text" || matches!(n.kind, NodeKind::Frozen { .. }) || n.classes.is_empty() {
+    let classes = classes_of(resolved, doc, id)?;
+    if classes.is_empty() {
+        return None;
+    }
+    let n = doc.node(id)?;
+    if n.tag == "#text" || matches!(n.kind, NodeKind::Frozen { .. }) {
         return None;
     }
     let mut decls = r.decls.clone();
     sort_decls(&mut decls);
-    Some((format!(".{}", n.classes[0]), decls))
+    Some((format!(".{}", classes[0]), decls))
 }
 
 /// 伪类规则 → (`.cls:hover` 选择器, 排序后的声明)。约束同上。
 fn pseudo_rule_target(
     doc: &Document,
+    resolved: &FinalClasses,
     pr: &crate::model::PseudoRule,
 ) -> Option<(String, Vec<vb_css::Decl>)> {
     let id = doc.find_by_sid(&pr.sid)?;
-    let n = doc.nodes.get(id)?;
-    if n.tag == "#text" || matches!(n.kind, NodeKind::Frozen { .. }) || n.classes.is_empty() {
+    let classes = classes_of(resolved, doc, id)?;
+    if classes.is_empty() {
+        return None;
+    }
+    let n = doc.node(id)?;
+    if n.tag == "#text" || matches!(n.kind, NodeKind::Frozen { .. }) {
         return None;
     }
     let mut decls = pr.decls.clone();
     sort_decls(&mut decls);
-    Some((format!(".{}:{}", n.classes[0], pr.pseudo), decls))
+    Some((format!(".{}:{}", classes[0], pr.pseudo), decls))
 }
 
 fn ordered_source(doc: &Document) -> Vec<NodeId> {
     let mut v = Vec::new();
-    for &ab in &doc.artboards {
+    for &ab in doc.artboards() {
         doc.subtree(ab, &mut v);
     }
     // 05-8:主件定义区排在画板之后(CSS 规则序 = 页面内容优先;类定稿
     // 与 CSS 输出共用本序,保证定义区原型节点的类与规则一并定稿/输出)
-    if let Some(r) = doc.nodes.get(doc.defs_root) {
+    if let Some(r) = doc.node(doc.defs_root()) {
         let kids = r.children.clone();
         for c in kids {
             doc.subtree(c, &mut v);
@@ -748,6 +797,170 @@ fn ordered_source(doc: &Document) -> Vec<NodeId> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// PERF-03 对照基准:旧实现(`finalize_classes`)的就地类名定稿,
+    /// 作用于克隆文档。新纯函数求解必须与其逐节点一致。
+    fn legacy_finalize_classes_inplace(doc: &mut Document) {
+        use std::collections::HashSet;
+        let mut used: HashSet<String> = HashSet::new();
+        let ids = ordered_source(doc);
+        for &id in &ids {
+            if let Some(n) = doc.nodes.get(id) {
+                if matches!(n.kind, NodeKind::Frozen { .. }) {
+                    for c in &n.classes {
+                        used.insert(c.clone());
+                    }
+                }
+            }
+        }
+        for id in ids {
+            let node = match doc.nodes.get_mut(id) {
+                Some(n) => n,
+                None => continue,
+            };
+            let is_def_container = node.parent == Some(doc.defs_root);
+            if node.tag == "#text"
+                || is_def_container
+                || matches!(node.kind, NodeKind::Frozen { .. })
+            {
+                continue;
+            }
+            if node.classes.is_empty() {
+                let slug = slugify(&node.name);
+                let base = if slug.is_empty() {
+                    format!("vb-el-{}", node.sid.as_str())
+                } else {
+                    slug
+                };
+                node.classes.push(base);
+            }
+            let primary = node.classes[0].clone();
+            if used.contains(&primary) {
+                let mut gen = format!("vb-el-{}", node.sid.as_str());
+                let mut seq = 2usize;
+                while node.classes.iter().any(|c| c == &gen) || used.contains(&gen) {
+                    gen = format!("vb-el-{}-{seq}", node.sid.as_str());
+                    seq += 1;
+                }
+                node.classes.insert(0, gen.clone());
+                used.insert(gen);
+                node.classes.retain(|c| c != &primary);
+            } else {
+                used.insert(primary);
+            }
+        }
+    }
+
+    /// 构造一个会触发全部定稿分支的文档:无名节点(造类)、同名双节点
+    /// (冲突改名)、冻结块(占名不改名)、`#text`、主件定义区原型。
+    fn attach(doc: &mut Document, parent: NodeId, n: Node) -> NodeId {
+        let id = doc.nodes.insert(n);
+        doc.nodes.get_mut(parent).unwrap().children.push(id);
+        doc.nodes.get_mut(id).unwrap().parent = Some(parent);
+        id
+    }
+
+    fn box_node(doc: &mut Document, name: &str, tag: &str) -> Node {
+        let sid = doc.alloc_sid();
+        let mut n = Node::new(NodeKind::Box, name, sid);
+        n.tag = tag.to_string();
+        n
+    }
+
+    fn doc_all_finalize_branches() -> Document {
+        let mut doc = Document::new("定稿分支", "zh-CN");
+        let ab = doc.artboards[0];
+        // 同名两节点 → 第二个触发冲突改名
+        for name in ["hero", "hero"] {
+            let n = box_node(&mut doc, name, "div");
+            attach(&mut doc, ab, n);
+        }
+        // 无名节点 → 造类
+        let n = box_node(&mut doc, "", "p");
+        attach(&mut doc, ab, n);
+        // 冻结块:带与首节点相同的类(只占名)
+        let sid = doc.alloc_sid();
+        let mut frozen = Node::new(
+            NodeKind::Frozen {
+                html: "<hr>".into(),
+            },
+            "冻结",
+            sid,
+        );
+        frozen.classes.push("hero".into());
+        attach(&mut doc, ab, frozen);
+        // #text 子片段(跳过定稿)
+        let sid = doc.alloc_sid();
+        let mut text = Node::new(
+            NodeKind::Text {
+                text: "文本".into(),
+                mode: crate::model::TextMode::Point,
+                segments: Vec::new(),
+            },
+            "文本",
+            sid,
+        );
+        text.tag = "#text".into();
+        attach(&mut doc, ab, text);
+        // 主件定义区:容器 + 原型子节点
+        let sid = doc.alloc_sid();
+        let def_container = Node::new(NodeKind::Group, "主件A", sid);
+        let dc = doc.nodes.insert(def_container);
+        doc.nodes.get_mut(dc).unwrap().parent = Some(doc.defs_root);
+        doc.nodes.get_mut(doc.defs_root).unwrap().children.push(dc);
+        let proto = box_node(&mut doc, "", "div");
+        attach(&mut doc, dc, proto);
+        doc
+    }
+
+    /// PERF-03(等价钉住):纯函数侧表定稿 ≡ 旧就地定稿(逐节点类表一致),
+    /// 且调用方文档零改动(不可变语义)。
+    #[test]
+    fn resolved_classes_match_legacy_inplace_and_doc_stays_immutable() {
+        let doc = doc_all_finalize_branches();
+        let before = doc.clone();
+
+        // 旧语义:在克隆上就地定稿
+        let mut legacy = doc.clone();
+        legacy_finalize_classes_inplace(&mut legacy);
+
+        // 新实现:侧表求解(渲染路径)
+        let resolved = resolve_final_classes(&doc);
+        for (id, legacy_node) in legacy.nodes.iter() {
+            let want = &legacy_node.classes;
+            let got = resolved
+                .get(&id)
+                .map(|v| v.as_slice())
+                .unwrap_or(doc.node(id).map(|n| n.classes.as_slice()).unwrap_or(&[]));
+            assert_eq!(got, want, "节点 {id:?} 定稿类表必须与旧就地版一致");
+        }
+        // 非平凡性:与冻结块占名撞类的 hero 节点们全部走冲突改名(vb-el-*);
+        // 冻结块自身不在侧表内(原样导出,P0-2 占名不改名)。
+        assert!(
+            resolved
+                .values()
+                .any(|c| c.first().is_some_and(|s| s.starts_with("vb-el-"))),
+            "冲突改名分支必须被触发:{resolved:?}"
+        );
+        let frozen_kept = doc
+            .nodes
+            .iter()
+            .any(|(_, n)| matches!(n.kind, NodeKind::Frozen { .. }) && n.classes == ["hero"]);
+        assert!(frozen_kept, "冻结块类名不得被定稿改写");
+
+        // 渲染全程借用:调用方文档在导出前后必须逐字节相同
+        let _ = render_project(&doc);
+        let snapshot = |d: &Document| -> String {
+            let mut parts: Vec<String> = d
+                .nodes
+                .iter()
+                .map(|(id, n)| format!("{id:?}={:?}|{:?}", n.classes, n.name))
+                .collect();
+            parts.sort();
+            format!("{:?}|{}", d.artboards, parts.join("|"))
+        };
+        assert_eq!(snapshot(&doc), snapshot(&before), "导出不得改动文档");
+    }
 
     /// 独立临时项目目录(测试间互不串扰;与 `vb_app::autosave` 同款)。
     fn tmp_project(tag: &str) -> std::path::PathBuf {

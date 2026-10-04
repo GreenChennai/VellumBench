@@ -12,11 +12,11 @@ use vb_doc::model::{Document, NodeId, NodeKind};
 /// 切片名以 `data-vb-slice` 属性为准(缺省回退节点名)。
 pub fn slices_of(doc: &Document, artboard: NodeId) -> Vec<(NodeId, String, [f64; 4])> {
     let mut out = Vec::new();
-    let Some(ab) = doc.nodes.get(artboard) else {
+    let Some(ab) = doc.nodes().get(artboard) else {
         return out;
     };
     for &c in &ab.children {
-        let Some(n) = doc.nodes.get(c) else {
+        let Some(n) = doc.nodes().get(c) else {
             continue;
         };
         if !matches!(n.kind, NodeKind::Slice) {
@@ -43,7 +43,7 @@ pub fn resolve_slice(
     all.into_iter().find(|(id, attr_name, _)| {
         attr_name.eq_ignore_ascii_case(key)
             || doc
-                .nodes
+                .nodes()
                 .get(*id)
                 .map(|n| n.name.eq_ignore_ascii_case(key))
                 .unwrap_or(false)
@@ -94,9 +94,9 @@ mod tests {
         let mut n = Node::new(NodeKind::Slice, name, sid.clone());
         n.geom = g;
         n.attrs.insert("data-vb-slice".into(), name.to_string());
-        let id = doc.nodes.insert(n);
-        doc.nodes.get_mut(id).unwrap().parent = Some(parent);
-        doc.nodes.get_mut(parent).unwrap().children.push(id);
+        let id = doc.nodes_mut().insert(n);
+        doc.nodes_mut().get_mut(id).unwrap().parent = Some(parent);
+        doc.nodes_mut().get_mut(parent).unwrap().children.push(id);
         id
     }
 
@@ -109,9 +109,9 @@ mod tests {
             value: color.into(),
             important: false,
         });
-        let id = doc.nodes.insert(n);
-        doc.nodes.get_mut(id).unwrap().parent = Some(parent);
-        doc.nodes.get_mut(parent).unwrap().children.push(id);
+        let id = doc.nodes_mut().insert(n);
+        doc.nodes_mut().get_mut(id).unwrap().parent = Some(parent);
+        doc.nodes_mut().get_mut(parent).unwrap().children.push(id);
         id
     }
 
@@ -119,7 +119,7 @@ mod tests {
     #[test]
     fn slices_are_collected_and_resolved() {
         let mut doc = Document::new("t", "zh-CN");
-        let ab = doc.artboards[0];
+        let ab = doc.artboards()[0];
         slice_node(
             &mut doc,
             ab,
@@ -143,7 +143,7 @@ mod tests {
     #[test]
     fn slice_png_crops_artboard_render() {
         let mut doc = Document::new("t", "zh-CN");
-        let ab = doc.artboards[0];
+        let ab = doc.artboards()[0];
         // 红块 (0,0,400,300) + 蓝块 (400,300,400,300);切片盖住蓝块
         box_node(
             &mut doc,

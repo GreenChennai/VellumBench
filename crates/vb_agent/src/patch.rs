@@ -152,10 +152,10 @@ pub fn apply_patch(
     req: &PatchRequest,
 ) -> Result<PatchOutcome, PatchError> {
     if let Some(base) = req.base_rev {
-        if base != doc.rev {
+        if base != doc.rev() {
             return Err(PatchError::Conflict {
                 expected: base,
-                current: doc.rev,
+                current: doc.rev(),
             });
         }
     }
@@ -174,7 +174,7 @@ pub fn apply_patch(
         warnings.append(&mut ws);
     }
     let mut outcome = PatchOutcome {
-        rev: doc.rev,
+        rev: doc.rev(),
         warnings,
         ..Default::default()
     };
@@ -188,7 +188,7 @@ pub fn apply_patch(
     let pushed = undo.push_compound(doc, cmds);
     undo.merging_enabled = prev_merging;
     pushed.map_err(|e| PatchError::Op(e.to_string()))?;
-    outcome.rev = doc.rev;
+    outcome.rev = doc.rev();
     Ok(outcome)
 }
 
@@ -214,7 +214,7 @@ fn require_child(doc: &Document, id: &str, op: &str) -> Result<vb_doc::model::No
     let nid = doc
         .find_by_sid(id)
         .ok_or_else(|| PatchError::Op(format!("{id} 不存在")))?;
-    if nid == doc.root {
+    if nid == doc.root() {
         return Err(PatchError::Op(format!("{op} 不能作用于文档根节点")));
     }
     Ok(nid)
@@ -237,7 +237,7 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<(Vec<Command>, Vec<Str
             let idx = match index {
                 Some(i) => *i,
                 None => doc
-                    .nodes
+                    .nodes()
                     .get(pid)
                     .ok_or_else(|| {
                         PatchError::Op(format!("parent {parent} 内部节点缺失(悬挂 id)"))
@@ -275,7 +275,7 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<(Vec<Command>, Vec<Str
                 .find_by_sid(id)
                 .ok_or_else(|| PatchError::Op(format!("{id} 不存在")))?;
             let mut style = doc
-                .nodes
+                .nodes()
                 .get(nid)
                 .ok_or_else(|| PatchError::Op(format!("{id} 内部节点缺失(悬挂 id)")))?
                 .style
@@ -313,7 +313,7 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<(Vec<Command>, Vec<Str
                 }
             }
             let mut merged = doc
-                .nodes
+                .nodes()
                 .get(nid)
                 .ok_or_else(|| PatchError::Op(format!("{id} 内部节点缺失(悬挂 id)")))?
                 .attrs
@@ -367,10 +367,10 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<(Vec<Command>, Vec<Str
                 .find_by_sid(id)
                 .ok_or_else(|| PatchError::Op(format!("{id} 不存在")))?;
             let parent_sid = doc
-                .nodes
+                .nodes()
                 .get(nid)
                 .and_then(|n| n.parent)
-                .and_then(|p| doc.nodes.get(p))
+                .and_then(|p| doc.nodes().get(p))
                 .map(|p| p.sid.as_str().to_string())
                 .ok_or_else(|| PatchError::Op("duplicate 需要有父级的节点".into()))?;
             // 深拷贝整棵子树(此前只复制根节点,容器内容全部丢失);
@@ -425,7 +425,7 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<(Vec<Command>, Vec<Str
         PatchOp::Order { id, to } => {
             let nid = require_child(doc, id, "order")?;
             let parent = doc
-                .nodes
+                .nodes()
                 .get(nid)
                 .ok_or_else(|| PatchError::Op(format!("{id} 内部节点缺失(悬挂 id)")))?
                 .parent
@@ -434,7 +434,7 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<(Vec<Command>, Vec<Str
             // 不做 unwrap 解包;悬挂 id 走结构化错误
             let (len, cur, parent_sid) = {
                 let p = doc
-                    .nodes
+                    .nodes()
                     .get(parent)
                     .ok_or_else(|| PatchError::Op(format!("{id} 的父级内部节点缺失(悬挂 id)")))?;
                 (
@@ -479,18 +479,14 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<(Vec<Command>, Vec<Str
                 w: *w,
                 h: *h,
             };
-            // 画板纵向排布:放到现有画板最下方
-            let y = doc
-                .artboards
-                .iter()
-                .filter_map(|&a| doc.nodes.get(a).map(|n| n.geom.y + n.geom.h))
-                .fold(0.0f64, f64::max)
-                + 80.0;
+            // 画板纵向排布:放到现有画板最下方(COUP-04:底边求最大值
+            // 的几何计算单源到 vb_tools::max_bottom,patch 只编排事务)
+            let y = vb_tools::max_bottom(doc, doc.artboards()) + 80.0;
             n.geom.y = y;
             // RB-01/AGT-02:root 侧信息(父 sid/插入位置)以结构化错误兜底
             let root_sid = doc
-                .nodes
-                .get(doc.root)
+                .nodes()
+                .get(doc.root())
                 .ok_or_else(|| PatchError::Op("文档根节点缺失(悬挂 id)".into()))?
                 .sid
                 .as_str()
@@ -499,7 +495,7 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<(Vec<Command>, Vec<Str
                 Some(a_sid) => doc
                     .find_by_sid(a_sid)
                     .and_then(|aid| {
-                        let root_children = &doc.nodes.get(doc.root)?.children;
+                        let root_children = &doc.nodes().get(doc.root())?.children;
                         root_children.iter().position(|&c| c == aid)
                     })
                     .map(|p| p + 1)
@@ -566,7 +562,7 @@ fn align_cmds(
     mode: &str,
     to: Option<&str>,
 ) -> Result<(Vec<Command>, Vec<String>), PatchError> {
-    use vb_tools::align::{aligned_delta, AbsBox, AlignMode, AlignTo};
+    use vb_tools::align::{aligned_geom, AbsBox, AlignMode, AlignTo};
 
     let mode =
         AlignMode::parse(mode).ok_or_else(|| PatchError::Op(format!("未知对齐模式:{mode}")))?;
@@ -583,7 +579,7 @@ fn align_cmds(
         let nid = doc
             .find_by_sid(id)
             .ok_or_else(|| PatchError::Op(format!("{id} 不存在")))?;
-        if nid == doc.root {
+        if nid == doc.root() {
             // root 的 geom 无意义且不属于任何画板:跳过而不是把它
             // 混进 root 哨兵分组一起挪动
             warnings.push("align 跳过文档根节点".to_string());
@@ -593,9 +589,11 @@ fn align_cmds(
             warnings.push(format!("align 跳过 {id}:无绝对几何"));
             continue;
         };
-        let ab = artboard_of(doc, nid);
+        // COUP-04:画板归属判定单源 vb_tools::artboard_of;
+        // None(无画板/悬挂链)→ root 哨兵,与旧本地实现逐点等价
+        let ab = vb_tools::artboard_of(doc, nid).unwrap_or(doc.root());
         let g = doc
-            .nodes
+            .nodes()
             .get(nid)
             .ok_or_else(|| PatchError::Op(format!("{id} 内部节点缺失(悬挂 id)")))?
             .geom;
@@ -611,7 +609,7 @@ fn align_cmds(
         if need_two && members.len() < 2 {
             let name = doc
                 .find_by_sid(&members[0].0)
-                .and_then(|nid| doc.nodes.get(nid))
+                .and_then(|nid| doc.nodes().get(nid))
                 .map(|n| n.name.clone())
                 .unwrap_or_else(|| members[0].0.clone());
             warnings.push(format!("align 跳过 {name}:与其余成员不在同一画板或落单"));
@@ -623,7 +621,7 @@ fn align_cmds(
             // 关键对象 = **最后**选中者(与画布/面板同口径)
             AlignTo::KeyObject => boxes.last().copied(),
             AlignTo::Artboard => doc
-                .nodes
+                .nodes()
                 .get(*ab)
                 .map(|n| AbsBox::new(0.0, 0.0, n.geom.w, n.geom.h)),
         };
@@ -632,35 +630,17 @@ fn align_cmds(
             continue;
         };
         for (id, g, bb) in members {
-            let (dx, dy) = aligned_delta(mode, bb, &target);
+            // COUP-04:「位移 + 平移回 geom」由 vb_tools::aligned_geom 一步
+            // 完成(与手拼 delta 逐位等价,等价性由 vb_tools 单测钉住)
             cmds.push(Command::SetGeom {
                 sid: id.clone(),
-                new: Geom {
-                    x: g.x + dx,
-                    y: g.y + dy,
-                    w: g.w,
-                    h: g.h,
-                },
+                new: aligned_geom(mode, *g, bb, &target),
                 old: None,
                 old_declared: None,
             });
         }
     }
     Ok((cmds, warnings))
-}
-
-/// 节点所属画板(沿 parent 链上溯);root 之下找不到画板时返回 root 哨兵。
-fn artboard_of(doc: &Document, mut id: vb_doc::model::NodeId) -> vb_doc::model::NodeId {
-    while let Some(n) = doc.nodes.get(id) {
-        if matches!(n.kind, NodeKind::Artboard) {
-            return id;
-        }
-        match n.parent {
-            Some(p) => id = p,
-            None => break,
-        }
-    }
-    doc.root
 }
 
 /// 递归重分配子树内全部 sid(duplicate:副本是新元素,身份必须全新)。

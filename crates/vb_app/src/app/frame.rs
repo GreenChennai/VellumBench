@@ -21,12 +21,25 @@ impl eframe::App for VellumApp {
                 egui::ThemePreference::Light
             });
             self.theme_synced = Some(self.theme_dark);
+            // PERF-05/UI-02:set_theme 按主题默认值重建 style,上一帧注入的
+            // 令牌会被冲掉 → 指纹清空,强制本帧重新注入
+            self.style_applied = None;
         }
-        // 主题逐帧应用(幂等;P2.7 支持 深/浅 切换)。H-1:带动效总开关
-        // —— 关闭时 egui animation_time 归零,组件侧动画同步冻结。
-        theme::apply_ex(ui.ctx(), self.theme_dark, 1.0, self.motion_enabled);
-        // §8.3.5 密度档:行高 24/28 的开关面(图层行等经 density::row_height 读)
-        theme::density::set_compact(ui.ctx(), self.density_compact);
+        // 主题样式按需注入(PERF-05/UI-02:此前每帧重跑整套 apply_ex,改
+        // 100+ 字段)。指纹 = (主题深浅, 动效开关, 密度档):连续帧不变 →
+        // 零重注入(单测 `style_injection_fingerprint_gates_reinjection`);
+        // 变化点只有主题切换/动效开关/密度切换/首帧。
+        if self.style_sync_needed(self.theme_dark, self.motion_enabled)
+            || self.density_sync_needed()
+        {
+            // H-1:带动效总开关 —— 关闭时 egui animation_time 归零,组件侧
+            // 动画同步冻结(COUP-09:开关真值来自 workspace.json 单一真相,
+            // 经 `motion_enabled` 字段还原,不再依赖 egui ctx.data 存活)。
+            theme::apply_ex(ui.ctx(), self.theme_dark, 1.0, self.motion_enabled);
+            // §8.3.5 密度档:行高 24/28 的开关面(图层行等经 density::row_height 读)
+            theme::density::set_compact(ui.ctx(), self.density_compact);
+            self.density_synced = Some(self.density_compact);
+        }
         // 04-3:UI 缩放因子。egui 的 pixels_per_point = zoom_factor × 系统 DPI,
         // 所以把缩放表达成 zoom_factor:随系统 DPI(150% 屏自动 1.5×),
         // 手调档位(视图 → 界面缩放)与系统缩放正交;egui-winit 在显示器
@@ -219,5 +232,32 @@ impl eframe::App for VellumApp {
         }
         // 03-3:画布出图状态机(隐藏 --canvas-shot;未启用时零开销直返)
         self.tick_canvas_shot(ui.ctx(), frame);
+    }
+}
+
+// ─────────────────────── PERF-05/UI-02 门禁(单测) ───────────────────────
+
+#[cfg(test)]
+mod tests {
+    /// PERF-05/UI-02(验收):连续帧指纹不变 → 零重注入;主题/动效开关
+    /// 变化 → 恰好重注入一次;set_theme 重建 style 路径(指纹清空)→ 必注入。
+    #[test]
+    fn style_injection_fingerprint_gates_reinjection() {
+        let _env = crate::ENV_LOCK.lock();
+        let mut app = crate::app::assemble::tests::app_fresh(None);
+        // 首帧:必注入
+        assert!(app.style_sync_needed(true, true), "首帧必须注入");
+        // 连续同指纹帧:零重注入
+        assert!(!app.style_sync_needed(true, true), "同指纹不得重注入");
+        assert!(!app.style_sync_needed(true, true));
+        // 动效开关变化(COUP-09:workspace.json 的 motion_enabled 翻转)
+        assert!(app.style_sync_needed(true, false), "动效开关变化必须重注入");
+        assert!(!app.style_sync_needed(true, false));
+        // 主题切换
+        assert!(app.style_sync_needed(false, false), "主题切换必须重注入");
+        // set_theme 重建 style → 指纹被清,下一帧必注入(真正切换才清)
+        app.set_theme_dark(false);
+        assert_eq!(app.style_applied, None, "主题偏好变化必须清指纹");
+        assert!(app.style_sync_needed(false, false), "清指纹后必须重注入");
     }
 }

@@ -640,11 +640,74 @@ impl VellumApp {
         }
     }
 
+    /// 本窗口是否为根视口(独立模式 / 根项目窗;UI-12:根视口不产生
+    /// 窗口层文件,布局随全局 workspace.json,与旧口径一致)。
+    pub(crate) fn is_root_window(&self) -> bool {
+        self.viewport_id == egui::ViewportId::ROOT
+    }
+
+    /// 当前窗口布局层快照(UI-12:布局字段 = 工具栏停靠/面板坞/次级坞/坞宽)。
+    fn window_layer(&self) -> super::dock_layout::LayoutSnapshot {
+        super::dock_layout::LayoutSnapshot::from_config(&self.workspace_config())
+    }
+
+    /// UI-12:外壳开窗后调用 —— 聚合读取(全局偏好 + 本窗口布局层)并
+    /// 应用。层文件缺失 = 首次开窗(保持全局/默认);**损坏 = 告警 +
+    /// 整层回退**(RB-08)。根视口不加载层(无层文件语义)。
+    pub(crate) fn attach_window_layer(&mut self) {
+        if self.is_root_window() {
+            return;
+        }
+        let id = self.viewport_id.0.value();
+        let (layer, warn) = super::dock_layout::load_window_layer(id);
+        if let Some(w) = warn {
+            log::warn!("{w}");
+            self.toast_warn(w);
+        }
+        if let Some(l) = layer {
+            // 布局字段逐项应用;次级坞经 from_config 复用既有越界兜底
+            // (组序去重/下标夹回),不写第二份解析
+            let mut synth = self.workspace_saved.clone();
+            synth.toolbar_dock = l.toolbar_dock;
+            synth.toolbar_columns = l.toolbar_columns;
+            synth.dock_collapsed = l.dock_collapsed;
+            synth.panel_order = l.panel_order;
+            synth.panel_tab = l.panel_tab;
+            synth.panels_hidden = l.panels_hidden;
+            synth.sec_floating = l.sec_floating;
+            synth.sec_pos = l.sec_pos;
+            synth.sec_group_order = l.sec_group_order;
+            synth.sec_active_group = l.sec_active_group;
+            synth.dock_width = l.dock_width;
+            synth.sec_dock_width = l.sec_dock_width;
+            synth.sec_dock_collapsed = l.sec_dock_collapsed;
+            self.toolbar_dock = synth.toolbar_dock;
+            self.toolbar_columns = synth.toolbar_columns;
+            self.dock_collapsed = synth.dock_collapsed;
+            if synth.panel_order.len() == super::panels::TAB_COUNT {
+                let mut order = [0usize; super::panels::TAB_COUNT];
+                order.copy_from_slice(&synth.panel_order);
+                self.panel_order = order;
+            }
+            self.panel_tab = synth.panel_tab.min(super::panels::TAB_COUNT - 1);
+            self.panels_hidden = synth.panels_hidden;
+            self.sec = super::panel_dock::SecDockState::from_config(&synth);
+            self.dock_width = synth.dock_width;
+            self.sec_dock_width = synth.sec_dock_width;
+            self.sec_dock_collapsed = synth.sec_dock_collapsed;
+        }
+        // 基线对齐当前态(无论层是否存在,避免首帧误报脏)
+        self.window_layer_saved = self.window_layer();
+    }
+
     /// 写回 `workspace.json`(失败 → toast,不静默)。成功则刷新脏检查快照。
     ///
-    /// 多窗口写策略(02-5-3 最后写入胜)的**预设合流**:写前从磁盘回读
-    /// `workspace_presets`,磁盘列表与本窗快照不同 → 他窗刚改过预设 →
-    /// 以磁盘为准合入,避免本窗口的旧列表覆盖掉他窗新增/删除的预设。
+    /// 多窗口写策略(UI-12 改版):**窗口布局字段**写每窗口独立层文件
+    /// `workspace.win-<id>.json`(互不覆盖);**进程级偏好**仍写全局
+    /// workspace.json(根视口连布局一起写,行为与旧口径一致;子窗口写
+    /// 全局时布局字段回填基线值,防止子窗布局覆盖根窗/独立模式的全局布局)。
+    /// 预设合流保持:写前从磁盘回读 `workspace_presets`,他窗刚改过则以
+    /// 磁盘为准合入。
     pub(crate) fn save_workspace(&mut self) {
         let mut cfg = self.workspace_config();
         if let Some(p) = super::dock_layout::config_path() {
@@ -654,9 +717,37 @@ impl VellumApp {
                 self.workspace_saved.workspace_presets = disk.workspace_presets;
             }
         }
+        // 子窗口:全局文件只承载偏好,布局字段回填基线(不覆盖他窗)
+        let layer = self.window_layer();
+        if !self.is_root_window() {
+            let saved = self.workspace_saved.clone();
+            cfg.toolbar_dock = saved.toolbar_dock;
+            cfg.toolbar_columns = saved.toolbar_columns;
+            cfg.dock_collapsed = saved.dock_collapsed;
+            cfg.panel_order = saved.panel_order.clone();
+            cfg.panel_tab = saved.panel_tab;
+            cfg.panels_hidden = saved.panels_hidden;
+            cfg.sec_floating = saved.sec_floating.clone();
+            cfg.sec_pos = saved.sec_pos.clone();
+            cfg.sec_group_order = saved.sec_group_order.clone();
+            cfg.sec_active_group = saved.sec_active_group;
+            cfg.dock_width = saved.dock_width;
+            cfg.sec_dock_width = saved.sec_dock_width;
+            cfg.sec_dock_collapsed = saved.sec_dock_collapsed;
+        }
         match super::dock_layout::save(&cfg) {
             Ok(()) => self.workspace_saved = cfg,
             Err(e) => self.toast_warn(format!("布局未持久化:{e}")),
+        }
+        // 窗口层(UI-12):子窗口布局独立落盘;根视口同步基线不写文件
+        if self.is_root_window() {
+            self.window_layer_saved = layer;
+        } else if layer != self.window_layer_saved {
+            let id = self.viewport_id.0.value();
+            match super::dock_layout::save_window_layer(id, &layer) {
+                Ok(()) => self.window_layer_saved = layer,
+                Err(e) => self.toast_warn(format!("窗口布局未持久化:{e}")),
+            }
         }
     }
 
@@ -683,7 +774,16 @@ impl VellumApp {
     }
 
     /// 当前布局是否与**已落盘快照**不同(逐字段比较,避免每帧构造 Vec)。
+    ///
+    /// UI-12:根视口比较全局快照(布局+偏好);子窗口比较「窗口布局层
+    /// 快照」+「全局偏好字段」(布局字段不再参与全局比较)。
     pub(crate) fn workspace_dirty(&self) -> bool {
+        if !self.is_root_window() {
+            let layer = self.window_layer();
+            if layer != self.window_layer_saved {
+                return true;
+            }
+        }
         let a = &self.workspace_saved;
         a.toolbar_dock != self.toolbar_dock
             || a.toolbar_columns != self.toolbar_columns
@@ -762,6 +862,9 @@ impl VellumApp {
                 sec_pos: cur.sec_pos.clone(),
                 sec_group_order: cur.sec_group_order.clone(),
                 sec_active_group: cur.sec_active_group,
+                dock_width: cur.dock_width,
+                sec_dock_width: cur.sec_dock_width,
+                sec_dock_collapsed: cur.sec_dock_collapsed,
             },
         };
         let mut list = self.presets_base_list();

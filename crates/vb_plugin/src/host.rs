@@ -110,7 +110,16 @@ pub trait HostServices {
     /// 执行宿主命令(**调用前宿主已过白名单闸门**)。
     fn run_command(&mut self, plugin: &str, command: &str) -> Result<Value, String>;
     /// 文档只读投影(结构摘要;无文档 → Err)。
+    ///
+    /// PLG-05 起仅作**降级路径**(投影线程不可用时同步兜底);常规路径
+    /// 走 [`HostServices::doc_snapshot`] + 后台线程。
     fn doc_projection(&self) -> Result<Value, String>;
+    /// 文档只读快照(PLG-05:UI 线程只付 arena 克隆,投影 JSON 构建移到
+    /// 后台线程;无文档 → None)。实现方必须返回独立快照(不得与 UI 状态
+    /// 共享可变内部)。
+    fn doc_snapshot(&self) -> Option<vb_doc::model::Document> {
+        None
+    }
     /// 执行导出动作(**dir 必须是用户在宿主 UI 里选择的目录**;输出只落
     /// 那里)。`format` 来自 manifest.exports 声明(宿主已校验白名单)。
     fn run_export(
@@ -200,6 +209,49 @@ pub struct InstallError {
     pub error: String,
 }
 
+/// 投影后台作业(PLG-05):UI 线程付快照,worker 只算 JSON。
+struct ProjJob {
+    snapshot: vb_doc::model::Document,
+}
+
+/// 投影后台结果(worker → UI 线程回投)。
+struct ProjResult {
+    projection: Value,
+}
+
+/// 投影 worker(单线程;宿主 drop → 通道关闭 → 线程自然退出,无残留)。
+struct ProjWorker {
+    tx: std::sync::mpsc::Sender<ProjJob>,
+    rx: std::sync::mpsc::Receiver<ProjResult>,
+}
+
+impl ProjWorker {
+    /// 启动(spawn 失败 → None,调用方走同步降级,不 panic)。
+    fn spawn() -> Option<Self> {
+        let (jtx, jrx) = std::sync::mpsc::channel::<ProjJob>();
+        let (rtx, rrx) = std::sync::mpsc::channel::<ProjResult>();
+        let handle = std::thread::Builder::new()
+            .name("vb-plugin-projection".into())
+            .spawn(move || {
+                while let Ok(job) = jrx.recv() {
+                    // 投影只读快照,无宿主状态访问;单 worker 串行,
+                    // 插件侧乱序由 pending 表按请求 id 归位
+                    let projection = crate::projection::build(&job.snapshot);
+                    if rtx.send(ProjResult { projection }).is_err() {
+                        break; // 宿主已 drop
+                    }
+                }
+            });
+        match handle {
+            Ok(_) => Some(ProjWorker { tx: jtx, rx: rrx }),
+            Err(e) => {
+                tracing::warn!("投影线程创建失败,doc/projection 退同步路径:{e}");
+                None
+            }
+        }
+    }
+}
+
 /// 插件宿主。
 pub struct PluginHost {
     entries: Vec<Entry>,
@@ -208,6 +260,10 @@ pub struct PluginHost {
     auth_path: Option<PathBuf>,
     /// 握手超时(默认 5s;测试调短)。
     handshake_timeout: Duration,
+    /// PLG-05:投影后台线程(惰性创建;None = spawn 失败走同步降级)。
+    proj: Option<ProjWorker>,
+    /// PLG-05:挂起的投影请求(插件 id → RPC id 列表;结果回投时按此归位)。
+    proj_pending: Vec<(String, Value)>,
 }
 
 impl Default for PluginHost {
@@ -229,6 +285,8 @@ impl PluginHost {
             store,
             auth_path,
             handshake_timeout: Duration::from_millis(DEFAULT_TIMEOUT_MS),
+            proj: None,
+            proj_pending: Vec::new(),
         }
     }
 
@@ -724,6 +782,32 @@ impl PluginHost {
     /// 每帧工作量有界);检测崩溃。
     /// **崩溃隔离**:本函数内的一切都不 panic;插件异常只落日志与状态。
     pub fn poll(&mut self, services: &mut dyn HostServices) {
+        // ⓪ PLG-05:收割后台投影结果(非阻塞 try_recv;UI 线程只收结果,
+        //    不算投影)。单 worker FIFO 消费 → 结果与挂起表按下标配对;
+        //    插件已卸载/已停 → 结果丢弃(不崩、不串插件)。
+        while let Some((plugin, id)) = self
+            .proj_pending
+            .first()
+            .map(|(p, i)| (p.clone(), i.clone()))
+        {
+            let Some(w) = &self.proj else { break };
+            let Ok(res) = w.rx.try_recv() else { break };
+            self.proj_pending.remove(0);
+            self.deliver_projection(&plugin, &id, res.projection);
+        }
+        // ①-③:stderr 泵 / 崩溃检测 / 入站消息(新投影作业先收集,
+        // 循环结束后统一投递 —— entries 借用期间不能 &mut self.proj)
+        let mut proj_jobs: Vec<(String, Value, vb_doc::model::Document)> = Vec::new();
+        self.pump_entries(services, &mut proj_jobs);
+        self.dispatch_proj_jobs(services, proj_jobs);
+    }
+
+    /// entries 泵(自 poll 拆出:收集投影作业而不与 worker 通道双借)。
+    fn pump_entries(
+        &mut self,
+        services: &mut dyn HostServices,
+        proj_jobs: &mut Vec<(String, Value, vb_doc::model::Document)>,
+    ) {
         for e in &self.entries {
             let shared = &e.shared;
             // ① stderr → 日志环
@@ -751,10 +835,55 @@ impl PluginHost {
                 let mut incoming = Vec::new();
                 proc.drain_incoming(&mut incoming, MAX_INCOMING_PER_POLL);
                 for inc in incoming {
-                    self.handle_incoming(e, &proc, services, inc);
+                    self.handle_incoming(e, &proc, services, inc, proj_jobs);
                 }
             }
         }
+    }
+
+    /// PLG-05:把收集到的投影作业投给后台线程(UI 线程只付快照)。
+    /// worker 不可用(spawn 失败/意外死亡)→ 同步算,语义不变、不静默。
+    fn dispatch_proj_jobs(
+        &mut self,
+        services: &mut dyn HostServices,
+        jobs: Vec<(String, Value, vb_doc::model::Document)>,
+    ) {
+        for (plugin, id, snapshot) in jobs {
+            if self.proj.is_none() {
+                self.proj = ProjWorker::spawn();
+            }
+            match &self.proj {
+                Some(w) => {
+                    if w.tx.send(ProjJob { snapshot }).is_ok() {
+                        self.proj_pending.push((plugin, id));
+                    } else {
+                        // worker 通道断(线程意外死亡)→ 弃用并同步兜底
+                        self.proj = None;
+                        let projection =
+                            crate::projection::build(&services.doc_snapshot().unwrap_or_default());
+                        self.deliver_projection(&plugin, &id, projection);
+                    }
+                }
+                None => {
+                    // spawn 失败 → 同步兜底(降级可见于 tracing)
+                    tracing::warn!("doc/projection 走同步降级(投影线程不可用)");
+                    let projection =
+                        crate::projection::build(&services.doc_snapshot().unwrap_or_default());
+                    self.deliver_projection(&plugin, &id, projection);
+                }
+            }
+        }
+    }
+
+    /// 投影结果回投到对应插件进程(插件已卸载/进程已失 → 静默丢弃)。
+    fn deliver_projection(&mut self, plugin: &str, id: &Value, projection: Value) {
+        let Some(e) = self.entries.iter().find(|e| e.manifest.id == plugin) else {
+            return;
+        };
+        let Some(proc) = e.shared.proc.lock().map(|g| g.clone()).ok().flatten() else {
+            return;
+        };
+        proc.respond(id, &projection);
     }
 
     /// 处理一条插件入站消息(请求一律应答;通知一律不崩)。
@@ -764,6 +893,7 @@ impl PluginHost {
         proc: &Arc<PluginProcess>,
         services: &mut dyn HostServices,
         inc: Incoming,
+        proj_jobs: &mut Vec<(String, Value, vb_doc::model::Document)>,
     ) {
         match inc {
             Incoming::Request { id, method, params } => match method.as_str() {
@@ -776,12 +906,19 @@ impl PluginHost {
                             .push_log("warn", "doc/projection 以通知发出(缺 id),已忽略");
                         return;
                     };
-                    match services.doc_projection() {
-                        Ok(v) => proc.respond(&id, &v),
-                        Err(msg) => proc.respond_error(
-                            &id,
-                            &RpcError::new(protocol::E_PROJECTION_UNAVAILABLE, msg),
-                        ),
+                    // PLG-05:UI 线程只取只读快照,JSON 构建在后台线程;
+                    // 宿主不给快照(测试 mock / 降级实现)→ 保持旧同步路径。
+                    match services.doc_snapshot() {
+                        Some(snapshot) => {
+                            proj_jobs.push((e.manifest.id.clone(), id, snapshot));
+                        }
+                        None => match services.doc_projection() {
+                            Ok(v) => proc.respond(&id, &v),
+                            Err(msg) => proc.respond_error(
+                                &id,
+                                &RpcError::new(protocol::E_PROJECTION_UNAVAILABLE, msg),
+                            ),
+                        },
                     }
                 }
                 other => {
