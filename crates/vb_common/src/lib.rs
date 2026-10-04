@@ -13,10 +13,10 @@ pub mod geom;
 /// 编译期内嵌,t/t_args/set_language,缺词回退链显式可见。
 pub mod i18n;
 pub mod id;
-/// 文本小工具(BOM 剥除、percent 解码;跨 crate 单源)。
-pub mod text;
 /// 数值格式化单源(EXP-07):PDF/SVG 两车道共用坐标精度函数 `fnum`。
 pub mod numfmt;
+/// 文本小工具(BOM 剥除、percent 解码;跨 crate 单源)。
+pub mod text;
 /// `transform` 平移分量解析(导入折算与导出补偿的**唯一口径**)。
 pub mod transform;
 pub mod units;
