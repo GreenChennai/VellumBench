@@ -243,6 +243,35 @@ pub fn key_text_for(id: &str) -> Option<String> {
     SHORTCUTS.iter().find(|s| s.id == id).map(|s| s.key_text())
 }
 
+// ── UI-01:菜单数据表的取词出口(zh 基准在 menus.rs 数据表,渲染点一律走
+//    t();key 由 tools/gen_ui_ftl.py 从数据表机械镜像,禁手抄)──
+
+/// 命令 ID → Fluent key 片段(`file.new` → `file-new`)。
+fn id_key(id: &str) -> String {
+    id.replace('.', "-")
+}
+
+/// 菜单项标签取词(渲染点用;数据表 `label` 字段仅作 zh 基准,不再直读)。
+pub fn menu_label_t(item: &MenuItem) -> String {
+    crate::i18n::t(&format!("ui-menu-{}", id_key(item.id)))
+}
+
+/// 「已登记未落地」说明取词(None = 非计划项)。
+pub fn planned_reason_t(id: &str) -> Option<String> {
+    planned_reason(id)
+        .map(|_| crate::i18n::t(&format!("ui-planned-{}", id_key(id))))
+}
+
+/// 路径查找器输出语义提示取词(None = 非路径查找器命令)。
+pub fn pathfinder_tip_t(id: &str) -> Option<String> {
+    pathfinder_tip(id).map(|_| crate::i18n::t(&format!("ui-pf-{}", id_key(id))))
+}
+
+/// 菜单栏标题取词(idx 对应 [`MENU_TITLES`] 下标)。
+pub fn menu_title_t(idx: usize) -> String {
+    crate::i18n::t(&format!("ui-menu-title-{idx}"))
+}
+
 /// 命令所属菜单的标题(键位编辑器分组用);不在任何菜单里的命令
 /// (工具/主页/命令面板等)返回「其他」。
 pub fn menu_group_of(id: &str) -> &'static str {

@@ -62,6 +62,13 @@ pub fn set_lang(lang: Lang) {
         },
         Ordering::Relaxed,
     );
+    // 镜像到 Fluent 底座进程级语言态:UI-01 抽取文案经
+    // vb_session::i18n::{t, t_args} 取词,两套入口必须同语言(单一事实:
+    // 本函数是 vb_app 侧唯一语言写点)。
+    vb_session::i18n::set_language(match lang {
+        Lang::Zh => vb_session::i18n::Lang::Zh,
+        Lang::En => vb_session::i18n::Lang::En,
+    });
 }
 
 pub fn lang() -> Lang {

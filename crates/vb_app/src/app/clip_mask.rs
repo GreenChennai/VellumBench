@@ -48,20 +48,20 @@ pub fn rebase_to_mask(content: Geom, mask_origin: (f64, f64)) -> Geom {
 /// ④ SetAttrs:蒙版加 `data-vb-clip="1"`。
 pub fn clip_mask_cmds(doc: &Document, selection: &[String]) -> Result<Vec<Command>, String> {
     if selection.len() < 2 {
-        return Err("剪切蒙版:选中「内容 + 形状」(形状最后选)后再按 Ctrl+7".into());
+        return Err(vb_session::i18n::t("ui-app-clip-mask-001").into());
     }
     let mask_sid = selection.last().unwrap().clone();
     let Some(mask_id) = doc.find_by_sid(&mask_sid) else {
-        return Err(format!("剪切蒙版:找不到蒙版对象 {mask_sid}"));
+        return Err(vb_session::i18n::t_args("ui-app-clip-mask-002", &[("mask_sid", vb_session::i18n::FluentValue::from((mask_sid).to_string()))]));
     };
     let Some(mask_node) = doc.nodes.get(mask_id) else {
-        return Err(format!("剪切蒙版:找不到蒙版对象 {mask_sid}"));
+        return Err(vb_session::i18n::t_args("ui-app-clip-mask-002", &[("mask_sid", vb_session::i18n::FluentValue::from((mask_sid).to_string()))]));
     };
     if !matches!(mask_node.kind, NodeKind::Box) {
-        return Err("剪切蒙版:蒙版形状必须是矩形/椭圆盒(顶层内容)".into());
+        return Err(vb_session::i18n::t("ui-app-clip-mask-003").into());
     }
     let mask_geom = mask_node.geom;
-    let mask_abs = vb_tools::abs_bbox(doc, mask_id).ok_or("剪切蒙版:取不到蒙版几何")?;
+    let mask_abs = vb_tools::abs_bbox(doc, mask_id).ok_or(vb_session::i18n::t("ui-app-clip-mask-004"))?;
     let mask_abs_origin = (mask_abs.x0, mask_abs.y0);
     let is_ellipse = mask_node
         .style_get("border-radius")
@@ -74,15 +74,15 @@ pub fn clip_mask_cmds(doc: &Document, selection: &[String]) -> Result<Vec<Comman
             continue;
         }
         let Some(id) = doc.find_by_sid(sid) else {
-            return Err(format!("剪切蒙版:找不到内容对象 {sid}"));
+            return Err(vb_session::i18n::t_args("ui-app-clip-mask-005", &[("sid", vb_session::i18n::FluentValue::from((sid).to_string()))]));
         };
         if doc.is_descendant_or_self(id, mask_id) || doc.is_descendant_or_self(mask_id, id) {
-            return Err("剪切蒙版:内容与蒙版不能互为祖先/后代".into());
+            return Err(vb_session::i18n::t("ui-app-clip-mask-006").into());
         }
         let Some(n) = doc.nodes.get(id) else {
             continue;
         };
-        let abs = vb_tools::abs_bbox(doc, id).ok_or("剪切蒙版:取不到内容几何")?;
+        let abs = vb_tools::abs_bbox(doc, id).ok_or(vb_session::i18n::t("ui-app-clip-mask-007"))?;
         // 蒙版本地系下的期望几何(绝对/画板本地 − 蒙版绝对原点):
         // 无论内容原来挂在画板 / Layer / Group 下,这一步都成立
         let desired = Geom {
@@ -108,7 +108,7 @@ pub fn clip_mask_cmds(doc: &Document, selection: &[String]) -> Result<Vec<Comman
         });
     }
     if cmds.is_empty() {
-        return Err("剪切蒙版:没有可收编的内容对象".into());
+        return Err(vb_session::i18n::t("ui-app-clip-mask-008").into());
     }
     // 蒙版自身样式:overflow + 椭圆圆角
     let mut new_style = mask_node.style.clone();
@@ -163,16 +163,16 @@ pub fn is_clip_mask(doc: &Document, sid: &str) -> bool {
 /// (视觉位置不变);③ 蒙版样式移除 overflow / 50% 圆角;④ 移除标记属性。
 pub fn release_clip_cmds(doc: &Document, sid: &str) -> Result<Vec<Command>, String> {
     let Some(id) = doc.find_by_sid(sid) else {
-        return Err(format!("释放剪切蒙版:找不到 {sid}"));
+        return Err(vb_session::i18n::t_args("ui-app-clip-mask-009", &[("sid", vb_session::i18n::FluentValue::from((sid).to_string()))]));
     };
     let Some(mask) = doc.nodes.get(id) else {
-        return Err(format!("释放剪切蒙版:找不到 {sid}"));
+        return Err(vb_session::i18n::t_args("ui-app-clip-mask-009", &[("sid", vb_session::i18n::FluentValue::from((sid).to_string()))]));
     };
     if !is_clip_mask(doc, sid) {
-        return Err("释放剪切蒙版:选中对象不是剪切蒙版容器".into());
+        return Err(vb_session::i18n::t("ui-app-clip-mask-010").into());
     }
     let Some(parent_id) = mask.parent else {
-        return Err("释放剪切蒙版:蒙版没有父级".into());
+        return Err(vb_session::i18n::t("ui-app-clip-mask-011").into());
     };
     let parent_sid = doc.nodes.get(parent_id).unwrap().sid.as_str().to_string();
     // 释放目标父级的坐标原点(子级回到该父级后的本地系偏移):
@@ -194,7 +194,7 @@ pub fn release_clip_cmds(doc: &Document, sid: &str) -> Result<Vec<Command>, Stri
         let Some(cn) = doc.nodes.get(child) else {
             continue;
         };
-        let child_abs = vb_tools::abs_bbox(doc, child).ok_or("释放剪切蒙版:取不到内容几何")?;
+        let child_abs = vb_tools::abs_bbox(doc, child).ok_or(vb_session::i18n::t("ui-app-clip-mask-012"))?;
         // 目标父级系下的几何(子级当前 abs 为画板本地,减目标父级原点)
         let desired = Geom {
             x: child_abs.x0 - target_origin.0,

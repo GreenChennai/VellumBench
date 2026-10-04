@@ -21,21 +21,32 @@ impl VellumApp {
                 let mut dyn_fired: Option<String> = None;
 
                 for (idx, title) in shortcuts::MENU_TITLES.iter().enumerate() {
-                    ui.menu_button(*title, |ui| {
+                    let _ = title; // 标题经 menu_title_t 取词(数据表不再直读)
+                    ui.menu_button(shortcuts::menu_title_t(idx), |ui| {
                         self.menu_section(ui, idx, &mut fired);
                         // X-7:窗口菜单在静态项之后动态列出用户工作区预设
                         // (保存于 workspace.json workspace_presets,可切换;
                         //  删除走「窗口 → 新建工作区…」对话框)
-                        if *title == "窗口" && !self.workspace_presets().is_empty() {
+                        if idx == 7 && !self.workspace_presets().is_empty() {
                             ui.separator();
-                            ui.label(egui::RichText::new("自定义工作区").size(11.0).weak());
+                            ui.label(
+                                egui::RichText::new(crate::i18n::t("ui-app-menus-002"))
+                                    .size(11.0)
+                                    .weak(),
+                            );
                             let names: Vec<String> = self
                                 .workspace_presets()
                                 .iter()
                                 .map(|p| p.name.clone())
                                 .collect();
                             for name in names {
-                                if ui.button(format!("工作区 → {name}")).clicked() {
+                                if ui
+                                    .button(format!(
+                                        "{} {name}",
+                                        crate::i18n::t("ui-app-menus-003")
+                                    ))
+                                    .clicked()
+                                {
                                     dyn_fired = Some(format!("preset:{name}"));
                                     ui.close();
                                 }
@@ -102,7 +113,10 @@ impl VellumApp {
                         _ => self.outline_mode,
                     };
                     ui.horizontal(|ui| {
-                        if ui.checkbox(&mut cur, item.label).changed() {
+                        if ui
+                            .checkbox(&mut cur, shortcuts::menu_label_t(item))
+                            .changed()
+                        {
                             *fired = Some(item.id);
                         }
                         // 键位文本查有效键位集(用户方案覆盖优先,05-4-A2)
@@ -137,9 +151,9 @@ fn menu_item_button_with(
     key_text: Option<String>,
 ) -> egui::Response {
     let label = if extra.is_empty() {
-        item.label.to_string()
+        shortcuts::menu_label_t(item)
     } else {
-        format!("{} {}", item.label, extra)
+        format!("{} {}", shortcuts::menu_label_t(item), extra)
     };
     let btn = match key_text {
         Some(k) => egui::Button::new(label).shortcut_text(k),
@@ -147,9 +161,11 @@ fn menu_item_button_with(
     };
     let resp = ui.add_enabled(enabled, btn);
     match shortcuts::planned_reason(item.id) {
-        Some(reason) if !enabled => resp.on_disabled_hover_text(reason),
+        Some(reason) if !enabled => resp.on_disabled_hover_text(
+            shortcuts::planned_reason_t(item.id).unwrap_or_else(|| reason.to_string()),
+        ),
         // 路径查找器各项悬停即见输出语义(05-3 / X-1)
-        _ => match shortcuts::pathfinder_tip(item.id) {
+        _ => match shortcuts::pathfinder_tip_t(item.id) {
             Some(tip) => resp.on_hover_text(tip),
             None => resp,
         },
