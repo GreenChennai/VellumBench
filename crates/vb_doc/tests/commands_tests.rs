@@ -816,3 +816,44 @@ fn compound_setgeom_merges_for_multi_drag() {
     assert_eq!(geom_of(&doc, &a).x, 12.0, "重做恢复最后一帧");
     assert_eq!(geom_of(&doc, &b).x, 62.0);
 }
+
+/// AGT-06(2026-10-05 迭代审查):Compound 中途失败必须回滚已应用前缀,
+/// 且**如实返回原始错误**——回滚路径不得吞错(`let _ = prev.revert`)。
+#[test]
+fn compound_failure_rolls_back_applied_prefix() {
+    let mut doc = Document::new_default();
+    let ab = doc
+        .nodes
+        .get(doc.artboards[0])
+        .unwrap()
+        .sid
+        .as_str()
+        .to_string();
+    let a = make_box(&mut doc, &ab, 10.0, 10.0);
+    let g0 = geom_of(&doc, &a);
+
+    let mut cmd = Command::Compound {
+        cmds: vec![
+            // 第一条成功应用
+            set_geom(
+                &a,
+                Geom {
+                    x: 999.0,
+                    y: 888.0,
+                    w: 11.0,
+                    h: 22.0,
+                },
+            ),
+            // 第二条失败:sid 不存在 → no_such
+            set_geom("no-such-sid", g0),
+        ],
+    };
+    let err = cmd.apply(&mut doc).expect_err("第二子命令必须失败");
+    // 回滚生效:第一条的几何改动被精确逆回,文档保持原状
+    assert_eq!(geom_of(&doc, &a), g0, "已应用前缀必须回滚");
+    // 回滚干净时返回**原始错误**(非回滚包装错);不再被静默吞掉
+    assert!(
+        err.to_string().contains("节点不存在"),
+        "应返回原始错误而非回滚错误: {err}"
+    );
+}
