@@ -10,11 +10,18 @@ use serde_json::{json, Value};
 
 use crate::ws::WsConn;
 
+/// 入站事件队列容量上限(RB-05:循环/队列必须有上限):长 CDP 等待期间
+/// 喋喋不休的页面(高频 Network/动画事件)不再无界积压 —— 超限丢最旧,
+/// 计数器可观测。load/crashed 等状态标志由消费侧逐条置位,丢旧事件只
+/// 影响 networkidle 的静默判定新鲜度,不影响正确性。
+const MAX_QUEUED_EVENTS: usize = 4096;
+
 pub struct Cdp {
     ws: WsConn,
     next_id: u64,
     responses: HashMap<u64, Result<Value, String>>,
     events: VecDeque<(String, Value)>,
+    dropped_events: u64,
 }
 
 impl Cdp {
@@ -24,6 +31,7 @@ impl Cdp {
             next_id: 0,
             responses: HashMap::new(),
             events: VecDeque::new(),
+            dropped_events: 0,
         }
     }
 
@@ -127,11 +135,15 @@ impl Cdp {
                         }
                         return Ok(()); // 有进展即返回,让调用方重新检查
                     } else if let Some(m) = v.get("method").and_then(Value::as_str) {
+                        if self.events.len() >= MAX_QUEUED_EVENTS {
+                            self.events.pop_front();
+                            self.dropped_events += 1;
+                        }
                         self.events.push_back((
                             m.to_string(),
                             v.get("params").cloned().unwrap_or(Value::Null),
                         ));
-                        return Ok(());
+                        return Ok(()); // 有进展即返回,让调用方重新检查
                     }
                 }
                 Ok(None) => {
@@ -148,6 +160,11 @@ impl Cdp {
     /// 取走全部已排队事件。
     pub fn drain_events(&mut self) -> Vec<(String, Value)> {
         self.events.drain(..).collect()
+    }
+
+    /// 入站事件超限丢弃计数(可观测;诊断喋喋不休页面)。
+    pub fn dropped_events(&self) -> u64 {
+        self.dropped_events
     }
 
     /// 泵至谓词成立(事件已入队即检查),带总超时。

@@ -15,6 +15,7 @@ pub mod capture;
 pub mod cdp;
 pub mod domsnap;
 pub mod httpc;
+pub mod limits;
 pub mod page;
 pub mod print;
 pub mod staticsrv;
@@ -69,10 +70,14 @@ pub struct LaneRequest {
     pub artboard_index: usize,
 }
 
-/// 采集视口(P0-3):显式宽 > 0 用之,否则历史兜底 1080;
-/// 高 > 0 用之,否则与宽同值(防 100vh 撑爆的占位口径)。
+/// 采集视口(P0-3):显式宽 > 0 用之,否则历史兜底 1080(limits 模块,
+/// EXP-12);高 > 0 用之,否则与宽同值(防 100vh 撑爆的占位口径)。
 pub fn viewport_dims(width: u32, height: u32) -> (u32, u32) {
-    let w = if width == 0 { 1080 } else { width };
+    let w = if width == 0 {
+        limits::VIEWPORT_FALLBACK_PX
+    } else {
+        width
+    };
     (w, if height == 0 { w } else { height })
 }
 

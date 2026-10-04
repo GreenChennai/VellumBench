@@ -326,6 +326,10 @@ impl WsConn {
     /// 轮询一条完整消息(非阻塞:受 socket read_timeout 界定,无数据立即返回)。
     /// Ok(None) = 暂无完整消息(不丢已收半包)。**不得**在内部循环等待——
     /// 否则上层所有 deadline 都会被架空。
+    ///
+    /// 对端关闭返回 **Err**(EXP-03):此前 EOF 被折算成 Ok(None),上层把
+    /// 「浏览器已死」当「暂无进展」每 5ms 睡到 deadline —— 截图/打印类长
+    /// 等待挂满 180s/300s 才失败。关闭必须立即失败(与 NoMessage 可判)。
     pub fn poll_message(&mut self) -> Result<Option<WsMessage>, String> {
         match self.codec.try_parse()? {
             FrameOutcome::Message(m) => return Ok(Some(m)),
@@ -335,7 +339,7 @@ impl WsConn {
             FrameOutcome::None => {}
         }
         if !self.read_some()? {
-            return Ok(None); // 对端关闭
+            return Err("WS 连接已关闭(对端 EOF)".into());
         }
         match self.codec.try_parse()? {
             FrameOutcome::Message(m) => Ok(Some(m)),

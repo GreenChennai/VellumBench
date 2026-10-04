@@ -4,9 +4,10 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use crate::limits;
 use crate::page::{
     PageSession, ARTBOARD_RECT_JS, BODY_MARGIN_RESET_JS, CONTENT_SIZE_JS, FREEZE_ANIMATIONS_JS,
-    RAF_THROTTLE_JS, WAIT_ASSETS_JS,
+    RAF_THROTTLE_JS, wait_assets_js,
 };
 
 /// 捕获参数(与 WPI CLI 参数面一致)。
@@ -49,14 +50,28 @@ fn settle_budget() -> Duration {
             }
         }
     }
-    Duration::from_secs(5)
+    limits::SETTLE_BUDGET
 }
 
 /// 资源等待(要素 5):fonts.ready + 懒加载转 eager + img.complete。
-/// 页内脚本自带竞速上限(字体 3s / 图片 5s),不受 settle 预算约束。
+/// 无外层预算的兼容入口(动画车道逐帧 prep 用)。
 pub fn wait_assets(page: &mut PageSession) {
-    let _ = page.evaluate(WAIT_ASSETS_JS, true);
-    page.sleep(200); // 字体换装后重排/重绘一拍(经验值;观察到的掉字均在此窗口内)
+    wait_assets_bounded(page, Instant::now() + Duration::from_secs(3600));
+}
+
+/// 有界版(EXP-11):字体/图片两段页内竞速上限(3s/5s)各自钳进剩余
+/// settle 预算 —— 此前 3s+5s+200ms 先于预算检查跑完,慢机可吃穿预算。
+/// 最坏 ≈2× 剩余预算收口,顺序保持字体优先;末次重排窗同样受检。
+pub fn wait_assets_bounded(page: &mut PageSession, deadline: Instant) {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return;
+    }
+    let rem_ms = remaining.as_millis() as u64;
+    let fonts_ms = rem_ms.min(limits::ASSET_FONTS_CAP_MS);
+    let imgs_ms = rem_ms.min(limits::ASSET_IMGS_CAP_MS);
+    let _ = page.evaluate(&wait_assets_js(fonts_ms, imgs_ms), true);
+    sleep_capped(page, limits::ASSET_WAIT_POST_DELAY_MS, deadline);
 }
 
 /// 滚动触发 reveal(要素 6):Python 侧驱动,≤40 步;`deadline` 为 settle
@@ -81,15 +96,15 @@ pub fn trigger_scroll_reveals(page: &mut PageSession, deadline: Instant) {
     let mut y = 0u32;
     while y <= total {
         steps += 1;
-        if steps > 40 || Instant::now() >= deadline {
+        if steps > limits::SCROLL_REVEAL_MAX_STEPS || Instant::now() >= deadline {
             break;
         }
         page.scroll_to(y);
-        page.sleep(130); // IntersectionObserver/reveal 过渡触发窗(经验值)
+        page.sleep(limits::SCROLL_REVEAL_STEP_MS); // IntersectionObserver/reveal 过渡触发窗(经验值)
         y += step;
     }
     page.scroll_to(0);
-    page.sleep(130);
+    page.sleep(limits::SCROLL_REVEAL_STEP_MS);
 }
 
 /// 有限动画 finish 定格(要素 7);返回无限动画数。
@@ -134,13 +149,13 @@ pub fn wait_visual_stability(page: &mut PageSession, deadline: Instant) -> Resul
     if Instant::now() >= deadline {
         return Ok(false);
     }
-    sleep_capped(page, 200, deadline); // 滚动/定格后的末次绘制窗(经验值)
+    sleep_capped(page, limits::STABILITY_PROBE_INTERVAL_MS, deadline); // 滚动/定格后的末次绘制窗(经验值)
     let Some(mut prev) = fast_hash(page) else {
         return Ok(false);
     };
     let mut stable = 0;
     while Instant::now() < deadline {
-        sleep_capped(page, 200, deadline); // 相邻比对帧间隔
+        sleep_capped(page, limits::STABILITY_PROBE_INTERVAL_MS, deadline); // 相邻比对帧间隔
         page.ensure_alive()?;
         let cur = fast_hash(page);
         match cur {
@@ -160,17 +175,23 @@ pub fn wait_visual_stability(page: &mut PageSession, deadline: Instant) -> Resul
     Ok(false)
 }
 
+/// 缩略哈希(PERF-04):优先走浏览器端 clip.scale 缩略探针(解码成本从
+/// 整页 JPEG 降到 ≤128px 级,慢机每拍 ~0.5-1s → 十几 ms);探针失败
+/// (旧内核不支持 clip.scale 等)回退全页截图路径,兜底语义不变。
 fn fast_hash(page: &mut PageSession) -> Option<[u8; 32]> {
     let (w, h) = page.content_size().ok()?;
-    let data = page
-        .screenshot(
-            "jpeg",
-            Some(50),
-            Some((0.0, 0.0, w as f64, h as f64)),
-            true,
-            false,
-        )
-        .ok()?;
+    let data = match page.screenshot_probe(w as f64, h as f64) {
+        Ok(d) => d,
+        Err(_) => page
+            .screenshot(
+                "jpeg",
+                Some(50),
+                Some((0.0, 0.0, w as f64, h as f64)),
+                true,
+                false,
+            )
+            .ok()?,
+    };
     let img = image::load_from_memory(&data).ok()?.to_rgb8();
     let small = image::imageops::resize(&img, 128, 128, image::imageops::FilterType::Nearest);
     // 128*128*3 → 压成 32 字节摘要(逐 48 字节折叠 XOR)
@@ -201,7 +222,7 @@ pub fn settle(page: &mut PageSession) -> Result<SettleOutcome, String> {
             );
         }
     };
-    wait_assets(page);
+    wait_assets_bounded(page, deadline); // EXP-11:资源等待受 settle 预算约束
     stage(t0, "wait_assets");
     page.ensure_alive()?;
     trigger_scroll_reveals(page, deadline);
@@ -211,10 +232,10 @@ pub fn settle(page: &mut PageSession) -> Result<SettleOutcome, String> {
         // 无限动画页永不视觉收敛:给有界宽限期让入场过渡走完后取当前帧。
         // 宽限期受预算截断(原固定 2×3s + 二轮滚动,是 20s+ 的最大单项);
         // 降级已由调用方的「存在 N 个无限循环动画」告警承载。
-        sleep_capped(page, 3000, deadline);
+        sleep_capped(page, limits::INFINITE_ANIM_GRACE_MS, deadline);
         trigger_scroll_reveals(page, deadline);
         freeze_animations(page);
-        sleep_capped(page, 3000, deadline);
+        sleep_capped(page, limits::INFINITE_ANIM_GRACE_MS, deadline);
     } else {
         // K5:稳定性探测失败不阻断(settle 兜底),但必须显式留痕
         if !wait_visual_stability(page, deadline)? {
@@ -245,7 +266,7 @@ pub fn capture_png(
         // 画板即画布(P0-3):页边距属页面 chrome,重置后再收敛,
         // 使画板矩形落在文档原点(与 native 车道同语义)
         let _ = page.evaluate(BODY_MARGIN_RESET_JS, false);
-        page.sleep(120);
+        page.sleep(limits::BODY_MARGIN_RESET_DELAY_MS);
     }
     // 要素 1:load + networkidle + 200ms(调用方已 navigate 亦可,这里由 caller 控制时序)
     let (mut sw, sh) = page.content_size()?;
@@ -262,7 +283,7 @@ pub fn capture_png(
     // 高度锁定:视口高 = 锁定值,导出顶部 min(lock, contentH)
     let (clip_h, viewport_h) = if let Some(lock) = opts.height_lock {
         page.set_device_metrics(opts.width, lock, opts.scale)?;
-        page.sleep(150);
+        page.sleep(limits::ARTBOARD_REFLOW_DELAY_MS);
         let (_, content_h) = page.content_size()?;
         (lock.min(content_h), lock)
     } else {

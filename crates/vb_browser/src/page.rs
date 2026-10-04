@@ -29,33 +29,38 @@ pub const RAF_THROTTLE_JS: &str = r#"(() => {
     window.cancelAnimationFrame = (id) => clearTimeout(id);
 })();"#;
 
-/// 字体/图片资源等待(WPI `wait_assets` JS 原样移植)。
-pub const WAIT_ASSETS_JS: &str = r#"(async () => {
-    try {
-        if (document.fonts && document.fonts.ready) {
+/// 字体/图片资源等待(WPI `wait_assets` JS 移植):竞速上限参数化
+/// (EXP-11)—— settle 侧把 3s/5s 钳进剩余预算,调用方生成脚本。
+pub fn wait_assets_js(fonts_ms: u64, imgs_ms: u64) -> String {
+    format!(
+        r#"(async () => {{
+    try {{
+        if (document.fonts && document.fonts.ready) {{
             await Promise.race([
                 document.fonts.ready,
-                new Promise(r => setTimeout(r, 3000)),
+                new Promise(r => setTimeout(r, {fonts_ms})),
             ]);
-        }
-    } catch (e) {}
+        }}
+    }} catch (e) {{}}
     const lazy = document.querySelectorAll('img[loading="lazy"]');
-    for (const i of lazy) { try { i.loading = 'eager'; } catch (e) {} }
+    for (const i of lazy) {{ try {{ i.loading = 'eager'; }} catch (e) {{}} }}
     const imgs = Array.from(document.images);
     const pending = imgs.filter(i => !i.complete || i.naturalWidth === 0);
-    if (pending.length) {
+    if (pending.length) {{
         await Promise.race([
-            Promise.all(pending.map(i => new Promise(res => {
+            Promise.all(pending.map(i => new Promise(res => {{
                 if (i.complete && i.naturalWidth) return res();
                 const done = () => res();
-                i.addEventListener('load', done, {once: true});
-                i.addEventListener('error', done, {once: true});
-            }))),
-            new Promise(r => setTimeout(r, 5000)),
+                i.addEventListener('load', done, {{once: true}});
+                i.addEventListener('error', done, {{once: true}});
+            }}))),
+            new Promise(r => setTimeout(r, {imgs_ms})),
         ]);
-    }
+    }}
     return true;
-})()"#;
+}})"#
+    )
+}
 
 /// 有限动画 finish(WPI `freeze_animations` JS;返回仍在跑的无限动画数)。
 pub const FREEZE_ANIMATIONS_JS: &str = r#"(() => {
@@ -233,6 +238,29 @@ impl PageSession {
             }
         }
         Ok(())
+    }
+
+    /// 关键截图路径一次重试(EXP-03):CDP 偶发传输失败/响应超时不应让
+    /// 整个导出失败;截图是幂等读,重发一次安全(新 call 用新 id,迟到
+    /// 响应永不误配)。取消错误不重试(三态);重试仍失败时错误串带两次
+    /// 原因,不静默。
+    fn cdp_call_retry(
+        &mut self,
+        method: &str,
+        params: serde_json::Value,
+        timeout: Duration,
+    ) -> Result<serde_json::Value, String> {
+        match self.cdp_call(method, params.clone(), timeout) {
+            Ok(v) => Ok(v),
+            Err(first) => {
+                if crate::cancel::is_wait_cancelled(&first) {
+                    return Err(first);
+                }
+                eprintln!("kiln: {method} 首次失败({first}),重试一次");
+                self.cdp_call(method, params, timeout)
+                    .map_err(|e| format!("{method} 重试后仍失败: {e}(首次错误: {first})"))
+            }
+        }
     }
 
     /// 消费事件,维护 load / 网络活动状态。
@@ -470,8 +498,9 @@ impl PageSession {
         if let Some((x, y, w, h)) = clip {
             params["clip"] = json!({ "x": x, "y": y, "width": w, "height": h, "scale": 1 });
         }
-        // 180s 截图等待经分片可取消通道(硬骨头 #3):≤100ms/片,片间查令牌
-        let res = self.cdp_call("Page.captureScreenshot", params, Duration::from_secs(180))?;
+        // 180s 截图等待经分片可取消通道(硬骨头 #3):≤100ms/片,片间查令牌;
+        // 失败一次重试(EXP-03,关键截图路径)
+        let res = self.cdp_call_retry("Page.captureScreenshot", params, Duration::from_secs(180))?;
         let data = res
             .get("data")
             .and_then(Value::as_str)
@@ -487,12 +516,31 @@ impl PageSession {
             "optimizeForSpeed": true,
             "captureBeyondViewport": false,
         });
-        let res = self.cdp_call("Page.captureScreenshot", params, Duration::from_secs(180))?;
+        let res = self.cdp_call_retry("Page.captureScreenshot", params, Duration::from_secs(180))?;
         let data = res
             .get("data")
             .and_then(Value::as_str)
             .ok_or_else(|| "截图响应缺少 data".to_string())?;
         b64::decode(data).map_err(|e| format!("截图数据解码失败: {e}"))
+    }
+
+    /// 视觉稳定探针截图(PERF-04):clip.scale 让浏览器端直接产出长边
+    /// ≤128px 的 JPEG —— 免全页截图传输与解码(慢机每拍 ~0.5-1s → 十几
+    /// ms 级)。仅供 fast_hash 探针用;交付截图走 [`PageSession::screenshot`]。
+    pub fn screenshot_probe(&mut self, w: f64, h: f64) -> Result<Vec<u8>, String> {
+        let scale = (128.0 / w.max(h).max(1.0)).clamp(1.0 / 4096.0, 1.0);
+        let params = json!({
+            "format": "jpeg",
+            "quality": 50,
+            "captureBeyondViewport": true,
+            "clip": { "x": 0.0, "y": 0.0, "width": w, "height": h, "scale": scale },
+        });
+        let res = self.cdp_call("Page.captureScreenshot", params, Duration::from_secs(60))?;
+        let data = res
+            .get("data")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "探针截图响应缺少 data".to_string())?;
+        b64::decode(data).map_err(|e| format!("探针截图解码失败: {e}"))
     }
 
     /// HeadlessExperimental.beginFrame:CDP **显式驱动一帧**并顺带截图。
@@ -518,9 +566,9 @@ impl PageSession {
             .map(|v| v == "1")
             .unwrap_or(false);
         let params = json!({ "noDisplayUpdates": no_display, "screenshot": shot });
-        // 60s beginFrame 等待同样走分片可取消通道
+        // 60s beginFrame 等待同样走分片可取消通道;失败一次重试(EXP-03)
         let res = self
-            .cdp_call(
+            .cdp_call_retry(
                 "HeadlessExperimental.beginFrame",
                 params,
                 Duration::from_secs(60),

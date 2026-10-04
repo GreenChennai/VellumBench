@@ -1,7 +1,7 @@
 //! 极简 HTTP/1.1 客户端:只服务 DevTools 本地端点(/json/new、/json/list)。
 
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
 /// 发起本地 HTTP 请求,返回 (状态码, 响应体)。
@@ -13,8 +13,15 @@ pub fn request(
     path: &str,
     timeout: Duration,
 ) -> Result<(u16, Vec<u8>), String> {
-    let mut stream =
-        TcpStream::connect((host, port)).map_err(|e| format!("连接 {host}:{port} 失败: {e}"))?;
+    // connect 也要有 deadline(EXP-03):裸 TcpStream::connect 的 TCP SYN
+    // 重试在 Windows 上可挂数秒,慢机并发冷启动会把 /json/new 拖成分钟级
+    let addr: std::net::SocketAddr = (host, port)
+        .to_socket_addrs()
+        .map_err(|e| format!("地址解析 {host}:{port} 失败: {e}"))?
+        .next()
+        .ok_or_else(|| format!("地址解析 {host}:{port} 无结果"))?;
+    let mut stream = TcpStream::connect_timeout(&addr, timeout)
+        .map_err(|e| format!("连接 {host}:{port} 失败: {e}"))?;
     stream.set_read_timeout(Some(timeout)).ok();
     stream.set_write_timeout(Some(timeout)).ok();
     let req = format!(
