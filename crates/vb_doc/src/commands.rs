@@ -975,7 +975,12 @@ impl Command {
                     }
                     *old_slots = Some(slots);
                 }
-                let slots = old_slots.as_ref().unwrap();
+                // DOC-12:快照理应刚已填充且非空(上方守卫),仍走结构化
+                // 出口 —— 不用 `unwrap` + 裸下标,状态异常返回冲突错误。
+                let slots = match old_slots.as_ref() {
+                    Some(s) if !s.is_empty() => s,
+                    _ => return Err(VbError::Conflict("编组成员快照缺失或为空".into())),
+                };
                 // 前置校验:成员必须同父、互不为祖先后代、不含画板。
                 // 此前注释声称「成员必须同父(v0.1 约束)」但代码未校验 ——
                 // 跨画板成员会被统一重定基到错误的坐标系(视觉瞬移);
@@ -1021,9 +1026,10 @@ impl Command {
                 let members: Vec<_> = member_sids
                     .iter()
                     .map(|s| {
-                        doc.find_by_sid(s)
-                            .ok_or_else(|| no_such(s))
-                            .map(|id| (id, doc.nodes.get(id).unwrap().clone()))
+                        // DOC-12:同上,Option 出口(不走裸 unwrap)
+                        let id = doc.find_by_sid(s).ok_or_else(|| no_such(s))?;
+                        let n = doc.nodes.get(id).ok_or_else(|| no_such(s))?;
+                        Ok((id, n.clone()))
                     })
                     .collect::<Result<_>>()?;
                 let group_id = vb_common::StableId::parse(group_sid)
