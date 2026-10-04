@@ -204,7 +204,7 @@ fn tokenize(src: &str) -> (Vec<StrLit>, Vec<(usize, usize)>) {
 
 /// 诊断出口调用名(22 篇 G-UI3「白名单:日志/调试」)。
 /// 注意:`format` 故意**不在**表内 —— format 产物会进渲染路径。
-const DIAGNOSTIC_CALLEES: [&str; 14] = [
+const DIAGNOSTIC_CALLEES: [&str; 19] = [
     "panic",
     "expect",
     "assert",
@@ -219,6 +219,13 @@ const DIAGNOSTIC_CALLEES: [&str; 14] = [
     "eprint",
     "eprintln",
     "dbg",
+    // log::info!/tracing 同名宏(日志诊断出口;取调用名末段,如
+    // `log::warn!` 回 "warn")
+    "info",
+    "warn",
+    "error",
+    "debug",
+    "trace",
 ];
 
 /// 行豁免标记:该行(任一覆盖行)含 `// vb-literal-ok: <理由>` 即豁免。
@@ -458,6 +465,12 @@ fn is_exempt_data_table(rel: &Path) -> bool {
         .components()
         .map(|c| c.as_os_str().to_string_lossy().into_owned())
         .collect();
+    let name = comps.last().map(String::as_str).unwrap_or("");
+    // tests.rs 模块文件:经 `#[cfg(test)] mod tests;` 挂载,整文件即测试
+    // (文件级 cfg(test) 白名单,理由同上;断言消息是开发期诊断)
+    if name == "tests.rs" {
+        return true;
+    }
     comps.len() == 2
         && comps[0] == "shortcuts"
         && (comps[1] == "catalog.rs" || comps[1] == "menus.rs")
@@ -576,6 +589,7 @@ fn scanner_line_exempt_needs_real_reason() {
 fn scanner_data_table_whitelist_paths() {
     assert!(is_exempt_data_table(Path::new("shortcuts/catalog.rs")));
     assert!(is_exempt_data_table(Path::new("shortcuts/menus.rs")));
+    assert!(is_exempt_data_table(Path::new("app/control_panel/tests.rs")));
     assert!(!is_exempt_data_table(Path::new("shortcuts/binds.rs")));
     assert!(!is_exempt_data_table(Path::new("app/commands.rs")));
     assert!(!is_exempt_data_table(Path::new("shortcuts/sub/catalog.rs")));
