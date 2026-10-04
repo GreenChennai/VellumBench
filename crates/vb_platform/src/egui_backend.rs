@@ -9,7 +9,8 @@
 
 use crate::error::PlatformError;
 use crate::traits::{
-    Clipboard, DarkModeProbe, DisplayInfo, FileDialog, SystemCursor, WindowHandle,
+    Clipboard, DarkModeProbe, DisplayInfo, FileDialog, MotionPreferenceProbe, SystemCursor,
+    WindowHandle,
 };
 use crate::types::{CursorShape, DisplayMetrics, FileFilter};
 use std::path::PathBuf;
@@ -196,6 +197,30 @@ impl DarkModeProbe for EguiDarkMode {
         // 0.35 无 ctx.style() 全局读口;theme() 返回当前解析后的主题档
         // (set_theme / 宿主集成同步的结果)
         self.ctx.theme() == egui::Theme::Dark
+    }
+}
+
+/// [`MotionPreferenceProbe`] 的 egui 实现(S5 清单 ④)。
+///
+/// 诚实说明:「减少动态效果」是**系统级**无障碍偏好,egui 0.35 / winit
+/// 都不暴露读取口(见 `vb_ui::theme` 动效总开关注释)—— 这里落在本
+/// crate 的 [`crate::os_motion::OsMotionProbe`](Windows =
+/// `SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION)`,其余平台
+/// fail-open),与 gpui 宿主同一条 OS 通道。
+#[derive(Debug, Default, Clone, Copy)]
+pub struct EguiMotionProbe {
+    os: crate::os_motion::OsMotionProbe,
+}
+
+impl EguiMotionProbe {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl MotionPreferenceProbe for EguiMotionProbe {
+    fn animations_enabled(&self) -> bool {
+        self.os.animations_enabled()
     }
 }
 

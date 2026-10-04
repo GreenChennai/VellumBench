@@ -29,13 +29,14 @@ impl eframe::App for VellumApp {
         // 100+ 字段)。指纹 = (主题深浅, 动效开关, 密度档):连续帧不变 →
         // 零重注入(单测 `style_injection_fingerprint_gates_reinjection`);
         // 变化点只有主题切换/动效开关/密度切换/首帧。
-        if self.style_sync_needed(self.theme_dark, self.motion_enabled)
-            || self.density_sync_needed()
-        {
+        // S5 清单 ④:注入动效真值 = 用户总开关 × 系统偏好(并联,
+        // `effective_motion`;系统「减少动态效果」开 → 同样全部直通)。
+        let motion = self.effective_motion();
+        if self.style_sync_needed(self.theme_dark, motion) || self.density_sync_needed() {
             // H-1:带动效总开关 —— 关闭时 egui animation_time 归零,组件侧
             // 动画同步冻结(COUP-09:开关真值来自 workspace.json 单一真相,
             // 经 `motion_enabled` 字段还原,不再依赖 egui ctx.data 存活)。
-            theme::apply_ex(ui.ctx(), self.theme_dark, 1.0, self.motion_enabled);
+            theme::apply_ex(ui.ctx(), self.theme_dark, 1.0, motion);
             // §8.3.5 密度档:行高 24/28 的开关面(图层行等经 density::row_height 读)
             theme::density::set_compact(ui.ctx(), self.density_compact);
             self.density_synced = Some(self.density_compact);

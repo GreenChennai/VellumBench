@@ -14,6 +14,7 @@
 //! | [`SystemCursor`] | `set_shape` | 画布工具随动光标 |
 //! | [`DisplayInfo`] | `displays` | **每显示器** DPI/分辨率(画布清晰度预算) |
 //! | [`DarkModeProbe`] | `is_dark_mode` | 系统深色外观探测(主题初值) |
+//! | [`MotionPreferenceProbe`] | `animations_enabled` | 系统「减少动态效果」探测(§8.10 reduced-motion;与应用内总开关并联) |
 //!
 //! ## 实现
 //!
@@ -34,6 +35,7 @@
 
 pub mod error;
 pub mod null;
+pub mod os_motion;
 pub mod traits;
 pub mod types;
 
@@ -43,6 +45,12 @@ pub mod egui_backend;
 pub mod gpui_backend;
 
 pub use error::PlatformError;
-pub use null::{NullClipboard, NullCursor, NullDarkMode, NullDialog, NullDisplay, NullWindow};
-pub use traits::{Clipboard, DarkModeProbe, DisplayInfo, FileDialog, SystemCursor, WindowHandle};
+pub use null::{
+    NullClipboard, NullCursor, NullDarkMode, NullDialog, NullDisplay, NullMotionProbe, NullWindow,
+};
+pub use os_motion::OsMotionProbe;
+pub use traits::{
+    Clipboard, DarkModeProbe, DisplayInfo, FileDialog, MotionPreferenceProbe, SystemCursor,
+    WindowHandle,
+};
 pub use types::{CursorShape, DisplayMetrics, FileFilter};

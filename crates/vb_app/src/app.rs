@@ -264,6 +264,11 @@ pub struct VellumApp {
     sec_dock_collapsed: bool,
     /// H-1:动效总开关(默认开;workspace.json `motion_enabled`)。
     pub(crate) motion_enabled: bool,
+    /// S5 清单 ④:系统「减少动态效果」偏好探测结果(构造时读一次;
+    /// 与用户总开关 [`Self::motion_enabled`] **并联** —— 任一关 → 动画
+    /// 直通,见 [`Self::effective_motion`])。运行中改系统设置需重启
+    /// 应用生效 —— 诚实记录:SPI 探针无变更回调口,不做每帧轮询。
+    pub(crate) os_animations: bool,
     /// §8.3.5 密度档(true = compact 24 行高;workspace.json
     /// `density_compact`,默认 false = comfortable 28)。
     pub(crate) density_compact: bool,
@@ -638,6 +643,12 @@ impl VellumApp {
         needed
     }
 
+    /// S5 清单 ④:动效真值 = 用户总开关 × 系统偏好**并联**
+    /// (`theme::anim_time` 只认这一份注入值;任一关 → 全部时长归零)。
+    pub(crate) fn effective_motion(&self) -> bool {
+        effective_motion(self.motion_enabled, self.os_animations)
+    }
+
     /// 外壳主题广播(02-3-5:主页与所有窗口跟随同一主题)。
     pub fn set_theme_dark(&mut self, dark: bool) {
         if self.theme_dark != dark {
@@ -781,9 +792,52 @@ pub(crate) fn fmt_deg(deg: f64) -> String {
     vb_common::units::fmt_num((deg * 10.0).round() / 10.0)
 }
 
+/// S5 清单 ④:读一次系统动效偏好(进程内只探测一次;构造期调用)。
+/// 探针细节与 fail-open 口径见 `vb_platform::os_motion`。
+pub(crate) fn probe_os_animations() -> bool {
+    use vb_platform::MotionPreferenceProbe as _;
+    vb_platform::os_motion::OsMotionProbe::new().animations_enabled()
+}
+
+/// S5 清单 ④:动效真值的**并联**纯函数(用户总开关 × 系统偏好)。
+/// 任一关 → `false`(`theme::apply_ex` 把 egui `animation_time` 归零,
+/// `anim_time` 同步归零 —— 全部过渡立即到位)。真值表单测在下方。
+pub(crate) const fn effective_motion(user_enabled: bool, os_animations: bool) -> bool {
+    user_enabled && os_animations
+}
+
 // ─────────────────────── 04-5 / 04-3 门禁(单测) ───────────────────────
 
 // ─────────────────────── UI-10 门禁(单测) ───────────────────────
+
+// ─────────────────────── S5 清单 ④:动效并联真值表 ───────────────────────
+
+#[cfg(test)]
+mod motion_parallel_tests {
+    use super::effective_motion;
+
+    /// 真值表逐行:用户总开关 × 系统偏好,**并联 = AND**。
+    /// (on,on)=动;(on,off)=系统减少动效 → 直通;(off,on)=用户关 →
+    /// 直通;(off,off)=双关 → 直通。theme 侧 `anim_time` 只认这份注入值,
+    /// 不做第二套判断(单一开关面)。
+    #[test]
+    fn motion_truth_table_parallel_and() {
+        // (用户开关, 系统偏好) → 动效真值
+        let table = [
+            ((true, true), true),
+            ((true, false), false),
+            ((false, true), false),
+            ((false, false), false),
+        ];
+        for ((user, os), want) in table {
+            assert_eq!(
+                effective_motion(user, os),
+                want,
+                "并联真值表({user},{os})应得 {want}"
+            );
+        }
+    }
+}
 
 #[cfg(test)]
 mod ui10_tests {

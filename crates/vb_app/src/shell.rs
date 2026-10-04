@@ -281,6 +281,9 @@ pub struct ShellApp {
     pending_open: Option<PendingOpen>,
     /// H-1 动效总开关(主页侧;由 workspace.json 初始化、窗口广播更新)。
     motion_enabled: bool,
+    /// S5 清单 ④:系统「减少动态效果」偏好(构造时探测一次;与
+    /// `motion_enabled` 并联,任一关 → 主页动效直通)。
+    os_animations: bool,
     /// 已同步到 egui 的主题(None=尚未同步;与 VellumApp.frame 同款,
     /// B4 主题单一真相 —— 主页此前跟随系统主题,深色机器上会画成浅色)。
     theme_synced: Option<bool>,
@@ -341,6 +344,8 @@ impl ShellApp {
             pending_open: None,
             // H-1:动效总开关随 workspace.json 初始化(主页侧与窗口侧同源)
             motion_enabled: ws_cfg.motion_enabled,
+            // S5 清单 ④:系统动效偏好(主页侧同样并联;探测一次)
+            os_animations: crate::app::probe_os_animations(),
             theme_synced: None,
             style_applied: None,
             root_title_sent: None,
@@ -789,9 +794,11 @@ impl eframe::App for ShellApp {
         // 主题单一真相在外壳(主页与窗口共用;vb_ui::theme 幂等)。
         // H-1:带动效总开关 —— 主页侧的过渡/toast 同样可关。
         // PERF-05/UI-02:指纹(深色, 动效)不变 → 零重注入(与 frame.rs 同口径)。
-        if self.style_applied != Some((self.theme_dark, self.motion_enabled)) {
-            self.style_applied = Some((self.theme_dark, self.motion_enabled));
-            vb_ui::theme::apply_ex(&ctx, self.theme_dark, 1.0, self.motion_enabled);
+        // S5 清单 ④:注入动效真值 = 用户总开关 × 系统偏好(并联)。
+        let motion = super::app::effective_motion(self.motion_enabled, self.os_animations);
+        if self.style_applied != Some((self.theme_dark, motion)) {
+            self.style_applied = Some((self.theme_dark, motion));
+            vb_ui::theme::apply_ex(&ctx, self.theme_dark, 1.0, motion);
         }
 
         self.drain_requests(&ctx);

@@ -164,6 +164,9 @@ impl VellumApp {
             sec_dock_width: ws.sec_dock_width,
             sec_dock_collapsed: ws.sec_dock_collapsed,
             motion_enabled: ws.motion_enabled,
+            // S5 清单 ④:系统「减少动态效果」偏好(构造期探测一次,与
+            // 用户总开关并联;真值经 `effective_motion` 注入 theme)
+            os_animations: super::probe_os_animations(),
             density_compact: ws.density_compact,
             workspace_saved: ws.clone(),
             // UI-12:窗口布局层基线 = 构造配置(避免首帧误报脏)

@@ -765,10 +765,13 @@ pub mod motion {
 
 // ───────────────────── 动效总开关(H-1:可关 + 持久化) ─────────────────────
 //
-// **为什么是开关而不是探测**:egui/winit 不暴露系统「减少动态效果」
-// 无障碍设置的跨平台读取口;这里以**显式设置项**承接同一语义
-// (首选项「常规」/视图菜单可关,状态入 workspace.json,默认开)。
-// 关闭后:① egui 全局 `animation_time` 归零(所有跟随样式的过渡立即到位);
+// **开关 + 系统探测并联(S5 清单 ④)**:egui/winit 不暴露系统「减少
+// 动态效果」的跨平台读取口,应用内以**显式设置项**承接(首选项「常规」/
+// 视图菜单可关,状态入 workspace.json,默认开);系统级探测归
+// `vb_platform::MotionPreferenceProbe`(Windows =
+// `SPI_GETCLIENTAREAANIMATION`),在 vb_app 构造期读一次,与本开关
+// **并联**(任一关 → 注入本层的动效真值 = false)。关闭后:
+// ① egui 全局 `animation_time` 归零(所有跟随样式的过渡立即到位);
 // ② 组件里显式传时长的 `animate_bool_with_time` 经 [`anim_time`] 同步归零;
 // ③ 对话框/Tab 的一次性淡入(motion 模块)直接跳到终态。
 

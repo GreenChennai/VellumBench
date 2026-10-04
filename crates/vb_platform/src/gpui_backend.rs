@@ -11,7 +11,8 @@
 
 use crate::error::PlatformError;
 use crate::traits::{
-    Clipboard, DarkModeProbe, DisplayInfo, FileDialog, SystemCursor, WindowHandle,
+    Clipboard, DarkModeProbe, DisplayInfo, FileDialog, MotionPreferenceProbe, SystemCursor,
+    WindowHandle,
 };
 use crate::types::{CursorShape, DisplayMetrics, FileFilter};
 use sable::gpui as gp;
@@ -145,6 +146,29 @@ impl DarkModeProbe for GpuiDarkMode<'_> {
             self.cx.window_appearance(),
             gp::WindowAppearance::Dark | gp::WindowAppearance::VibrantDark
         )
+    }
+}
+
+/// [`MotionPreferenceProbe`] 的 gpui 实现(S5 清单 ④)。
+///
+/// gpui 0.2.2 无 reduced-motion API(sable 锁定版本,诚实记录);
+/// 「减少动态效果」本就是系统级设置,与宿主框架无关 —— 实读走
+/// [`crate::os_motion::OsMotionProbe`](Windows =
+/// `SPI_GETCLIENTAREAANIMATION`),与 egui 宿主同一 OS 通道。
+#[derive(Debug, Default, Clone, Copy)]
+pub struct GpuiMotionProbe {
+    os: crate::os_motion::OsMotionProbe,
+}
+
+impl GpuiMotionProbe {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl MotionPreferenceProbe for GpuiMotionProbe {
+    fn animations_enabled(&self) -> bool {
+        self.os.animations_enabled()
     }
 }
 
