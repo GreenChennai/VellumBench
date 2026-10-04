@@ -617,6 +617,7 @@ impl VellumApp {
             sec_dock_width: self.sec_dock_width,
             sec_dock_collapsed: self.sec_dock_collapsed,
             motion_enabled: self.motion_enabled,
+            density_compact: self.density_compact,
             // 07-A:自动保存间隔档位
             autosave_interval_secs: self.autosave_interval_secs,
             // 05-2(X-5):铅笔保真度容差
@@ -705,6 +706,7 @@ impl VellumApp {
             || (a.sec_dock_width - self.sec_dock_width).abs() > 0.5
             || a.sec_dock_collapsed != self.sec_dock_collapsed
             || a.motion_enabled != self.motion_enabled
+            || a.density_compact != self.density_compact
             // 07-A:自动保存间隔
             || a.autosave_interval_secs != self.autosave_interval_secs
             // 05-2(X-5):铅笔保真度

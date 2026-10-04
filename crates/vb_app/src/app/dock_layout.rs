@@ -296,6 +296,9 @@ pub struct WorkspaceConfig {
     pub sec_dock_collapsed: bool,
     /// H-1 动效总开关(true = 开;首选项「常规」页/视图菜单可关)。
     pub motion_enabled: bool,
+    /// §8.3.5 密度档(true = compact 行高 24;false = comfortable 28)。
+    /// v2 内追加字段,serde(default) 兼容旧文件,不抬版本。
+    pub density_compact: bool,
 }
 
 impl Default for WorkspaceConfig {
@@ -342,6 +345,7 @@ impl Default for WorkspaceConfig {
             sec_dock_width: super::panel_dock::SEC_DOCK_WIDTH,
             sec_dock_collapsed: false,
             motion_enabled: true,
+            density_compact: false,
         }
     }
 }

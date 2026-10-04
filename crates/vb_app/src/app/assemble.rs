@@ -154,6 +154,7 @@ impl VellumApp {
             sec_dock_width: ws.sec_dock_width,
             sec_dock_collapsed: ws.sec_dock_collapsed,
             motion_enabled: ws.motion_enabled,
+            density_compact: ws.density_compact,
             workspace_saved: ws.clone(),
             transform_panel_open: false,
             transform_ref: transform_panel::RefPoint::MC,

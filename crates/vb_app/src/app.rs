@@ -238,6 +238,9 @@ pub struct VellumApp {
     sec_dock_collapsed: bool,
     /// H-1:动效总开关(默认开;workspace.json `motion_enabled`)。
     pub(crate) motion_enabled: bool,
+    /// §8.3.5 密度档(true = compact 24 行高;workspace.json
+    /// `density_compact`,默认 false = comfortable 28)。
+    pub(crate) density_compact: bool,
     /// 上次**已持久化**的工作区快照(脏检查;阶段 6 / 07-2 写通)。
     workspace_saved: dock_layout::WorkspaceConfig,
     /// 变换数值面板显隐(阶段 2 / 03-2,`⇧F8`)
