@@ -34,9 +34,9 @@ impl ToastKind {
     /// 存活时长(自动消退)。
     pub fn ttl(self) -> Duration {
         match self {
-            Self::Info | Self::Success => Duration::from_millis(2500),
-            Self::Warn => Duration::from_millis(5000),
-            Self::Error => Duration::from_millis(10_000),
+            Self::Info | Self::Success => Duration::from_millis(2500), // vb-size-ok: TTL 毫秒(时长,非尺寸)
+            Self::Warn => Duration::from_millis(5000),                 // vb-size-ok: TTL 毫秒
+            Self::Error => Duration::from_millis(10_000),              // vb-size-ok: TTL 毫秒
         }
     }
 
@@ -167,6 +167,13 @@ impl ToastHost {
                     let remaining = toast.kind.ttl().saturating_sub(elapsed);
                     // 末 400ms 整卡淡出
                     let fade = (remaining.as_secs_f32() / 0.4).clamp(0.0, 1.0);
+                    // 入场滑入 120ms(§8.6 #15;motion::STATE;总开关关=直通)
+                    let enter = crate::motion::enter_alpha(
+                        ctx,
+                        egui::Id::new("vb_toast_enter").with(toast.born),
+                        theme::motion::STATE,
+                    );
+                    let dy = (1.0 - enter) * theme::space::S4;
                     let kind_col = toast.kind.color(&t);
                     let copyable = matches!(toast.kind, ToastKind::Error | ToastKind::Warn);
                     egui::Frame::new()
@@ -176,9 +183,10 @@ impl ToastHost {
                             kind_col.gamma_multiply(0.6),
                         ))
                         .corner_radius(theme::radius::lg())
-                        .inner_margin(egui::Margin::symmetric(10, 6))
+                        .inner_margin(egui::Margin::symmetric(8, 6))
                         .multiply_with_opacity(fade)
                         .show(ui, |ui| {
+                            ui.add_space(dy);
                             ui.horizontal(|ui| {
                                 ui.label(icons::rich(toast.kind.icon(), 14.0).color(kind_col));
                                 ui.add(

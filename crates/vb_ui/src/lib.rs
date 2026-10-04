@@ -29,9 +29,11 @@ pub mod theme;
 pub mod toast;
 
 pub use components::{
-    caption, dialog_footer, dialog_footer_btn3, icon_button, key_badge_text, label, mono, strong,
-    ColorField, ColorFieldResponse, NumField, NumFieldResponse, PanelTabs, SectionHeader,
-    TabsResponse, ToolButton,
+    badge, caption, card, checkbox, dialog, dialog_footer, dialog_footer_btn3, icon_button,
+    inline_error, key_badge_text, label, mono, progress_linear, progress_pill, radio, select,
+    separator_indented, slider, spinner, strong, BadgeKind, ColorField, ColorFieldResponse,
+    EmptyState, EmptyStateResponse, NumField, NumFieldResponse, PanelTabs, SectionHeader,
+    SliderResponse, TabsResponse, TextField, ToolButton, ValueOverlay,
 };
 pub use gradient::{gradient_bar, GradKind, Gradient, GradientBarResponse, Stop};
 pub use toast::{Toast, ToastHost, ToastKind};

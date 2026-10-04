@@ -80,16 +80,23 @@ pub fn enter_alpha(ctx: &egui::Context, id: Id, secs: f32) -> f32 {
 }
 
 /// 把 `body` 的绘制包上一层入场位移(`slide_px` 像素,自下而上就位):
-/// 对话框 120ms + 4px,浮层/Tab 内容 80ms + 2px。
-pub fn fade_slide(ui: &mut Ui, id: Id, secs: f32, slide_px: f32, body: impl FnOnce(&mut Ui)) {
+/// 对话框 120ms + 4px,浮层/Tab 内容 80ms + 2px。`body` 的产出原样透传。
+pub fn fade_slide<R>(
+    ui: &mut Ui,
+    id: Id,
+    secs: f32,
+    slide_px: f32,
+    body: impl FnOnce(&mut Ui) -> R,
+) -> R {
     let a = enter_alpha(ui.ctx(), id, secs);
     // 每帧走**同一条布局路径**(scope 子块):入场期与稳定期的结构一致,
     // 避免 Window 的 sizing 记忆在不同路径之间反复横跳(实测会撑高窗口)。
     let dy = (1.0 - a) * slide_px;
     ui.scope_builder(UiBuilder::new().id_salt(id.with("fade")), |inner| {
         inner.add_space(dy);
-        body(inner);
-    });
+        body(inner)
+    })
+    .inner
 }
 
 #[cfg(test)]
