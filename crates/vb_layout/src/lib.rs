@@ -354,7 +354,7 @@ fn measure_leaf(input: LayoutInput, node_ctx: Option<&mut LeafCtx>) -> LayoutOut
             } as f32;
             let ls = *letter_spacing as f32;
             if *nowrap {
-                let (mw, _n) = vb_render::text::measure_text_weighted(
+                let (mw, _n) = vb_textmeasure::measure_text_weighted(
                     text,
                     family,
                     *font_size as f32,
@@ -367,7 +367,7 @@ fn measure_leaf(input: LayoutInput, node_ctx: Option<&mut LeafCtx>) -> LayoutOut
                     known_h.unwrap_or(lh.max(1.0).ceil()),
                 )
             } else {
-                let (mw, lines) = vb_render::text::measure_text_weighted(
+                let (mw, lines) = vb_textmeasure::measure_text_weighted(
                     text,
                     family,
                     *font_size as f32,

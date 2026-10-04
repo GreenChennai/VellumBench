@@ -12,4 +12,11 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 vb_common = { path = "../vb_common" }
 vb_css = { path = "../vb_css" }
 vb_doc = { path = "../vb_doc" }
-vb_render = { path = "../vb_render" }
+# COUP-01(ADR-0053):文本量测走底层 vb_textmeasure,布局层不再依赖渲染层
+vb_textmeasure = { workspace = true }
+
+# COUP-01:库依赖已不含 vb_render(见 tests/dep_direction.rs 钉子)。
+# dev-dependency 仅供一处跨层几何回归(artboard_declared_height.rs)以
+# 渲染视角复验布局结果;不影响库本体的编译面与依赖方向。
+[dev-dependencies]
+vb_render = { workspace = true }

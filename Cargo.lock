@@ -8999,6 +8999,7 @@ dependencies = [
  "vb_css",
  "vb_doc",
  "vb_render",
+ "vb_textmeasure",
 ]
 
 [[package]]
@@ -9027,15 +9028,13 @@ dependencies = [
 name = "vb_render"
 version = "0.14.0"
 dependencies = [
- "fontique",
  "image",
- "swash",
  "tiny-skia 0.12.0",
  "vb_common",
  "vb_css",
  "vb_doc",
+ "vb_textmeasure",
  "vello",
- "zeno",
 ]
 
 [[package]]
@@ -9062,6 +9061,16 @@ dependencies = [
  "vb_render",
  "vb_session",
  "vello",
+]
+
+[[package]]
+name = "vb_textmeasure"
+version = "0.14.0"
+dependencies = [
+ "fontique",
+ "swash",
+ "vb_common",
+ "zeno",
 ]
 
 [[package]]
