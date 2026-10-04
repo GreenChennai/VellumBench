@@ -305,7 +305,6 @@ impl VellumApp {
         if count > 0 {
             self.exec(Command::Compound { cmds });
             self.status = format!("已{}分布 {count} 个对象(间距 {gap:.0}px)", axis);
-            // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
         }
     }
 
@@ -789,7 +788,7 @@ impl VellumApp {
             n += 1;
         }
         self.status = format!(
-            "再次变换(Ctrl+D):{} 个对象(位移 {:.0},{:.0} · 缩放 ×{:.2}/×{:.2} · 旋转 {:.1}°)", // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
+            "再次变换(Ctrl+D):{} 个对象(位移 {:.0},{:.0} · 缩放 ×{:.2}/×{:.2} · 旋转 {:.1}°)",
             n, d.dx, d.dy, d.kx, d.ky, d.d_angle
         );
     }

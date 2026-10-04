@@ -387,7 +387,7 @@ impl VellumApp {
         // 结果区:分数 + 说明
         if let (Some(score), Some(ratio)) = (job.score, job.diff_ratio) {
             ui.label(format!(
-                "差异分数 {score:.4}(灰度不一致像素占比 {:.2}%;分数由本次采样生成)", // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
+                "差异分数 {score:.4}(灰度不一致像素占比 {:.2}%;分数由本次采样生成)",
                 ratio * 100.0
             ));
             ui.small(

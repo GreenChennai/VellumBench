@@ -527,7 +527,7 @@ impl VellumApp {
                 let vp = ui.ctx().viewport_rect();
                 match (fps, adapter) {
                     (Some((fps, frame_ms)), Some((backend, name))) => {
-                        ui.label(format!("FPS {fps:.0} · 帧时间 {frame_ms:.1} ms")); // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
+                        ui.label(format!("FPS {fps:.0} · 帧时间 {frame_ms:.1} ms"));
                         ui.label(vb_session::i18n::t_args(
                             "ui-app-panels-mod-panels-036",
                             &[(
@@ -537,16 +537,16 @@ impl VellumApp {
                                 ),
                             )],
                         ));
-                        ui.label(format!("渲染 {backend:?} · {name}")); // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
+                        ui.label(format!("渲染 {backend:?} · {name}"));
                         ui.label(format!(
-                            "视口 {:.0}×{:.0} · 缩放 {}%", // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
+                            "视口 {:.0}×{:.0} · 缩放 {}%",
                             vp.width(),
                             vp.height(),
                             (self.camera.zoom * 100.0) as i64
                         ));
                     }
                     (Some((fps, frame_ms)), None) => {
-                        ui.label(format!("FPS {fps:.0} · 帧时间 {frame_ms:.1} ms")); // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
+                        ui.label(format!("FPS {fps:.0} · 帧时间 {frame_ms:.1} ms"));
                         ui.label(vb_session::i18n::t_args(
                             "ui-app-panels-mod-panels-036",
                             &[(
@@ -560,7 +560,6 @@ impl VellumApp {
                     }
                     (None, Some((backend, name))) => {
                         ui.label(format!("FPS 采样中… · 渲染 {backend:?} · {name}"));
-                        // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
                     }
                     (None, None) => {
                         ui.label(vb_session::i18n::t("ui-app-panels-mod-panels-041"));

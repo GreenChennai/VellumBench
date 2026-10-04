@@ -773,7 +773,7 @@ impl VellumApp {
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {
                 self.status = format!(
-                    "导出中:{}({:.0}s)…", // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
+                    "导出中:{}({:.0}s)…",
                     job.out.display(),
                     job.started.elapsed().as_secs_f32()
                 );

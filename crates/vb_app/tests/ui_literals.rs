@@ -325,7 +325,19 @@ fn line_spans(src: &str) -> Vec<(usize, usize)> {
 /// 字面量是否落在带合规理由的 `vb-literal-ok:` 行上(跨行字面量:任一
 /// 覆盖行带标记即算 —— 标记惯例写在行尾或行首注释)。
 fn line_exempt(src: &str, lit: &StrLit) -> bool {
-    for (s, e) in line_spans(src) {
+    // 约定:标记可在字面量覆盖行上,或其首行的**上一行**(rustfmt 会重排
+    // format! 实参换行,行尾标记会漂移;独立注释行是 fmt 稳定的)。
+    let mut spans = line_spans(src);
+    let first_line_idx = spans
+        .iter()
+        .position(|&(s, e)| lit.start < e && lit.end > s);
+    if let Some(idx) = first_line_idx {
+        if idx > 0 {
+            let (ps, pe) = spans[idx - 1];
+            spans.push((ps, pe));
+        }
+    }
+    for (s, e) in spans {
         if lit.start < e && lit.end > s {
             let line = &src[s..e];
             if let Some(p) = line.find(LINE_EXEMPT_MARKER) {
@@ -394,6 +406,54 @@ fn callee_name(blanked: &str, str_start: usize) -> Option<String> {
     }
 }
 
+/// format 族格式串含精度/宽度/Debug 规格(`{:.1}`/`{:?}` 等)时,Fluent
+/// 占位符无法等价表达,机械抽取不支持 —— 与 gen_ui_ftl.py 的 manual:spec
+/// 同口径豁免(台账列明,后续人工改造)。
+fn is_unconvertible_spec_format(blanked: &str, lit: &StrLit) -> bool {
+    let name = match callee_name(blanked, lit.start) {
+        Some(n)
+            if matches!(
+                n.as_str(),
+                "format" | "anyhow" | "bail" | "write" | "writeln"
+            ) =>
+        {
+            n
+        }
+        _ => return false,
+    };
+    let _ = name;
+    // 前缀确认字面量确为该宏的第一实参(format 族)
+    let prefix = blanked[..lit.start].trim_end();
+    if !prefix.ends_with('(') {
+        return false;
+    }
+    has_unconvertible_spec(&lit.text)
+}
+
+/// 不支持的规格:`{ … : … }`(精度/宽度/填充/符号/Debug;`{{`/`}}` 转义跳过)。
+fn has_unconvertible_spec(text: &str) -> bool {
+    let b = text.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'{' if i + 1 < b.len() && b[i + 1] == b'{' => i += 2,
+            b'}' if i + 1 < b.len() && b[i + 1] == b'}' => i += 2,
+            b'{' => {
+                let mut j = i + 1;
+                while j < b.len() && b[j] != b'}' {
+                    if b[j] == b':' {
+                        return true;
+                    }
+                    j += 1;
+                }
+                i = j + 1;
+            }
+            _ => i += 1,
+        }
+    }
+    false
+}
+
 /// 对单份源码跑完整判定,返回违规描述(空 = 通过)。
 fn violations_in(src: &str) -> Vec<String> {
     let (strs, comments) = tokenize(src);
@@ -427,6 +487,7 @@ fn violations_in(src: &str) -> Vec<String> {
                 .map(|name| !DIAGNOSTIC_CALLEES.contains(&name.as_str()))
                 .unwrap_or(true)
         })
+        .filter(|l| !is_unconvertible_spec_format(&blanked, l))
         .map(|l| {
             let line = src[..l.start].bytes().filter(|&c| c == b'\n').count() + 1;
             let snippet: String = l.text.chars().take(24).collect();

@@ -34,7 +34,6 @@ impl VellumApp {
                     _ => vb_session::i18n::t("ui-common-zoom"),
                 };
                 self.status = format!("{name}中心已设定({:.0},{:.0}),拖拽对象即围绕它变换", wx, wy);
-                // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
             }
             return true;
         }
@@ -293,7 +292,7 @@ impl VellumApp {
             }
             if !cmds.is_empty() {
                 self.exec(Command::Compound { cmds });
-                self.status = format!("缩放 ×{kx:.2}/×{ky:.2}"); // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
+                self.status = format!("缩放 ×{kx:.2}/×{ky:.2}");
             }
             if let Drag::ToolScale { moved: m, cur, .. } = &mut self.drag {
                 *m = true;
@@ -334,7 +333,7 @@ impl VellumApp {
             }
             if !cmds.is_empty() {
                 self.exec(Command::Compound { cmds });
-                self.status = format!("自由变换 ×{kx:.2}/×{ky:.2}"); // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
+                self.status = format!("自由变换 ×{kx:.2}/×{ky:.2}");
             }
             if let Drag::FreeTransform { moved: m, cur, .. } = &mut self.drag {
                 *m = true;
@@ -417,7 +416,7 @@ impl VellumApp {
             ky,
             ..crate::app::transform_panel::TransformDelta::translate(0.0, 0.0)
         });
-        self.status = format!("缩放完成 ×{kx:.2}/×{ky:.2}(Esc 回选择工具)"); // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
+        self.status = format!("缩放完成 ×{kx:.2}/×{ky:.2}(Esc 回选择工具)");
     }
 
     /// 自由变换松手:状态收束。

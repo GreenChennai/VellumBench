@@ -932,10 +932,10 @@ def main():
         # 给 manual:* 位点所在行加 `// vb-literal-ok: <理由>` 行豁免
         # (const 静态表 / match 模式位 / 控制字符;理由必须真实)。
         REASONS = {
-            "manual:const": " // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)",
-            "manual:pattern": " // vb-literal-ok: match 模式位字符串(内部判别值,非渲染文案)",
-            "manual:ctl": " // vb-literal-ok: 含换行控制字符,单行 ftl 放不下",
-            "manual:spec": " // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动",
+            "manual:const": "// vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)",
+            "manual:pattern": "// vb-literal-ok: match 模式位字符串(内部判别值,非渲染文案)",
+            "manual:ctl": "// vb-literal-ok: 含换行控制字符,单行 ftl 放不下",
+            "manual:spec": "// vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动",
         }
         by_rel = {}
         for s in sites:
@@ -945,11 +945,19 @@ def main():
         for rel, ss in sorted(by_rel.items()):
             p = SRC / rel
             lines = p.read_text(encoding="utf-8").split("\n")
+            # 约定:标记插在字面量首行的**上一行**(独立注释行,fmt 稳定;
+            # 门禁 line_exempt 会查上一行)。降序插入防行号漂移。
+            inserted: set[int] = set()
             for s in sorted(ss, key=lambda x: x.line, reverse=True):
-                ln = lines[s.line - 1]
-                if "vb-literal-ok:" in ln:
+                idx = s.line - 1
+                if idx in inserted or idx < 1:
                     continue
-                lines[s.line - 1] = ln.rstrip() + REASONS[s.kind]
+                if "vb-literal-ok:" in lines[idx] or "vb-literal-ok:" in lines[idx - 1]:
+                    inserted.add(idx)
+                    continue
+                indent = lines[idx][: len(lines[idx]) - len(lines[idx].lstrip())]
+                lines.insert(idx, indent + REASONS[s.kind])
+                inserted.add(idx)
                 n += 1
             p.write_text("\n".join(lines), encoding="utf-8", newline="")
             print(f"{rel}: 标记 {sum(1 for s in ss)}")

@@ -164,7 +164,6 @@ impl VellumApp {
         self.pencil_fidelity = next;
         self.save_workspace();
         self.status = format!("铅笔保真度:{next:.0}px(容差越大笔迹越简洁;下一档继续点)",);
-        // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
     }
 }
 

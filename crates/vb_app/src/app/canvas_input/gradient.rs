@@ -100,6 +100,5 @@ impl VellumApp {
         self.gradient_annot = Some((start.0, start.1, end.0, end.1));
         self.status =
             format!("线性渐变已应用 {angle:.0}°(起=原填充 → 止=#ffffff;双击色标改色;Alt+单击移除)");
-        // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
     }
 }

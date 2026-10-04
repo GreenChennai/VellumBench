@@ -577,7 +577,7 @@ impl VellumApp {
     pub(crate) fn anim_play_toggle(&mut self) {
         if self.anim_playing {
             self.anim_playing = false;
-            self.say(format!("暂停 @ {:.2}s", self.anim_time)); // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
+            self.say(format!("暂停 @ {:.2}s", self.anim_time));
         } else {
             let total = self.anim_total_duration();
             if total <= 0.0 {
@@ -662,7 +662,7 @@ impl VellumApp {
         }
         self.anim_write_model(&sid, &m);
         self.say(format!(
-            "已在播放头 {:.2}s 加 {added} 个关键帧(Ctrl+Z 撤销)", // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
+            "已在播放头 {:.2}s 加 {added} 个关键帧(Ctrl+Z 撤销)",
             self.anim_time
         ));
     }

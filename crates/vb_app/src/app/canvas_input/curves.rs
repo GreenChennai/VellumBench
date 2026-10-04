@@ -107,7 +107,7 @@ impl VellumApp {
             Some(p) => {
                 self.create_vector_node(p, false);
                 self.status = format!(
-                    "铅笔:{} 点笔迹 → {} 锚点路径(保真度 {:.0}px,编辑 → 设置可调)", // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
+                    "铅笔:{} 点笔迹 → {} 锚点路径(保真度 {:.0}px,编辑 → 设置可调)",
                     pts.len(),
                     n,
                     self.pencil_fidelity
@@ -132,7 +132,7 @@ impl VellumApp {
                 if let Some(nid) = self.pick_at_world(wx, wy) {
                     let n = self.doc.nodes.get(nid).unwrap();
                     self.status = format!(
-                        "度量:「{}」 {} × {} px(原点 {:.0},{:.0};拖动可量任意两点距离)", // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
+                        "度量:「{}」 {} × {} px(原点 {:.0},{:.0};拖动可量任意两点距离)",
                         n.name, n.geom.w, n.geom.h, n.geom.x, n.geom.y
                     );
                     if let Some(bb) = vb_tools::abs_bbox_world(&self.doc, nid) {
@@ -160,7 +160,7 @@ impl VellumApp {
         self.measure_anchor = Some(start);
         self.measure_result = Some((dx, dy, d));
         self.status = format!(
-            "度量:距离 {d:.1}px(ΔX {dx:.1},ΔY {dy:.1};Esc 退出度量)", // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
+            "度量:距离 {d:.1}px(ΔX {dx:.1},ΔY {dy:.1};Esc 退出度量)",
             d = d,
             dx = dx,
             dy = dy

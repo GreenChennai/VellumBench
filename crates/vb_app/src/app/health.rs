@@ -450,7 +450,7 @@ pub(crate) fn a11y_issues(doc: &Document) -> Vec<HealthIssue> {
                 out.push(HealthIssue {
                     kind: HealthKind::A11yContrast,
                     message: format!(
-                        "文本「{}」({})对比度 {:.1}:1,低于 WCAG AA 建议 ≥{threshold}:1(按节点级样式粗判,仅提示)", // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
+                        "文本「{}」({})对比度 {:.1}:1,低于 WCAG AA 建议 ≥{threshold}:1(按节点级样式粗判,仅提示)",
                         truncate_text(text),
                         sid,
                         ratio
