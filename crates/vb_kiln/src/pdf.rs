@@ -1809,29 +1809,9 @@ pub fn escape_pdf_string(t: &str) -> String {
         .replace(')', "\\)")
 }
 
-/// f32/f64 统一数值格式化(消双侧调用点的类型摩擦)。
-pub trait FnumVal {
-    fn val(self) -> f64;
-}
-impl FnumVal for f64 {
-    fn val(self) -> f64 {
-        self
-    }
-}
-impl FnumVal for f32 {
-    fn val(self) -> f64 {
-        self as f64
-    }
-}
-
-pub fn fnum<V: FnumVal>(v: V) -> String {
-    let r = (v.val() * 1000.0).round() / 1000.0;
-    if r == r.trunc() {
-        format!("{}", r as i64)
-    } else {
-        format!("{r}")
-    }
-}
+/// f32/f64 统一数值格式化(EXP-07:实现移至 `vb_common::numfmt` 单源,
+/// SVG 车道同函数;此处 re-export 兼容既有 `crate::pdf::fnum` 调用点)。
+pub use vb_common::numfmt::{fnum, FnumVal};
 
 /// F1: 线性渐变 → PDF axial shading 字典体。
 /// 角度为 CSS 语义(0=to top, 90=to right, 180=to bottom),坐标已 Y 翻转。
