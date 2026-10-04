@@ -22,7 +22,10 @@
 //! - `--no-handshake` 收到 initialize 不回包(超时门禁);
 //! - `--probe <command>` 握手后调用一次 runCommand(越权门禁;结果打
 //!   stderr 后退出);
-//! - `--hang` 握手后挂起(停止/杀进程路径)。
+//! - `--hang` 握手后挂起(停止/杀进程路径);
+//! - `--flood-line` 握手后写一行 9MB(PLG-04 单行上限断连门禁);
+//! - `--flood-notify` 握手后连发 3000 条通知(PLG-04 入站队列上限门禁);
+//! - `--bad-version` 握手回包声明错误协议版本(PLG-06 版本协商门禁)。
 
 use std::collections::VecDeque;
 use std::io::{BufRead, Write};
@@ -214,7 +217,7 @@ fn handle_request(
             hang();
         }
         let result = json!({
-            "protocolVersion": PROTOCOL_VERSION,
+            "protocolVersion": if mode == "--bad-version" { "9.9" } else { PROTOCOL_VERSION },
             "name": "统计元素(示例)",
             "version": env!("CARGO_PKG_VERSION"),
         });
@@ -232,6 +235,36 @@ fn handle_request(
             "--hang" => {
                 eprintln!("vb-example-stats:--hang 夹具,挂起等待宿主处理");
                 hang();
+            }
+            "--flood-line" => {
+                // PLG-04 夹具:写一行 9MB 的"帧"(超过宿主单行上限)→
+                // 宿主必须断连并记录原因,而不是 OOM
+                eprintln!("vb-example-stats:--flood-line 夹具,写超长单行");
+                write_out(
+                    out,
+                    &format!("{{\"junk\":\"{}\"}}\n", "x".repeat(9_000_000)),
+                );
+                // 留出宿主读到超长行的窗口(读到即断连,不等进程退出)
+                std::thread::sleep(Duration::from_millis(300));
+                std::process::exit(0);
+            }
+            "--flood-notify" => {
+                // PLG-04 夹具:高速发 3000 条通知(不需要应答)→ 宿主
+                // 入站队列超上限 → 断连。通知帧无需应答,可连续直写。
+                eprintln!("vb-example-stats:--flood-notify 夹具,连发 3000 条通知");
+                let frame = encode_notification(
+                    protocol::M_LOG,
+                    &json!({"level":"info","message":"flood"}),
+                );
+                {
+                    let mut o = out.lock();
+                    for _ in 0..3000 {
+                        let _ = o.write_all(frame.as_bytes());
+                    }
+                    let _ = o.flush();
+                }
+                std::thread::sleep(Duration::from_millis(300));
+                std::process::exit(0);
             }
             _ => {}
         }
