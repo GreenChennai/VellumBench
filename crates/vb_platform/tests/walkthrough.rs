@@ -12,8 +12,8 @@
 use std::path::PathBuf;
 use vb_platform::{
     Clipboard, CursorShape, DarkModeProbe, DisplayInfo, DisplayMetrics, FileDialog, FileFilter,
-    NullClipboard, NullCursor, NullDarkMode, NullDialog, NullDisplay, NullWindow, SystemCursor,
-    WindowHandle,
+    MotionPreferenceProbe, NullClipboard, NullCursor, NullDarkMode, NullDialog, NullDisplay,
+    NullMotionProbe, NullWindow, OsMotionProbe, SystemCursor, WindowHandle,
 };
 
 /// 用例 1:启动器卡片「复制路径」——写后可读(null 参考语义)。
@@ -86,6 +86,20 @@ fn theme_seed_from_dark_mode_probe() {
     let mode = |p: &dyn DarkModeProbe| if p.is_dark_mode() { "dark" } else { "light" };
     assert_eq!(mode(dark.as_ref()), "dark");
     assert_eq!(mode(light.as_ref()), "light");
+}
+
+/// 用例 6(S5 清单 ④):系统动效偏好探测 —— null 默认放行 / 注入关态
+/// 模拟「减少动态效果」;OS 探针(`dyn`)可调用且 fail-open。
+/// 与 vb_app `effective_motion` 的并联语义配套(真值表在那边钉)。
+#[test]
+fn reduced_motion_probe_parallel_semantics() {
+    let on: Box<dyn MotionPreferenceProbe> = Box::new(NullMotionProbe::default());
+    let off: Box<dyn MotionPreferenceProbe> = Box::new(NullMotionProbe::new(false));
+    assert!(on.animations_enabled(), "null 默认 = 系统允许动画");
+    assert!(!off.animations_enabled(), "注入 false = 模拟减少动态效果");
+    // OS 探针经 dyn 派发可调用(Windows 真读 SPI;值随机器,不断言方向)
+    let os: Box<dyn MotionPreferenceProbe> = Box::new(OsMotionProbe::new());
+    let _ = os.animations_enabled();
 }
 
 /// 用例 5:打开工程(headless = 用户取消)+ 开窗后改标题。

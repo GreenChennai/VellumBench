@@ -34,24 +34,24 @@ impl DiffPair {
     ];
     pub fn label(self) -> &'static str {
         match self {
-            DiffPair::DiskMemory => "磁盘 ↔ 内存",
-            DiffPair::DiskSnapshot => "磁盘 ↔ 快照",
-            DiffPair::SnapshotMemory => "快照 ↔ 内存",
+            DiffPair::DiskMemory => "磁盘 ↔ 内存", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            DiffPair::DiskSnapshot => "磁盘 ↔ 快照", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            DiffPair::SnapshotMemory => "快照 ↔ 内存", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
         }
     }
 }
 
 /// 一方的可读摘要(缺失如实标注,不装作有值)。
 pub(crate) struct SideSummary {
-    pub label: &'static str,
+    pub label: String,
     pub lines: Option<usize>,
 }
 
 impl SideSummary {
     fn text(&self) -> String {
         match self.lines {
-            Some(n) => format!("{}:{} 行", self.label, n),
-            None => format!("{}:不可读/缺失", self.label),
+            Some(n) => format!("{}:{} 行", self.label, n), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            None => format!("{}:不可读/缺失", self.label), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
         }
     }
 }
@@ -66,15 +66,15 @@ pub(crate) fn side_summaries(
 ) -> [SideSummary; 3] {
     [
         SideSummary {
-            label: "磁盘 index.html",
+            label: vb_session::i18n::t("ui-app-conflict-dialog-006"),
             lines: disk.map(|d| d.lines().count()),
         },
         SideSummary {
-            label: "自动快照",
+            label: vb_session::i18n::t("ui-app-conflict-dialog-007"),
             lines: snapshot.map(|s| s.lines().count()),
         },
         SideSummary {
-            label: "内存当前态",
+            label: vb_session::i18n::t("ui-app-conflict-dialog-008"),
             lines: Some(memory.lines().count()),
         },
     ]
@@ -88,17 +88,37 @@ pub(crate) fn pair_diff(
     memory: &str,
 ) -> Vec<DiffRow> {
     let (a, b, la, lb): (Option<&str>, Option<&str>, &str, &str) = match pair {
-        DiffPair::DiskMemory => (disk, Some(memory), "磁盘", "内存"),
-        DiffPair::DiskSnapshot => (disk, snapshot, "磁盘", "快照"),
-        DiffPair::SnapshotMemory => (snapshot, Some(memory), "快照", "内存"),
+        DiffPair::DiskMemory => (
+            disk,
+            Some(memory),
+            &vb_session::i18n::t("ui-common-disk"),
+            &vb_session::i18n::t("ui-common-memory"),
+        ),
+        DiffPair::DiskSnapshot => (
+            disk,
+            snapshot,
+            &vb_session::i18n::t("ui-common-disk"),
+            &vb_session::i18n::t("ui-common-snapshot"),
+        ),
+        DiffPair::SnapshotMemory => (
+            snapshot,
+            Some(memory),
+            &vb_session::i18n::t("ui-common-snapshot"),
+            &vb_session::i18n::t("ui-common-memory"),
+        ),
     };
     match (a, b) {
         (Some(a), Some(b)) => autosave::line_diff(a, b),
         _ => vec![DiffRow {
             kind: DiffKind::Same,
-            text: format!(
-                "(一方缺失,无法做双方 diff;缺失方:{})",
-                if a.is_none() { la } else { lb }
+            text: vb_session::i18n::t_args(
+                "ui-app-conflict-dialog-009",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from(
+                        (if a.is_none() { la } else { lb }).to_string(),
+                    ),
+                )],
             ),
         }],
     }
@@ -147,14 +167,14 @@ impl VellumApp {
         let mut open = true;
         let mut action: Option<ConflictAction> = None;
         let mut cancel = false;
-        egui::Window::new("外部改动 — 对比并合并")
+        egui::Window::new(vb_session::i18n::t("ui-app-conflict-dialog-010"))
             .open(&mut open)
             .collapsible(false)
             .default_size([760.0, 500.0])
             .show(ui.ctx(), |ui| {
                 ui.colored_label(
                     vb_ui::theme::tokens(ui.ctx()).warn,
-                    "磁盘上的 index.html 已被外部修改,而本地有未保存编辑(未自动采用)。",
+                    vb_session::i18n::t("ui-app-conflict-dialog-011"),
                 );
                 // 三方摘要
                 ui.horizontal_wrapped(|ui| {
@@ -166,7 +186,7 @@ impl VellumApp {
                 // 差分对选择
                 let mut pair = self.conflict_diff_pair;
                 ui.horizontal(|ui| {
-                    ui.label("对比");
+                    ui.label(vb_session::i18n::t("ui-common-compare"));
                     for p in DiffPair::ALL {
                         if ui.selectable_label(pair == p, p.label()).clicked() {
                             pair = p;
@@ -178,8 +198,12 @@ impl VellumApp {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     let rows = pair_diff(pair, disk.as_deref(), snap_html.as_deref(), &mem_html);
                     let changed = rows.iter().filter(|r| r.kind != DiffKind::Same).count();
-                    ui.label(format!(
-                        "统一视图;差异 {changed} 行。「−」= 前者独有,「+」= 后者独有。"
+                    ui.label(vb_session::i18n::t_args(
+                        "ui-app-conflict-dialog-012",
+                        &[(
+                            "changed",
+                            vb_session::i18n::FluentValue::from((changed).to_string()),
+                        )],
                     ));
                     ui.separator();
                     // 差异红绿走 vb_ui::theme::semantic 的差异令牌(与
@@ -200,17 +224,26 @@ impl VellumApp {
                 });
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("以磁盘为准重载(放弃本地编辑)").clicked() {
+                    if ui
+                        .button(vb_session::i18n::t("ui-app-conflict-dialog-013"))
+                        .clicked()
+                    {
                         action = Some(ConflictAction::TakeDisk);
                     }
-                    if ui.button("以内存为准存回(覆盖磁盘)").clicked() {
+                    if ui
+                        .button(vb_session::i18n::t("ui-app-conflict-dialog-014"))
+                        .clicked()
+                    {
                         action = Some(ConflictAction::TakeMemory);
                     }
-                    if ui.button("先不动").clicked() {
+                    if ui
+                        .button(vb_session::i18n::t("ui-app-conflict-dialog-015"))
+                        .clicked()
+                    {
                         cancel = true;
                     }
                 });
-                ui.weak("快照列为最近一次自动保存(.vb-autosave/);项目没有快照时该方显示缺失。");
+                ui.weak(vb_session::i18n::t("ui-app-conflict-dialog-016"));
             });
         match action {
             Some(ConflictAction::TakeDisk) => self.conflict_take_disk(),
@@ -249,9 +282,15 @@ impl VellumApp {
                     e.adopted = true;
                 }
                 self.conflict_open = false;
-                self.say(format!("已放弃本地编辑,采用磁盘版本(画板 {n})"));
+                self.say(vb_session::i18n::t_args(
+                    "ui-app-conflict-dialog-017",
+                    &[("n", vb_session::i18n::FluentValue::from((n).to_string()))],
+                ));
             }
-            Err(e) => self.toast_error(format!("重载磁盘版本失败:{e}")),
+            Err(e) => self.toast_error(vb_session::i18n::t_args(
+                "ui-app-conflict-dialog-018",
+                &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+            )),
         }
     }
 
@@ -264,7 +303,7 @@ impl VellumApp {
                 e.adopted = true;
             }
             self.conflict_open = false;
-            self.say("已以内存版本写回磁盘(外部改动被覆盖)");
+            self.say(vb_session::i18n::t("ui-app-conflict-dialog-019"));
         }
     }
 }

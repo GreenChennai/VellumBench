@@ -103,9 +103,15 @@ impl Tokens {
             accent: Color32::from_rgb(0x0D, 0x99, 0xFF),
             accent_hover: Color32::from_rgb(0x3A, 0xAE, 0xFF),
             accent_dim: Color32::from_rgba_unmultiplied(0x0D, 0x99, 0xFF, 41),
-            danger: Color32::from_rgb(0xF2, 0x48, 0x22),
+            // S5(§8.10 G-UI-E 收口):#F24822 对 bg_panel 仅 3.8:1、对
+            // bg_raised 3.1:1,danger 作为**正文色**出现在状态栏印记与
+            // 对话框里(12px),不达 AA(4.5)。提亮到 #FF8470:
+            // panel 5.83 / raised 4.75 / canvas 7.12,全面 ≥4.5。
+            danger: Color32::from_rgb(0xFF, 0x84, 0x70),
             warn: Color32::from_rgb(0xFF, 0xC7, 0x00),
-            success: Color32::from_rgb(0x14, 0xAE, 0x5C),
+            // S5(§8.10 G-UI-E 收口):同 danger 的正文口径 —— #14AE5C 对
+            // 凸起底 3.91:1 不达 4.5,提亮到 #33C272(panel 6.04/raised 4.92)。
+            success: Color32::from_rgb(0x33, 0xC2, 0x72),
 
             // ── §8.3.4 功能色扩展(JSON:color.ext.dark)──
             accent_press: Color32::from_rgb(0x0B, 0x87, 0xE5),
@@ -203,7 +209,11 @@ impl Tokens {
             state_hover: Color32::from_rgba_unmultiplied(0x00, 0x00, 0x00, 10),
             state_press: Color32::from_rgba_unmultiplied(0x00, 0x00, 0x00, 20),
             state_selected: Color32::from_rgba_unmultiplied(0x0D, 0x99, 0xFF, 36),
-            focus_ring: Color32::from_rgba_unmultiplied(0x0D, 0x99, 0xFF, 255),
+            // S5(§8.10 G-UI-E 收口):#0D99FF 对白底仅 2.75:1,不达
+            // 非文字对比 1.4.11(≥3:1)。焦点环是**状态指示色**不是品牌
+            // 展示面,取 accent 的深阶 #0072D6:白 4.80 / 画布 4.40 /
+            // n4 输入底 3.92,全承载面 ≥3;深色侧维持 #0D99FF(3.8+)。
+            focus_ring: Color32::from_rgba_unmultiplied(0x00, 0x72, 0xD6, 255),
             focus_ring_inner: Color32::from_rgba_unmultiplied(0xFF, 0xFF, 0xFF, 230),
             disabled_fg: Color32::from_rgb(0x76, 0x76, 0x76),
         }
@@ -243,7 +253,8 @@ impl Tokens {
     }
 
     /// 焦点环描边(外描边 accent 全强 1.5px;内侧隔离环色见
-    /// [`Tokens::focus_ring_inner`] —— 键盘焦点环真接线在 S5,当前仅规格就位)。
+    /// [`Tokens::focus_ring_inner`]。S5 起键盘焦点环已在全部自绘控件
+    /// 真接线 —— 见 `components::paint_focus_ring` 与 ui-focus-a11y.md)。
     pub fn focus_ring_stroke(&self) -> Stroke {
         Stroke::new(stroke::FOCUS, self.focus_ring)
     }
@@ -765,10 +776,13 @@ pub mod motion {
 
 // ───────────────────── 动效总开关(H-1:可关 + 持久化) ─────────────────────
 //
-// **为什么是开关而不是探测**:egui/winit 不暴露系统「减少动态效果」
-// 无障碍设置的跨平台读取口;这里以**显式设置项**承接同一语义
-// (首选项「常规」/视图菜单可关,状态入 workspace.json,默认开)。
-// 关闭后:① egui 全局 `animation_time` 归零(所有跟随样式的过渡立即到位);
+// **开关 + 系统探测并联(S5 清单 ④)**:egui/winit 不暴露系统「减少
+// 动态效果」的跨平台读取口,应用内以**显式设置项**承接(首选项「常规」/
+// 视图菜单可关,状态入 workspace.json,默认开);系统级探测归
+// `vb_platform::MotionPreferenceProbe`(Windows =
+// `SPI_GETCLIENTAREAANIMATION`),在 vb_app 构造期读一次,与本开关
+// **并联**(任一关 → 注入本层的动效真值 = false)。关闭后:
+// ① egui 全局 `animation_time` 归零(所有跟随样式的过渡立即到位);
 // ② 组件里显式传时长的 `animate_bool_with_time` 经 [`anim_time`] 同步归零;
 // ③ 对话框/Tab 的一次性淡入(motion 模块)直接跳到终态。
 
@@ -1361,8 +1375,8 @@ mod tests {
     /// 中性阶文字档(N12/N10)对同义面板底(n4)同样 ≥4.5:1。
     ///
     /// 已知限制(记录不拦截):disabled_fg 对凸起浮层底(bg_raised)3.85:1
-    /// —— 禁用文字只允许出现在面板底;语义色 danger 对深色面板 3.8:1,
-    /// 仅达大字号/图标档(3:1),S5 文字样式落地时一并处理。
+    /// —— 禁用文字只允许出现在面板底。语义色 danger 的 3.8:1 已在 S5
+    /// 收口(提亮 #FF8470,见 `dark_theme_semantic_text_meets_wcag_aa`)。
     #[test]
     fn dark_theme_text_meets_wcag_aa() {
         let d = Tokens::dark();
@@ -1407,8 +1421,8 @@ mod tests {
     }
 
     /// G-UI-E:焦点环属非文字对比(WCAG 1.4.11 ≥3:1)。深色侧 accent
-    /// 环对面板/画布底达标;浅色侧对白底 2.75:1 是**已知限制**
-    /// (JSON state-layer 注),S5 需经隔离环/加深评审,不在本轮硬拦。
+    /// 环对面板/画布底达标;浅色侧原 2.75:1 已在 S5 收口(环取 accent
+    /// 深阶 #0072D6,见 `light_theme_focus_ring_meets_non_text_contrast`)。
     #[test]
     fn dark_theme_focus_ring_meets_non_text_contrast() {
         let d = Tokens::dark();
@@ -1419,6 +1433,46 @@ mod tests {
         ] {
             let c = contrast(d.focus_ring, bg);
             assert!(c >= 3.0, "深色焦点环对 {bg_name} {c:.2}:1 < 3.0(1.4.11)");
+        }
+    }
+
+    /// G-UI-E(S5 收口):深色语义色作为**正文**(状态栏印记/对话框/
+    /// toast 文本)在面板与凸起底 ≥4.5:1。warn/success 原值已达标,
+    /// danger 经本批提亮后三者同栏硬拦。
+    #[test]
+    fn dark_theme_semantic_text_meets_wcag_aa() {
+        let d = Tokens::dark();
+        for (name, fg) in [
+            ("warn", d.warn),
+            ("danger", d.danger),
+            ("success", d.success),
+        ] {
+            for (bg_name, bg) in [("面板", d.bg_panel), ("凸起", d.bg_raised)] {
+                let c = contrast(fg, bg);
+                assert!(
+                    c >= 4.5,
+                    "深色 {name} 文字在 {bg_name} 底上对比度 {c:.2}:1 < 4.5(WCAG AA)"
+                );
+            }
+        }
+    }
+
+    /// G-UI-E(S5 收口):浅色焦点环属非文字对比(1.4.11 ≥3:1),
+    /// 对全部承载面(白面板/画布/n4 输入底)硬拦。
+    #[test]
+    fn light_theme_focus_ring_meets_non_text_contrast() {
+        let l = Tokens::light();
+        for (bg_name, bg) in [
+            ("面板(白)", l.bg_panel),
+            ("画布", l.bg_canvas),
+            ("凸起", l.bg_raised),
+            ("n4 输入底", l.neutral[4]),
+        ] {
+            let c = contrast(l.focus_ring, bg);
+            assert!(
+                c >= 3.0,
+                "浅色焦点环对 {bg_name} {c:.2}:1 < 3.0(WCAG 1.4.11)"
+            );
         }
     }
 

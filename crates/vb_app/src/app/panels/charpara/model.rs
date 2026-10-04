@@ -52,15 +52,15 @@ impl Align9 {
 
     pub fn label(self) -> &'static str {
         match self {
-            Align9::Left => "左对齐",
-            Align9::Center => "居中对齐",
-            Align9::Right => "右对齐",
-            Align9::Justify => "两端对齐·末行左",
-            Align9::JustifyLastCenter => "两端对齐·末行居中",
-            Align9::JustifyLastRight => "两端对齐·末行右",
-            Align9::JustifyLastJustify => "两端对齐·末行两端",
-            Align9::JustifyAll => "全部两端(含末行)",
-            Align9::JustifyAllLast => "强制撑满(末行两端)",
+            Align9::Left => "左对齐", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            Align9::Center => "居中对齐", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            Align9::Right => "右对齐", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            Align9::Justify => "两端对齐·末行左", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            Align9::JustifyLastCenter => "两端对齐·末行居中", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            Align9::JustifyLastRight => "两端对齐·末行右", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            Align9::JustifyLastJustify => "两端对齐·末行两端", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            Align9::JustifyAll => "全部两端(含末行)", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            Align9::JustifyAllLast => "强制撑满(末行两端)", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
         }
     }
 
@@ -71,8 +71,8 @@ impl Align9 {
             Align9::Center => "↔",
             Align9::Right => "⇥",
             Align9::Justify => "≡",
-            Align9::JustifyLastCenter => "≡·中",
-            Align9::JustifyLastRight => "≡·右",
+            Align9::JustifyLastCenter => "≡·中", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            Align9::JustifyLastRight => "≡·右", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
             Align9::JustifyLastJustify => "≡≡",
             Align9::JustifyAll => "▮",
             Align9::JustifyAllLast => "▮▮",

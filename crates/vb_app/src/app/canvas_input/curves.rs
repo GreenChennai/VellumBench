@@ -36,7 +36,7 @@ impl VellumApp {
         let tol = 8.0 / self.camera.zoom;
         // 命中含曲线段的矢量路径(顶点命中沿用直接选择的判定)
         let Some((sid, _)) = self.find_vector_vertex(wx, wy, tol) else {
-            self.status = "曲率:请在矢量路径的锚点附近单击(先经钢笔/铅笔建路径)".into();
+            self.status = vb_session::i18n::t("ui-app-canvas-input-curves-001");
             return;
         };
         let Some(nid) = self.doc.find_by_sid(&sid) else {
@@ -47,15 +47,15 @@ impl VellumApp {
             _ => None,
         };
         let Some(path) = path_opt else {
-            self.status = "曲率:目标不是矢量路径".into();
+            self.status = vb_session::i18n::t("ui-app-canvas-input-curves-002");
             return;
         };
         let Some((anchors, closed)) = vb_tools::xform::path_anchors(&path) else {
-            self.status = "曲率:路径锚点不足,无法拟合".into();
+            self.status = vb_session::i18n::t("ui-app-canvas-input-curves-003");
             return;
         };
         let Some(smoothed) = vb_tools::xform::smooth_polyline(&anchors, closed) else {
-            self.status = "曲率:路径锚点不足,无法拟合".into();
+            self.status = vb_session::i18n::t("ui-app-canvas-input-curves-003");
             return;
         };
         self.exec(Command::SetVector {
@@ -64,9 +64,12 @@ impl VellumApp {
             old: None,
         });
         self.selection = vec![sid].into();
-        self.status = format!(
-            "曲率:已为 {} 个锚点拟合平滑控制点(直接选择 A 可微调手柄)",
-            anchors.len()
+        self.status = vb_session::i18n::t_args(
+            "ui-app-canvas-input-curves-004",
+            &[(
+                "a1",
+                vb_session::i18n::FluentValue::from((anchors.len()).to_string()),
+            )],
         );
     }
 
@@ -95,7 +98,7 @@ impl VellumApp {
     pub(super) fn end_pencil(&mut self, pts: Vec<(f64, f64)>) {
         let simplified = vb_tools::xform::rdp_simplify(&pts, self.pencil_fidelity);
         if simplified.len() < 2 {
-            self.status = "铅笔:笔画太短(按住拖动绘制)".into();
+            self.status = vb_session::i18n::t("ui-app-canvas-input-curves-005");
             return;
         }
         let path = vb_tools::xform::smooth_polyline(&simplified, false);
@@ -110,7 +113,7 @@ impl VellumApp {
                     self.pencil_fidelity
                 );
             }
-            None => self.status = "铅笔:笔画无法成路径".into(),
+            None => self.status = vb_session::i18n::t("ui-app-canvas-input-curves-007"),
         }
     }
 
@@ -142,7 +145,7 @@ impl VellumApp {
                         ));
                     }
                 } else {
-                    self.status = "度量:单击对象标注尺寸,或拖动量两点距离(Esc 退出)".into();
+                    self.status = vb_session::i18n::t("ui-app-canvas-input-curves-009");
                 }
             }
             return true;

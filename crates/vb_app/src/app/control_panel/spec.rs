@@ -21,11 +21,11 @@ pub enum CtlKind {
     Text,
     /// 按钮(零参动作;写回走 app 命令 ID 或文档命令)
     Button,
-    /// 提示文案(非交互;design/03 明示的"提示"类条目)
+    /// 提示文案(非交互;design/03 明示的vb_session::i18n::t("ui-menu-view-toggle_hints")类条目)
     Hint,
 }
 
-/// 字段写回命令。二者都是"命令路径":Agent 可复现 ——
+/// 字段写回命令。二者都是vb_session::i18n::t("ui-app-control-panel-spec-002"):Agent 可复现 ——
 /// `Doc` 走文档命令(patch 等价 op / Kiln 命令流),`App` 走
 /// `run_command`(ID 注册于 commands.yaml 三处同步)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,11 +95,11 @@ pub fn spec_for(c: &CtlCtx) -> ControlPanelSpec {
         Tool::DirectSelect => ControlPanelSpec {
             state: "direct.anchor",
             fields: vec![
-                f("ax", "锚点X", CtlKind::Num, CtlWrite::Doc("SetVector")),
-                f("ay", "锚点Y", CtlKind::Num, CtlWrite::Doc("SetVector")),
+                f("ax", "锚点X", CtlKind::Num, CtlWrite::Doc("SetVector")), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+                f("ay", "锚点Y", CtlKind::Num, CtlWrite::Doc("SetVector")), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                 f(
                     "anchor.hint",
-                    "拖画布锚点改位;手柄/转换点 → 阶段 2",
+                    "拖画布锚点改位;手柄/转换点 → 阶段 2", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                     CtlKind::Hint,
                     CtlWrite::None,
                 ),
@@ -110,25 +110,25 @@ pub fn spec_for(c: &CtlCtx) -> ControlPanelSpec {
             fields: vec![
                 f(
                     "pen.fill",
-                    "填充",
+                    "填充", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                     CtlKind::Color,
                     CtlWrite::Doc("SetStyle(fill)"),
                 ),
                 f(
                     "pen.stroke",
-                    "描边",
+                    "描边", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                     CtlKind::Color,
                     CtlWrite::Doc("SetStyle(stroke)"),
                 ),
                 f(
                     "pen.sw",
-                    "粗细",
+                    "粗细", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                     CtlKind::Num,
                     CtlWrite::Doc("SetStyle(stroke-width)"),
                 ),
                 f(
                     "pen.hint",
-                    "点击落锚点 · 点击起点或 Enter 自动闭合",
+                    "点击落锚点 · 点击起点或 Enter 自动闭合", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                     CtlKind::Hint,
                     CtlWrite::None,
                 ),
@@ -142,25 +142,25 @@ pub fn spec_for(c: &CtlCtx) -> ControlPanelSpec {
             fields: vec![
                 f(
                     "t.size",
-                    "字号",
+                    "字号", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                     CtlKind::Num,
                     CtlWrite::Doc("SetStyle(font-size)"),
                 ),
                 f(
                     "t.align",
-                    "对齐",
+                    "对齐", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                     CtlKind::Combo,
                     CtlWrite::Doc("SetStyle(text-align)"),
                 ),
                 f(
                     "t.color",
-                    "颜色",
+                    "颜色", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                     CtlKind::Color,
                     CtlWrite::Doc("SetStyle(color)"),
                 ),
                 f(
                     "text.hint",
-                    "字符/段落面板:Ctrl+T / Ctrl+Alt+T",
+                    "字符/段落面板:Ctrl+T / Ctrl+Alt+T", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                     CtlKind::Hint,
                     CtlWrite::None,
                 ),
@@ -171,25 +171,25 @@ pub fn spec_for(c: &CtlCtx) -> ControlPanelSpec {
             fields: vec![
                 f(
                     "g.kind",
-                    "类型",
+                    "类型", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                     CtlKind::Combo,
                     CtlWrite::Doc("SetStyle(background-image)"),
                 ),
                 f(
                     "g.angle",
-                    "角度",
+                    "角度", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                     CtlKind::Num,
                     CtlWrite::Doc("SetStyle(background-image)"),
                 ),
                 f(
                     "g.reverse",
-                    "反向",
+                    "反向", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                     CtlKind::Button,
                     CtlWrite::Doc("SetStyle(background-image)"),
                 ),
                 f(
                     "g.hint",
-                    "色标编辑 → 阶段 4(05 外观/渐变)",
+                    "色标编辑 → 阶段 4(05 外观/渐变)", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                     CtlKind::Hint,
                     CtlWrite::None,
                 ),
@@ -200,18 +200,18 @@ pub fn spec_for(c: &CtlCtx) -> ControlPanelSpec {
             fields: vec![
                 f(
                     "ab.preset",
-                    "预设",
+                    "预设", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                     CtlKind::Combo,
                     CtlWrite::Doc("SetGeom"),
                 ),
-                f("ab.name", "名称", CtlKind::Text, CtlWrite::Doc("Rename")),
+                f("ab.name", "名称", CtlKind::Text, CtlWrite::Doc("Rename")), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                 f("ab.x", "X", CtlKind::Num, CtlWrite::Doc("SetGeom")),
                 f("ab.y", "Y", CtlKind::Num, CtlWrite::Doc("SetGeom")),
                 f("ab.w", "W", CtlKind::Num, CtlWrite::Doc("SetGeom")),
                 f("ab.h", "H", CtlKind::Num, CtlWrite::Doc("SetGeom")),
                 f(
                     "ab.hint",
-                    "适配内容 → 阶段 2(画板面板增强)",
+                    "适配内容 → 阶段 2(画板面板增强)", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                     CtlKind::Hint,
                     CtlWrite::None,
                 ),
@@ -222,7 +222,7 @@ pub fn spec_for(c: &CtlCtx) -> ControlPanelSpec {
             state: "view.hint",
             fields: vec![f(
                 "view.hint",
-                "抓手:拖动平移(Space 同) · 缩放:单击放大 / Alt+单击缩小 / 拖框 · Ctrl+0 适合窗口",
+                "抓手:拖动平移(Space 同) · 缩放:单击放大 / Alt+单击缩小 / 拖框 · Ctrl+0 适合窗口", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                 CtlKind::Hint,
                 CtlWrite::None,
             )],
@@ -231,7 +231,7 @@ pub fn spec_for(c: &CtlCtx) -> ControlPanelSpec {
             state: "eyedropper.hint",
             fields: vec![f(
                 "eyedropper.hint",
-                "吸管:单击对象取色应用到选区 · Alt+单击吸取全部样式",
+                "吸管:单击对象取色应用到选区 · Alt+单击吸取全部样式", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                 CtlKind::Hint,
                 CtlWrite::None,
             )],
@@ -240,7 +240,7 @@ pub fn spec_for(c: &CtlCtx) -> ControlPanelSpec {
             state: "scissors.hint",
             fields: vec![f(
                 "scissors.hint",
-                "剪刀:在矢量路径的锚点上单击剪开(闭路开口 / 开路分段)",
+                "剪刀:在矢量路径的锚点上单击剪开(闭路开口 / 开路分段)", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                 CtlKind::Hint,
                 CtlWrite::None,
             )],
@@ -250,7 +250,7 @@ pub fn spec_for(c: &CtlCtx) -> ControlPanelSpec {
             state: "xform.hint",
             fields: vec![f(
                 "xform.hint",
-                "变换工具:单击画布点设定中心 → 拖拽对象按工具语义变换 · Shift 15°/等比 · Alt 从对象中心 · Esc 回选择",
+                "变换工具:单击画布点设定中心 → 拖拽对象按工具语义变换 · Shift 15°/等比 · Alt 从对象中心 · Esc 回选择", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                 CtlKind::Hint,
                 CtlWrite::None,
             )],
@@ -259,7 +259,7 @@ pub fn spec_for(c: &CtlCtx) -> ControlPanelSpec {
             state: "pencil.hint",
             fields: vec![f(
                 "pencil.hint",
-                "铅笔:按住拖动自由绘制,松手按保真度容差抽稀为矢量路径(编辑 → 设置 → 铅笔保真度)",
+                "铅笔:按住拖动自由绘制,松手按保真度容差抽稀为矢量路径(编辑 → 设置 → 铅笔保真度)", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                 CtlKind::Hint,
                 CtlWrite::None,
             )],
@@ -268,7 +268,7 @@ pub fn spec_for(c: &CtlCtx) -> ControlPanelSpec {
             state: "curvature.hint",
             fields: vec![f(
                 "curvature.hint",
-                "曲率:在矢量路径锚点附近单击,自动拟合平滑控制点(直接选择 A 可微调)",
+                "曲率:在矢量路径锚点附近单击,自动拟合平滑控制点(直接选择 A 可微调)", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                 CtlKind::Hint,
                 CtlWrite::None,
             )],
@@ -277,7 +277,7 @@ pub fn spec_for(c: &CtlCtx) -> ControlPanelSpec {
             state: "slice.hint",
             fields: vec![f(
                 "slice.hint",
-                "切片:拖框建立 data-vb-slice 切片;选中对象后单击 = 从选区建立;vellum-cli export --slice 按名出图",
+                "切片:拖框建立 data-vb-slice 切片;选中对象后单击 = 从选区建立;vellum-cli export --slice 按名出图", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                 CtlKind::Hint,
                 CtlWrite::None,
             )],
@@ -286,7 +286,7 @@ pub fn spec_for(c: &CtlCtx) -> ControlPanelSpec {
             state: "measure.hint",
             fields: vec![f(
                 "measure.hint",
-                "度量:拖动量两点距离;单击对象标注尺寸;Esc 退出",
+                "度量:拖动量两点距离;单击对象标注尺寸;Esc 退出", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                 CtlKind::Hint,
                 CtlWrite::None,
             )],
@@ -312,43 +312,43 @@ fn transform_spec() -> ControlPanelSpec {
             ),
             f(
                 "fill",
-                "填充",
+                "填充", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                 CtlKind::Color,
                 CtlWrite::Doc("SetStyle(background-color)"),
             ),
             f(
                 "opacity",
-                "不透明",
+                "不透明", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                 CtlKind::Num,
                 CtlWrite::Doc("SetStyle(opacity)"),
             ),
             f(
                 "align.h",
-                "⬌画板",
+                "⬌画板", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                 CtlKind::Button,
                 CtlWrite::App("align.hcenter"),
             ),
             f(
                 "align.v",
-                "⬍画板",
+                "⬍画板", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                 CtlKind::Button,
                 CtlWrite::App("align.vcenter"),
             ),
             f(
                 "group",
-                "编组",
+                "编组", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                 CtlKind::Button,
                 CtlWrite::App("object.group"),
             ),
             f(
                 "fwd",
-                "前移",
+                "前移", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                 CtlKind::Button,
                 CtlWrite::App("object.bring_forward"),
             ),
             f(
                 "bwd",
-                "后移",
+                "后移", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                 CtlKind::Button,
                 CtlWrite::App("object.send_backward"),
             ),
@@ -367,13 +367,13 @@ fn artboard_opts_spec() -> ControlPanelSpec {
         fields: vec![
             f(
                 "ab.preset",
-                "预设",
+                "预设", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                 CtlKind::Combo,
                 CtlWrite::Doc("SetGeom"),
             ),
             f(
                 "ab.orient",
-                "取向",
+                "取向", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                 CtlKind::Combo,
                 CtlWrite::Doc("SetGeom"),
             ),
@@ -381,13 +381,13 @@ fn artboard_opts_spec() -> ControlPanelSpec {
             f("ab.h", "H", CtlKind::Num, CtlWrite::Doc("SetGeom")),
             f(
                 "ab.bg",
-                "画板底",
+                "画板底", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
                 CtlKind::Color,
                 CtlWrite::Doc("SetStyle(background-color)"),
             ),
             // 只读计数(渲染层显示当前画板数;增删走「+画板」/画板面板)
-            f("ab.count", "画板数", CtlKind::Hint, CtlWrite::None),
-            f("ab.add", "+画板", CtlKind::Button, CtlWrite::Doc("Insert")),
+            f("ab.count", "画板数", CtlKind::Hint, CtlWrite::None), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            f("ab.add", "+画板", CtlKind::Button, CtlWrite::Doc("Insert")), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
         ],
     }
 }
@@ -397,19 +397,19 @@ fn shape_spec(radius: bool) -> ControlPanelSpec {
     let mut fields = vec![
         f(
             "sh.fill",
-            "填充",
+            "填充", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
             CtlKind::Color,
             CtlWrite::Doc("SetStyle(background-color)"),
         ),
         f(
             "sh.stroke",
-            "描边",
+            "描边", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
             CtlKind::Color,
             CtlWrite::Doc("SetStyle(border)"),
         ),
         f(
             "sh.sw",
-            "粗细",
+            "粗细", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
             CtlKind::Num,
             CtlWrite::Doc("SetStyle(border)"),
         ),
@@ -417,7 +417,7 @@ fn shape_spec(radius: bool) -> ControlPanelSpec {
     if radius {
         fields.push(f(
             "sh.radius",
-            "圆角",
+            "圆角", // vb-literal-ok: CtlField 标签为 &str 体系(与 const FIXED_FIELDS 共型),fn 化留后续,
             CtlKind::Num,
             CtlWrite::Doc("SetStyle(border-radius)"),
         ));
@@ -432,15 +432,15 @@ fn shape_spec(radius: bool) -> ControlPanelSpec {
 pub const FIXED_FIELDS: [CtlField; 3] = [
     f(
         "doc.title",
-        "标题",
+        "标题", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
         CtlKind::Text,
         CtlWrite::Doc("SetMetaTitle"),
     ),
     f(
         "ab.switch",
-        "画板",
+        "画板", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
         CtlKind::Combo,
         CtlWrite::App("view.zoom_to_selection"),
     ),
-    f("zoom", "缩放", CtlKind::Combo, CtlWrite::App("view.fit")),
+    f("zoom", "缩放", CtlKind::Combo, CtlWrite::App("view.fit")), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
 ];

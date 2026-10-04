@@ -138,5 +138,7 @@ fn i18n_catalog_complete() {
         assert!(zh.contains_key(*key), "既有 key 被删:{key}(zh)");
         assert!(en.contains_key(*key), "既有 key 被删:{key}(en)");
     }
-    assert_eq!(zh_keys.len(), 204, "cmd-* 数量漂移(204 条命令目录)");
+    // 207 = 204 + 3(S5 清单 ②:view.focus_next_panel / focus_prev_panel /
+    // escape_overlay;新增命令时同 commit 更新 catalog + 两份 ftl + 此数)
+    assert_eq!(zh_keys.len(), 207, "cmd-* 数量漂移(207 条命令目录)");
 }

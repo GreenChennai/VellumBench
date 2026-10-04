@@ -75,7 +75,15 @@ impl VellumApp {
                             .iter()
                             .filter_map(|id| self.doc.nodes.get(*id).map(|n| n.name.clone()))
                             .collect();
-                        self.status = format!("隔离模式:{}(Esc 退出)", crumbs.join(" / "));
+                        self.status = vb_session::i18n::t_args(
+                            "ui-app-canvas-input-select-001",
+                            &[(
+                                "a1",
+                                vb_session::i18n::FluentValue::from(
+                                    (crumbs.join(" / ")).to_string(),
+                                ),
+                            )],
+                        );
                         return true;
                     }
                     if matches!(n.kind, NodeKind::Text { .. }) {
@@ -103,13 +111,18 @@ impl VellumApp {
                                 crate::app::panels::charpara::area_fit_height_cmd(&self.doc, &sid)
                             {
                                 self.exec(cmd);
-                                self.status = "区域文本已自动扩高(SetGeom,可撤销)".into();
+                                self.status = vb_session::i18n::t("ui-app-canvas-input-select-002");
                             }
                             return true;
                         }
                         self.editing_text = Some(n.sid.as_str().to_string());
-                        self.status =
-                            format!("编辑文本:{}(Ctrl+Enter/Esc 提交,再按 Esc 放弃)", n.name);
+                        self.status = vb_session::i18n::t_args(
+                            "ui-app-canvas-input-select-003",
+                            &[(
+                                "a1",
+                                vb_session::i18n::FluentValue::from((n.name).to_string()),
+                            )],
+                        );
                     }
                 }
             }
@@ -369,7 +382,7 @@ impl VellumApp {
                 self.last_move_delta = Some((g.x - start_geom.x, g.y - start_geom.y));
                 delta_recorded = Some((g.x - start_geom.x, g.y - start_geom.y));
             }
-            // 阶段 2(03-4-2):拖动也记进"上一次变换"
+            // 阶段 2(03-4-2):拖动也记进vb_session::i18n::t("ui-app-canvas-input-select-004")
             // (借用结束后再调用,避免 `&mut self.drag` 与 `&mut self` 冲突)
             if let Some((dx, dy)) = delta_recorded {
                 self.remember_transform(crate::app::transform_panel::TransformDelta::translate(
@@ -416,7 +429,13 @@ impl VellumApp {
             }
             self.selection = sids.into();
             if !self.selection.is_empty() {
-                self.status = format!("框选 {} 个对象", self.selection.len());
+                self.status = vb_session::i18n::t_args(
+                    "ui-app-canvas-input-select-005",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from((self.selection.len()).to_string()),
+                    )],
+                );
             }
         }
     }

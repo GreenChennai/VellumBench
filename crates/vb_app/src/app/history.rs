@@ -102,22 +102,44 @@ impl VellumApp {
             let can_redo = self.undo.can_redo();
             // H-8:禁用不是「点了没反应」—— 按钮保持可点、置灰呈呈现,
             // 点击给 toast 说明原因(与工具箱「未支持工具」同一纪律)。
-            match disabled_action_button(ui, "⟲ 撤销", can_undo, "没有可撤销的操作") {
+            match disabled_action_button(
+                ui,
+                &vb_session::i18n::t("ui-app-history-001"),
+                can_undo,
+                &vb_session::i18n::t("ui-app-history-002"),
+            ) {
                 ActionClick::Fire => self.run_command("edit.undo", false, false),
-                ActionClick::Disabled => self.toast_warn("没有可撤销的操作(先做一次编辑)"),
+                ActionClick::Disabled => self.toast_warn(vb_session::i18n::t("ui-app-history-003")),
                 ActionClick::None => {}
             }
-            match disabled_action_button(ui, "⟳ 重做", can_redo, "没有可重做的操作") {
+            match disabled_action_button(
+                ui,
+                &vb_session::i18n::t("ui-app-history-004"),
+                can_redo,
+                &vb_session::i18n::t("ui-app-history-005"),
+            ) {
                 ActionClick::Fire => self.run_command("edit.redo", false, false),
-                ActionClick::Disabled => self.toast_warn("没有可重做的操作(先撤销一步)"),
+                ActionClick::Disabled => self.toast_warn(vb_session::i18n::t("ui-app-history-006")),
                 ActionClick::None => {}
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
-                    egui::RichText::new(format!(
-                        "{} 步 / 待重做 {}",
-                        self.undo.undo_len(),
-                        self.undo.redo_len()
+                    egui::RichText::new(vb_session::i18n::t_args(
+                        "ui-app-history-007",
+                        &[
+                            (
+                                "a1",
+                                vb_session::i18n::FluentValue::from(
+                                    (self.undo.undo_len()).to_string(),
+                                ),
+                            ),
+                            (
+                                "a2",
+                                vb_session::i18n::FluentValue::from(
+                                    (self.undo.redo_len()).to_string(),
+                                ),
+                            ),
+                        ],
                     ))
                     .size(12.0),
                 );
@@ -134,7 +156,7 @@ impl VellumApp {
             ui.horizontal(|ui| {
                 ui.add_space(vb_ui::theme::space::S2);
                 ui.label(vb_ui::icons::rich(vb_ui::icons::Name::History, 18.0).color(t.text_3));
-                ui.label("还没有可撤销的操作 —— 画一笔就有了。");
+                ui.label(vb_session::i18n::t("ui-app-history-008"));
             });
             ui.add_space(vb_ui::theme::space::S2);
             ui.horizontal_wrapped(|ui| {
@@ -142,15 +164,15 @@ impl VellumApp {
                     (
                         "tool.rect",
                         vb_ui::icons::Name::ToolRect,
-                        "矩形工具(M):拖框新建",
+                        vb_session::i18n::t("ui-app-history-009"),
                     ),
                     (
                         "tool.text",
                         vb_ui::icons::Name::ToolText,
-                        "文字工具(T):单击点文本",
+                        vb_session::i18n::t("ui-app-history-010"),
                     ),
                 ] {
-                    if vb_ui::components::icon_button(ui, icon, tip).clicked() {
+                    if vb_ui::components::icon_button(ui, icon, &tip).clicked() {
                         self.run_command(id, false, false);
                     }
                 }
@@ -199,20 +221,27 @@ impl VellumApp {
             return;
         };
         let mut action = 0u8; // 1=确认 2=取消
-        egui::Window::new("跳转历史?")
+        egui::Window::new(vb_session::i18n::t("ui-app-history-011"))
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ui.ctx(), |ui| {
-                ui.label(format!(
-                    "跳转到该状态将丢弃其后的 {redo_n} 步重做记录(不可恢复)。"
+                ui.label(vb_session::i18n::t_args(
+                    "ui-app-history-012",
+                    &[(
+                        "redo_n",
+                        vb_session::i18n::FluentValue::from((redo_n).to_string()),
+                    )],
                 ));
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("跳转并丢弃").clicked() {
+                    if ui
+                        .button(vb_session::i18n::t("ui-app-history-013"))
+                        .clicked()
+                    {
                         action = 1;
                     }
-                    if ui.button("取消").clicked() {
+                    if ui.button(vb_session::i18n::t("ui-common-cancel")).clicked() {
                         action = 2;
                     }
                 });
@@ -237,12 +266,24 @@ impl VellumApp {
             match self.undo.undo(&mut self.doc) {
                 Ok(_) => n += 1,
                 Err(e) => {
-                    self.toast_error(format!("历史跳转中断:{e}"));
+                    self.toast_error(vb_session::i18n::t_args(
+                        "ui-app-history-014",
+                        &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                    ));
                     break;
                 }
             }
         }
-        self.after_history_move(format!("已回退 {n} 步(深度 {depth})"));
+        self.after_history_move(vb_session::i18n::t_args(
+            "ui-app-history-015",
+            &[
+                ("n", vb_session::i18n::FluentValue::from((n).to_string())),
+                (
+                    "depth",
+                    vb_session::i18n::FluentValue::from((depth).to_string()),
+                ),
+            ],
+        ));
     }
 
     /// 前进 `n` 步重做(历史重do区点击;无丢弃语义)。
@@ -253,12 +294,21 @@ impl VellumApp {
                 Ok(Some(_)) => done += 1,
                 Ok(None) => break,
                 Err(e) => {
-                    self.toast_error(format!("历史跳转中断:{e}"));
+                    self.toast_error(vb_session::i18n::t_args(
+                        "ui-app-history-014",
+                        &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                    ));
                     break;
                 }
             }
         }
-        self.after_history_move(format!("已重做 {done} 步"));
+        self.after_history_move(vb_session::i18n::t_args(
+            "ui-app-history-016",
+            &[(
+                "done",
+                vb_session::i18n::FluentValue::from((done).to_string()),
+            )],
+        ));
     }
 
     /// 跳转后的公共收敛:悬空引用清理 + 状态提示(与撤销命令同款纪律)。

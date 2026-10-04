@@ -17,7 +17,7 @@ impl VellumApp {
         }
         let mut open = true;
         let t = vb_ui::theme::Tokens::get(self.theme_dark);
-        egui::Window::new("能力台账")
+        egui::Window::new(vb_session::i18n::t("ui-app-capabilities-ui-001"))
             .open(&mut open)
             .collapsible(false)
             .default_width(460.0)
@@ -40,7 +40,7 @@ impl VellumApp {
                     ui,
                     &format!(
                         "共 {} 条:已落地 {n_done} · 部分 {n_partial} · 计划 {n_planned} · 不做 {n_dropped}。\
-                         本表是「还有哪些没做」的单一真相。",
+                         本表是「还有哪些没做」的单一真相。", // vb-literal-ok: 多行字符串字面量,机械抽取不支持,fn 化留手动(台账)
                         CAPABILITIES.len()
                     ),
                 ));
@@ -68,7 +68,7 @@ impl VellumApp {
                         }
                         if !c.commands.is_empty() {
                             let ids = c.commands.join(" · ");
-                            ui.label(caption(ui, &format!("    命令:{ids}")));
+                            ui.label(caption(ui, &vb_session::i18n::t_args("ui-app-capabilities-ui-002", &[("ids", vb_session::i18n::FluentValue::from((ids).to_string()))])));
                         }
                         ui.add_space(4.0);
                     }

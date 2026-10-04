@@ -7,7 +7,8 @@
 
 use crate::error::PlatformError;
 use crate::traits::{
-    Clipboard, DarkModeProbe, DisplayInfo, FileDialog, SystemCursor, WindowHandle,
+    Clipboard, DarkModeProbe, DisplayInfo, FileDialog, MotionPreferenceProbe, SystemCursor,
+    WindowHandle,
 };
 use crate::types::{CursorShape, DisplayMetrics, FileFilter};
 use std::path::PathBuf;
@@ -159,6 +160,35 @@ impl DarkModeProbe for NullDarkMode {
     }
 }
 
+/// null 动效偏好(headless/测试):**默认返回 true**(系统允许动画)。
+///
+/// 「null 后端返回 true」是规格面:headless 环境没有系统偏好可读,
+/// 按 trait 的 fail-open 口径放行动画;需要演练 reduced-motion 时用
+/// [`NullMotionProbe::new(false)`] 注入关态(真值表测试依赖它)。
+#[derive(Debug, Clone, Copy)]
+pub struct NullMotionProbe {
+    enabled: bool,
+}
+
+impl Default for NullMotionProbe {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+impl NullMotionProbe {
+    /// `enabled = false` 模拟系统「减少动态效果」开。
+    pub fn new(enabled: bool) -> Self {
+        Self { enabled }
+    }
+}
+
+impl MotionPreferenceProbe for NullMotionProbe {
+    fn animations_enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,5 +225,14 @@ mod tests {
         assert!(probe.is_dark_mode());
         let empty = NullDisplay::default();
         assert!(empty.displays().is_empty());
+    }
+
+    /// S5 清单 ④:null 动效探针 —— 默认 true(允许动画),注入 false
+    /// 模拟系统「减少动态效果」。
+    #[test]
+    fn motion_probe_defaults_to_enabled_and_is_injectable() {
+        assert!(NullMotionProbe::default().animations_enabled());
+        assert!(NullMotionProbe::new(true).animations_enabled());
+        assert!(!NullMotionProbe::new(false).animations_enabled());
     }
 }

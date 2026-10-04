@@ -1,14 +1,14 @@
 //! 变换数值面板(`⇧F8`,副文档 03-2 / 03-3)+ 再次变换的矩阵口径(03-4-2)。
 //!
 //! **单一真相**:面板与画布拖拽走**同一条命令路径**(`Command::SetGeom` 与
-//! `Command::SetStyle(transform)`),面板只做"投影 → 构建命令",不自己算几何
-//! —— 避免了副文档 03 §6 点名的"双真相"风险。
+//! `Command::SetStyle(transform)`),面板只做vb_session::i18n::t("ui-app-transform-panel-001"),不自己算几何
+//! —— 避免了副文档 03 §6 点名的vb_session::i18n::t("ui-app-transform-panel-002")风险。
 //!
 //! **几何口径**(ADR 级决定,写在这里供后续引用):
 //! - `X/Y/W/H` → `geom`(父相对矩形);`W/H` 的缩放以**参考点**为轴心;
 //! - `∠ 旋转` / `倾斜` → CSS `transform`(`rotate(θdeg) skew(sxdeg, sydeg)`);
 //!   旋转**不折进** `geom`(轴对齐矩形表达不了旋转,画布仍按未旋转 bbox 选中,
-//!   与 AI 的"旋转后仍按 bbox 选中"手感一致);
+//!   与 AI 的vb_session::i18n::t("ui-app-transform-panel-003")手感一致);
 //! - `transform: translate()` **会**折进画布几何(见 `vb_layout::parse_translate`)。
 //!
 //! **可测边界**:几何换算、参考点、transform 编解码、再次变换重放全部是纯函数。
@@ -45,15 +45,15 @@ impl RefPoint {
 
     pub fn label(self) -> &'static str {
         match self {
-            RefPoint::TL => "左上",
-            RefPoint::TC => "上中",
-            RefPoint::TR => "右上",
-            RefPoint::ML => "左中",
-            RefPoint::MC => "中心",
-            RefPoint::MR => "右中",
-            RefPoint::BL => "左下",
-            RefPoint::BC => "下中",
-            RefPoint::BR => "右下",
+            RefPoint::TL => "左上", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            RefPoint::TC => "上中", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            RefPoint::TR => "右上", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            RefPoint::ML => "左中", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            RefPoint::MC => "中心", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            RefPoint::MR => "右中", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            RefPoint::BL => "左下", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            RefPoint::BC => "下中", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            RefPoint::BR => "右下", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
         }
     }
 
@@ -327,7 +327,7 @@ pub fn set_transform_cmd(
 /// 把多选节点的绝对包围盒换算回各自父帧的 `SetGeom`(多选缩放用)。
 ///
 /// 口径:对**公共包围盒**按 `(kx,ky)` + 参考点缩放后,每个节点的新矩形 =
-/// 它在公共包围盒内的相对位置同比例缩放(与单选的"轴心不动"一致)。
+/// 它在公共包围盒内的相对位置同比例缩放(与单选的vb_session::i18n::t("ui-app-transform-panel-012")一致)。
 pub fn scale_multi_cmds(
     doc: &Document,
     p: &TransformProj,
@@ -393,12 +393,18 @@ fn parent_abs_origin(doc: &Document, id: vb_doc::model::NodeId) -> (f64, f64) {
 impl VellumApp {
     pub(crate) fn transform_panel_body(&mut self, ui: &mut egui::Ui) {
         let Some(p) = project(&self.doc, &self.selection) else {
-            ui.label(caption(ui, "未选中对象 —— 选中后可数值化变换。"));
+            ui.label(caption(
+                ui,
+                &vb_session::i18n::t("ui-app-transform-panel-013"),
+            ));
             return;
         };
         let sid = p.sids[0].clone();
         if p.multi {
-            ui.label(caption(ui, "多选:数值作用于公共包围盒。"));
+            ui.label(caption(
+                ui,
+                &vb_session::i18n::t("ui-app-transform-panel-014"),
+            ));
         }
 
         // ── W / H(锁链等比)+ X / Y ──
@@ -418,7 +424,7 @@ impl VellumApp {
             changed_geom |= r.changed;
             if ui
                 .selectable_label(self.transform_lock_ratio, "🔗")
-                .on_hover_text("锁定等比(改 W 时 H 同比例)")
+                .on_hover_text(vb_session::i18n::t("ui-app-transform-panel-015"))
                 .clicked()
             {
                 self.transform_lock_ratio = !self.transform_lock_ratio;
@@ -467,7 +473,10 @@ impl VellumApp {
 
         // ── 参考点九宫格 ──
         ui.separator();
-        ui.label(caption(ui, "参考点(缩放/倾斜轴心)"));
+        ui.label(caption(
+            ui,
+            &vb_session::i18n::t("ui-app-transform-panel-016"),
+        ));
         ui.horizontal(|ui| {
             for row in RefPoint::GRID {
                 ui.vertical(|ui| {
@@ -484,7 +493,11 @@ impl VellumApp {
             }
             ui.vertical(|ui| {
                 ui.label(caption(ui, self.transform_ref.label()));
-                if ui.button("中心").on_hover_text("复位到中心").clicked() {
+                if ui
+                    .button(vb_session::i18n::t("ui-common-center"))
+                    .on_hover_text(vb_session::i18n::t("ui-app-transform-panel-017"))
+                    .clicked()
+                {
                     self.transform_ref = RefPoint::MC;
                 }
             });
@@ -504,14 +517,14 @@ impl VellumApp {
                 .width(62.0)
                 .ui(ui);
             changed_tf |= r.changed;
-            let r2 = NumField::new("倾斜X", &mut sx)
+            let r2 = NumField::new(&vb_session::i18n::t("ui-app-transform-panel-018"), &mut sx)
                 .speed(1.0)
                 .step(1.0)
                 .unit("°")
                 .width(62.0)
                 .ui(ui);
             changed_tf |= r2.changed;
-            let r3 = NumField::new("倾斜Y", &mut sy)
+            let r3 = NumField::new(&vb_session::i18n::t("ui-app-transform-panel-019"), &mut sy)
                 .speed(1.0)
                 .step(1.0)
                 .unit("°")
@@ -520,11 +533,17 @@ impl VellumApp {
             changed_tf |= r3.changed;
         });
 
-        // ── 复选框(策略位,当前只影响"缩放描边"的提示) ──
-        ui.checkbox(&mut self.transform_scale_stroke, "缩放描边和效果")
-            .on_hover_text("HTML 无「描边随框缩放」语义:统一为几何缩放(border-width 不随之变)");
-        ui.checkbox(&mut self.transform_snap_pixel, "对齐像素网格")
-            .on_hover_text("几何取整到整数像素(拖动/数值输入同源)");
+        // ── 复选框(策略位,当前只影响vb_session::i18n::t("ui-app-transform-panel-020")的提示) ──
+        ui.checkbox(
+            &mut self.transform_scale_stroke,
+            vb_session::i18n::t("ui-app-transform-panel-021"),
+        )
+        .on_hover_text(vb_session::i18n::t("ui-app-transform-panel-022"));
+        ui.checkbox(
+            &mut self.transform_snap_pixel,
+            vb_session::i18n::t("ui-app-transform-panel-023"),
+        )
+        .on_hover_text(vb_session::i18n::t("ui-app-transform-panel-024"));
 
         // ── 提交 ──
         if changed_geom {
@@ -604,7 +623,7 @@ impl VellumApp {
         }
     }
 
-    /// 面板改几何 → 记入"上一次变换"(供 `Mod+D` 重放)。
+    /// 面板改几何 → 记入vb_session::i18n::t("ui-app-canvas-input-select-004")(供 `Mod+D` 重放)。
     fn transform_remember_geom(&mut self, p: &TransformProj, target: Geom) {
         let kx = if p.rect.w.abs() > 1e-9 {
             target.w / p.rect.w

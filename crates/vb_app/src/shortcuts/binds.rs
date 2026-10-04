@@ -195,7 +195,7 @@ pub const SHORTCUTS: &[Shortcut] = &[
         ctx: CTX_NO_TEXT,
     },
     // 07-M 可用性核对补口:design/06 §六「Mod+5 从对象生成参考线」——
-    // 命令早已落地但从未绑键(状态提示一直显示"未绑定");与画布右键
+    // 命令早已落地但从未绑键(状态提示一直显示"未绑定");与画布右键 // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     // 菜单、视图菜单同一命令 ID,三入口并行。
     Shortcut {
         id: "view.guides_from_selection",
@@ -605,6 +605,28 @@ pub const SHORTCUTS: &[Shortcut] = &[
         key: Key::F4,
         ctrl: ModMatch::Off,
         shift: ModMatch::Off,
+        alt: ModMatch::Any,
+        ctx: CTX_NO_TEXT,
+    },
+    // ── S5 清单 ②(§8.10.2):面板区焦点循环 ──
+    // 设计(22 篇 §键盘焦点体系)是 F6/Ctrl+F6;本宿主 F6 单键已被颜色
+    // 面板占用(design/03 §5.4 既有承诺,registry_is_conflict_free 硬门禁
+    // 不许同键位双绑)—— 循环落在 Ctrl+F6(下一区)/ Ctrl+Shift+F6(上一区),
+    // 偏差记录在 ui-focus-a11y.md。Esc 的「逐级退出」不另绑键位:Esc 键
+    // 仍归 canvas.cancel,其回退链内联 view.escape_overlay(浮层→面板→画布)。
+    Shortcut {
+        id: "view.focus_next_panel",
+        key: Key::F6,
+        ctrl: ModMatch::On,
+        shift: ModMatch::Off,
+        alt: ModMatch::Any,
+        ctx: CTX_NO_TEXT,
+    },
+    Shortcut {
+        id: "view.focus_prev_panel",
+        key: Key::F6,
+        ctrl: ModMatch::On,
+        shift: ModMatch::On,
         alt: ModMatch::Any,
         ctx: CTX_NO_TEXT,
     },

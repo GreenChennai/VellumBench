@@ -24,7 +24,7 @@ impl VellumApp {
     /// 状态栏印记,写失败 toast 一次并同样推后节拍(不刷屏)。
     ///
     /// **响应式渲染保底**:egui 无输入事件可以不产帧 —— 用户改完放着不动,
-    /// 节拍就永远到不了点。故只要"脏 + 计时中",挂一个 ≤500ms 的重绘请求,
+    /// 节拍就永远到不了点。故只要vb_session::i18n::t("ui-app-recover-001"),挂一个 ≤500ms 的重绘请求,
     /// 保证墙钟节拍(干净态零开销,不给阶段 6 的 idle 节流添负担)。
     pub(crate) fn tick_autosave(&mut self, ctx: &egui::Context) {
         // 门禁出图 / 脚本通道不做自动保存(确定性优先)
@@ -68,7 +68,10 @@ impl VellumApp {
                     self.autosave_interval_secs
                 );
             }
-            Err(e) => self.toast_warn(format!("自动保存失败:{e}")),
+            Err(e) => self.toast_warn(vb_session::i18n::t_args(
+                "ui-app-recover-002",
+                &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+            )),
         }
     }
 
@@ -77,9 +80,18 @@ impl VellumApp {
         let (_, at) = self.autosave_at?;
         let mins = at.elapsed().as_secs() / 60;
         Some(match mins {
-            0 => "已自动保存(刚刚)".into(),
-            m if m < 60 => format!("已自动保存 {m} 分钟前"),
-            m => format!("已自动保存 {} 小时前", m / 60),
+            0 => vb_session::i18n::t("ui-app-recover-003"),
+            m if m < 60 => vb_session::i18n::t_args(
+                "ui-app-recover-004",
+                &[("m", vb_session::i18n::FluentValue::from((m).to_string()))],
+            ),
+            m => vb_session::i18n::t_args(
+                "ui-app-recover-005",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from((m / 60).to_string()),
+                )],
+            ),
         })
     }
 
@@ -100,8 +112,11 @@ impl VellumApp {
         self.autosave_interval_secs = next;
         self.save_workspace();
         self.say(match next {
-            0 => "自动保存:关闭(请常按 Ctrl+S)".into(),
-            s => format!("自动保存:每 {s} 秒(快照写入项目 .vb-autosave/,不覆盖 index.html)"),
+            0 => vb_session::i18n::t("ui-app-prefs-dialog-037"),
+            s => vb_session::i18n::t_args(
+                "ui-app-recover-006",
+                &[("s", vb_session::i18n::FluentValue::from((s).to_string()))],
+            ),
         });
     }
 
@@ -124,7 +139,7 @@ impl VellumApp {
             return;
         };
         let mut action = 0u8; // 1=恢复 2=差异 3=丢弃 4=暂不
-        egui::Window::new("发现未保存的自动快照")
+        egui::Window::new(vb_session::i18n::t("ui-app-recover-007"))
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_TOP, [0.0, 80.0])
@@ -134,33 +149,52 @@ impl VellumApp {
                     rec.snapshot.saved_at_unix,
                     crate::recent::now_secs(),
                 );
-                ui.label(format!(
-                    "「{name}」检测到上次异常退出留下的自动快照({when}写入)。"
+                ui.label(vb_session::i18n::t_args(
+                    "ui-app-recover-008",
+                    &[
+                        (
+                            "name",
+                            vb_session::i18n::FluentValue::from((name).to_string()),
+                        ),
+                        (
+                            "when",
+                            vb_session::i18n::FluentValue::from((when).to_string()),
+                        ),
+                    ],
                 ));
                 ui.colored_label(
                     // 提示级走主题 warn 令牌(07-I 口径,浅色自动加深保对比)
                     vb_ui::theme::tokens(ui.ctx()).warn,
-                    "磁盘上的 index.html 未被快照覆盖;恢复只载入内存,何时写回由你决定。",
+                    vb_session::i18n::t("ui-app-recover-009"),
                 );
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("恢复快照").clicked() {
+                    if ui
+                        .button(vb_session::i18n::t("ui-app-recover-010"))
+                        .clicked()
+                    {
                         action = 1;
                     }
-                    if ui.button("查看差异").clicked() {
+                    if ui
+                        .button(vb_session::i18n::t("ui-app-recover-011"))
+                        .clicked()
+                    {
                         action = 2;
                     }
-                    if ui.button("丢弃").clicked() {
+                    if ui
+                        .button(vb_session::i18n::t("ui-common-discard"))
+                        .clicked()
+                    {
                         action = 3;
                     }
-                    if ui.button("暂不处理").clicked() {
+                    if ui
+                        .button(vb_session::i18n::t("ui-app-recover-012"))
+                        .clicked()
+                    {
                         action = 4;
                     }
                 });
-                ui.label(
-                    egui::RichText::new("快照保留期间会随编辑继续滚动;选择后本窗口关闭。")
-                        .size(12.0),
-                );
+                ui.label(egui::RichText::new(vb_session::i18n::t("ui-app-recover-013")).size(12.0));
             });
         match action {
             1 => self.recover_restore(),
@@ -170,11 +204,11 @@ impl VellumApp {
                     autosave::clear(&dir);
                 }
                 self.recover = None;
-                self.say("已丢弃自动快照(继续使用磁盘版本)");
+                self.say(vb_session::i18n::t("ui-app-recover-014"));
             }
             4 => {
                 self.recover = None;
-                self.say("快照已保留;可继续编辑,下次打开仍会提示");
+                self.say(vb_session::i18n::t("ui-app-recover-015"));
             }
             _ => {}
         }
@@ -183,7 +217,7 @@ impl VellumApp {
     /// 「恢复快照」:快照 → 当前文档;撤销栈清空并记「从快照恢复」反馈;
     /// 快照清点(恢复完成后残留无意义,防下次打开误报)。
     ///
-    /// 磁盘文件不动;`saved_rev` 刻意与 `doc.rev` 错开 → 文档按"脏"处理,
+    /// 磁盘文件不动;`saved_rev` 刻意与 `doc.rev` 错开 → 文档按vb_session::i18n::t("ui-app-recover-016")处理,
     /// 关闭确认 / 标题 `*` / 后续自动保存全部按未保存语义工作。
     pub(crate) fn recover_restore(&mut self) {
         let Some(rec) = self.recover.clone() else {
@@ -216,10 +250,13 @@ impl VellumApp {
                 self.recover = None;
                 self.recover_diff_open = false;
                 self.autosave_last = None;
-                self.say("从快照恢复:磁盘文件未动,Ctrl+S 写回(撤销栈已清空)");
+                self.say(vb_session::i18n::t("ui-app-recover-017"));
                 log::info!("崩溃恢复:已载入快照 {}", rec.path.display());
             }
-            Err(e) => self.toast_error(format!("恢复快照失败:{e}")),
+            Err(e) => self.toast_error(vb_session::i18n::t_args(
+                "ui-app-recover-018",
+                &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+            )),
         }
     }
 
@@ -235,7 +272,7 @@ impl VellumApp {
             return;
         };
         let mut open = true;
-        egui::Window::new("快照差异(只读)")
+        egui::Window::new(vb_session::i18n::t("ui-app-recover-019"))
             .open(&mut open)
             .collapsible(false)
             .default_size([760.0, 480.0])
@@ -256,29 +293,65 @@ impl VellumApp {
                 // 三方可读性摘要(缺失如实标注,不装作有值)
                 ui.horizontal_wrapped(|ui| {
                     match &disk {
-                        Some(d) => {
-                            ui.label(format!("磁盘 index.html:{} 行", d.lines().count()))
-                        }
+                        Some(d) => ui.label(vb_session::i18n::t_args(
+                            "ui-app-recover-020",
+                            &[(
+                                "a1",
+                                vb_session::i18n::FluentValue::from(
+                                    (d.lines().count()).to_string(),
+                                ),
+                            )],
+                        )),
                         None => ui.colored_label(
                             // 提示级走主题 warn 令牌(07-I 口径,两主题可读)
                             vb_ui::theme::tokens(ui.ctx()).warn,
-                            "磁盘 index.html:不可读(文件缺失?)",
+                            vb_session::i18n::t("ui-app-recover-021"),
                         ),
                     };
                     ui.separator();
-                    ui.label(format!("快照:{} 行", snap_html.lines().count()));
+                    ui.label(vb_session::i18n::t_args(
+                        "ui-app-recover-022",
+                        &[(
+                            "a1",
+                            vb_session::i18n::FluentValue::from(
+                                (snap_html.lines().count()).to_string(),
+                            ),
+                        )],
+                    ));
                     ui.separator();
                     let mem_lines = mem_html.lines().count();
                     match &disk {
                         Some(d) => {
                             let same = mem_html == *d;
-                            ui.label(format!(
-                                "内存当前态:{mem_lines} 行({})",
-                                if same { "与磁盘一致" } else { "与磁盘不同" }
+                            ui.label(vb_session::i18n::t_args(
+                                "ui-app-recover-023",
+                                &[
+                                    (
+                                        "mem_lines",
+                                        vb_session::i18n::FluentValue::from(
+                                            (mem_lines).to_string(),
+                                        ),
+                                    ),
+                                    (
+                                        "a1",
+                                        vb_session::i18n::FluentValue::from(
+                                            (if same {
+                                                vb_session::i18n::t("ui-app-recover-024")
+                                            } else {
+                                                vb_session::i18n::t("ui-app-recover-025")
+                                            })
+                                            .to_string(),
+                                        ),
+                                    ),
+                                ],
                             ))
                         }
-                        None => ui.label(format!(
-                            "内存当前态:{mem_lines} 行(磁盘方缺失,无从对比)"
+                        None => ui.label(vb_session::i18n::t_args(
+                            "ui-app-recover-026",
+                            &[(
+                                "mem_lines",
+                                vb_session::i18n::FluentValue::from((mem_lines).to_string()),
+                            )],
                         )),
                     };
                 });
@@ -288,8 +361,7 @@ impl VellumApp {
                         Some(d) => autosave::line_diff(d, &snap_html),
                         None => std::iter::once(DiffRow {
                             kind: DiffKind::Same,
-                            text: "(磁盘 index.html 不可读,无法做双方 diff;快照内容见下)"
-                                .into(),
+                            text: vb_session::i18n::t("ui-app-recover-027"),
                         })
                         .chain(snap_html.lines().map(|l| DiffRow {
                             kind: DiffKind::Add,
@@ -298,8 +370,12 @@ impl VellumApp {
                         .collect::<Vec<_>>(),
                     };
                     let changed = rows.iter().filter(|r| r.kind != DiffKind::Same).count();
-                    ui.label(format!(
-                        "「磁盘 −」/「快照 +」统一视图;差异 {changed} 行。删除行=磁盘独有,新增行=快照独有。"
+                    ui.label(vb_session::i18n::t_args(
+                        "ui-app-recover-028",
+                        &[(
+                            "changed",
+                            vb_session::i18n::FluentValue::from((changed).to_string()),
+                        )],
                     ));
                     ui.separator();
                     // 差异红绿是固定语义色(删=红/增=绿),走 vb_ui::theme::semantic

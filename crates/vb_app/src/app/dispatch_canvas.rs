@@ -84,7 +84,7 @@ impl VellumApp {
                 if !cmds.is_empty() {
                     self.exec(Command::Compound { cmds });
                 }
-                self.status = "已锁定所选".into();
+                self.status = vb_session::i18n::t("ui-app-dispatch-canvas-001");
             }
             "object.unlock_all" => {
                 // 走 SetFlags 复合命令入 undo 栈(此前裸改 arena 不可撤销)
@@ -108,10 +108,10 @@ impl VellumApp {
                     })
                     .collect();
                 if cmds.is_empty() {
-                    self.status = "没有已锁定的对象".into();
+                    self.status = vb_session::i18n::t("ui-app-dispatch-canvas-002");
                 } else {
                     self.exec(Command::Compound { cmds });
-                    self.status = "已解锁全部".into();
+                    self.status = vb_session::i18n::t("ui-app-dispatch-canvas-003");
                 }
             }
             "object.hide" => {
@@ -129,7 +129,7 @@ impl VellumApp {
                 if !cmds.is_empty() {
                     self.exec(Command::Compound { cmds });
                 }
-                self.status = "已隐藏所选".into();
+                self.status = vb_session::i18n::t("ui-app-dispatch-canvas-004");
             }
             "object.show_all" => {
                 let mut ids = Vec::new();
@@ -152,10 +152,10 @@ impl VellumApp {
                     })
                     .collect();
                 if cmds.is_empty() {
-                    self.status = "没有已隐藏的对象".into();
+                    self.status = vb_session::i18n::t("ui-app-dispatch-canvas-005");
                 } else {
                     self.exec(Command::Compound { cmds });
-                    self.status = "已显示全部".into();
+                    self.status = vb_session::i18n::t("ui-app-dispatch-canvas-006");
                 }
             }
             // ── P3.2 命令面板 ──
@@ -194,14 +194,14 @@ impl VellumApp {
                     self.text_discard_arm = None;
                     if armed {
                         self.undo.cancel_top(&mut self.doc);
-                        self.say("已放弃文本修改(未入撤销栈)");
+                        self.say(vb_session::i18n::t("ui-app-dispatch-canvas-007"));
                         return true;
                     }
                 }
                 // 钢笔进行中:Esc = 结束开放路径(02 篇 §5.3)
                 if self.tool == Tool::Pen && !self.pen_points.is_empty() {
                     self.finish_pen(false);
-                    self.status = "钢笔:路径已结束(开放)".into();
+                    self.status = vb_session::i18n::t("ui-app-dispatch-canvas-008");
                     return true;
                 }
                 // P4.3 隔离模式:Esc 逐层弹出进入栈(面包屑回退)
@@ -214,16 +214,43 @@ impl VellumApp {
                         .map(|n| n.name.clone())
                         .unwrap_or_default();
                     self.status = match self.isolate_top() {
-                        Some(up) => format!(
-                            "退出 {name} → {}",
-                            self.doc
-                                .nodes
-                                .get(up)
-                                .map(|n| n.name.clone())
-                                .unwrap_or_default()
+                        Some(up) => vb_session::i18n::t_args(
+                            "ui-app-dispatch-canvas-009",
+                            &[
+                                (
+                                    "name",
+                                    vb_session::i18n::FluentValue::from((name).to_string()),
+                                ),
+                                (
+                                    "a1",
+                                    vb_session::i18n::FluentValue::from(
+                                        (self
+                                            .doc
+                                            .nodes
+                                            .get(up)
+                                            .map(|n| n.name.clone())
+                                            .unwrap_or_default())
+                                        .to_string(),
+                                    ),
+                                ),
+                            ],
                         ),
-                        None => format!("退出隔离模式({name})"),
+                        None => vb_session::i18n::t_args(
+                            "ui-app-dispatch-canvas-010",
+                            &[(
+                                "name",
+                                vb_session::i18n::FluentValue::from((name).to_string()),
+                            )],
+                        ),
                     };
+                    return true;
+                }
+                // S5 清单 ②:逐级退出的「面板级」—— 区焦点停在面板区时,
+                // Esc 先把区焦点退回画布并消费本次按键(画布级的选择清除/
+                // 工具回退留给下一次 Esc;`view.escape_overlay` 同语义)。
+                if self.focus_zone != crate::app::FocusZone::Canvas {
+                    self.focus_zone = crate::app::FocusZone::Canvas;
+                    self.status = vb_session::i18n::t("ui-app-dispatch-view-065");
                     return true;
                 }
                 self.selection.clear();
@@ -244,15 +271,15 @@ impl VellumApp {
                         | Drag::FreeTransform { .. } => {
                             if self.drag_edited {
                                 self.undo.cancel_top(&mut self.doc);
-                                self.status = "已取消(未入撤销栈)".into();
+                                self.status = vb_session::i18n::t("ui-app-dispatch-canvas-011");
                             } else {
-                                self.status = "已取消".into();
+                                self.status = vb_session::i18n::t("ui-app-dispatch-canvas-012");
                             }
                             self.drag_edited = false;
                             self.last_move_delta = None;
                         }
                         _ => {
-                            self.status = "已取消".into();
+                            self.status = vb_session::i18n::t("ui-app-dispatch-canvas-012");
                         }
                     }
                     self.smart_guides.clear();
@@ -261,14 +288,14 @@ impl VellumApp {
                 // 创建类工具(矩形/钢笔/画板…)不再驻留 —— 点画布不会误建形状。
                 if self.tool != Tool::Select {
                     self.set_tool(Tool::Select);
-                    self.status = "已回到选择工具(Esc 退出工具态)".into();
+                    self.status = vb_session::i18n::t("ui-app-dispatch-canvas-013");
                 }
             }
             // ── P4 钢笔:Enter 结束路径 ──
             "canvas.pen_finish" => {
                 if self.tool == Tool::Pen && !self.pen_points.is_empty() {
                     self.finish_pen(false);
-                    self.status = "钢笔:路径已结束".into();
+                    self.status = vb_session::i18n::t("ui-app-dispatch-canvas-014");
                 }
             }
             // ── 应用级(无键位,仅菜单) ──
@@ -279,7 +306,7 @@ impl VellumApp {
             "app.quit" => {
                 if let Some(tx) = &self.shell_tx {
                     let _ = tx.send(crate::shell::ShellRequest::QuitAll);
-                    self.say("正在退出…");
+                    self.say(vb_session::i18n::t("ui-app-dispatch-canvas-015"));
                 } else {
                     std::process::exit(0);
                 }

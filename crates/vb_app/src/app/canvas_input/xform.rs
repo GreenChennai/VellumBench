@@ -29,9 +29,9 @@ impl VellumApp {
                 let (wx, wy) = self.camera.screen_to_world(pl.x as f64, pl.y as f64);
                 self.xf_center = Some((wx, wy));
                 let name = match self.tool {
-                    Tool::Rotate => "旋转",
-                    Tool::Mirror => "镜像",
-                    _ => "缩放",
+                    Tool::Rotate => vb_session::i18n::t("ui-common-rotate"),
+                    Tool::Mirror => vb_session::i18n::t("ui-common-mirror"),
+                    _ => vb_session::i18n::t("ui-common-zoom"),
                 };
                 self.status = format!("{name}中心已设定({:.0},{:.0}),拖拽对象即围绕它变换", wx, wy);
             }
@@ -86,7 +86,7 @@ impl VellumApp {
     /// X-4 工具拖拽起手(旋转/镜像/缩放;自由变换另有角命中入口)。
     pub(super) fn drag_begin_xform(&mut self, wx: f64, wy: f64) {
         if self.selection.is_empty() {
-            self.status = "先选中对象,再单击设中心 / 拖拽变换".into();
+            self.status = vb_session::i18n::t("ui-app-canvas-input-xform-002");
             return;
         }
         let sids = self.selection.clone();
@@ -138,7 +138,7 @@ impl VellumApp {
     /// 自由变换拖拽起手:命中选区包围盒四角之一才开始(06 篇「四角独立拖动」)。
     pub(super) fn drag_begin_free_transform(&mut self, wx: f64, wy: f64) {
         let Some((bx, by, bw, bh)) = self.selection_world_bounds() else {
-            self.status = "自由变换:先选中对象".into();
+            self.status = vb_session::i18n::t("ui-app-canvas-input-xform-003");
             return;
         };
         // 命中四角(世界容差 = 8 屏幕像素)
@@ -149,7 +149,7 @@ impl VellumApp {
             .position(|c| vb_tools::xform::dist(*c, (wx, wy)) <= tol)
             .map(|i| i as u8)
         else {
-            self.status = "自由变换:拖选区四角之一(对角锚定缩放)".into();
+            self.status = vb_session::i18n::t("ui-app-canvas-input-xform-004");
             return;
         };
         let sids = self.selection.clone();
@@ -211,7 +211,13 @@ impl VellumApp {
             }
             if !cmds.is_empty() {
                 self.exec(Command::Compound { cmds });
-                self.status = format!("旋转 {}°(Shift 约束 15°)", fmt_deg(delta_deg));
+                self.status = vb_session::i18n::t_args(
+                    "ui-app-canvas-input-xform-005",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from((fmt_deg(delta_deg)).to_string()),
+                    )],
+                );
             }
             if let Drag::ToolRotate { moved, .. } = &mut self.drag {
                 *moved = true;
@@ -364,7 +370,7 @@ impl VellumApp {
                 ..crate::app::transform_panel::TransformDelta::translate(0.0, 0.0)
             });
         }
-        self.status = "旋转完成(Esc 回选择工具)".into();
+        self.status = vb_session::i18n::t("ui-app-canvas-input-xform-008");
     }
 
     /// 镜像松手:状态提示(命令已在拖拽中逐帧落地)。
@@ -377,10 +383,20 @@ impl VellumApp {
         let axis = vb_tools::xform::MirrorAxis::from_drag(cur.0 - start.0, cur.1 - start.1);
         let _ = center;
         let name = match axis {
-            vb_tools::xform::MirrorAxis::Vertical => "左右镜像(竖直轴)",
-            vb_tools::xform::MirrorAxis::Horizontal => "上下镜像(水平轴)",
+            vb_tools::xform::MirrorAxis::Vertical => {
+                vb_session::i18n::t("ui-app-canvas-input-xform-009")
+            }
+            vb_tools::xform::MirrorAxis::Horizontal => {
+                vb_session::i18n::t("ui-app-canvas-input-xform-010")
+            }
         };
-        self.status = format!("镜像完成:{name}(Esc 回选择工具)");
+        self.status = vb_session::i18n::t_args(
+            "ui-app-canvas-input-xform-011",
+            &[(
+                "name",
+                vb_session::i18n::FluentValue::from((name).to_string()),
+            )],
+        );
     }
 
     /// 缩放松手:把缩放记进「上一次变换」(比例按中心距离比)。
@@ -406,7 +422,7 @@ impl VellumApp {
     /// 自由变换松手:状态收束。
     pub(super) fn end_free_transform(&mut self, moved: bool) {
         if moved {
-            self.status = "自由变换完成(Esc 回选择工具)".into();
+            self.status = vb_session::i18n::t("ui-app-canvas-input-xform-013");
         }
     }
 }

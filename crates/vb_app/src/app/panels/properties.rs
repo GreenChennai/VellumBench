@@ -31,7 +31,7 @@ use crate::shortcuts;
 
 /// 属性面板七分组(组序 = design/03 §四;pub(crate) 供存在性测试)。
 pub(crate) const PROP_GROUPS: [&str; 7] =
-    ["变换", "外观", "布局", "文本", "交互", "无障碍", "导出"];
+    ["变换", "外观", "布局", "文本", "交互", "无障碍", "导出"]; // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
 
 // 组下标(与 PROP_GROUPS 对齐)
 const G_TRANSFORM: usize = 0;
@@ -44,7 +44,7 @@ const G_EXPORT: usize = 6;
 
 impl VellumApp {
     pub(crate) fn properties_tab(&mut self, ui: &mut egui::Ui) {
-        ui.heading("属性");
+        ui.heading(vb_session::i18n::t("ui-menu-window-tab_properties"));
         ui.separator();
 
         // --- 选中对象的属性(先取全量快照,避免借用冲突) ---
@@ -128,11 +128,26 @@ impl VellumApp {
                         .unwrap_or_default();
                     let is_root = root == nid;
                     ui.horizontal_wrapped(|ui| {
-                        ui.strong(format!("组件实例:{sym_name}"));
+                        ui.strong(vb_session::i18n::t_args(
+                            "ui-app-panels-properties-001",
+                            &[(
+                                "sym_name",
+                                vb_session::i18n::FluentValue::from((sym_name).to_string()),
+                            )],
+                        ));
                         if !overrides.is_empty() {
-                            ui.small(format!("(覆盖 {})", overrides));
+                            ui.small(vb_session::i18n::t_args(
+                                "ui-app-panels-properties-002",
+                                &[(
+                                    "a1",
+                                    vb_session::i18n::FluentValue::from((overrides).to_string()),
+                                )],
+                            ));
                         }
-                        if ui.small_button("跳到主件").clicked() {
+                        if ui
+                            .small_button(vb_session::i18n::t("ui-app-panels-properties-003"))
+                            .clicked()
+                        {
                             if let Some(cid) = self.doc.find_by_sid(&ref_sid) {
                                 if let Some(pid) =
                                     self.doc.nodes.get(cid).unwrap().children.first().copied()
@@ -146,23 +161,27 @@ impl VellumApp {
                                         .as_str()
                                         .to_string()]
                                     .into();
-                                    self.say(
-                                        "已选中主件原型(定义区不在画布;编辑主件将同步全部实例)",
-                                    );
+                                    self.say(vb_session::i18n::t("ui-app-panels-properties-004"));
                                 }
                             }
                         }
                     });
                     if !is_root {
-                        ui.small("(内部编辑将登记为覆盖,主件同步时保留)");
+                        ui.small(vb_session::i18n::t("ui-app-panels-properties-005"));
                     }
                     ui.separator();
                 } else if let Some(c) = vb_doc::symbol::def_container_of(&self.doc, nid) {
                     // 选中主件定义区节点:显示主件身份(编辑此处将同步全部实例)
                     let main_name = self.doc.nodes.get(c).unwrap().name.clone();
                     ui.horizontal_wrapped(|ui| {
-                        ui.strong(format!("主件:{main_name}"));
-                        ui.small("(编辑主件将同步全部实例;定义区不随页面导出为可见内容)");
+                        ui.strong(vb_session::i18n::t_args(
+                            "ui-app-panels-properties-006",
+                            &[(
+                                "main_name",
+                                vb_session::i18n::FluentValue::from((main_name).to_string()),
+                            )],
+                        ));
+                        ui.small(vb_session::i18n::t("ui-app-panels-properties-007"));
                     });
                     ui.separator();
                 }
@@ -174,7 +193,13 @@ impl VellumApp {
                 ];
                 let mut tag_sel = cur_tag.clone();
                 egui::ComboBox::from_id_salt("tag_sel")
-                    .selected_text(format!("标签 {tag_sel}"))
+                    .selected_text(vb_session::i18n::t_args(
+                        "ui-app-panels-properties-008",
+                        &[(
+                            "tag_sel",
+                            vb_session::i18n::FluentValue::from((tag_sel).to_string()),
+                        )],
+                    ))
                     .show_ui(ui, |ui| {
                         for t in TAGS {
                             ui.selectable_value(&mut tag_sel, t.to_string(), t);
@@ -191,7 +216,13 @@ impl VellumApp {
                 if sids.len() > 1 {
                     ui.label(caption(
                         ui,
-                        &format!("已选 {} 个对象 · 编辑作用于全部(一条撤销)", sids.len()),
+                        &vb_session::i18n::t_args(
+                            "ui-app-panels-properties-009",
+                            &[(
+                                "a1",
+                                vb_session::i18n::FluentValue::from((sids.len()).to_string()),
+                            )],
+                        ),
                     ));
                 }
                 ui.separator();
@@ -255,7 +286,7 @@ impl VellumApp {
                     s.num_commit(r, cmd.flatten());
                     ui.label(caption(
                         ui,
-                        "倾斜 / 参考点九宫格 / 缩放描边和效果 → 阶段 2(03)",
+                        &vb_session::i18n::t("ui-app-panels-properties-010"),
                     ));
                 });
 
@@ -277,7 +308,9 @@ impl VellumApp {
                         .map(|c| Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a))
                         .unwrap_or(Color32::WHITE);
                     let tokens = s.doc.tokens.clone();
-                    let r = ColorField::new("填充", &mut col).doc_tokens(&tokens).ui(ui);
+                    let r = ColorField::new(&vb_session::i18n::t("ui-common-fill"), &mut col)
+                        .doc_tokens(&tokens)
+                        .ui(ui);
                     if let Some(nm) = r.var_picked {
                         let cmds = style_prop_cmds(
                             &s.doc,
@@ -287,13 +320,16 @@ impl VellumApp {
                         );
                         if let Some(cmd) = combine(cmds) {
                             s.exec(cmd);
-                            s.say(format!("填充 → var(--{nm})"));
+                            s.say(vb_session::i18n::t_args(
+                                "ui-app-panels-properties-011",
+                                &[("nm", vb_session::i18n::FluentValue::from((nm).to_string()))],
+                            ));
                         }
                     } else if r.cleared {
                         let cmds = style_prop_remove_cmds(&s.doc, &sids, "background-color");
                         if let Some(cmd) = combine(cmds) {
                             s.exec(cmd);
-                            s.say("填充已清除");
+                            s.say(vb_session::i18n::t("ui-app-panels-properties-012"));
                         }
                     } else if r.changed {
                         let [cr, cg, cb, ca] = col.to_srgba_unmultiplied();
@@ -309,7 +345,7 @@ impl VellumApp {
                         .find(|d| d.prop == "border-radius")
                         .and_then(|d| d.value.trim_end_matches("px").parse::<f64>().ok())
                         .unwrap_or(0.0);
-                    let r = NumField::new("圆角", &mut radius)
+                    let r = NumField::new(&vb_session::i18n::t("ui-common-corner"), &mut radius)
                         .speed(1.0)
                         .step(1.0)
                         .range(0.0, 2000.0)
@@ -333,14 +369,14 @@ impl VellumApp {
                     let radius_changed = r.changed;
                     s.num_commit(r, cmd.flatten());
                     if radius_changed && !radius_ok {
-                        s.toast_warn("圆角仅对盒对象有效(路径/文字对象不支持)");
+                        s.toast_warn(vb_session::i18n::t("ui-app-appearance-commands-002"));
                     }
                     let mut op = style
                         .iter()
                         .find(|d| d.prop == "opacity")
                         .and_then(|d| d.value.parse::<f64>().ok())
                         .unwrap_or(1.0);
-                    let r = NumField::new("不透明", &mut op)
+                    let r = NumField::new(&vb_session::i18n::t("ui-common-opacity-short"), &mut op)
                         .speed(0.01)
                         .step(0.01)
                         .range(0.0, 1.0)
@@ -353,7 +389,10 @@ impl VellumApp {
                     });
                     s.num_commit(r, cmd.flatten());
                     // 隐藏 / 锁定(对象旗标;SetFlags)
-                    if ui.checkbox(&mut hidden, "隐藏").changed() {
+                    if ui
+                        .checkbox(&mut hidden, vb_session::i18n::t("ui-common-hide"))
+                        .changed()
+                    {
                         let cmds: Vec<Command> = sids
                             .iter()
                             .map(|sid| Command::SetFlags {
@@ -367,7 +406,10 @@ impl VellumApp {
                             s.exec(cmd);
                         }
                     }
-                    if ui.checkbox(&mut locked, "锁定").changed() {
+                    if ui
+                        .checkbox(&mut locked, vb_session::i18n::t("ui-common-lock"))
+                        .changed()
+                    {
                         let cmds: Vec<Command> = sids
                             .iter()
                             .map(|sid| Command::SetFlags {
@@ -384,16 +426,22 @@ impl VellumApp {
                     // 外观面板 / 描边面板入口(S4 05-1/05-3:多填充、
                     // 条目排序/禁用/混合模式、描边全字段)
                     ui.horizontal(|ui| {
-                        if ui.button("外观面板 ⇧F6").clicked() {
+                        if ui
+                            .button(vb_session::i18n::t("ui-app-panels-properties-013"))
+                            .clicked()
+                        {
                             s.run_command("view.toggle_appearance_panel", false, false);
                         }
-                        if ui.button("描边面板 ^F10").clicked() {
+                        if ui
+                            .button(vb_session::i18n::t("ui-app-panels-properties-014"))
+                            .clicked()
+                        {
                             s.run_command("view.toggle_stroke_panel", false, false);
                         }
                     });
                     ui.label(caption(
                         ui,
-                        "多填充 / 描边 / 效果条目(排序·禁用·混合模式)→ 外观面板;描边全字段 → 描边面板",
+                        &vb_session::i18n::t("ui-app-panels-properties-015"),
                     ));
                 });
 
@@ -443,20 +491,32 @@ impl VellumApp {
                         }
                     };
                     egui::ComboBox::from_id_salt("disp")
-                        .selected_text(format!("显示 {display}"))
+                        .selected_text(vb_session::i18n::t_args(
+                            "ui-app-panels-properties-016",
+                            &[(
+                                "display",
+                                vb_session::i18n::FluentValue::from((display).to_string()),
+                            )],
+                        ))
                         .show_ui(ui, |ui| {
                             for v in ["block", "flex", "inline-flex", "none"] {
                                 ui.selectable_value(&mut display, v.to_string(), v);
                             }
                         });
                     egui::ComboBox::from_id_salt("dir")
-                        .selected_text(format!("方向 {direction}"))
+                        .selected_text(vb_session::i18n::t_args(
+                            "ui-app-panels-properties-017",
+                            &[(
+                                "direction",
+                                vb_session::i18n::FluentValue::from((direction).to_string()),
+                            )],
+                        ))
                         .show_ui(ui, |ui| {
                             for v in ["row", "column", "row-reverse", "column-reverse"] {
                                 ui.selectable_value(&mut direction, v.to_string(), v);
                             }
                         });
-                    let r = NumField::new("间距", &mut gap)
+                    let r = NumField::new(&vb_session::i18n::t("ui-common-gap"), &mut gap)
                         .speed(1.0)
                         .step(1.0)
                         .range(0.0, 400.0)
@@ -471,7 +531,13 @@ impl VellumApp {
                     });
                     s.num_commit(r, cmd.flatten());
                     egui::ComboBox::from_id_salt("jc")
-                        .selected_text(format!("主轴 {justify}"))
+                        .selected_text(vb_session::i18n::t_args(
+                            "ui-app-panels-properties-018",
+                            &[(
+                                "justify",
+                                vb_session::i18n::FluentValue::from((justify).to_string()),
+                            )],
+                        ))
                         .show_ui(ui, |ui| {
                             for v in [
                                 "flex-start",
@@ -484,7 +550,13 @@ impl VellumApp {
                             }
                         });
                     egui::ComboBox::from_id_salt("ai")
-                        .selected_text(format!("交叉轴 {align}"))
+                        .selected_text(vb_session::i18n::t_args(
+                            "ui-app-panels-properties-019",
+                            &[(
+                                "align",
+                                vb_session::i18n::FluentValue::from((align).to_string()),
+                            )],
+                        ))
                         .show_ui(ui, |ui| {
                             for v in ["stretch", "center", "flex-start", "flex-end"] {
                                 ui.selectable_value(&mut align, v.to_string(), v);
@@ -536,14 +608,17 @@ impl VellumApp {
                         .trim_end_matches("px")
                         .parse::<f64>()
                         .unwrap_or(0.0);
-                    let r = NumField::new("内边距", &mut pad)
-                        .speed(1.0)
-                        .step(1.0)
-                        .range(0.0, 1000.0)
-                        .unit("px")
-                        .label_width(44.0)
-                        .width(56.0)
-                        .ui(ui);
+                    let r = NumField::new(
+                        &vb_session::i18n::t("ui-app-panels-properties-020"),
+                        &mut pad,
+                    )
+                    .speed(1.0)
+                    .step(1.0)
+                    .range(0.0, 1000.0)
+                    .unit("px")
+                    .label_width(44.0)
+                    .width(56.0)
+                    .ui(ui);
                     let cmd = r.changed.then(|| {
                         let cmds =
                             style_prop_cmds(&s.doc, &sids, "padding", &format!("{}px", pad as i64));
@@ -557,14 +632,17 @@ impl VellumApp {
                         .trim_end_matches("px")
                         .parse::<f64>()
                         .unwrap_or(0.0);
-                    let r = NumField::new("外边距", &mut mar)
-                        .speed(1.0)
-                        .step(1.0)
-                        .range(0.0, 1000.0)
-                        .unit("px")
-                        .label_width(44.0)
-                        .width(56.0)
-                        .ui(ui);
+                    let r = NumField::new(
+                        &vb_session::i18n::t("ui-app-panels-properties-021"),
+                        &mut mar,
+                    )
+                    .speed(1.0)
+                    .step(1.0)
+                    .range(0.0, 1000.0)
+                    .unit("px")
+                    .label_width(44.0)
+                    .width(56.0)
+                    .ui(ui);
                     let cmd = r.changed.then(|| {
                         let cmds =
                             style_prop_cmds(&s.doc, &sids, "margin", &format!("{}px", mar as i64));
@@ -581,7 +659,7 @@ impl VellumApp {
                             .find(|d| d.prop == "font-size")
                             .and_then(|d| d.value.trim_end_matches("px").parse::<f64>().ok())
                             .unwrap_or(24.0);
-                        let r = NumField::new("字号", &mut fs)
+                        let r = NumField::new(&vb_session::i18n::t("ui-common-font-size"), &mut fs)
                             .speed(1.0)
                             .step(1.0)
                             .range(1.0, 500.0)
@@ -606,7 +684,13 @@ impl VellumApp {
                             .unwrap_or_else(|| "left".into());
                         let mut sel = cur_align.clone();
                         egui::ComboBox::from_id_salt("prop_ta")
-                            .selected_text(format!("对齐 {sel}"))
+                            .selected_text(vb_session::i18n::t_args(
+                                "ui-app-control-panel-editors-002",
+                                &[(
+                                    "sel",
+                                    vb_session::i18n::FluentValue::from((sel).to_string()),
+                                )],
+                            ))
                             .show_ui(ui, |ui| {
                                 for v in ["left", "center", "right", "justify"] {
                                     ui.selectable_value(&mut sel, v.to_string(), v);
@@ -626,13 +710,22 @@ impl VellumApp {
                             .map(|c| Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a))
                             .unwrap_or(Color32::BLACK);
                         let tokens = s.doc.tokens.clone();
-                        let r = ColorField::new("字色", &mut tc).doc_tokens(&tokens).ui(ui);
+                        let r =
+                            ColorField::new(&vb_session::i18n::t("ui-common-text-color"), &mut tc)
+                                .doc_tokens(&tokens)
+                                .ui(ui);
                         if let Some(nm) = r.var_picked {
                             let cmds =
                                 style_prop_cmds(&s.doc, &sids, "color", &format!("var(--{nm})"));
                             if let Some(cmd) = combine(cmds) {
                                 s.exec(cmd);
-                                s.say(format!("字色 → var(--{nm})"));
+                                s.say(vb_session::i18n::t_args(
+                                    "ui-app-panels-properties-022",
+                                    &[(
+                                        "nm",
+                                        vb_session::i18n::FluentValue::from((nm).to_string()),
+                                    )],
+                                ));
                             }
                         } else if r.changed && !r.cleared {
                             let [cr, cg, cb, ca] = tc.to_srgba_unmultiplied();
@@ -642,7 +735,10 @@ impl VellumApp {
                                 s.exec(cmd);
                             }
                         }
-                        ui.label(caption(ui, "字体族 / 字距 / 行距 → 字符面板(Ctrl+T);对齐/缩进/段距 → 段落面板(Ctrl+Alt+T)"));
+                        ui.label(caption(
+                            ui,
+                            &vb_session::i18n::t("ui-app-panels-properties-023"),
+                        ));
                     });
                 }
 
@@ -654,7 +750,7 @@ impl VellumApp {
                         .map(|(_, v)| v.clone())
                         .unwrap_or_default();
                     ui.horizontal(|ui| {
-                        ui.label("链接");
+                        ui.label(vb_session::i18n::t("ui-common-link"));
                         let h = vb_ui::theme::row_height(ui.ctx());
                         if ui
                             .add_sized([160.0, h], egui::TextEdit::singleline(&mut href))
@@ -671,16 +767,26 @@ impl VellumApp {
                     });
                     let mut target = href_value(&attrs, "target");
                     egui::ComboBox::from_id_salt("prop_target")
-                        .selected_text(format!(
-                            "目标 {}",
-                            if target.is_empty() {
-                                "_self"
-                            } else {
-                                target.as_str()
-                            }
+                        .selected_text(vb_session::i18n::t_args(
+                            "ui-app-panels-properties-024",
+                            &[(
+                                "a1",
+                                vb_session::i18n::FluentValue::from(
+                                    (if target.is_empty() {
+                                        "_self"
+                                    } else {
+                                        target.as_str()
+                                    })
+                                    .to_string(),
+                                ),
+                            )],
                         ))
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut target, String::new(), "_self(默认)");
+                            ui.selectable_value(
+                                &mut target,
+                                String::new(),
+                                vb_session::i18n::t("ui-app-panels-properties-025"),
+                            );
                             for v in ["_blank", "_parent", "_top"] {
                                 ui.selectable_value(&mut target, v.to_string(), v);
                             }
@@ -718,7 +824,7 @@ impl VellumApp {
                 self.prop_section(ui, G_EXPORT, |s, ui| {
                     let mut nm = name.clone();
                     ui.horizontal(|ui| {
-                        ui.label("名称");
+                        ui.label(vb_session::i18n::t("ui-common-name"));
                         let h = vb_ui::theme::row_height(ui.ctx());
                         if ui
                             .add_sized([160.0, h], egui::TextEdit::singleline(&mut nm))
@@ -730,19 +836,27 @@ impl VellumApp {
                             let cmds = rename_cmds(&s.doc, &sids, nm.trim());
                             if let Some(cmd) = combine(cmds) {
                                 s.exec(cmd);
-                                s.say(format!("名称 → {}", nm.trim()));
+                                s.say(vb_session::i18n::t_args(
+                                    "ui-app-panels-properties-026",
+                                    &[(
+                                        "a1",
+                                        vb_session::i18n::FluentValue::from(
+                                            (nm.trim()).to_string(),
+                                        ),
+                                    )],
+                                ));
                             }
                         }
                     });
                     ui.label(caption(
                         ui,
-                        "导出倍率 @1x/@2x/@3x:暂无节点级存储位,现用导出对话框统一倍率(遗留项见 02c 报告)",
+                        &vb_session::i18n::t("ui-app-panels-properties-027"),
                     ));
                 });
 
                 // --- 对齐(P3.8:复用命令派发,快捷键同源) ---
                 ui.separator();
-                ui.label("对齐");
+                ui.label(vb_session::i18n::t("ui-common-align"));
                 ui.horizontal(|ui| {
                     let btns: [(&str, &str); 6] = [
                         ("align.left", "⇤"),
@@ -763,24 +877,42 @@ impl VellumApp {
                     }
                 });
                 ui.horizontal(|ui| {
-                    ui.label("分布");
-                    if ui.button("↔ 等距").clicked() {
+                    ui.label(vb_session::i18n::t("ui-app-align-panel-016"));
+                    if ui
+                        .button(vb_session::i18n::t("ui-app-panels-properties-028"))
+                        .clicked()
+                    {
                         self.run_command("object.distribute_h", false, false);
                     }
-                    if ui.button("↕ 等距").clicked() {
+                    if ui
+                        .button(vb_session::i18n::t("ui-app-panels-properties-029"))
+                        .clicked()
+                    {
                         self.run_command("object.distribute_v", false, false);
                     }
                 });
 
                 // --- 路径查找器(C1:四基本运算,两两矢量路径) ---
                 ui.separator();
-                ui.label("路径查找器");
+                ui.label(vb_session::i18n::t("ui-app-panels-properties-030"));
                 ui.horizontal(|ui| {
                     let btns: [(&str, &str); 4] = [
-                        ("path.union", "联集"),
-                        ("path.subtract", "减去顶层"),
-                        ("path.intersect", "交集"),
-                        ("path.xor", "差集"),
+                        (
+                            "path.union",
+                            &vb_session::i18n::t("ui-app-panels-properties-031"),
+                        ),
+                        (
+                            "path.subtract",
+                            &vb_session::i18n::t("ui-app-panels-properties-032"),
+                        ),
+                        (
+                            "path.intersect",
+                            &vb_session::i18n::t("ui-app-panels-properties-033"),
+                        ),
+                        (
+                            "path.xor",
+                            &vb_session::i18n::t("ui-app-panels-properties-034"),
+                        ),
                     ];
                     for (id, label) in btns {
                         if ui.button(label).clicked() {
@@ -796,21 +928,19 @@ impl VellumApp {
             // 实测 crop-right.png(P1-⑦):三行长灰文案占满 280px 窄坞,信息密度
             // 极低。改为「一句短话 + 常用动作入口」:教学细节移进悬停提示,
             // 垂直空间留给真正能点的动作(全部走既有命令,无假控件)。
-            ui.strong("未选中对象");
+            ui.strong(vb_session::i18n::t("ui-common-no-selection"));
             ui.label(caption(
                 ui,
-                "点选画布对象,或从下面开始。",
+                &vb_session::i18n::t("ui-app-panels-properties-035"),
             ))
-            .on_hover_text(
-                "选中后按 变换/外观/布局/文本/交互/无障碍/导出 分组编辑;数值框支持拖标签改值与表达式(如 320/2、50%)。",
-            );
+            .on_hover_text(vb_session::i18n::t("ui-app-panels-properties-036"));
             ui.add_space(vb_ui::theme::space::S3);
             // §8.9 空态:无选区先给**画板属性**(不许白板)—— 名称与
-            // 尺寸是空态下唯一可"编辑对象"的属性代理;改它去画板 Tab。
+            // 尺寸是空态下唯一可vb_session::i18n::t("ui-app-panels-properties-037")的属性代理;改它去画板 Tab。
             if let Some(ab) = self.active_artboard() {
                 if let Some(n) = self.doc.nodes.get(ab) {
                     ui.horizontal_wrapped(|ui| {
-                        ui.strong("画板");
+                        ui.strong(vb_session::i18n::t("ui-menu-window-tab_artboards"));
                         ui.label(caption(
                             ui,
                             &format!("{} · {} × {} px", n.name, n.geom.w as i64, n.geom.h as i64),
@@ -819,34 +949,57 @@ impl VellumApp {
                 }
             }
             ui.add_space(vb_ui::theme::space::S2);
-            ui.label(caption(ui, "常用"));
+            ui.label(caption(
+                ui,
+                &vb_session::i18n::t("ui-app-panels-properties-038"),
+            ));
             ui.horizontal_wrapped(|ui| {
                 for (id, icon, tip) in [
-                    ("tool.select", Name::ToolSelect, "选择工具(V):点选 / 拖框选"),
-                    ("tool.rect", Name::ToolRect, "矩形工具(M):拖框新建"),
-                    ("tool.ellipse", Name::ToolEllipse, "椭圆工具(L):拖框新建"),
+                    (
+                        "tool.select",
+                        Name::ToolSelect,
+                        vb_session::i18n::t("ui-app-panels-properties-039"),
+                    ),
+                    (
+                        "tool.rect",
+                        Name::ToolRect,
+                        vb_session::i18n::t("ui-app-history-009"),
+                    ),
+                    (
+                        "tool.ellipse",
+                        Name::ToolEllipse,
+                        vb_session::i18n::t("ui-app-panels-properties-040"),
+                    ),
                     (
                         "tool.text",
                         Name::ToolText,
-                        "文字工具(T):单击点文本 / 拖框区域文本",
+                        vb_session::i18n::t("ui-app-panels-properties-041"),
                     ),
                 ] {
-                    if icon_button(ui, icon, tip).clicked() {
+                    if icon_button(ui, icon, &tip).clicked() {
                         self.run_command(id, false, false);
                     }
                 }
             });
             ui.horizontal_wrapped(|ui| {
                 for (id, icon, tip) in [
-                    ("view.fit", Name::Expanded, "缩放到全部画板可见(Ctrl+0)"),
-                    ("window.tab_layers", Name::KindLayer, "切换到图层面板"),
+                    (
+                        "view.fit",
+                        Name::Expanded,
+                        vb_session::i18n::t("ui-app-panels-properties-042"),
+                    ),
+                    (
+                        "window.tab_layers",
+                        Name::KindLayer,
+                        vb_session::i18n::t("ui-app-panels-properties-043"),
+                    ),
                     (
                         "window.tab_artboards",
                         Name::ToolArtboard,
-                        "切换到画板面板(可新建画板)",
+                        vb_session::i18n::t("ui-app-panels-properties-044"),
                     ),
                 ] {
-                    if icon_button(ui, icon, tip).clicked() {
+                    if icon_button(ui, icon, &tip).clicked() {
                         self.run_command(id, false, false);
                     }
                 }
@@ -854,7 +1007,7 @@ impl VellumApp {
             ui.add_space(vb_ui::theme::space::S3);
             ui.label(caption(
                 ui,
-                "提示:V 点选 · M 矩形 · L 椭圆 · Ctrl+0 适合窗口。",
+                &vb_session::i18n::t("ui-app-panels-properties-045"),
             ));
             ui.separator();
         }

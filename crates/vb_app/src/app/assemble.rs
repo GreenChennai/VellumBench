@@ -71,7 +71,13 @@ impl VellumApp {
     /// 阶段 2 外壳入口:打开失败返回 `Err`(主页/toast 显式告知),**不静默回退**。
     pub fn try_open_project(ctx: &egui::Context, dir: &std::path::Path) -> Result<Self, String> {
         if !dir.is_dir() {
-            return Err(format!("路径不存在:{}", dir.display()));
+            return Err(vb_session::i18n::t_args(
+                "ui-app-assemble-001",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from((dir.display()).to_string()),
+                )],
+            ));
         }
         let r = import_with_layout(dir).map_err(|e| e.to_string())?;
         let (ws, ws_warn) = dock_layout::load();
@@ -119,6 +125,8 @@ impl VellumApp {
             dock_collapsed: ws.dock_collapsed,
             panel_order: ws_panel_order,
             panels_hidden: ws.panels_hidden,
+            // S5 清单 ②:面板区焦点状态机(会话态,默认画布)
+            focus_zone: super::FocusZone::Canvas,
             num_commit: None,
             // PERF-05:样式注入指纹(None = 首帧必注入)
             style_applied: None,
@@ -158,6 +166,9 @@ impl VellumApp {
             sec_dock_width: ws.sec_dock_width,
             sec_dock_collapsed: ws.sec_dock_collapsed,
             motion_enabled: ws.motion_enabled,
+            // S5 清单 ④:系统「减少动态效果」偏好(构造期探测一次,与
+            // 用户总开关并联;真值经 `effective_motion` 注入 theme)
+            os_animations: super::probe_os_animations(),
             density_compact: ws.density_compact,
             workspace_saved: ws.clone(),
             // UI-12:窗口布局层基线 = 构造配置(避免首帧误报脏)
@@ -179,8 +190,11 @@ impl VellumApp {
             },
             text_discard_arm: None,
             status: match &ws_warn {
-                Some(w) => format!("{w} — 已使用默认布局"),
-                None => "就绪 — V 选择 · A 直接选择 · M 矩形 · Alt+拖动 复制 · Shift 约束 · Space 平移 · Ctrl+0 适合".into(),
+                Some(w) => vb_session::i18n::t_args(
+                    "ui-app-assemble-002",
+                    &[("w", vb_session::i18n::FluentValue::from((w).to_string()))],
+                ),
+                None => vb_session::i18n::t("ui-app-assemble-003"),
             },
             last_move_delta: None,
             canvas_rect: None,
@@ -190,7 +204,9 @@ impl VellumApp {
             frame_times: std::collections::VecDeque::new(),
             // 06-3:VB_FPS_LOG=1 冒烟钩子(idle 帧率取证 / bench.ps1 -Boot 冷启动
             // 计时用;未设置时零开销,不进 UI 面)
-            fps_log_at: std::env::var("VB_FPS_LOG").is_ok().then(std::time::Instant::now),
+            fps_log_at: std::env::var("VB_FPS_LOG")
+                .is_ok()
+                .then(std::time::Instant::now),
             fps_log_frames: 0,
             show_about: false,
             show_export: false,
@@ -341,7 +357,7 @@ impl VellumApp {
             app.keymap = store;
             app.keymap_live = live;
         }
-        // 打开即"已保存基线"(rev 对齐;修复旧实现打开项目后误标脏的问题)
+        // 打开即vb_session::i18n::t("ui-app-assemble-004")(rev 对齐;修复旧实现打开项目后误标脏的问题)
         app.saved_rev = app.doc.rev;
         // 文件监听 per-window(02-5-7:多窗口按项目隔离,互不串扰)
         app.watcher_rx = start_watcher(app.project_dir.as_deref());
@@ -364,7 +380,7 @@ impl VellumApp {
             let _ = app.undo.push(
                 &mut app.doc,
                 vb_doc::commands::Command::SetMetaTitle {
-                    new: "本地未保存的标题编辑".into(),
+                    new: vb_session::i18n::t("ui-app-assemble-005"),
                     old: None,
                 },
             );

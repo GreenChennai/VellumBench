@@ -3,8 +3,8 @@
 //! 三块能力:
 //! - **不透明度** → `opacity`;
 //! - **混合模式**(16 项)→ `mix-blend-mode`;
-//! - **挖空组** → `isolation: isolate`(CSS 唯一可无损对应"隔离组"语义的属性;
-//!   AI 的挖空还涉及"组内相互挖空",v1 只落隔离层,UI 如实标注为近似);
+//! - **挖空组** → `isolation: isolate`(CSS 唯一可无损对应vb_session::i18n::t("ui-app-opacity-panel-001")语义的属性;
+//!   AI 的挖空还涉及vb_session::i18n::t("ui-app-opacity-panel-002"),v1 只落隔离层,UI 如实标注为近似);
 //! - **蒙版区**:制作 / 释放 / 反转不透明度蒙版 → `mask-image` 渐变。
 //!
 //! 纪律:所有不支持项**给提示不静默**(`design/06 §七`);`mask-*` 族除
@@ -20,12 +20,12 @@ use crate::app::appearance::{self, AppearanceItem, AppearanceTarget, BLEND_MODES
 use crate::app::{style_set_or_remove, VellumApp};
 
 /// 默认不透明度蒙版:黑(不透明)→ 透明(黑 alpha 0)。
-/// CSS `mask-image` 用 alpha 通道,故"不透明"即 `#000`,透明即 `#0000`。
+/// CSS `mask-image` 用 alpha 通道,故vb_session::i18n::t("ui-common-opacity-short")即 `#000`,透明即 `#0000`。
 /// **值写成 canonical 形式**(`0` 不带单位)—— 与 `vb_css::canonical_value`
 /// 同口径,保证首帧保存即为不动点(L1)。
 const MASK_DEFAULT: &str = "linear-gradient(#000 0, #00000000 100%)";
 
-/// 该对象是否"盒类"(非文字/矢量/冻结)—— 决定 `opacity` 之外的能力可用性。
+/// 该对象是否vb_session::i18n::t("ui-app-opacity-panel-003")(非文字/矢量/冻结)—— 决定 `opacity` 之外的能力可用性。
 fn is_box(doc: &Document, sid: &str) -> bool {
     doc.find_by_sid(sid)
         .and_then(|id| doc.nodes.get(id))
@@ -55,11 +55,15 @@ pub fn set_prop_cmd(doc: &Document, sid: &str, prop: &str, value: Option<&str>) 
 pub fn invert_mask_cmd(doc: &Document, sid: &str) -> Result<Option<Command>, String> {
     let nid = doc
         .find_by_sid(sid)
-        .ok_or_else(|| "对象不存在".to_string())?;
-    let n = doc.nodes.get(nid).ok_or_else(|| "对象不存在".to_string())?;
-    let raw = prop_of(n, "mask-image").ok_or_else(|| "该对象还没有蒙版".to_string())?;
-    let mut g =
-        gradient::parse(raw).ok_or_else(|| "该蒙版不是可反转的渐变蒙版(原样保留)".to_string())?;
+        .ok_or_else(|| vb_session::i18n::t("ui-common-object-missing").to_string())?;
+    let n = doc
+        .nodes
+        .get(nid)
+        .ok_or_else(|| vb_session::i18n::t("ui-common-object-missing").to_string())?;
+    let raw = prop_of(n, "mask-image")
+        .ok_or_else(|| vb_session::i18n::t("ui-app-opacity-panel-004").to_string())?;
+    let mut g = gradient::parse(raw)
+        .ok_or_else(|| vb_session::i18n::t("ui-app-opacity-panel-005").to_string())?;
     g.reverse();
     Ok(Some(Command::SetStyle {
         sid: sid.to_string(),
@@ -78,12 +82,15 @@ impl VellumApp {
         let Some(sid) = self.selection.last().cloned() else {
             ui.label(caption(
                 ui,
-                "未选中对象 —— 选中后调整不透明度 / 混合 / 蒙版。",
+                &vb_session::i18n::t("ui-app-opacity-panel-006"),
             ));
             return;
         };
         let Some(nid) = self.doc.find_by_sid(&sid) else {
-            ui.label(caption(ui, "对象已不存在。"));
+            ui.label(caption(
+                ui,
+                &vb_session::i18n::t("ui-app-gradient-panel-006"),
+            ));
             return;
         };
         let (style, kind) = {
@@ -100,7 +107,7 @@ impl VellumApp {
             .and_then(|d| d.value.trim().parse::<f64>().ok())
             .unwrap_or(1.0)
             * 100.0;
-        let r = NumField::new("不透明度", &mut op)
+        let r = NumField::new(&vb_session::i18n::t("ui-common-opacity"), &mut op)
             .unit("%")
             .speed(1.0)
             .step(1.0)
@@ -122,7 +129,7 @@ impl VellumApp {
             .unwrap_or("normal")
             .to_string();
         ui.horizontal(|ui| {
-            ui.label("混合模式");
+            ui.label(vb_session::i18n::t("ui-common-blend-mode"));
             let mut sel = cur.clone();
             egui::ComboBox::from_id_salt("vb-mix-blend")
                 .selected_text(sel.clone())
@@ -146,7 +153,7 @@ impl VellumApp {
         if !boxy {
             ui.label(caption(
                 ui,
-                "混合模式对文字/矢量对象落 CSS 无独立语义(随父层生效)。",
+                &vb_session::i18n::t("ui-app-opacity-panel-007"),
             ));
         }
 
@@ -157,8 +164,8 @@ impl VellumApp {
             .map(|v| v.trim() == "isolate")
             .unwrap_or(false);
         let before = knock;
-        ui.checkbox(&mut knock, "挖空组(隔离组)")
-            .on_hover_text("CSS 落点:isolation: isolate(近似;组内相互挖空的渲染级还原计划 v2)");
+        ui.checkbox(&mut knock, vb_session::i18n::t("ui-app-opacity-panel-008"))
+            .on_hover_text(vb_session::i18n::t("ui-app-opacity-panel-009"));
         if knock != before {
             let cmd = knockout_cmd(&self.doc, &sid, knock);
             self.undo.merging_enabled = false;
@@ -171,13 +178,13 @@ impl VellumApp {
         ui.separator();
 
         // ── 蒙版区 ──
-        ui.label("不透明度蒙版");
+        ui.label(vb_session::i18n::t("ui-app-opacity-panel-010"));
         let has_mask = prop_of(self.doc.nodes.get(nid).unwrap(), "mask-image").is_some();
         ui.horizontal(|ui| {
             if !has_mask {
                 if ui
-                    .button("制作蒙版")
-                    .on_hover_text("写入 mask-image 渐变(黑→透明);顶部对象作蒙版的黑白稿未建模")
+                    .button(vb_session::i18n::t("ui-app-opacity-panel-011"))
+                    .on_hover_text(vb_session::i18n::t("ui-app-opacity-panel-012"))
                     .clicked()
                 {
                     let cmd = set_prop_cmd(&self.doc, &sid, "mask-image", Some(MASK_DEFAULT));
@@ -188,7 +195,10 @@ impl VellumApp {
                     self.undo.merging_enabled = true;
                 }
             } else {
-                if ui.button("反转蒙版").clicked() {
+                if ui
+                    .button(vb_session::i18n::t("ui-app-opacity-panel-013"))
+                    .clicked()
+                {
                     match invert_mask_cmd(&self.doc, &sid) {
                         Ok(Some(c)) => {
                             self.undo.merging_enabled = false;
@@ -199,7 +209,10 @@ impl VellumApp {
                         Err(msg) => self.toast_warn(msg),
                     }
                 }
-                if ui.button("释放蒙版").clicked() {
+                if ui
+                    .button(vb_session::i18n::t("ui-app-opacity-panel-014"))
+                    .clicked()
+                {
                     let cmd = set_prop_cmd(&self.doc, &sid, "mask-image", None);
                     self.undo.merging_enabled = false;
                     if let Some(c) = cmd {
@@ -211,7 +224,7 @@ impl VellumApp {
         });
         ui.label(caption(
             ui,
-            "蒙版以 mask-image 渐变表示;mask-repeat/position 等不在白名单(计划 v2)。",
+            &vb_session::i18n::t("ui-app-opacity-panel-015"),
         ));
 
         // ── 蒙版色标(与渐变面板同源的结构化编辑)──
@@ -259,7 +272,10 @@ impl VellumApp {
             ui.separator();
             ui.label(caption(
                 ui,
-                &format!("填充条目级混合:{b}(逐层 background-blend-mode,外观面板可改)。"),
+                &vb_session::i18n::t_args(
+                    "ui-app-opacity-panel-016",
+                    &[("b", vb_session::i18n::FluentValue::from((b).to_string()))],
+                ),
             ));
         }
     }

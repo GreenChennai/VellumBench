@@ -11,7 +11,7 @@
 //!
 //! **与既有告警的关系**(不写两套):导入期的「样式表缺失」告警
 //! (`vb_doc::import`)与布局期图像探测(`vb_layout::probe_image` 回退)
-//! 仍是打开时的即时通道;本模块是**聚合盘点**,同一套"项目相对路径解析"
+//! 仍是打开时的即时通道;本模块是**聚合盘点**,同一套vb_session::i18n::t("ui-app-health-001")
 //! 约定(相对项目根、跳过远程/锚点),结论互补不重复。
 //!
 //! 报告窗口在文件尾部 `impl VellumApp` 块;每条问题可点击定位
@@ -53,14 +53,14 @@ pub enum HealthKind {
 impl HealthKind {
     pub fn label(self) -> &'static str {
         match self {
-            HealthKind::MissingAsset => "缺失资源",
-            HealthKind::BrokenLink => "失效链接",
-            HealthKind::Frozen => "冻结块",
-            HealthKind::UnusedAsset => "未使用资产",
-            HealthKind::LargeFile => "超长文件",
-            HealthKind::A11yAlt => "无障碍·缺 alt",
-            HealthKind::A11yName => "无障碍·可访问名",
-            HealthKind::A11yContrast => "无障碍·对比度",
+            HealthKind::MissingAsset => "缺失资源", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            HealthKind::BrokenLink => "失效链接", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            HealthKind::Frozen => "冻结块", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            HealthKind::UnusedAsset => "未使用资产", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            HealthKind::LargeFile => "超长文件", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            HealthKind::A11yAlt => "无障碍·缺 alt", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            HealthKind::A11yName => "无障碍·可访问名", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            HealthKind::A11yContrast => "无障碍·对比度", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
         }
     }
 
@@ -406,9 +406,15 @@ pub(crate) fn a11y_issues(doc: &Document) -> Vec<HealthIssue> {
         if is_img && !n.attrs.contains_key("alt") {
             out.push(HealthIssue {
                 kind: HealthKind::A11yAlt,
-                message: format!(
-                    "图片「{}」({})缺 alt 属性 —— 加 alt 说明内容;纯装饰图给空 alt=\"\"",
-                    n.name, sid
+                message: vb_session::i18n::t_args(
+                    "ui-app-health-009",
+                    &[
+                        (
+                            "a1",
+                            vb_session::i18n::FluentValue::from((n.name).to_string()),
+                        ),
+                        ("a2", vb_session::i18n::FluentValue::from((sid).to_string())),
+                    ],
                 ),
                 locate: Locate::Node(sid.clone()),
             });
@@ -417,9 +423,15 @@ pub(crate) fn a11y_issues(doc: &Document) -> Vec<HealthIssue> {
         if is_interactive(&n.tag, &n.attrs) && !has_accessible_name(doc, id) {
             out.push(HealthIssue {
                 kind: HealthKind::A11yName,
-                message: format!(
-                    "交互元素「{}」({})无可访问名称 —— 加 aria-label 或可见文本",
-                    n.name, sid
+                message: vb_session::i18n::t_args(
+                    "ui-app-health-010",
+                    &[
+                        (
+                            "a1",
+                            vb_session::i18n::FluentValue::from((n.name).to_string()),
+                        ),
+                        ("a2", vb_session::i18n::FluentValue::from((sid).to_string())),
+                    ],
                 ),
                 locate: Locate::Node(sid.clone()),
             });
@@ -485,7 +497,23 @@ pub fn check(doc: &Document, project: &Path) -> Vec<HealthIssue> {
             };
             out.push(HealthIssue {
                 kind,
-                message: format!("{attr} 指向的「{rel}」不存在(节点 {sid})"),
+                message: vb_session::i18n::t_args(
+                    "ui-app-health-012",
+                    &[
+                        (
+                            "attr",
+                            vb_session::i18n::FluentValue::from((attr).to_string()),
+                        ),
+                        (
+                            "rel",
+                            vb_session::i18n::FluentValue::from((rel).to_string()),
+                        ),
+                        (
+                            "sid",
+                            vb_session::i18n::FluentValue::from((sid).to_string()),
+                        ),
+                    ],
+                ),
                 locate: Locate::Node(sid.clone()),
             });
         }
@@ -501,10 +529,18 @@ pub fn check(doc: &Document, project: &Path) -> Vec<HealthIssue> {
             if matches!(n.kind, NodeKind::Frozen { .. }) {
                 out.push(HealthIssue {
                     kind: HealthKind::Frozen,
-                    message: format!(
-                        "冻结块「{}」({})—— 内部不可编辑,样式由原样 HTML 承载",
-                        n.name,
-                        n.sid.as_str()
+                    message: vb_session::i18n::t_args(
+                        "ui-app-health-013",
+                        &[
+                            (
+                                "a1",
+                                vb_session::i18n::FluentValue::from((n.name).to_string()),
+                            ),
+                            (
+                                "a2",
+                                vb_session::i18n::FluentValue::from((n.sid.as_str()).to_string()),
+                            ),
+                        ],
                     ),
                     locate: Locate::Node(n.sid.as_str().to_string()),
                 });
@@ -523,9 +559,12 @@ pub fn check(doc: &Document, project: &Path) -> Vec<HealthIssue> {
         if !referenced.contains(&key) {
             out.push(HealthIssue {
                 kind: HealthKind::UnusedAsset,
-                message: format!(
-                    "assets/ 里的「{}」没有被任何引用(可归档或删除)",
-                    f.to_string_lossy()
+                message: vb_session::i18n::t_args(
+                    "ui-app-health-014",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from((f.to_string_lossy()).to_string()),
+                    )],
                 ),
                 locate: Locate::File(project.join(f).to_string_lossy().to_string()),
             });
@@ -552,10 +591,26 @@ pub fn check(doc: &Document, project: &Path) -> Vec<HealthIssue> {
         if meta.len() > MAX_FILE_BYTES {
             out.push(HealthIssue {
                 kind: HealthKind::LargeFile,
-                message: format!(
-                    "{name} 有 {} MB(阈值 {} MB)—— 影响打开/导出速度",
-                    meta.len() / (1024 * 1024),
-                    MAX_FILE_BYTES / (1024 * 1024)
+                message: vb_session::i18n::t_args(
+                    "ui-app-health-015",
+                    &[
+                        (
+                            "name",
+                            vb_session::i18n::FluentValue::from((name).to_string()),
+                        ),
+                        (
+                            "a1",
+                            vb_session::i18n::FluentValue::from(
+                                (meta.len() / (1024 * 1024)).to_string(),
+                            ),
+                        ),
+                        (
+                            "a2",
+                            vb_session::i18n::FluentValue::from(
+                                (MAX_FILE_BYTES / (1024 * 1024)).to_string(),
+                            ),
+                        ),
+                    ],
                 ),
                 locate: Locate::File(p.to_string_lossy().to_string()),
             });
@@ -569,10 +624,30 @@ pub fn check(doc: &Document, project: &Path) -> Vec<HealthIssue> {
                 {
                     out.push(HealthIssue {
                         kind: HealthKind::LargeFile,
-                        message: format!(
-                            "{name} 第 {} 行超长({} 字符 > {MAX_LINE_CHARS})—— 多半是内联大图/压缩产物",
-                            no + 1,
-                            len.chars().count()
+                        message: vb_session::i18n::t_args(
+                            "ui-app-health-016",
+                            &[
+                                (
+                                    "name",
+                                    vb_session::i18n::FluentValue::from((name).to_string()),
+                                ),
+                                (
+                                    "a1",
+                                    vb_session::i18n::FluentValue::from((no + 1).to_string()),
+                                ),
+                                (
+                                    "a2",
+                                    vb_session::i18n::FluentValue::from(
+                                        (len.chars().count()).to_string(),
+                                    ),
+                                ),
+                                (
+                                    "MAX_LINE_CHARS",
+                                    vb_session::i18n::FluentValue::from(
+                                        (MAX_LINE_CHARS).to_string(),
+                                    ),
+                                ),
+                            ],
                         ),
                         locate: Locate::File(p.to_string_lossy().to_string()),
                     });
@@ -599,22 +674,30 @@ impl VellumApp {
             return;
         }
         let mut open = true;
-        egui::Window::new("项目健康检查")
+        egui::Window::new(vb_session::i18n::t("ui-app-health-017"))
             .open(&mut open)
             .collapsible(false)
             .default_size([620.0, 420.0])
             .show(ui.ctx(), |ui| {
                 let Some(dir) = self.project_dir.clone() else {
-                    ui.label("当前文档没有项目目录(先保存或打开一个项目)。");
+                    ui.label(vb_session::i18n::t("ui-app-assets-panel-002"));
                     return;
                 };
                 ui.horizontal(|ui| {
-                    if ui.button("重新体检").clicked() {
+                    if ui
+                        .button(vb_session::i18n::t("ui-app-health-018"))
+                        .clicked()
+                    {
                         self.health_report = Some(check(&self.doc, &dir));
                     }
-                    ui.label(format!(
-                        "项目:{}",
-                        crate::recent::display_name(&dir)
+                    ui.label(vb_session::i18n::t_args(
+                        "ui-app-assets-panel-003",
+                        &[(
+                            "a1",
+                            vb_session::i18n::FluentValue::from(
+                                (crate::recent::display_name(&dir)).to_string(),
+                            ),
+                        )],
                     ));
                 });
                 ui.separator();
@@ -626,13 +709,16 @@ impl VellumApp {
                 if issues.is_empty() {
                     ui.colored_label(
                         vb_ui::theme::Tokens::get(self.theme_dark).success,
-                        "未发现问题(缺失资源 / 失效链接 / 冻结块 / 未使用资产 / 超长文件 / 无障碍 全部通过)。",
+                        vb_session::i18n::t("ui-app-health-019"),
                     );
                     return;
                 }
-                ui.label(format!(
-                    "发现 {} 项(冻结块与无障碍为提示项,其余建议处理):",
-                    issues.len()
+                ui.label(vb_session::i18n::t_args(
+                    "ui-app-health-020",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from((issues.len()).to_string()),
+                    )],
                 ));
                 ui.separator();
                 egui::ScrollArea::vertical().show(ui, |ui| {
@@ -641,23 +727,46 @@ impl VellumApp {
                             ui.colored_label(it.kind.color(self.theme_dark), it.kind.label());
                             let resp = ui.button(it.message.clone());
                             let tip = match &it.locate {
-                                Locate::Node(sid) => {
-                                    format!("点击选中图层({sid})")
-                                }
-                                Locate::File(p) => format!("点击查看路径:{p}"),
+                                Locate::Node(sid) => vb_session::i18n::t_args(
+                                    "ui-app-health-021",
+                                    &[(
+                                        "sid",
+                                        vb_session::i18n::FluentValue::from((sid).to_string()),
+                                    )],
+                                ),
+                                Locate::File(p) => vb_session::i18n::t_args(
+                                    "ui-app-health-022",
+                                    &[("p", vb_session::i18n::FluentValue::from((p).to_string()))],
+                                ),
                             };
                             if resp.on_hover_text(tip).clicked() {
                                 match &it.locate {
                                     Locate::Node(sid) => {
                                         if self.doc.find_by_sid(sid).is_some() {
                                             self.selection = vec![sid.clone()].into();
-                                            self.say(format!("健康检查:已定位图层({sid})"));
+                                            self.say(vb_session::i18n::t_args(
+                                                "ui-app-health-023",
+                                                &[(
+                                                    "sid",
+                                                    vb_session::i18n::FluentValue::from(
+                                                        (sid).to_string(),
+                                                    ),
+                                                )],
+                                            ));
                                         } else {
-                                            self.say("该图层已不存在(文档可能已变更)");
+                                            self.say(vb_session::i18n::t("ui-app-health-024"));
                                         }
                                     }
                                     Locate::File(p) => {
-                                        self.say(format!("健康检查:{p}"));
+                                        self.say(vb_session::i18n::t_args(
+                                            "ui-app-health-025",
+                                            &[(
+                                                "p",
+                                                vb_session::i18n::FluentValue::from(
+                                                    (p).to_string(),
+                                                ),
+                                            )],
+                                        ));
                                     }
                                 }
                             }

@@ -23,27 +23,56 @@ impl VellumApp {
                     self.camera
                         .zoom_at(r.center().x as f64, r.center().y as f64, f);
                 }
-                self.status = format!("缩放 {}%", (self.camera.zoom * 100.0) as i64);
+                self.status = vb_session::i18n::t_args(
+                    "ui-app-canvas-input-view-001",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from(
+                            ((self.camera.zoom * 100.0) as i64).to_string(),
+                        ),
+                    )],
+                );
             }
             "view.fit" => {
                 self.fit_view();
-                self.status = format!("适合窗口 {}%", (self.camera.zoom * 100.0) as i64);
+                self.status = vb_session::i18n::t_args(
+                    "ui-app-dispatch-view-001",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from(
+                            ((self.camera.zoom * 100.0) as i64).to_string(),
+                        ),
+                    )],
+                );
             }
             "view.actual_size" => {
                 self.camera.zoom = 1.0;
-                self.status = "实际大小 100%".into();
+                self.status = vb_session::i18n::t("ui-app-dispatch-view-002");
             }
             "view.outline" => {
                 self.outline_mode = !self.outline_mode;
                 self.status = if self.outline_mode {
-                    "轮廓模式:开(Mod+Y)".into()
+                    vb_session::i18n::t("ui-app-dispatch-view-003")
                 } else {
-                    "轮廓模式:关(Mod+Y)".into()
+                    vb_session::i18n::t("ui-app-dispatch-view-004")
                 };
             }
             "view.toggle_grid" => {
                 self.grid_on = !self.grid_on;
-                self.status = format!("网格:{}", if self.grid_on { "显示" } else { "隐藏" });
+                self.status = vb_session::i18n::t_args(
+                    "ui-app-dispatch-view-005",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from(
+                            (if self.grid_on {
+                                vb_session::i18n::t("ui-common-show")
+                            } else {
+                                vb_session::i18n::t("ui-common-hide")
+                            })
+                            .to_string(),
+                        ),
+                    )],
+                );
             }
             "view.toggle_theme" => {
                 self.theme_dark = !self.theme_dark;
@@ -52,18 +81,27 @@ impl VellumApp {
                     let _ = tx.send(crate::shell::ShellRequest::ThemeChanged(self.theme_dark));
                 }
                 self.status = if self.theme_dark {
-                    "主题:深色"
+                    vb_session::i18n::t("ui-app-dispatch-view-006")
                 } else {
-                    "主题:浅色"
-                }
-                .into();
+                    vb_session::i18n::t("ui-app-dispatch-view-007")
+                };
             }
             "view.toggle_smart_guides" => {
                 self.smart_guides_on = !self.smart_guides_on;
                 self.smart_guides.clear();
-                self.status = format!(
-                    "智能参考线:{}",
-                    if self.smart_guides_on { "开" } else { "关" }
+                self.status = vb_session::i18n::t_args(
+                    "ui-app-dispatch-view-008",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from(
+                            (if self.smart_guides_on {
+                                vb_session::i18n::t("ui-common-on")
+                            } else {
+                                vb_session::i18n::t("ui-common-off")
+                            })
+                            .to_string(),
+                        ),
+                    )],
                 );
             }
             // 09-E(05-2):像素预览 —— 缩放 ≥ 阈值时画布对齐物理像素网格
@@ -71,12 +109,17 @@ impl VellumApp {
             "view.pixel_preview" => {
                 self.pixel_preview = !self.pixel_preview;
                 self.status = if self.pixel_preview {
-                    format!(
-                        "像素预览:开(缩放 ≥{}× 时对齐物理像素网格并显示边界)",
-                        Self::PIXEL_PREVIEW_MIN_ZOOM
+                    vb_session::i18n::t_args(
+                        "ui-app-dispatch-view-009",
+                        &[(
+                            "a1",
+                            vb_session::i18n::FluentValue::from(
+                                (Self::PIXEL_PREVIEW_MIN_ZOOM).to_string(),
+                            ),
+                        )],
                     )
                 } else {
-                    "像素预览:关".into()
+                    vb_session::i18n::t("ui-app-dispatch-view-010")
                 };
             }
             "view.next_artboard" | "view.prev_artboard" => {
@@ -108,6 +151,74 @@ impl VellumApp {
             "view.next_panel_tab" => {
                 self.panel_tab = (self.panel_tab + 1) % panels::TAB_COUNT;
             }
+            // ── S5 清单 ②(§8.10.2):面板区焦点循环 ──
+            // 区状态机与循环顺序见 [`crate::app::next_focus_zone`]。
+            // 区跳转 = 可见性抬升:反面板隐藏、反用户折叠(窄窗强制折叠
+            // 不受影响,那是布局函数不是偏好)、保持用户排的 panel_order。
+            "view.focus_next_panel" | "view.focus_prev_panel" => {
+                let forward = id == "view.focus_next_panel";
+                let sec_available = !self.panels_hidden
+                    && panel_dock::SecPanel::ALL
+                        .iter()
+                        .copied()
+                        .any(|p| self.sec_is_open(p));
+                self.focus_zone = super::next_focus_zone(self.focus_zone, sec_available, forward);
+                match self.focus_zone {
+                    super::FocusZone::RightDock => {
+                        self.panels_hidden = false;
+                        self.dock_collapsed = false;
+                        self.status = vb_session::i18n::t_args(
+                            "ui-app-dispatch-view-063",
+                            &[(
+                                "a1",
+                                vb_session::i18n::FluentValue::from(
+                                    (panels::TAB_LABELS[self.panel_tab]).to_string(),
+                                ),
+                            )],
+                        );
+                    }
+                    super::FocusZone::SecDock => {
+                        self.panels_hidden = false;
+                        self.sec_dock_collapsed = false;
+                        // 区可用性在循环函数已保证;此处再兜一次组内选中
+                        // (面板全浮窗/组切换后 effective 可能落空)。
+                        if self.sec.active.is_none_or(|p| !self.sec_is_open(p)) {
+                            if let Some(p) = panel_dock::SecPanel::ALL
+                                .iter()
+                                .copied()
+                                .find(|&p| self.sec_is_open(p))
+                            {
+                                self.sec_focus(p);
+                            }
+                        }
+                        let group = panel_dock::SecGroup::from_index(self.sec.active_group);
+                        self.status = vb_session::i18n::t_args(
+                            "ui-app-dispatch-view-064",
+                            &[(
+                                "a1",
+                                vb_session::i18n::FluentValue::from((group.label()).to_string()),
+                            )],
+                        );
+                    }
+                    super::FocusZone::Canvas => {
+                        self.status = vb_session::i18n::t("ui-app-dispatch-view-065");
+                    }
+                }
+            }
+            // ── S5 清单 ②:逐级退出(浮层→面板→画布)的「面板级」原语。
+            // 浮层级由 Esc 回退链的 esc_dialog_top 承担、画布级由既有
+            // canvas.cancel 承担;本命令独立可用(命令面板/Agent),
+            // Esc 键位仍归 canvas.cancel(见 binds.rs 注释)。
+            "view.escape_overlay" => {
+                if self.esc_dialog_top().is_some() {
+                    self.close_esc_dialog_top();
+                } else if self.focus_zone != super::FocusZone::Canvas {
+                    self.focus_zone = super::FocusZone::Canvas;
+                    self.status = vb_session::i18n::t("ui-app-dispatch-view-065");
+                }
+                // 浮层与面板区都没有 → 画布级交还 canvas.cancel 语义
+                // (本命令不重复取消选择;Esc 键路径会继续走它)。
+            }
             // ── S1-b 面板显隐(F7 / Tab;design/02 §四-面板显隐) ──
             "view.toggle_layers_panel" => {
                 let forced = self.last_viewport_width < vb_ui::theme::space::COLLAPSE_BELOW;
@@ -119,22 +230,22 @@ impl VellumApp {
                     if !forced {
                         self.dock_collapsed = true;
                     }
-                    self.say("图层面板:已折叠(F7 恢复)");
+                    self.say(vb_session::i18n::t("ui-app-dispatch-view-011"));
                 } else {
                     self.panels_hidden = false;
                     if !forced {
                         self.dock_collapsed = false;
                     }
                     self.panel_tab = panels::TAB_LAYERS;
-                    self.say("图层面板:显示(F7 折叠)");
+                    self.say(vb_session::i18n::t("ui-app-dispatch-view-012"));
                 }
             }
             "view.toggle_all_panels" => {
                 self.panels_hidden = !self.panels_hidden;
                 self.say(if self.panels_hidden {
-                    "已隐藏所有面板(Tab 恢复)"
+                    vb_session::i18n::t("ui-app-dispatch-view-013")
                 } else {
-                    "已恢复所有面板(Tab 再隐藏)"
+                    vb_session::i18n::t("ui-app-dispatch-view-014")
                 });
             }
             "view.zoom_to_selection" => {
@@ -142,28 +253,53 @@ impl VellumApp {
             }
             "view.toggle_rulers" => {
                 self.rulers_on = !self.rulers_on;
-                self.status = format!("标尺:{}", if self.rulers_on { "显示" } else { "隐藏" });
+                self.status = vb_session::i18n::t_args(
+                    "ui-app-dispatch-view-015",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from(
+                            (if self.rulers_on {
+                                vb_session::i18n::t("ui-common-show")
+                            } else {
+                                vb_session::i18n::t("ui-common-hide")
+                            })
+                            .to_string(),
+                        ),
+                    )],
+                );
             }
             "view.toggle_guides" => {
                 self.guides_visible = !self.guides_visible;
-                self.status = format!(
-                    "参考线:{}",
-                    if self.guides_visible {
-                        "显示"
-                    } else {
-                        "隐藏"
-                    }
+                self.status = vb_session::i18n::t_args(
+                    "ui-app-dispatch-view-016",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from(
+                            (if self.guides_visible {
+                                vb_session::i18n::t("ui-common-show")
+                            } else {
+                                vb_session::i18n::t("ui-common-hide")
+                            })
+                            .to_string(),
+                        ),
+                    )],
                 );
             }
             "view.lock_guides" => {
                 self.guides_locked = !self.guides_locked;
-                self.status = format!(
-                    "参考线:{}",
-                    if self.guides_locked {
-                        "已锁定"
-                    } else {
-                        "未锁定"
-                    }
+                self.status = vb_session::i18n::t_args(
+                    "ui-app-dispatch-view-016",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from(
+                            (if self.guides_locked {
+                                vb_session::i18n::t("ui-app-dispatch-view-017")
+                            } else {
+                                vb_session::i18n::t("ui-app-dispatch-view-018")
+                            })
+                            .to_string(),
+                        ),
+                    )],
                 );
             }
             "view.guides_from_selection" => {
@@ -184,8 +320,20 @@ impl VellumApp {
                     }
                 }
                 let key = shortcuts::key_text_for("view.guides_from_selection")
-                    .unwrap_or_else(|| "未绑定".into());
-                self.status = format!("从选区生成 {added} 条参考线({key})");
+                    .unwrap_or_else(|| vb_session::i18n::t("ui-app-dispatch-view-019"));
+                self.status = vb_session::i18n::t_args(
+                    "ui-app-dispatch-view-020",
+                    &[
+                        (
+                            "added",
+                            vb_session::i18n::FluentValue::from((added).to_string()),
+                        ),
+                        (
+                            "key",
+                            vb_session::i18n::FluentValue::from((key).to_string()),
+                        ),
+                    ],
+                );
             }
             // ── 工具箱(统一经 set_tool:清进行中的钢笔锚点/直接选择顶点) ──
             "tool.select" => self.set_tool(Tool::Select),
@@ -203,18 +351,18 @@ impl VellumApp {
                 self.char_panel_open = !self.char_panel_open;
                 self.sec_focus(panel_dock::SecPanel::Char);
                 self.say(if self.char_panel_open {
-                    "字符面板:显示(Ctrl+T 关闭)"
+                    vb_session::i18n::t("ui-app-dispatch-view-021")
                 } else {
-                    "字符面板:隐藏(Ctrl+T 显示)"
+                    vb_session::i18n::t("ui-app-dispatch-view-022")
                 });
             }
             "view.toggle_para_panel" => {
                 self.para_panel_open = !self.para_panel_open;
                 self.sec_focus(panel_dock::SecPanel::Para);
                 self.say(if self.para_panel_open {
-                    "段落面板:显示(Ctrl+Alt+T 关闭)"
+                    vb_session::i18n::t("ui-app-dispatch-view-023")
                 } else {
-                    "段落面板:隐藏(Ctrl+Alt+T 显示)"
+                    vb_session::i18n::t("ui-app-dispatch-view-024")
                 });
             }
             // ── S4 外观/描边面板显隐(⇧F6 / ^F10;design/03 §5.9 / §5.7) ──
@@ -222,18 +370,18 @@ impl VellumApp {
                 self.appearance_panel_open = !self.appearance_panel_open;
                 self.sec_focus(panel_dock::SecPanel::Appearance);
                 self.say(if self.appearance_panel_open {
-                    "外观面板:显示(⇧F6 关闭)"
+                    vb_session::i18n::t("ui-app-dispatch-view-025")
                 } else {
-                    "外观面板:隐藏(⇧F6 显示)"
+                    vb_session::i18n::t("ui-app-dispatch-view-026")
                 });
             }
             "view.toggle_stroke_panel" => {
                 self.stroke_panel_open = !self.stroke_panel_open;
                 self.sec_focus(panel_dock::SecPanel::Stroke);
                 self.say(if self.stroke_panel_open {
-                    "描边面板:显示(^F10 关闭)"
+                    vb_session::i18n::t("ui-app-dispatch-view-027")
                 } else {
-                    "描边面板:隐藏(^F10 显示)"
+                    vb_session::i18n::t("ui-app-dispatch-view-028")
                 });
             }
             // ── S4-b 渐变/透明度/颜色面板显隐(^F9 / ⇧^F10 / F6) ──
@@ -241,27 +389,27 @@ impl VellumApp {
                 self.gradient_panel_open = !self.gradient_panel_open;
                 self.sec_focus(panel_dock::SecPanel::Gradient);
                 self.say(if self.gradient_panel_open {
-                    "渐变面板:显示(^F9 关闭)"
+                    vb_session::i18n::t("ui-app-dispatch-view-029")
                 } else {
-                    "渐变面板:隐藏(^F9 显示)"
+                    vb_session::i18n::t("ui-app-dispatch-view-030")
                 });
             }
             "view.toggle_opacity_panel" => {
                 self.opacity_panel_open = !self.opacity_panel_open;
                 self.sec_focus(panel_dock::SecPanel::Opacity);
                 self.say(if self.opacity_panel_open {
-                    "透明度面板:显示(⇧^F10 关闭)"
+                    vb_session::i18n::t("ui-app-dispatch-view-031")
                 } else {
-                    "透明度面板:隐藏(⇧^F10 显示)"
+                    vb_session::i18n::t("ui-app-dispatch-view-032")
                 });
             }
             "view.toggle_color_panel" => {
                 self.color_panel_open = !self.color_panel_open;
                 self.sec_focus(panel_dock::SecPanel::Color);
                 self.say(if self.color_panel_open {
-                    "颜色面板:显示(F6 关闭)"
+                    vb_session::i18n::t("ui-app-dispatch-view-033")
                 } else {
-                    "颜色面板:隐藏(F6 显示)"
+                    vb_session::i18n::t("ui-app-dispatch-view-034")
                 });
             }
             // ── S4-b 颜色动作(D / X / Shift+X;design/03 §5.4)──
@@ -272,9 +420,9 @@ impl VellumApp {
             "help.capabilities" => {
                 self.capabilities_ui.toggle();
                 self.say(if self.capabilities_ui.open {
-                    "能力台账:显示(再点关闭)"
+                    vb_session::i18n::t("ui-app-dispatch-view-035")
                 } else {
-                    "能力台账:隐藏"
+                    vb_session::i18n::t("ui-app-dispatch-view-036")
                 });
             }
             // ── 阶段 2:变换数值面板(副文档 03-2,⇧F8)──
@@ -282,35 +430,35 @@ impl VellumApp {
                 self.transform_panel_open = !self.transform_panel_open;
                 self.sec_focus(panel_dock::SecPanel::Transform);
                 self.say(if self.transform_panel_open {
-                    "变换面板:显示(⇧F8 关闭)"
+                    vb_session::i18n::t("ui-app-dispatch-view-037")
                 } else {
-                    "变换面板:隐藏(⇧F8 显示)"
+                    vb_session::i18n::t("ui-app-dispatch-view-038")
                 });
             }
             "view.toggle_align_panel" => {
                 self.align_panel_open = !self.align_panel_open;
                 self.sec_focus(panel_dock::SecPanel::Align);
                 self.say(if self.align_panel_open {
-                    "对齐面板:显示(⇧F7 关闭)"
+                    vb_session::i18n::t("ui-app-dispatch-view-039")
                 } else {
-                    "对齐面板:隐藏(⇧F7 显示)"
+                    vb_session::i18n::t("ui-app-dispatch-view-040")
                 });
             }
             // ── 04-4:开发者统计与提示条(默认隐藏/显示,状态入 workspace.json)──
             "view.developer_stats" => {
                 self.dev_stats = !self.dev_stats;
                 self.say(if self.dev_stats {
-                    "开发者统计:显示(帧率/帧时间/节点/显卡只在此可见)"
+                    vb_session::i18n::t("ui-app-dispatch-view-041")
                 } else {
-                    "开发者统计:隐藏"
+                    vb_session::i18n::t("ui-app-dispatch-view-042")
                 });
             }
             "view.toggle_hints" => {
                 self.hints = !self.hints;
                 self.say(if self.hints {
-                    "提示条:显示"
+                    vb_session::i18n::t("ui-app-dispatch-view-043")
                 } else {
-                    "提示条:隐藏"
+                    vb_session::i18n::t("ui-app-dispatch-view-044")
                 });
             }
             // ── 第四轮 H-1:动效总开关(持久化 + 主页广播)──
@@ -323,9 +471,9 @@ impl VellumApp {
                     ));
                 }
                 self.say(if self.motion_enabled {
-                    "界面动效:开(对话框/面板淡入、悬停过渡)"
+                    vb_session::i18n::t("ui-app-dispatch-view-045")
                 } else {
-                    "界面动效:关(所有过渡立即到位;视图菜单或首选项可再开)"
+                    vb_session::i18n::t("ui-app-dispatch-view-046")
                 });
             }
             // ── 04-3:UI 缩放档位(完整首选项九分类属阶段 5;最小入口挂视图菜单)──
@@ -334,16 +482,16 @@ impl VellumApp {
             "view.ui_scale_reset" => {
                 self.ui_scale = 1.0;
                 self.save_workspace();
-                self.say("界面缩放 100%(跟随系统 DPI)");
+                self.say(vb_session::i18n::t("ui-app-dispatch-view-047"));
             }
             // ── 04-6:显示未支持工具(design/06 §二;置灰展示,点击有响应)──
             "edit.toggle_unsupported_tools" => {
                 self.show_all_tools = !self.show_all_tools;
                 self.save_workspace();
                 self.say(if self.show_all_tools {
-                    "未支持工具:显示(置灰,点击见计划版本)"
+                    vb_session::i18n::t("ui-app-dispatch-view-048")
                 } else {
-                    "未支持工具:隐藏(工具箱保持整洁)"
+                    vb_session::i18n::t("ui-app-dispatch-view-049")
                 });
             }
             // ── 阶段 7(07-A/07-D/07-E:数据安全批次)──
@@ -354,9 +502,9 @@ impl VellumApp {
                 self.history_open = !self.history_open;
                 self.sec_focus(panel_dock::SecPanel::History);
                 self.say(if self.history_open {
-                    "历史面板:显示(点击历史项可跳转;回退遇重做尾需确认)"
+                    vb_session::i18n::t("ui-app-dispatch-view-050")
                 } else {
-                    "历史面板:隐藏"
+                    vb_session::i18n::t("ui-app-dispatch-view-051")
                 });
             }
             // 07-K:资产面板(次级坞「资产」组;assets/ 清单 + 引用关系)
@@ -364,9 +512,9 @@ impl VellumApp {
                 self.assets_open = !self.assets_open;
                 self.sec_focus(panel_dock::SecPanel::Assets);
                 self.say(if self.assets_open {
-                    "资产面板:显示(点击引用可定位图层;支持替换引用)"
+                    vb_session::i18n::t("ui-app-dispatch-view-052")
                 } else {
-                    "资产面板:隐藏"
+                    vb_session::i18n::t("ui-app-dispatch-view-053")
                 });
             }
             // ── 05-9 动效时间轴(09-I;ADR-VB-L11)──
@@ -375,9 +523,9 @@ impl VellumApp {
                 self.timeline_open = !self.timeline_open;
                 self.sec_focus(panel_dock::SecPanel::Timeline);
                 self.say(if self.timeline_open {
-                    "时间轴面板:显示(选中对象 → 双击轨道加关键帧 → 播放预览)"
+                    vb_session::i18n::t("ui-app-dispatch-view-054")
                 } else {
-                    "时间轴面板:隐藏(预览若在播放将继续)"
+                    vb_session::i18n::t("ui-app-dispatch-view-055")
                 });
             }
             // 播放 / 暂停(会话态;文档编辑走 anim.keyframe_* 命令)
@@ -396,16 +544,16 @@ impl VellumApp {
             // 插件管理窗口(安装/授权/启停/日志/重启)
             "edit.plugins" => {
                 self.plugins_mgr_open = true;
-                self.say("插件管理:已打开(插件 = 外部进程,默认零权限,首次启用需授权)");
+                self.say(vb_session::i18n::t("ui-app-dispatch-view-056"));
             }
             // 插件坞面板(次级坞「插件」组;Running 插件的注册面板)
             "view.toggle_plugins_panel" => {
                 self.plugins_panel_open = !self.plugins_panel_open;
                 self.sec_focus(panel_dock::SecPanel::Plugins);
                 self.say(if self.plugins_panel_open {
-                    "插件面板:显示(Running 插件的注册面板;按钮点击回发插件通知)"
+                    vb_session::i18n::t("ui-app-dispatch-view-057")
                 } else {
-                    "插件面板:隐藏"
+                    vb_session::i18n::t("ui-app-dispatch-view-058")
                 });
             }
             // 07-E:项目健康检查(报告窗口;打开即重算;07-N 起含无障碍三查)
@@ -413,9 +561,9 @@ impl VellumApp {
                 if self.project_dir.is_some() {
                     self.health_open = true;
                     self.health_report = None; // 置空 → 窗口打开时现算
-                    self.say("项目健康检查:缺失资源 / 失效链接 / 冻结块 / 未使用资产 / 超长文件 / 无障碍");
+                    self.say(vb_session::i18n::t("ui-app-dispatch-view-059"));
                 } else {
-                    self.toast_warn("项目健康检查:当前文档没有项目目录(先保存或打开一个项目)");
+                    self.toast_warn(vb_session::i18n::t("ui-app-dispatch-view-060"));
                 }
             }
             // ── 阶段 2:路径查找器扩展三运算(副文档 03-1-4)──
@@ -473,15 +621,116 @@ impl VellumApp {
                         .collect();
                     let n = cmds.len();
                     self.exec(Command::Compound { cmds });
-                    self.say(format!(
-                        "文字模式 → {pending}(待用 + {n} 个选中文本对象已转换)"
+                    self.say(vb_session::i18n::t_args(
+                        "ui-app-dispatch-view-061",
+                        &[
+                            (
+                                "pending",
+                                vb_session::i18n::FluentValue::from((pending).to_string()),
+                            ),
+                            ("n", vb_session::i18n::FluentValue::from((n).to_string())),
+                        ],
                     ));
                 } else {
-                    self.say(format!("文字模式 → {pending}(下次新建生效)"));
+                    self.say(vb_session::i18n::t_args(
+                        "ui-app-dispatch-view-062",
+                        &[(
+                            "pending",
+                            vb_session::i18n::FluentValue::from((pending).to_string()),
+                        )],
+                    ));
                 }
             }
             _ => matched = false,
         }
         matched
+    }
+}
+
+// ─────────────────────── S5 清单 ②门禁(单测) ───────────────────────
+
+#[cfg(test)]
+mod panel_zone_tests {
+    use super::super::FocusZone;
+    use crate::app::assemble::tests::app_fresh;
+    use crate::app::panel_dock::SecPanel;
+    use crate::app::panels::TAB_LAYERS;
+    use crate::app::Tool;
+
+    /// 循环命令:区状态机按「画布 → 右坞 →(次级坞)→ 画布」推进;
+    /// 次级坞无开面板时被剔除;跳右坞/次级坞必须反隐藏、反折叠
+    /// (区跳转要有可见反馈,否则对键盘用户是空操作)。
+    #[test]
+    fn panel_focus_cycle_advances_regions() {
+        let _env = crate::ENV_LOCK.lock();
+        let mut app = app_fresh(None);
+        // 次级坞全关:二区环
+        app.run_command("view.focus_next_panel", false, false);
+        assert_eq!(app.focus_zone, FocusZone::RightDock);
+        assert!(!app.panels_hidden, "区跳转必须反面板隐藏");
+        assert!(!app.dock_collapsed, "区跳转必须反用户折叠");
+        app.run_command("view.focus_next_panel", false, false);
+        assert_eq!(
+            app.focus_zone,
+            FocusZone::Canvas,
+            "次级坞不可用 → 直接回画布"
+        );
+        // 打开一个次级面板:三区环
+        app.sec_set_open(SecPanel::Char, true);
+        app.focus_zone = FocusZone::Canvas;
+        app.run_command("view.focus_next_panel", false, false);
+        app.run_command("view.focus_next_panel", false, false);
+        assert_eq!(app.focus_zone, FocusZone::SecDock);
+        assert!(!app.sec_dock_collapsed, "次级坞区跳转必须反折叠");
+        app.run_command("view.focus_next_panel", false, false);
+        assert_eq!(app.focus_zone, FocusZone::Canvas, "循环回卷");
+        // 反向:画布 →(次级坞)→ 右坞
+        app.run_command("view.focus_prev_panel", false, false);
+        assert_eq!(app.focus_zone, FocusZone::SecDock);
+        app.run_command("view.focus_prev_panel", false, false);
+        assert_eq!(app.focus_zone, FocusZone::RightDock);
+        app.run_command("view.focus_prev_panel", false, false);
+        assert_eq!(app.focus_zone, FocusZone::Canvas);
+    }
+
+    /// Esc 层级(浮层→面板→画布):面板区持焦时第一下 Esc 只退回画布
+    /// (不消费画布级取消);第二下才走画布级(工具回选择)。
+    #[test]
+    fn escape_steps_out_panel_region_before_canvas_cancel() {
+        let _env = crate::ENV_LOCK.lock();
+        let mut app = app_fresh(None);
+        app.sec_set_open(SecPanel::Char, true);
+        app.run_command("tool.rect", false, false);
+        app.run_command("view.focus_next_panel", false, false);
+        assert_eq!(app.focus_zone, FocusZone::RightDock);
+        // Esc(= canvas.cancel):先退面板级,工具保持
+        app.run_command("canvas.cancel", false, false);
+        assert_eq!(app.focus_zone, FocusZone::Canvas, "第一下 Esc 退面板区");
+        assert_eq!(app.tool, Tool::Rect, "面板级消费,画布级取消不动工具");
+        // 第二下 Esc:画布级(工具回选择)
+        app.run_command("canvas.cancel", false, false);
+        assert_eq!(app.tool, Tool::Select, "第二下 Esc 走画布级取消");
+        // 独立命令:浮层/面板都没有时是良性空操作(不炸不误清选区)
+        app.run_command("view.escape_overlay", false, false);
+        assert_eq!(app.focus_zone, FocusZone::Canvas);
+    }
+
+    /// `view.escape_overlay` 独立路径:面板区持焦 → 退回画布;
+    /// 已在画布 → 幂等。与 Esc 键路径(canvas.cancel 内联)同语义。
+    #[test]
+    fn escape_overlay_command_is_the_panel_level_primitive() {
+        let _env = crate::ENV_LOCK.lock();
+        let mut app = app_fresh(None);
+        app.sec_set_open(SecPanel::Char, true);
+        app.run_command("view.focus_prev_panel", false, false);
+        assert_eq!(app.focus_zone, FocusZone::SecDock, "反向第一跳 = 次级坞");
+        app.run_command("view.escape_overlay", false, false);
+        assert_eq!(app.focus_zone, FocusZone::Canvas);
+        app.run_command("view.escape_overlay", false, false);
+        assert_eq!(app.focus_zone, FocusZone::Canvas, "幂等");
+        // Tab 跳转命令不受影响(同族回归钉):F4 循环右坞 Tab
+        app.panel_tab = TAB_LAYERS;
+        app.run_command("view.next_panel_tab", false, false);
+        assert_eq!(app.panel_tab, TAB_LAYERS + 1);
     }
 }

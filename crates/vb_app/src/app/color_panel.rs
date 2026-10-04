@@ -95,10 +95,13 @@ pub fn write_color_cmd(
 ) -> Result<Option<Command>, String> {
     let nid = doc
         .find_by_sid(sid)
-        .ok_or_else(|| "对象不存在".to_string())?;
-    let n = doc.nodes.get(nid).ok_or_else(|| "对象不存在".to_string())?;
+        .ok_or_else(|| vb_session::i18n::t("ui-common-object-missing").to_string())?;
+    let n = doc
+        .nodes
+        .get(nid)
+        .ok_or_else(|| vb_session::i18n::t("ui-common-object-missing").to_string())?;
     if appearance::target_of(&n.kind) == AppearanceTarget::Frozen {
-        return Err("冻结对象(原样片段)不可改色".into());
+        return Err(vb_session::i18n::t("ui-app-color-panel-001"));
     }
     let attrs: Vec<(String, String)> = n
         .attrs
@@ -147,10 +150,10 @@ pub fn write_color_cmd(
 
 /// 交换填充与描边色(Shift+X):任一缺失 → `Err` 说明,不静默。
 pub fn swap_cmd(doc: &Document, sid: &str) -> Result<Option<Command>, String> {
-    let f =
-        read_target_color(doc, sid, false).ok_or_else(|| "该对象没有填充色可交换".to_string())?;
-    let s =
-        read_target_color(doc, sid, true).ok_or_else(|| "该对象没有描边色可交换".to_string())?;
+    let f = read_target_color(doc, sid, false)
+        .ok_or_else(|| vb_session::i18n::t("ui-app-color-panel-002").to_string())?;
+    let s = read_target_color(doc, sid, true)
+        .ok_or_else(|| vb_session::i18n::t("ui-app-color-panel-003").to_string())?;
     let c1 = write_color_cmd(doc, sid, false, &s)?;
     // 第二条命令基于「填充已改」之后的文档状态会不同 —— 用 Compound 同批执行
     let c2 = write_color_cmd(doc, sid, true, &f)?;
@@ -301,9 +304,9 @@ impl VellumApp {
     pub(crate) fn color_toggle_target(&mut self) {
         self.color_target_stroke = !self.color_target_stroke;
         self.say(if self.color_target_stroke {
-            "颜色面板:作用于描边(X 切回填充)"
+            vb_session::i18n::t("ui-app-color-panel-004")
         } else {
-            "颜色面板:作用于填充(X 切到描边)"
+            vb_session::i18n::t("ui-app-color-panel-005")
         });
         self.color_panel_open = true;
         // 04-2:自动打开也要有可见反馈 → 聚焦次级坞颜色组
@@ -313,7 +316,7 @@ impl VellumApp {
     /// `Shift+X`:交换填充与描边色。
     pub(crate) fn color_swap(&mut self) {
         let Some(sid) = self.selection.last().cloned() else {
-            self.toast_warn("未选中对象");
+            self.toast_warn(vb_session::i18n::t("ui-common-no-selection"));
             return;
         };
         let r = swap_cmd(&self.doc, &sid);
@@ -323,7 +326,7 @@ impl VellumApp {
     /// `D`:恢复默认填充白 / 描边黑。
     pub(crate) fn color_default(&mut self) {
         let Some(sid) = self.selection.last().cloned() else {
-            self.toast_warn("未选中对象");
+            self.toast_warn(vb_session::i18n::t("ui-common-no-selection"));
             return;
         };
         let stroke = self.color_target_stroke;
@@ -335,10 +338,7 @@ impl VellumApp {
 
     pub(crate) fn color_panel_body(&mut self, ui: &mut egui::Ui) {
         let Some(sid) = self.selection.last().cloned() else {
-            ui.label(caption(
-                ui,
-                "未选中对象 —— 选中后调整填充/描边色与全局色板。",
-            ));
+            ui.label(caption(ui, &vb_session::i18n::t("ui-app-color-panel-006")));
             self.color_swatch_section(ui);
             return;
         };
@@ -349,26 +349,30 @@ impl VellumApp {
         // ── 目标切换(填充/描边)──
         ui.horizontal(|ui| {
             if ui
-                .selectable_label(!stroke, "填充")
-                .on_hover_text("X 切换目标")
+                .selectable_label(!stroke, vb_session::i18n::t("ui-common-fill"))
+                .on_hover_text(vb_session::i18n::t("ui-app-color-panel-007"))
                 .clicked()
             {
                 self.color_target_stroke = false;
             }
             if ui
-                .selectable_label(stroke, "描边")
-                .on_hover_text("X 切换目标")
+                .selectable_label(stroke, vb_session::i18n::t("ui-common-stroke"))
+                .on_hover_text(vb_session::i18n::t("ui-app-color-panel-007"))
                 .clicked()
             {
                 self.color_target_stroke = true;
             }
-            if ui.button("⇄ 交换").on_hover_text("Shift+X").clicked() {
+            if ui
+                .button(vb_session::i18n::t("ui-app-color-panel-008"))
+                .on_hover_text("Shift+X")
+                .clicked()
+            {
                 self.color_swap();
                 return;
             }
             if ui
-                .button("默认")
-                .on_hover_text("D:填充白 / 描边黑")
+                .button(vb_session::i18n::t("ui-common-default"))
+                .on_hover_text(vb_session::i18n::t("ui-app-color-panel-009"))
                 .clicked()
             {
                 self.color_default();
@@ -376,14 +380,12 @@ impl VellumApp {
         });
 
         let Some(text) = cur else {
-            ui.label(caption(
-                ui,
-                if stroke {
-                    "该对象没有描边色 —— 可在描边面板(^F10)添加描边。"
-                } else {
-                    "该对象没有填充色 —— 可在外观面板(⇧F6)添加填充。"
-                },
-            ));
+            let lbl = if stroke {
+                vb_session::i18n::t("ui-app-color-panel-010")
+            } else {
+                vb_session::i18n::t("ui-app-color-panel-011")
+            };
+            ui.label(caption(ui, &lbl));
             self.color_swatch_section(ui);
             return;
         };
@@ -391,7 +393,12 @@ impl VellumApp {
 
         if let Some(c) = rgba {
             let mut col = egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a);
-            let cf = ColorField::new(if stroke { "描边色" } else { "填充色" }, &mut col)
+            let field_lbl = if stroke {
+                vb_session::i18n::t("ui-app-color-panel-012")
+            } else {
+                vb_session::i18n::t("ui-app-color-panel-013")
+            };
+            let cf = ColorField::new(&field_lbl, &mut col)
                 .doc_tokens(&tokens)
                 .ui(ui);
             if cf.changed || cf.var_picked.is_some() {
@@ -405,7 +412,15 @@ impl VellumApp {
 
             // ── 页签:HSB / RGB / CMYK / CSS 变量 ──
             ui.horizontal(|ui| {
-                for (i, name) in ["HSB", "RGB", "CMYK", "CSS 变量"].iter().enumerate() {
+                for (i, name) in [
+                    "HSB",
+                    "RGB",
+                    "CMYK",
+                    &vb_session::i18n::t("ui-app-color-panel-014"),
+                ]
+                .iter()
+                .enumerate()
+                {
                     if ui.selectable_label(self.color_tab == i, *name).clicked() {
                         self.color_tab = i;
                     }
@@ -478,15 +493,12 @@ impl VellumApp {
                         let (r, g, b) = cmyk_to_rgb(c_, m_, y_, k_);
                         edited = Some(hex_of(Rgba::new(r, g, b, col.a())));
                     }
-                    ui.label(caption(
-                        ui,
-                        "CMYK 仅作输入换算(CSS 只有 sRGB);显示为近似值。",
-                    ));
+                    ui.label(caption(ui, &vb_session::i18n::t("ui-app-color-panel-015")));
                 }
                 _ => {
                     let g = global_colors(&self.doc);
                     if g.is_empty() {
-                        ui.label(caption(ui, "还没有全局色 —— 在下方色板里新建。"));
+                        ui.label(caption(ui, &vb_session::i18n::t("ui-app-color-panel-016")));
                     }
                     ui.horizontal_wrapped(|ui| {
                         for (name, value) in &g {
@@ -499,10 +511,7 @@ impl VellumApp {
                             }
                         }
                     });
-                    ui.label(caption(
-                        ui,
-                        "点全局色即写入 var(--name):改令牌值全站生效(令牌 Tab F4)。",
-                    ));
+                    ui.label(caption(ui, &vb_session::i18n::t("ui-app-color-panel-017")));
                 }
             }
             if let Some(v) = edited {
@@ -512,7 +521,13 @@ impl VellumApp {
         } else {
             ui.label(caption(
                 ui,
-                &format!("当前颜色 `{text}` 不可解析(可能是变量或复杂函数),已在色板区展示。"),
+                &vb_session::i18n::t_args(
+                    "ui-app-color-panel-018",
+                    &[(
+                        "text",
+                        vb_session::i18n::FluentValue::from((text).to_string()),
+                    )],
+                ),
             ));
         }
 
@@ -524,10 +539,10 @@ impl VellumApp {
         ui.separator();
         let tokens = self.doc.tokens.clone();
         ui.horizontal(|ui| {
-            ui.label("色板(全局色)");
+            ui.label(vb_session::i18n::t("ui-app-color-panel-019"));
             if ui
-                .button("＋ 新建")
-                .on_hover_text("把当前填充色登记为全局色(--vb-color-N)")
+                .button(vb_session::i18n::t("ui-app-color-panel-020"))
+                .on_hover_text(vb_session::i18n::t("ui-app-color-panel-021"))
                 .clicked()
             {
                 let v = self
@@ -542,10 +557,7 @@ impl VellumApp {
         });
         let globals = global_colors(&self.doc);
         if globals.is_empty() {
-            ui.label(caption(
-                ui,
-                "全局色 = CSS 变量(--vb-color-N),存于文档令牌,改动全站生效。",
-            ));
+            ui.label(caption(ui, &vb_session::i18n::t("ui-app-color-panel-022")));
         }
         let mut apply: Option<String> = None;
         let mut del: Option<String> = None;
@@ -560,7 +572,10 @@ impl VellumApp {
                 }
                 resp.context_menu(|ui| {
                     ui.label(caption(ui, &format!("--{name}: {value}")));
-                    if ui.button("删除全局色").clicked() {
+                    if ui
+                        .button(vb_session::i18n::t("ui-app-color-panel-023"))
+                        .clicked()
+                    {
                         del = Some(name.clone());
                         ui.close();
                     }
@@ -599,7 +614,7 @@ impl VellumApp {
                 let r = write_color_cmd(&self.doc, &sid, stroke, &v);
                 self.color_apply(r);
             } else {
-                self.toast_warn("未选中对象 —— 先选中对象再应用全局色");
+                self.toast_warn(vb_session::i18n::t("ui-app-color-panel-024"));
             }
         }
         if let Some((name, v)) = edit {
@@ -610,10 +625,7 @@ impl VellumApp {
             let cmd = delete_global_cmd(&name);
             self.color_apply(Ok(Some(cmd)));
         }
-        ui.label(caption(
-            ui,
-            "从页面提取颜色:依赖 WPI color_profiler,当前未落地 —— 暂不提供按钮(计划 v2)。",
-        ));
+        ui.label(caption(ui, &vb_session::i18n::t("ui-app-color-panel-025")));
         let _ = fmt_num(0.0);
         let _ = NodeKind::Artboard;
     }

@@ -9,7 +9,7 @@
 //! - **重新排列**(02-5-1):网格/按行/按列,纯函数 [`arrange_layout`]
 //!   计算几何,Compound(SetGeom…) 一次落盘一次撤销;
 //! - **适配图稿边界**(02-5-2):按内容包围盒(纯函数 [`content_union`])
-//!   调画板几何,单条 SetGeom;无内容的画板不产生命令(不做"点了没反应")。
+//!   调画板几何,单条 SetGeom;无内容的画板不产生命令(不做vb_session::i18n::t("ui-app-control-panel-render-001"))。
 //! - **画板预设**(02-5-3):[`AB_PRESETS`] 七档(Web 1920/1440/1080、
 //!   移动 750/375、A4 横竖)+ 自定义 W×H;取向横竖(w/h 互换);
 //!   本表是**常量单一来源**,控制面板「画板工具态」共享引用。
@@ -38,14 +38,14 @@ pub(crate) const AB_PRESETS: [(&str, f64, f64); 7] = [
     ("Web 1920×1080", 1920.0, 1080.0),
     ("Web 1440×900", 1440.0, 900.0),
     ("Web 1080×1920", 1080.0, 1920.0),
-    ("移动 750×1334", 750.0, 1334.0),
-    ("移动 375×667", 375.0, 667.0),
-    ("A4 竖 794×1123", 794.0, 1123.0),
-    ("A4 横 1123×794", 1123.0, 794.0),
+    ("移动 750×1334", 750.0, 1334.0), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("移动 375×667", 375.0, 667.0), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("A4 竖 794×1123", 794.0, 1123.0), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("A4 横 1123×794", 1123.0, 794.0), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
 ];
 
 /// 预设之外的显示名(尺寸不匹配任何行时;自定义 W/H 数值框承接)。
-pub(crate) const PRESET_CUSTOM: &str = "自定义";
+pub(crate) const PRESET_CUSTOM: &str = "自定义"; // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
 
 /// 画板重新排列布局(02-5-1)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,9 +61,9 @@ pub(crate) enum Arrange {
 impl Arrange {
     fn label(self) -> &'static str {
         match self {
-            Arrange::Grid => "网格",
-            Arrange::Row => "按行",
-            Arrange::Column => "按列",
+            Arrange::Grid => "网格", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            Arrange::Row => "按行", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            Arrange::Column => "按列", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
         }
     }
 }
@@ -219,7 +219,13 @@ pub(crate) fn duplicate_artboard_cmd(doc: &mut Document, sid: &str) -> Option<(C
     }
     let mut tree = vb_doc::model::NodeTree::from_document(doc, ab)?;
     crate::app::re_sid_tree(&mut tree, doc);
-    tree.node.name = format!("{} 副本", tree.node.name);
+    tree.node.name = vb_session::i18n::t_args(
+        "ui-app-panels-artboards-007",
+        &[(
+            "a1",
+            vb_session::i18n::FluentValue::from((tree.node.name).to_string()),
+        )],
+    );
     tree.node.geom.y = doc
         .artboards
         .iter()
@@ -242,7 +248,7 @@ pub(crate) fn duplicate_artboard_cmd(doc: &mut Document, sid: &str) -> Option<(C
 
 impl VellumApp {
     pub(crate) fn artboards_tab(&mut self, ui: &mut egui::Ui) {
-        ui.heading("画板");
+        ui.heading(vb_session::i18n::t("ui-menu-window-tab_artboards"));
         ui.separator();
 
         let active = self.active_artboard();
@@ -252,11 +258,14 @@ impl VellumApp {
 
         // --- 工具行:新建 / 复制 / 删除(02-5-2) ---
         ui.horizontal(|ui| {
-            if ui.button("+ 新建").clicked() {
+            if ui
+                .button(vb_session::i18n::t("ui-app-panels-artboards-008"))
+                .clicked()
+            {
                 // 与控制面板「+画板」同一条命令路径(S1-c 抽取共享)
                 self.add_default_artboard();
             }
-            if ui.button("复制").clicked() {
+            if ui.button(vb_session::i18n::t("ui-common-copy")).clicked() {
                 match active_sid.clone().and_then(|sid| {
                     let mut doc = std::mem::take(&mut self.doc);
                     let d = duplicate_artboard_cmd(&mut doc, &sid);
@@ -266,12 +275,15 @@ impl VellumApp {
                     Some((cmd, new_sid)) => {
                         self.exec(cmd);
                         self.selection = vec![new_sid].into();
-                        self.say("画板已复制(纵向落到最下方)");
+                        self.say(vb_session::i18n::t("ui-app-panels-artboards-009"));
                     }
-                    None => self.say("复制:先选中一块画板"),
+                    None => self.say(vb_session::i18n::t("ui-app-panels-artboards-010")),
                 }
             }
-            if ui.button("🗑 删除").clicked() {
+            if ui
+                .button(vb_session::i18n::t("ui-app-panels-artboards-011"))
+                .clicked()
+            {
                 match &active_sid {
                     Some(sid) if self.doc.artboards.len() > 1 => {
                         self.exec(Command::Delete {
@@ -283,18 +295,18 @@ impl VellumApp {
                         // 不清会导致拾取拿到死 id 而全面失效
                         self.isolate_stack
                             .retain(|id| self.doc.nodes.get(*id).is_some());
-                        self.say("画板已删除");
+                        self.say(vb_session::i18n::t("ui-app-panels-artboards-012"));
                     }
-                    _ => self.say("删除:至少保留一块画板"),
+                    _ => self.say(vb_session::i18n::t("ui-app-panels-artboards-013")),
                 }
             }
         });
 
         // --- 重新排列:网格 / 按行 / 按列 + 间距(02-5-1) ---
         ui.horizontal(|ui| {
-            ui.label("重新排列");
+            ui.label(vb_session::i18n::t("ui-app-panels-artboards-014"));
             let mut gap = self.arrange_gap;
-            let r = NumField::new("间距", &mut gap)
+            let r = NumField::new(&vb_session::i18n::t("ui-common-gap"), &mut gap)
                 .speed(1.0)
                 .step(8.0)
                 .range(0.0, 2000.0)
@@ -308,19 +320,33 @@ impl VellumApp {
             for layout in [Arrange::Grid, Arrange::Row, Arrange::Column] {
                 if ui
                     .small_button(layout.label())
-                    .on_hover_text(format!(
-                        "全部画板按{}重新排列(经 SetGeom 复合命令,一次撤销)",
-                        layout.label()
+                    .on_hover_text(vb_session::i18n::t_args(
+                        "ui-app-panels-artboards-015",
+                        &[(
+                            "a1",
+                            vb_session::i18n::FluentValue::from((layout.label()).to_string()),
+                        )],
                     ))
                     .clicked()
                 {
                     let cmds = rearrange_cmds(&self.doc, layout, self.arrange_gap);
                     let n = cmds.len();
                     if n == 0 {
-                        self.say("重新排列:画板已在位");
+                        self.say(vb_session::i18n::t("ui-app-panels-artboards-016"));
                     } else {
                         self.exec(Command::Compound { cmds });
-                        self.say(format!("已按{}排列 {n} 块画板", layout.label()));
+                        self.say(vb_session::i18n::t_args(
+                            "ui-app-panels-artboards-017",
+                            &[
+                                (
+                                    "a1",
+                                    vb_session::i18n::FluentValue::from(
+                                        (layout.label()).to_string(),
+                                    ),
+                                ),
+                                ("n", vb_session::i18n::FluentValue::from((n).to_string())),
+                            ],
+                        ));
                     }
                 }
             }
@@ -329,19 +355,19 @@ impl VellumApp {
         // --- 适配图稿边界(02-5-2;作用于选中画板) ---
         ui.horizontal(|ui| {
             if ui
-                .button("⤢ 适配图稿边界")
-                .on_hover_text("画板几何 = 内容包围盒(选中画板;经 SetGeom)")
+                .button(vb_session::i18n::t("ui-app-panels-artboards-018"))
+                .on_hover_text(vb_session::i18n::t("ui-app-panels-artboards-019"))
                 .clicked()
             {
                 match &active_sid {
                     Some(sid) => match fit_artboard_cmd(&self.doc, sid) {
                         Some(cmd) => {
                             self.exec(cmd);
-                            self.say("画板已适配图稿边界");
+                            self.say(vb_session::i18n::t("ui-app-panels-artboards-020"));
                         }
-                        None => self.say("适配图稿边界:画板没有内容"),
+                        None => self.say(vb_session::i18n::t("ui-app-panels-artboards-021")),
                     },
-                    None => self.say("适配图稿边界:先选中一块画板"),
+                    None => self.say(vb_session::i18n::t("ui-app-panels-artboards-022")),
                 }
             }
         });
@@ -349,7 +375,7 @@ impl VellumApp {
 
         // --- 选中画板区:预设 / 取向 / 自定义尺寸 / 背景(02-5-3) ---
         if let Some(sid) = &active_sid {
-            ui.label("选中画板");
+            ui.label(vb_session::i18n::t("ui-app-panels-artboards-023"));
             let (w, h) = {
                 let n = self
                     .doc
@@ -366,7 +392,13 @@ impl VellumApp {
                     .map(|(n, _, _)| *n)
                     .unwrap_or(PRESET_CUSTOM);
                 egui::ComboBox::from_id_salt("ab_panel_preset")
-                    .selected_text(format!("预设 {label}"))
+                    .selected_text(vb_session::i18n::t_args(
+                        "ui-app-control-panel-editors-003",
+                        &[(
+                            "label",
+                            vb_session::i18n::FluentValue::from((label).to_string()),
+                        )],
+                    ))
                     .show_ui(ui, |ui| {
                         for (name, pw, ph) in AB_PRESETS {
                             let is_cur = (pw - w).abs() < 0.5 && (ph - h).abs() < 0.5;
@@ -377,22 +409,28 @@ impl VellumApp {
                                     &[(GeomAxis::W, pw), (GeomAxis::H, ph)],
                                 ) {
                                     self.exec(cmd);
-                                    self.say(format!("画板预设 → {name}"));
+                                    self.say(vb_session::i18n::t_args(
+                                        "ui-app-control-panel-editors-004",
+                                        &[(
+                                            "name",
+                                            vb_session::i18n::FluentValue::from((name).to_string()),
+                                        )],
+                                    ));
                                 }
                             }
                         }
                     });
                 // 取向:横/竖互换(经 SetGeom)
                 if ui
-                    .small_button("⇄ 取向")
-                    .on_hover_text("横竖互换(w/h 互换,经 SetGeom)")
+                    .small_button(vb_session::i18n::t("ui-app-panels-artboards-024"))
+                    .on_hover_text(vb_session::i18n::t("ui-app-panels-artboards-025"))
                     .clicked()
                 {
                     if let Some(cmd) =
                         geom_axes_cmd(&self.doc, sid, &[(GeomAxis::W, h), (GeomAxis::H, w)])
                     {
                         self.exec(cmd);
-                        self.say("画板取向已互换");
+                        self.say(vb_session::i18n::t("ui-app-panels-artboards-026"));
                     }
                 }
             });
@@ -442,7 +480,9 @@ impl VellumApp {
                 .map(|c| Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a))
                 .unwrap_or(Color32::WHITE);
             let tokens = self.doc.tokens.clone();
-            let r = ColorField::new("背景", &mut col).doc_tokens(&tokens).ui(ui);
+            let r = ColorField::new(&vb_session::i18n::t("ui-common-background"), &mut col)
+                .doc_tokens(&tokens)
+                .ui(ui);
             if let Some(name) = r.var_picked {
                 let cmds = style_prop_cmds(
                     &self.doc,
@@ -452,13 +492,19 @@ impl VellumApp {
                 );
                 if let Some(cmd) = combine(cmds) {
                     self.exec(cmd);
-                    self.say(format!("画板背景 → var(--{name})"));
+                    self.say(vb_session::i18n::t_args(
+                        "ui-app-panels-artboards-027",
+                        &[(
+                            "name",
+                            vb_session::i18n::FluentValue::from((name).to_string()),
+                        )],
+                    ));
                 }
             } else if r.cleared {
                 let cmds = style_prop_remove_cmds(&self.doc, &[ab_sid], "background-color");
                 if let Some(cmd) = combine(cmds) {
                     self.exec(cmd);
-                    self.say("画板背景已清除");
+                    self.say(vb_session::i18n::t("ui-app-panels-artboards-028"));
                 }
             } else if r.changed {
                 let [cr, cg, cb, ca] = col.to_srgba_unmultiplied();
@@ -549,7 +595,7 @@ impl VellumApp {
                                 new: trimmed,
                                 old: None,
                             });
-                            self.say("画板已改名(data-vb-name 同步)");
+                            self.say(vb_session::i18n::t("ui-app-panels-artboards-029"));
                         }
                     }
                 } else {
@@ -585,7 +631,7 @@ impl VellumApp {
                 ui.add_space(4.0);
                 ui.label(vb_ui::components::caption(
                     ui,
-                    "只有一个默认画板 —— 点「+ 新建」,或 Shift+O 用画板工具拖框。",
+                    &vb_session::i18n::t("ui-app-panels-artboards-030"),
                 ));
             }
         });

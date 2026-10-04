@@ -208,7 +208,13 @@ pub fn build_live(store: &KeymapStore) -> (Vec<LiveBinding>, Vec<String>) {
     let mut live: Vec<LiveBinding> = Vec::new();
     for b in &store.bindings {
         let Some((key, ctrl, shift, alt)) = parse_combo(&b.combo) else {
-            warns.push(format!("键位方案:无法识别组合键「{}」(已跳过)", b.combo));
+            warns.push(vb_session::i18n::t_args(
+                "ui-keymap-001",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from((b.combo).to_string()),
+                )],
+            ));
             continue;
         };
         let entry = LiveBinding {
@@ -222,9 +228,22 @@ pub fn build_live(store: &KeymapStore) -> (Vec<LiveBinding>, Vec<String>) {
         // 冲突(同组合键已有绑定):首份胜,后续丢弃 —— 与「保存时拒绝」
         // 同一判定,手改文件由此兜底。
         if let Some(prev) = live.iter().find(|l| hits_same(l, key, ctrl, shift, alt)) {
-            warns.push(format!(
-                "键位方案:{} 与 {} 同时绑定「{}」,已保留前者",
-                prev.id, b.id, b.combo
+            warns.push(vb_session::i18n::t_args(
+                "ui-keymap-002",
+                &[
+                    (
+                        "a1",
+                        vb_session::i18n::FluentValue::from((prev.id).to_string()),
+                    ),
+                    (
+                        "a2",
+                        vb_session::i18n::FluentValue::from((b.id).to_string()),
+                    ),
+                    (
+                        "a3",
+                        vb_session::i18n::FluentValue::from((b.combo).to_string()),
+                    ),
+                ],
             ));
             continue;
         }
@@ -330,7 +349,7 @@ pub fn load() -> (KeymapStore, Option<String>) {
         Some(p) => load_from(&p),
         None => (
             KeymapStore::default(),
-            Some("找不到配置目录,自定义键位不会持久化(可用 VB_KEYMAP 指定)".into()),
+            Some(vb_session::i18n::t("ui-keymap-003")),
         ),
     }
 }
@@ -346,9 +365,20 @@ pub fn load_from(path: &std::path::Path) -> (KeymapStore, Option<String>) {
             if st.schema_version != SCHEMA_VERSION {
                 return (
                     KeymapStore::default(),
-                    Some(format!(
-                        "keymap.json 版本 {} 与当前 {SCHEMA_VERSION} 不符,已回退默认键位",
-                        st.schema_version
+                    Some(vb_session::i18n::t_args(
+                        "ui-keymap-004",
+                        &[
+                            (
+                                "a1",
+                                vb_session::i18n::FluentValue::from(
+                                    (st.schema_version).to_string(),
+                                ),
+                            ),
+                            (
+                                "SCHEMA_VERSION",
+                                vb_session::i18n::FluentValue::from((SCHEMA_VERSION).to_string()),
+                            ),
+                        ],
                     )),
                 );
             }
@@ -357,7 +387,10 @@ pub fn load_from(path: &std::path::Path) -> (KeymapStore, Option<String>) {
         }
         Err(e) => (
             KeymapStore::default(),
-            Some(format!("keymap.json 解析失败,已回退默认键位:{e}")),
+            Some(vb_session::i18n::t_args(
+                "ui-keymap-005",
+                &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+            )),
         ),
     }
 }
@@ -365,19 +398,39 @@ pub fn load_from(path: &std::path::Path) -> (KeymapStore, Option<String>) {
 /// 写指定路径(原子性:先写 `.tmp` 再改名)。
 pub fn save_to(path: &std::path::Path, st: &KeymapStore) -> Result<(), String> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败:{e}"))?;
+        std::fs::create_dir_all(dir).map_err(|e| {
+            vb_session::i18n::t_args(
+                "ui-app-dock-layout-012",
+                &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+            )
+        })?;
     }
     let mut st = st.clone();
     st.schema_version = SCHEMA_VERSION;
-    let text = serde_json::to_string_pretty(&st).map_err(|e| format!("序列化键位方案失败:{e}"))?;
+    let text = serde_json::to_string_pretty(&st).map_err(|e| {
+        vb_session::i18n::t_args(
+            "ui-keymap-006",
+            &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+        )
+    })?;
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, text).map_err(|e| format!("写键位方案失败:{e}"))?;
-    std::fs::rename(&tmp, path).map_err(|e| format!("提交键位方案失败:{e}"))
+    std::fs::write(&tmp, text).map_err(|e| {
+        vb_session::i18n::t_args(
+            "ui-keymap-007",
+            &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+        )
+    })?;
+    std::fs::rename(&tmp, path).map_err(|e| {
+        vb_session::i18n::t_args(
+            "ui-keymap-008",
+            &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+        )
+    })
 }
 
 /// 写真实路径(无路径 → 报错说明,不静默)。
 pub fn save(st: &KeymapStore) -> Result<(), String> {
-    let p = keymap_path().ok_or_else(|| "找不到配置目录,键位方案未持久化".to_string())?;
+    let p = keymap_path().ok_or_else(|| vb_session::i18n::t("ui-keymap-009").to_string())?;
     save_to(&p, st)
 }
 

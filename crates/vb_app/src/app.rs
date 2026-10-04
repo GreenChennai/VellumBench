@@ -130,6 +130,41 @@ pub(crate) struct NumCommitGuard {
     pub(crate) opened_at: std::time::Instant,
 }
 
+/// S5 清单 ②:面板区焦点(§8.10.2「F6 循环面板区」的状态机面)。
+///
+/// 区跳转 = **可见性抬升 + 本状态机**:把目标区抬到可见(反隐藏/反折叠/
+/// 保持当前 Tab),区内首个控件的键盘焦点仍由 egui 原生 Tab 承担
+/// (egui 0.35 无「区域焦点」公开 API —— 诚实限制,见 ui-focus-a11y.md)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum FocusZone {
+    /// 画布(默认;无面板持有区焦点)。
+    #[default]
+    Canvas,
+    /// 主右坞(属性/图层/画板/令牌,当前 Tab)。
+    RightDock,
+    /// 次级坞(字符/外观/变换…,当前组;全关时循环跳过)。
+    SecDock,
+}
+
+/// S5 清单 ②:面板区循环纯函数(循环顺序与 Esc 层级测试打这里)。
+///
+/// 顺序环:画布 → 右坞 →(次级坞,可用时)→ 画布;`forward = false`
+/// 走反向。次级坞**没有任何开着的面板**时从顺序里剔除(跳到不存在的
+/// 区是骗人);当前区失效(如停在次级坞但面板全关)按画布处理。
+pub(crate) fn next_focus_zone(cur: FocusZone, sec_available: bool, forward: bool) -> FocusZone {
+    let mut order = vec![FocusZone::Canvas, FocusZone::RightDock];
+    if sec_available {
+        order.push(FocusZone::SecDock);
+    }
+    let i = order.iter().position(|z| *z == cur).unwrap_or(0);
+    let n = order.len();
+    if forward {
+        order[(i + 1) % n]
+    } else {
+        order[(i + n - 1) % n]
+    }
+}
+
 pub struct VellumApp {
     pub doc: Document,
     pub undo: UndoStack,
@@ -173,13 +208,17 @@ pub struct VellumApp {
     /// 面板坞用户折叠偏好(S1-b 02-1-1)。
     /// 实际折叠 = `vb_ui::dock::should_collapse(视口宽, 本值)` —— 窗口
     /// <1200 时强制折叠且**不回写**本值(拉宽后自动恢复展开)。
-    /// 持久化到 workspace.json 为阶段 7 项(接口已按"单字段可序列化"预留)。
+    /// 持久化到 workspace.json 为阶段 7 项(接口已按vb_session::i18n::t("ui-app-001")预留)。
     dock_collapsed: bool,
     /// Tab 顺序(槽位 → Tab 语义 id;S1-b 02-1-2,右键 Tab 可换,
     /// **内存可换**,持久化到 workspace.json 为阶段 7 项,接口预留)。
     panel_order: [usize; panels::TAB_COUNT],
     /// 隐藏/恢复所有面板(S1-b 02-6-5,`Tab`;隐藏右侧坞+状态栏+浮动工具条)。
     panels_hidden: bool,
+    /// S5 清单 ②:面板区焦点状态机(会话态,不持久化;
+    /// `view.focus_next_panel` / `view.focus_prev_panel` 推进,
+    /// `view.escape_overlay` 的「面板级」退回画布)。
+    pub(crate) focus_zone: FocusZone,
     /// NumField 提交会话守卫(UI-10 RAII 化,2026-10-05)。
     ///
     /// 旧实现是裸 `bool num_commit_open`:置位/复位散在 `num_commit` 与
@@ -264,6 +303,11 @@ pub struct VellumApp {
     sec_dock_collapsed: bool,
     /// H-1:动效总开关(默认开;workspace.json `motion_enabled`)。
     pub(crate) motion_enabled: bool,
+    /// S5 清单 ④:系统「减少动态效果」偏好探测结果(构造时读一次;
+    /// 与用户总开关 [`Self::motion_enabled`] **并联** —— 任一关 → 动画
+    /// 直通,见 [`Self::effective_motion`])。运行中改系统设置需重启
+    /// 应用生效 —— 诚实记录:SPI 探针无变更回调口,不做每帧轮询。
+    pub(crate) os_animations: bool,
     /// §8.3.5 密度档(true = compact 24 行高;workspace.json
     /// `density_compact`,默认 false = comfortable 28)。
     pub(crate) density_compact: bool,
@@ -340,7 +384,7 @@ pub struct VellumApp {
     /// 阶段 2:外壳协作通道(打开/新建/关闭/主页/主题/最近列表经外壳单点写;
     /// None = 无外壳的旧式独立构造,走就地打开/新建的兜底路径)。
     pub(crate) shell_tx: Option<std::sync::mpsc::Sender<crate::shell::ShellRequest>>,
-    /// 阶段 2:本窗口的视口 id(外壳据此定位"哪个窗口要关闭/聚焦",02-5-2)。
+    /// 阶段 2:本窗口的视口 id(外壳据此定位vb_session::i18n::t("ui-app-002"),02-5-2)。
     pub(crate) viewport_id: egui::ViewportId,
     /// 阶段 2:「新建项目 / 从模板新建」对话框(02-4-1;确认后发外壳开新窗口)。
     new_dialog: Option<crate::new_project::NewProjectDialog>,
@@ -376,7 +420,7 @@ pub struct VellumApp {
     autosave_interval_secs: u32,
     /// 07-A:节拍计时(首次见脏起表;干净态清空)。
     autosave_last: Option<std::time::Instant>,
-    /// 07-A:最近一次自动保存((Unix 秒, 时刻)—— 状态栏"已自动保存"印记)。
+    /// 07-A:最近一次自动保存((Unix 秒, 时刻)—— 状态栏vb_session::i18n::t("ui-app-003")印记)。
     autosave_at: Option<(i64, std::time::Instant)>,
     /// 07-B:待处理的崩溃恢复提示(打开项目时检出 `.vb-autosave/` 残留)。
     recover: Option<crate::autosave::RecoverPrompt>,
@@ -495,7 +539,7 @@ pub struct VellumApp {
     pub(crate) plugin_logs_open: std::collections::HashSet<String>,
     /// 插件坞面板当前选中的插件下标(多 Running 插件时)。
     pub(crate) plugin_panel_sel: usize,
-    /// 插件面板输入框草稿(键 = "插件/面板/输入id";会话态)。
+    /// 插件面板输入框草稿(键 = vb_session::i18n::t("ui-app-004");会话态)。
     pub(crate) plugin_input_buf: std::collections::HashMap<String, String>,
 }
 
@@ -514,7 +558,10 @@ impl VellumApp {
 
     fn exec(&mut self, cmd: Command) {
         if let Err(e) = self.undo.push(&mut self.doc, cmd) {
-            self.toast_error(format!("命令失败:{e}"));
+            self.toast_error(vb_session::i18n::t_args(
+                "ui-app-005",
+                &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+            ));
             return;
         }
         // 拖拽进行中的每次落盘都标记(Esc 取消时据此作废合并条目)
@@ -610,7 +657,7 @@ impl VellumApp {
                 return name.to_string_lossy().to_string();
             }
         }
-        "未命名".into()
+        vb_session::i18n::t("ui-common-untitled")
     }
 
     /// PERF-05/UI-02:样式注入指纹判定。指纹(主题深浅, 动效开关)与上次
@@ -633,6 +680,12 @@ impl VellumApp {
             self.density_synced = Some(self.density_compact);
         }
         needed
+    }
+
+    /// S5 清单 ④:动效真值 = 用户总开关 × 系统偏好**并联**
+    /// (`theme::anim_time` 只认这一份注入值;任一关 → 全部时长归零)。
+    pub(crate) fn effective_motion(&self) -> bool {
+        effective_motion(self.motion_enabled, self.os_animations)
     }
 
     /// 外壳主题广播(02-3-5:主页与所有窗口跟随同一主题)。
@@ -704,9 +757,12 @@ impl VellumApp {
         };
         self.ui_scale = next;
         self.save_workspace();
-        self.say(format!(
-            "界面缩放 {}%(叠加在系统 DPI 之上;视图 → 界面缩放可调)",
-            (next * 100.0) as i64
+        self.say(vb_session::i18n::t_args(
+            "ui-app-006",
+            &[(
+                "a1",
+                vb_session::i18n::FluentValue::from(((next * 100.0) as i64).to_string()),
+            )],
         ));
     }
 }
@@ -775,9 +831,92 @@ pub(crate) fn fmt_deg(deg: f64) -> String {
     vb_common::units::fmt_num((deg * 10.0).round() / 10.0)
 }
 
+/// S5 清单 ④:读一次系统动效偏好(进程内只探测一次;构造期调用)。
+/// 探针细节与 fail-open 口径见 `vb_platform::os_motion`。
+pub(crate) fn probe_os_animations() -> bool {
+    use vb_platform::MotionPreferenceProbe as _;
+    vb_platform::os_motion::OsMotionProbe::new().animations_enabled()
+}
+
+/// S5 清单 ④:动效真值的**并联**纯函数(用户总开关 × 系统偏好)。
+/// 任一关 → `false`(`theme::apply_ex` 把 egui `animation_time` 归零,
+/// `anim_time` 同步归零 —— 全部过渡立即到位)。真值表单测在下方。
+pub(crate) const fn effective_motion(user_enabled: bool, os_animations: bool) -> bool {
+    user_enabled && os_animations
+}
+
 // ─────────────────────── 04-5 / 04-3 门禁(单测) ───────────────────────
 
 // ─────────────────────── UI-10 门禁(单测) ───────────────────────
+
+// ─────────────────────── S5 清单 ④:动效并联真值表 ───────────────────────
+
+#[cfg(test)]
+mod focus_zone_tests {
+    use super::{next_focus_zone, FocusZone};
+
+    /// 循环顺序:画布 → 右坞 → 次级坞 → 画布(次级坞可用时),
+    /// 反向严格镜像;次级坞不可用时二区环。
+    #[test]
+    fn panel_zone_cycle_order_forward_and_reverse() {
+        // 三区环(次级坞可用)
+        let f = |cur| next_focus_zone(cur, true, true);
+        assert_eq!(f(FocusZone::Canvas), FocusZone::RightDock);
+        assert_eq!(f(FocusZone::RightDock), FocusZone::SecDock);
+        assert_eq!(f(FocusZone::SecDock), FocusZone::Canvas, "循环回卷");
+        // 反向镜像
+        let b = |cur| next_focus_zone(cur, true, false);
+        assert_eq!(b(FocusZone::Canvas), FocusZone::SecDock);
+        assert_eq!(b(FocusZone::SecDock), FocusZone::RightDock);
+        assert_eq!(b(FocusZone::RightDock), FocusZone::Canvas);
+        // 次级坞不可用:顺序剔除,二区环
+        assert_eq!(
+            next_focus_zone(FocusZone::Canvas, false, true),
+            FocusZone::RightDock
+        );
+        assert_eq!(
+            next_focus_zone(FocusZone::RightDock, false, true),
+            FocusZone::Canvas
+        );
+        // 失效区(次级坞面板全关后仍停在 SecDock)按画布处理:
+        // 正向 → 右坞;反向 → 右坞(与「画布反向 = 环上最后一区」一致)
+        assert_eq!(
+            next_focus_zone(FocusZone::SecDock, false, true),
+            FocusZone::RightDock
+        );
+        assert_eq!(
+            next_focus_zone(FocusZone::SecDock, false, false),
+            FocusZone::RightDock
+        );
+    }
+}
+
+#[cfg(test)]
+mod motion_parallel_tests {
+    use super::effective_motion;
+
+    /// 真值表逐行:用户总开关 × 系统偏好,**并联 = AND**。
+    /// (on,on)=动;(on,off)=系统减少动效 → 直通;(off,on)=用户关 →
+    /// 直通;(off,off)=双关 → 直通。theme 侧 `anim_time` 只认这份注入值,
+    /// 不做第二套判断(单一开关面)。
+    #[test]
+    fn motion_truth_table_parallel_and() {
+        // (用户开关, 系统偏好) → 动效真值
+        let table = [
+            ((true, true), true),
+            ((true, false), false),
+            ((false, true), false),
+            ((false, false), false),
+        ];
+        for ((user, os), want) in table {
+            assert_eq!(
+                effective_motion(user, os),
+                want,
+                "并联真值表({user},{os})应得 {want}"
+            );
+        }
+    }
+}
 
 #[cfg(test)]
 mod ui10_tests {

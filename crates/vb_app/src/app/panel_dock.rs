@@ -106,7 +106,7 @@ const MARGIN: f32 = 24.0;
 /// 可停靠面板(语义 id;持久化下标 = [`SecPanel::ALL`] 顺序)。
 ///
 /// 阶段 7(07-D)新增 `History`:撤销历史面板,归入「变换」组
-/// (定夺允许"变换组或独立历史组";入组零迁移成本,组数保持 4)。
+/// (定夺允许vb_session::i18n::t("ui-app-panel-dock-001");入组零迁移成本,组数保持 4)。
 /// 阶段 7b(07-K)新增 `Assets`:资产面板,独立「资产」组。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SecPanel {
@@ -150,19 +150,19 @@ impl SecPanel {
     /// 面板标题(Tab 文本与浮窗标题共用)。
     pub fn label(self) -> &'static str {
         match self {
-            SecPanel::Char => "字符",
-            SecPanel::Para => "段落",
-            SecPanel::Appearance => "外观",
-            SecPanel::Stroke => "描边",
-            SecPanel::Gradient => "渐变",
-            SecPanel::Opacity => "透明度",
-            SecPanel::Color => "颜色",
-            SecPanel::Transform => "变换",
-            SecPanel::Align => "对齐",
-            SecPanel::History => "历史",
-            SecPanel::Assets => "资产",
-            SecPanel::Timeline => "时间轴",
-            SecPanel::Plugins => "插件",
+            SecPanel::Char => "字符", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            SecPanel::Para => "段落", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            SecPanel::Appearance => "外观", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            SecPanel::Stroke => "描边", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            SecPanel::Gradient => "渐变", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            SecPanel::Opacity => "透明度", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            SecPanel::Color => "颜色", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            SecPanel::Transform => "变换", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            SecPanel::Align => "对齐", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            SecPanel::History => "历史", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            SecPanel::Assets => "资产", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            SecPanel::Timeline => "时间轴", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            SecPanel::Plugins => "插件", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
         }
     }
 
@@ -222,13 +222,13 @@ impl SecGroup {
     /// 组标题。
     pub fn label(self) -> &'static str {
         match self {
-            SecGroup::Text => "文字",
-            SecGroup::Looks => "外观",
-            SecGroup::Xform => "变换",
-            SecGroup::Paint => "颜色",
-            SecGroup::Assets => "资产",
-            SecGroup::Timeline => "时间轴",
-            SecGroup::Plugins => "插件",
+            SecGroup::Text => "文字", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            SecGroup::Looks => "外观", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            SecGroup::Xform => "变换", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            SecGroup::Paint => "颜色", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            SecGroup::Assets => "资产", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            SecGroup::Timeline => "时间轴", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            SecGroup::Plugins => "插件", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
         }
     }
 
@@ -476,7 +476,14 @@ impl VellumApp {
             .show(ui, |ui| {
                 ui.add_space(theme::space::S2);
                 let can_expand = sec_rail_can_expand(viewport_width);
-                if icon_button(ui, Name::Expanded, "展开次级坞").clicked() && can_expand {
+                if icon_button(
+                    ui,
+                    Name::Expanded,
+                    &vb_session::i18n::t("ui-app-panel-dock-003"),
+                )
+                .clicked()
+                    && can_expand
+                {
                     self.sec_dock_collapsed = false;
                 }
                 ui.separator();
@@ -486,9 +493,21 @@ impl VellumApp {
                     let selected = self.sec.active_group == gi;
                     let has_open = g.panels().iter().any(|&p| self.sec_is_open(p));
                     let hint = if can_expand {
-                        format!("{}(点击展开并切换)", g.label())
+                        vb_session::i18n::t_args(
+                            "ui-app-panel-dock-004",
+                            &[(
+                                "a1",
+                                vb_session::i18n::FluentValue::from((g.label()).to_string()),
+                            )],
+                        )
                     } else {
-                        format!("{}(窗口过窄,仅切换)", g.label())
+                        vb_session::i18n::t_args(
+                            "ui-app-panel-dock-005",
+                            &[(
+                                "a1",
+                                vb_session::i18n::FluentValue::from((g.label()).to_string()),
+                            )],
+                        )
                     };
                     let (rect, resp) = ui.allocate_exact_size(
                         egui::Vec2::splat(theme::space::ROW_HEIGHT),
@@ -522,6 +541,11 @@ impl VellumApp {
                         if can_expand {
                             self.sec_dock_collapsed = false;
                         }
+                    }
+                    // S5(§8.10 诚实清单 ①):折叠图标条(次级坞)的组图标
+                    // 同样是 allocate 自绘控件,键盘焦点环统一接线。
+                    if resp.has_focus() {
+                        vb_ui::components::paint_focus_ring(ui, rect, &t);
                     }
                     let _ = resp.on_hover_text(hint);
                 }
@@ -572,10 +596,7 @@ impl VellumApp {
             .collect();
         let Some(active) = self.sec_effective() else {
             ui.add_space(theme::space::S5);
-            ui.label(caption(
-                ui,
-                "该组面板均已关闭 —— 用「窗口」菜单或快捷键打开(如 ⇧F6 外观、Ctrl+T 字符)。",
-            ));
+            ui.label(caption(ui, &vb_session::i18n::t("ui-app-panel-dock-006")));
             return;
         };
         ui.horizontal(|ui| {
@@ -592,9 +613,9 @@ impl VellumApp {
             // 浮窗 ⇄ 停靠 切换(04-2-3:浮窗保留但默认关闭)
             let floating = self.sec_is_floating(active);
             let tip = if floating {
-                "该面板当前是浮窗;点击停靠回面板坞"
+                vb_session::i18n::t("ui-app-panel-dock-007")
             } else {
-                "把该面板改为浮窗(位置自动排布,不级联)"
+                vb_session::i18n::t("ui-app-panel-dock-008")
             };
             if icon_button(
                 ui,
@@ -603,17 +624,34 @@ impl VellumApp {
                 } else {
                     Name::Expanded
                 },
-                tip,
+                &tip,
             )
             .clicked()
             {
                 self.sec.floating[active.index()] = !floating;
             }
             // 关闭(与浮窗 × 同语义)
-            if icon_button(ui, Name::Close, &format!("关闭「{}」面板", active.label())).clicked()
+            if icon_button(
+                ui,
+                Name::Close,
+                &vb_session::i18n::t_args(
+                    "ui-app-panel-dock-009",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from((active.label()).to_string()),
+                    )],
+                ),
+            )
+            .clicked()
             {
                 self.sec_set_open(active, false);
-                self.say(format!("「{}」面板:已关闭", active.label()));
+                self.say(vb_session::i18n::t_args(
+                    "ui-app-panel-dock-010",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from((active.label()).to_string()),
+                    )],
+                ));
             }
         });
         ui.separator();
@@ -645,10 +683,16 @@ impl VellumApp {
         let remembered = self.sec.pos[idx];
         let has_memory = self.sec.pos_memory[idx];
         let mut open = true;
-        let mut win = egui::Window::new(format!("{}(浮窗)", p.label()))
-            .open(&mut open)
-            .collapsible(false)
-            .default_width(300.0);
+        let mut win = egui::Window::new(vb_session::i18n::t_args(
+            "ui-app-panel-dock-011",
+            &[(
+                "a1",
+                vb_session::i18n::FluentValue::from((p.label()).to_string()),
+            )],
+        ))
+        .open(&mut open)
+        .collapsible(false)
+        .default_width(300.0);
         win = if has_memory {
             win.default_pos(egui::pos2(remembered[0], remembered[1]))
         } else {

@@ -20,19 +20,37 @@ fn count(haystack: &str, needle: &str) -> usize {
 }
 
 /// 自绘焦点环:环调用点 ≥ 自绘可交互控件数
-/// (ToolButton / NumField 标签 / icon_button / checkbox / radio / switch,
-/// 加 TextField 独立实现 = 7 处)。
+/// (ToolButton / NumField 标签 / icon_button / checkbox / radio / switch /
+/// TextField / PanelTabs Tab 页 = 8 处)。
 #[test]
 fn custom_controls_paint_focus_rings() {
     let rings = count(COMPONENTS, "paint_focus_ring(") - 1; // 减定义本身
     assert!(
-        rings >= 7,
-        "G-UI-D:自绘控件的键盘焦点环调用点不足(找到 {rings},需 ≥7)—— \
+        rings >= 8,
+        "G-UI-D:自绘控件的键盘焦点环调用点不足(找到 {rings},需 ≥8)—— \
          新增自绘控件必须在 resp.has_focus() 时画焦点环"
     );
     assert!(
         COMPONENTS.contains("fn paint_focus_ring"),
         "焦点环助手必须存在于 components.rs(单一实现)"
+    );
+}
+
+/// S5(§8.10 诚实清单 ①):PanelTabs 的 Tab 页是 allocate 自绘控件,
+/// 逐控件断言其环真接线(`resp.has_focus()` → `paint_focus_ring`),
+/// 不许只靠总数蒙混。vb_app 侧的图层面板行/状态栏文本项/启动器卡片
+/// 由 `docs/design/ui-focus-a11y.md` 走查表人工钉住(跨 crate 静态扫描
+/// 归属 CI 分档项)。
+#[test]
+fn panel_tabs_tabs_paint_focus_ring() {
+    let body = COMPONENTS
+        .split("pub fn ui_ex")
+        .nth(1)
+        .and_then(|rest| rest.split("pub fn ui(").next())
+        .unwrap_or("");
+    assert!(
+        body.contains("resp.has_focus()") && body.contains("paint_focus_ring("),
+        "G-UI-D:PanelTabs Tab 页缺键盘焦点环(S5 清单 ① 回归)"
     );
 }
 
@@ -45,6 +63,36 @@ fn custom_controls_register_widget_info() {
         infos >= 3,
         "G-UI-D:checkbox/radio/switch 的 WidgetInfo 登记缺失(找到 {infos})"
     );
+}
+
+/// S5 清单 ③(§8.5 扫尾):自绘可交互点的读屏登记逐类点名 ——
+/// 凡组件层自绘的可交互控件(ToolButton / NumField 标签滑杆 /
+/// ColorField 色块 + 令牌色板 / SectionHeader / PanelTabs / icon_button /
+/// 进度指示)都必须有语义登记;非交互点(静态标签、分隔线、悬停文本)
+/// 不登记是**有意豁免**(egui Label 无事件语义,登记噪音大于收益)。
+#[test]
+fn interactive_widgets_register_widget_info() {
+    let total = count(COMPONENTS, "widget_info(");
+    assert!(
+        total >= 12,
+        "G-UI-D:WidgetInfo 登记点不足(找到 {total},需 ≥12)—— \
+         新增自绘可交互控件必须登记读屏语义"
+    );
+    for ty in [
+        "WidgetType::Button",            // ToolButton(带激活态)+ icon_button + 进度 pill
+        "WidgetInfo::slider(",           // NumField 标签区(scrubby 拖改值,slider 语义)
+        "WidgetType::ColorButton",       // ColorField 色块 + 取色器令牌色板
+        "WidgetType::CollapsingHeader",  // SectionHeader 可折叠标题
+        "WidgetType::SelectableLabel",   // PanelTabs Tab 页
+        "WidgetType::ProgressIndicator", // 线性进度
+        "WidgetType::Checkbox",          // checkbox / switch
+        "WidgetType::RadioButton",       // radio
+    ] {
+        assert!(
+            COMPONENTS.contains(ty),
+            "G-UI-D:组件层缺 {ty} 的读屏登记(S5 清单 ③ 回归)"
+        );
+    }
 }
 
 /// Tab 序的机制面:自绘控件一律经 `Sense::click` / `Sense::drag` /

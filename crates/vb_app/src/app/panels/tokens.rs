@@ -8,10 +8,13 @@ use crate::app::VellumApp;
 impl VellumApp {
     pub(crate) fn tokens_tab(&mut self, ui: &mut egui::Ui) {
         // --- 设计令牌(v0.7:CSS 变量,改一处全站生效) ---
-        ui.heading("设计令牌");
+        ui.heading(vb_session::i18n::t("ui-app-panels-tokens-001"));
         ui.horizontal(|ui| {
             let mut add: Option<(String, String)> = None;
-            if ui.small_button("+ 令牌").clicked() {
+            if ui
+                .small_button(vb_session::i18n::t("ui-app-panels-tokens-002"))
+                .clicked()
+            {
                 add = Some((
                     format!("brand-{}", self.doc.tokens.len() + 1),
                     "#888888".into(), // vb-token-ok: 新令牌默认值(文档内容,非 UI 皮肤)

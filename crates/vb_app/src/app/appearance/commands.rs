@@ -18,10 +18,24 @@ pub type AppearanceResult = Result<Option<Command>, String>;
 /// 条目写回单命令:`Compound[SetStyle(重编译), SetAttrs(模型)]`。
 /// `m` 为**新**模型(own 已含 prev 的接管集;删到 0 条也保持接管)。
 pub fn appearance_write_cmd(doc: &Document, sid: &str, m: AppearanceModel) -> AppearanceResult {
-    let nid = doc
-        .find_by_sid(sid)
-        .ok_or_else(|| format!("对象不存在:{sid}"))?;
-    let n = doc.node(nid).ok_or_else(|| format!("对象不存在:{sid}"))?;
+    let nid = doc.find_by_sid(sid).ok_or_else(|| {
+        vb_session::i18n::t_args(
+            "ui-app-appearance-commands-001",
+            &[(
+                "sid",
+                vb_session::i18n::FluentValue::from((sid).to_string()),
+            )],
+        )
+    })?;
+    let n = doc.node(nid).ok_or_else(|| {
+        vb_session::i18n::t_args(
+            "ui-app-appearance-commands-001",
+            &[(
+                "sid",
+                vb_session::i18n::FluentValue::from((sid).to_string()),
+            )],
+        )
+    })?;
     let mut own = m.own.clone();
     for it in &m.items {
         let tag = item_own_tag(it);
@@ -63,15 +77,15 @@ pub(super) fn validate_effect(kind: &NodeKind, e: &Effect) -> Result<(), String>
         Effect::RoundCorners { .. }
             if !accepts_round_corners(kind) && target_of(kind) != AppearanceTarget::Frozen =>
         {
-            Err("圆角仅对盒对象有效(路径/文字对象不支持)".into())
+            Err(vb_session::i18n::t("ui-app-appearance-commands-002"))
         }
         Effect::RoundCorners { .. } if target_of(kind) == AppearanceTarget::Frozen => {
-            Err("冻结块内部不可编辑(样式作用于原样保留的 HTML 片段,无渲染落点)".into())
+            Err(vb_session::i18n::t("ui-app-appearance-commands-003"))
         }
         Effect::InnerShadow { .. } | Effect::InnerGlow { .. }
             if target_of(kind) == AppearanceTarget::Text =>
         {
-            Err("文字不支持内阴影/内发光(CSS text-shadow 无 inset 语义)".into())
+            Err(vb_session::i18n::t("ui-app-appearance-commands-004"))
         }
         _ => Ok(()),
     }
@@ -81,14 +95,15 @@ pub(super) fn validate_effect(kind: &NodeKind, e: &Effect) -> Result<(), String>
 
 /// 添加填充(默认半透明灰,入栈可撤销)。
 pub fn add_fill_cmd(doc: &Document, sid: &str, body: FillBody) -> AppearanceResult {
-    let (nid, mut m) = load_model(doc, sid).ok_or_else(|| "未选中对象".to_string())?;
+    let (nid, mut m) = load_model(doc, sid)
+        .ok_or_else(|| vb_session::i18n::t("ui-common-no-selection").to_string())?;
     let kind = doc.node(nid).unwrap().kind.clone();
     match (&body, target_of(&kind)) {
         (FillBody::Gradient { .. }, AppearanceTarget::Vector) => {
-            return Err("矢量路径的渐变填充暂不支持(SVG defs 未建模,计划 v2);可先用纯色".into())
+            return Err(vb_session::i18n::t("ui-app-appearance-commands-005"))
         }
         (FillBody::Gradient { .. }, AppearanceTarget::Text) => {
-            return Err("文字渐变填充暂不支持(计划 v2);可先用纯色".into())
+            return Err(vb_session::i18n::t("ui-app-appearance-commands-006"))
         }
         _ => {}
     }
@@ -111,7 +126,8 @@ pub fn set_fill_body_cmd(
     index: usize,
     body: FillBody,
 ) -> AppearanceResult {
-    let (_, mut m) = load_model(doc, sid).ok_or_else(|| "未选中对象".to_string())?;
+    let (_, mut m) = load_model(doc, sid)
+        .ok_or_else(|| vb_session::i18n::t("ui-common-no-selection").to_string())?;
     if index >= m.items.len() {
         return Ok(None);
     }
@@ -127,7 +143,8 @@ pub fn set_fill_body_cmd(
 
 /// 为任意对象添加描边(05-3-3 通用入口;默认 1px 黑内侧)。
 pub fn add_stroke_cmd(doc: &Document, sid: &str) -> AppearanceResult {
-    let (_nid, mut m) = load_model(doc, sid).ok_or_else(|| "未选中对象".to_string())?;
+    let (_nid, mut m) = load_model(doc, sid)
+        .ok_or_else(|| vb_session::i18n::t("ui-common-no-selection").to_string())?;
     // AI 语义:新描边条目在最上层
     m.items.insert(
         0,
@@ -150,9 +167,10 @@ pub fn set_stroke_spec_cmd(
     index: usize,
     spec: StrokeSpec,
 ) -> AppearanceResult {
-    let (_, mut m) = load_model(doc, sid).ok_or_else(|| "未选中对象".to_string())?;
+    let (_, mut m) = load_model(doc, sid)
+        .ok_or_else(|| vb_session::i18n::t("ui-common-no-selection").to_string())?;
     if spec.dash.len() > 6 {
-        return Err("虚线最多 6 组(3 对值/间隙)".into());
+        return Err(vb_session::i18n::t("ui-app-appearance-commands-007"));
     }
     if index >= m.items.len() {
         return Ok(None);
@@ -169,7 +187,8 @@ pub fn set_stroke_spec_cmd(
 
 /// 添加效果(六种映射 + 羽化;圆角/内阴影对非支持目标的拒绝含提示)。
 pub fn add_effect_cmd(doc: &Document, sid: &str, effect: Effect) -> AppearanceResult {
-    let (nid, mut m) = load_model(doc, sid).ok_or_else(|| "未选中对象".to_string())?;
+    let (nid, mut m) = load_model(doc, sid)
+        .ok_or_else(|| vb_session::i18n::t("ui-common-no-selection").to_string())?;
     let kind = doc.node(nid).unwrap().kind.clone();
     validate_effect(&kind, &effect)?;
     // AI 语义:新效果条目在最上层
@@ -186,7 +205,8 @@ pub fn add_effect_cmd(doc: &Document, sid: &str, effect: Effect) -> AppearanceRe
 
 /// 编辑第 `index` 条效果(参数数值化;校验同添加)。
 pub fn set_effect_cmd(doc: &Document, sid: &str, index: usize, effect: Effect) -> AppearanceResult {
-    let (nid, mut m) = load_model(doc, sid).ok_or_else(|| "未选中对象".to_string())?;
+    let (nid, mut m) = load_model(doc, sid)
+        .ok_or_else(|| vb_session::i18n::t("ui-common-no-selection").to_string())?;
     let kind = doc.node(nid).unwrap().kind.clone();
     validate_effect(&kind, &effect)?;
     if index >= m.items.len() {
@@ -204,7 +224,8 @@ pub fn set_effect_cmd(doc: &Document, sid: &str, index: usize, effect: Effect) -
 
 /// 上移/下移(05-1-1 条目顺序 = CSS 叠加顺序;dir -1 = 上移)。
 pub fn move_item_cmd(doc: &Document, sid: &str, index: usize, dir: i32) -> AppearanceResult {
-    let (_, mut m) = load_model(doc, sid).ok_or_else(|| "未选中对象".to_string())?;
+    let (_, mut m) = load_model(doc, sid)
+        .ok_or_else(|| vb_session::i18n::t("ui-common-no-selection").to_string())?;
     let to = index as i32 + dir;
     if index >= m.items.len() || to < 0 || to as usize >= m.items.len() {
         return Ok(None);
@@ -215,7 +236,8 @@ pub fn move_item_cmd(doc: &Document, sid: &str, index: usize, dir: i32) -> Appea
 
 /// 眼睛开关(临时禁用 = 从编译产物移除该条,模型保留)。
 pub fn toggle_item_cmd(doc: &Document, sid: &str, index: usize, enabled: bool) -> AppearanceResult {
-    let (_, mut m) = load_model(doc, sid).ok_or_else(|| "未选中对象".to_string())?;
+    let (_, mut m) = load_model(doc, sid)
+        .ok_or_else(|| vb_session::i18n::t("ui-common-no-selection").to_string())?;
     if index >= m.items.len() {
         return Ok(None);
     }
@@ -225,7 +247,8 @@ pub fn toggle_item_cmd(doc: &Document, sid: &str, index: usize, enabled: bool) -
 
 /// 复制条目(插到原条目上方;AI 行为)。
 pub fn duplicate_item_cmd(doc: &Document, sid: &str, index: usize) -> AppearanceResult {
-    let (_, mut m) = load_model(doc, sid).ok_or_else(|| "未选中对象".to_string())?;
+    let (_, mut m) = load_model(doc, sid)
+        .ok_or_else(|| vb_session::i18n::t("ui-common-no-selection").to_string())?;
     if index >= m.items.len() {
         return Ok(None);
     }
@@ -236,7 +259,8 @@ pub fn duplicate_item_cmd(doc: &Document, sid: &str, index: usize) -> Appearance
 
 /// 删除条目(删到 0 条保持接管:清空 = 移除受管声明,不静默残留)。
 pub fn remove_item_cmd(doc: &Document, sid: &str, index: usize) -> AppearanceResult {
-    let (_, mut m) = load_model(doc, sid).ok_or_else(|| "未选中对象".to_string())?;
+    let (_, mut m) = load_model(doc, sid)
+        .ok_or_else(|| vb_session::i18n::t("ui-common-no-selection").to_string())?;
     if index >= m.items.len() {
         return Ok(None);
     }
@@ -251,7 +275,8 @@ pub fn set_item_blend_cmd(
     index: usize,
     blend: Option<String>,
 ) -> AppearanceResult {
-    let (_, mut m) = load_model(doc, sid).ok_or_else(|| "未选中对象".to_string())?;
+    let (_, mut m) = load_model(doc, sid)
+        .ok_or_else(|| vb_session::i18n::t("ui-common-no-selection").to_string())?;
     if index >= m.items.len() {
         return Ok(None);
     }
@@ -267,7 +292,8 @@ pub fn update_stroke_width(
     index: usize,
     width: f64,
 ) -> AppearanceResult {
-    let (_, mut m) = load_model(doc, sid).ok_or_else(|| "未选中对象".to_string())?;
+    let (_, mut m) = load_model(doc, sid)
+        .ok_or_else(|| vb_session::i18n::t("ui-common-no-selection").to_string())?;
     if index >= m.items.len() {
         return Ok(None);
     }
@@ -292,33 +318,33 @@ pub struct UnsupportedFeature {
 pub const UNSUPPORTED: &[UnsupportedFeature] = &[
     UnsupportedFeature {
         id: "live_paint",
-        label: "实时上色",
-        message: "实时上色在 v1 不支持;可用路径查找器或形状生成器代替",
+        label: "实时上色", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+        message: "实时上色在 v1 不支持;可用路径查找器或形状生成器代替", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     },
     UnsupportedFeature {
         id: "mesh_gradient",
-        label: "渐变网格",
-        message: "渐变网格无 HTML 对应;建议用多层径向渐变叠加模拟(计划于 v2 支持)",
+        label: "渐变网格", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+        message: "渐变网格无 HTML 对应;建议用多层径向渐变叠加模拟(计划于 v2 支持)", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     },
     UnsupportedFeature {
         id: "image_trace",
-        label: "图像描摹",
-        message: "图像描摹暂不支持(计划于 v2 支持)",
+        label: "图像描摹", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+        message: "图像描摹暂不支持(计划于 v2 支持)", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     },
     UnsupportedFeature {
         id: "perspective_3d",
-        label: "3D / 透视",
-        message: "3D 与透视网格不支持",
+        label: "3D / 透视", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+        message: "3D 与透视网格不支持", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     },
     UnsupportedFeature {
         id: "symbols",
-        label: "符号",
-        message: "符号将于 v2 以『组件』形式提供",
+        label: "符号", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+        message: "符号将于 v2 以『组件』形式提供", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     },
     UnsupportedFeature {
         id: "variables",
-        label: "变量",
-        message: "变量已以『设计令牌』提供:右侧面板坞 · 令牌 Tab(F4 切换)",
+        label: "变量", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+        message: "变量已以『设计令牌』提供:右侧面板坞 · 令牌 Tab(F4 切换)", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     },
 ];
 

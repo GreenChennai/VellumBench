@@ -94,14 +94,44 @@ impl AppearanceItem {
     pub fn summary(&self) -> String {
         match self {
             AppearanceItem::Fill(f) => match &f.body {
-                FillBody::Solid { value } => format!("填充 {value}"),
-                FillBody::Gradient { value } => format!("填充 渐变({value})"),
-                FillBody::Raw { value } => format!("填充 {value}"),
+                FillBody::Solid { value } => vb_session::i18n::t_args(
+                    "ui-app-appearance-model-001",
+                    &[(
+                        "value",
+                        vb_session::i18n::FluentValue::from((value).to_string()),
+                    )],
+                ),
+                FillBody::Gradient { value } => vb_session::i18n::t_args(
+                    "ui-app-appearance-model-002",
+                    &[(
+                        "value",
+                        vb_session::i18n::FluentValue::from((value).to_string()),
+                    )],
+                ),
+                FillBody::Raw { value } => vb_session::i18n::t_args(
+                    "ui-app-appearance-model-001",
+                    &[(
+                        "value",
+                        vb_session::i18n::FluentValue::from((value).to_string()),
+                    )],
+                ),
             },
-            AppearanceItem::Stroke(s) => {
-                format!("描边 {}px", vb_common::units::fmt_num(s.spec.width))
-            }
-            AppearanceItem::Effect(e) => format!("效果 {}", e.effect.label()),
+            AppearanceItem::Stroke(s) => vb_session::i18n::t_args(
+                "ui-app-appearance-model-003",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from(
+                        (vb_common::units::fmt_num(s.spec.width)).to_string(),
+                    ),
+                )],
+            ),
+            AppearanceItem::Effect(e) => vb_session::i18n::t_args(
+                "ui-app-appearance-model-004",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from((e.effect.label()).to_string()),
+                )],
+            ),
         }
     }
 }
@@ -150,9 +180,9 @@ pub enum StrokeCap {
 impl StrokeCap {
     pub fn label(self) -> &'static str {
         match self {
-            StrokeCap::Butt => "平头",
-            StrokeCap::Round => "圆头",
-            StrokeCap::Square => "方头",
+            StrokeCap::Butt => "平头", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            StrokeCap::Round => "圆头", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            StrokeCap::Square => "方头", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
         }
     }
     pub fn css(self) -> &'static str {
@@ -184,9 +214,9 @@ pub enum StrokeJoin {
 impl StrokeJoin {
     pub fn label(self) -> &'static str {
         match self {
-            StrokeJoin::Miter => "斜接",
-            StrokeJoin::Round => "圆角",
-            StrokeJoin::Bevel => "斜切",
+            StrokeJoin::Miter => "斜接", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            StrokeJoin::Round => "圆角", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            StrokeJoin::Bevel => "斜切", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
         }
     }
     pub fn css(self) -> &'static str {
@@ -221,9 +251,9 @@ pub enum StrokeAlign {
 impl StrokeAlign {
     pub fn label(self) -> &'static str {
         match self {
-            StrokeAlign::Center => "居中",
-            StrokeAlign::Inside => "内侧",
-            StrokeAlign::Outside => "外侧",
+            StrokeAlign::Center => "居中", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            StrokeAlign::Inside => "内侧", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            StrokeAlign::Outside => "外侧", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
         }
     }
 }
@@ -242,10 +272,10 @@ pub enum Arrowhead {
 impl Arrowhead {
     pub fn label(self) -> &'static str {
         match self {
-            Arrowhead::None => "无",
-            Arrowhead::Arrow => "箭头",
-            Arrowhead::Circle => "圆点",
-            Arrowhead::Tick => "短线",
+            Arrowhead::None => "无", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            Arrowhead::Arrow => "箭头", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            Arrowhead::Circle => "圆点", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            Arrowhead::Tick => "短线", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
         }
     }
 }
@@ -342,14 +372,14 @@ pub enum Effect {
 impl Effect {
     pub fn label(&self) -> &'static str {
         match self {
-            Effect::DropShadow { .. } => "投影",
-            Effect::InnerShadow { .. } => "内阴影",
-            Effect::OuterGlow { .. } => "外发光",
-            Effect::InnerGlow { .. } => "内发光",
-            Effect::GaussianBlur { .. } => "高斯模糊",
-            Effect::RoundCorners { .. } => "圆角",
-            Effect::Feather { .. } => "羽化",
-            Effect::Other { .. } => "自定义",
+            Effect::DropShadow { .. } => "投影", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            Effect::InnerShadow { .. } => "内阴影", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            Effect::OuterGlow { .. } => "外发光", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            Effect::InnerGlow { .. } => "内发光", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            Effect::GaussianBlur { .. } => "高斯模糊", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            Effect::RoundCorners { .. } => "圆角", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            Effect::Feather { .. } => "羽化", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            Effect::Other { .. } => "自定义", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
         }
     }
 

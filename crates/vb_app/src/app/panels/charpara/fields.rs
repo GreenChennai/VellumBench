@@ -24,49 +24,49 @@ pub(super) struct PxFieldSpec {
 }
 
 pub(super) const SIZE_SPEC: PxFieldSpec = PxFieldSpec {
-    label: "大小",
+    label: "大小", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     prop: "font-size",
     lo: 1.0,
     hi: 1000.0,
 };
 pub(super) const LH_SPEC: PxFieldSpec = PxFieldSpec {
-    label: "行距",
+    label: "行距", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     prop: "line-height",
     lo: 1.0,
     hi: 2000.0,
 };
 pub(super) const TRACK_SPEC: PxFieldSpec = PxFieldSpec {
-    label: "字距",
+    label: "字距", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     prop: "letter-spacing",
     lo: -50.0,
     hi: 500.0,
 };
 pub(super) const INDENT_L_SPEC: PxFieldSpec = PxFieldSpec {
-    label: "左缩进",
+    label: "左缩进", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     prop: "padding-left",
     lo: 0.0,
     hi: 1000.0,
 };
 pub(super) const INDENT_R_SPEC: PxFieldSpec = PxFieldSpec {
-    label: "右缩进",
+    label: "右缩进", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     prop: "padding-right",
     lo: 0.0,
     hi: 1000.0,
 };
 pub(super) const INDENT_FIRST_SPEC: PxFieldSpec = PxFieldSpec {
-    label: "首行缩",
+    label: "首行缩", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     prop: "text-indent",
     lo: -200.0,
     hi: 1000.0,
 };
 pub(super) const SPACE_BEFORE_SPEC: PxFieldSpec = PxFieldSpec {
-    label: "段前",
+    label: "段前", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     prop: "margin-top",
     lo: 0.0,
     hi: 2000.0,
 };
 pub(super) const SPACE_AFTER_SPEC: PxFieldSpec = PxFieldSpec {
-    label: "段后",
+    label: "段后", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     prop: "margin-bottom",
     lo: 0.0,
     hi: 2000.0,
@@ -82,30 +82,30 @@ pub(super) struct ComboSpec {
 }
 
 pub(super) const KINSOKU_SPEC: ComboSpec = ComboSpec {
-    label: "避头尾",
+    label: "避头尾", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     salt: "para_kinsoku",
     prop: "line-break",
     options: &[
-        ("auto", "自动"),
-        ("loose", "宽松"),
-        ("normal", "一般"),
-        ("strict", "严格"),
+        ("auto", "自动"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+        ("loose", "宽松"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+        ("normal", "一般"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+        ("strict", "严格"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     ],
 };
 pub(super) const HYPHENS_SPEC: ComboSpec = ComboSpec {
-    label: "连字",
+    label: "连字", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     salt: "para_hyphens",
     prop: "hyphens",
-    options: &[("manual", "手动(默认)"), ("auto", "自动"), ("none", "关")],
+    options: &[("manual", "手动(默认)"), ("auto", "自动"), ("none", "关")], // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
 };
 pub(super) const PUNCT_SPEC: ComboSpec = ComboSpec {
-    label: "标点挤压",
+    label: "标点挤压", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     salt: "para_punct",
     prop: "hanging-punctuation",
     options: &[
-        ("none", "无"),
-        ("allow-end", "允许末行悬挂"),
-        ("force-end", "强制末行悬挂"),
+        ("none", "无"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+        ("allow-end", "允许末行悬挂"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+        ("force-end", "强制末行悬挂"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     ],
 };
 

@@ -57,12 +57,10 @@ impl VellumApp {
                                     self.control_field_ui(ui, field);
                                 }
                                 // 需要选区的态没有对象时给引导,不画死控件
-                                // (不做"点了没反应";§8.9:引导带键位,
+                                // (不做vb_session::i18n::t("ui-app-control-panel-render-001");§8.9:引导带键位,
                                 // 与属性面板空态同一套话术)
                                 if needs_selection(spec.state) && self.selection.is_empty() {
-                                    ui.weak(
-                                        "先选中对象(按 V 点选 · M 拖框创建 · 双击文字进入编辑)",
-                                    );
+                                    ui.weak(vb_session::i18n::t("ui-app-control-panel-render-002"));
                                 }
                             });
                         });
@@ -79,7 +77,13 @@ impl VellumApp {
         // 04-5-3:画板数(只读计数;design/03 §三「画板选项:… 画板数」)。
         // 增删画板走「+画板」按钮与画板面板,此处不做假的可编辑控件。
         if field.id == "ab.count" {
-            ui.weak(format!("画板数 {}", self.doc.artboards.len()));
+            ui.weak(vb_session::i18n::t_args(
+                "ui-app-control-panel-render-003",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from((self.doc.artboards.len()).to_string()),
+                )],
+            ));
             return;
         }
         match field.kind {
@@ -99,7 +103,7 @@ impl VellumApp {
                             let cmds = gradient_reverse_cmds(&self.doc, &sids);
                             if let Some(cmd) = combine(cmds) {
                                 self.exec(cmd);
-                                self.say("渐变已反向");
+                                self.say(vb_session::i18n::t("ui-app-control-panel-render-004"));
                             }
                         }
                         _ => {}
@@ -194,7 +198,7 @@ impl VellumApp {
     pub(super) fn fixed_zone_ui(&mut self, ui: &mut egui::Ui) {
         // 文档标题(真实写文档:SetMetaTitle)
         let mut title = self.doc.meta.title.clone();
-        ui.label("标题");
+        ui.label(vb_session::i18n::t("ui-common-title"));
         if ui
             .add_sized(
                 [110.0, vb_ui::theme::row_height(ui.ctx())],
@@ -206,7 +210,13 @@ impl VellumApp {
         {
             let new = title.trim().to_string();
             self.exec(Command::SetMetaTitle { new, old: None });
-            self.say(format!("文档标题 → {}", title.trim()));
+            self.say(vb_session::i18n::t_args(
+                "ui-app-control-panel-render-005",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from((title.trim()).to_string()),
+                )],
+            ));
         }
         // 画板切换下拉(联动画布)
         let idx = self
@@ -223,7 +233,15 @@ impl VellumApp {
                     .name
                     .clone()
             })
-            .unwrap_or_else(|| format!("共 {} 块", self.doc.artboards.len()));
+            .unwrap_or_else(|| {
+                vb_session::i18n::t_args(
+                    "ui-app-control-panel-render-006",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from((self.doc.artboards.len()).to_string()),
+                    )],
+                )
+            });
         egui::ComboBox::from_id_salt("ctl_ab_switch")
             .selected_text(format!(
                 "{}/{} {}",
@@ -253,7 +271,10 @@ impl VellumApp {
         egui::ComboBox::from_id_salt("ctl_zoom")
             .selected_text(format!("{pct}%"))
             .show_ui(ui, |ui| {
-                if ui.selectable_label(false, "适合窗口").clicked() {
+                if ui
+                    .selectable_label(false, vb_session::i18n::t("ui-menu-view-fit"))
+                    .clicked()
+                {
                     self.run_command("view.fit", false, false);
                     ui.close();
                 }
@@ -261,16 +282,28 @@ impl VellumApp {
                     self.run_command("view.actual_size", false, false);
                     ui.close();
                 }
-                if ui.selectable_label(false, "放大一档").clicked() {
+                if ui
+                    .selectable_label(
+                        false,
+                        vb_session::i18n::t("ui-app-control-panel-render-008"),
+                    )
+                    .clicked()
+                {
                     self.run_command("view.zoom_in", false, false);
                     ui.close();
                 }
-                if ui.selectable_label(false, "缩小一档").clicked() {
+                if ui
+                    .selectable_label(
+                        false,
+                        vb_session::i18n::t("ui-app-control-panel-render-009"),
+                    )
+                    .clicked()
+                {
                     self.run_command("view.zoom_out", false, false);
                     ui.close();
                 }
             });
-        // 浏览器校对按钮:design/03 §三 称"本产品独有",但现有命令层
+        // 浏览器校对按钮:design/03 §三 称vb_session::i18n::t("ui-app-control-panel-render-010"),但现有命令层
         // 无可复用实现(vb_browser 仅 CLI 侧)—— 不放假按钮,登记阶段 8。
     }
 

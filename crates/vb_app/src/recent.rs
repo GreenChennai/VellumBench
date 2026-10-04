@@ -9,7 +9,7 @@
 //! 单一真相(`config_dir`)同批下沉,`dock_layout::config_dir` 委托至此。
 //!
 //! 多窗口写竞争的缓解不变 = **单写入者**:只有外壳(`crate::shell::ShellApp`)
-//! 持有内存态并落盘;项目窗口的"保存/打开"经外壳转发,不直接写。
+//! 持有内存态并落盘;项目窗口的vb_session::i18n::t("ui-recent-001")经外壳转发,不直接写。
 
 pub use vb_session::mru::*;
 

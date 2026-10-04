@@ -44,10 +44,10 @@ impl DockSide {
 
     pub fn label(self) -> &'static str {
         match self {
-            DockSide::Top => "顶部",
-            DockSide::Left => "左侧",
-            DockSide::Right => "右侧",
-            DockSide::Bottom => "底部",
+            DockSide::Top => "顶部", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            DockSide::Left => "左侧", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            DockSide::Right => "右侧", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            DockSide::Bottom => "底部", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
         }
     }
 
@@ -412,7 +412,10 @@ pub fn load_from(path: &std::path::Path) -> (WorkspaceConfig, Option<String>) {
         Err(e) => {
             return (
                 WorkspaceConfig::default(),
-                Some(format!("workspace.json 解析失败,已回退默认布局:{e}")),
+                Some(vb_session::i18n::t_args(
+                    "ui-app-dock-layout-005",
+                    &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                )),
             );
         }
     };
@@ -426,7 +429,10 @@ pub fn load_from(path: &std::path::Path) -> (WorkspaceConfig, Option<String>) {
             Ok(cfg) => (normalize(cfg), None),
             Err(e) => (
                 WorkspaceConfig::default(),
-                Some(format!("workspace.json 解析失败,已回退默认布局:{e}")),
+                Some(vb_session::i18n::t_args(
+                    "ui-app-dock-layout-005",
+                    &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                )),
             ),
         },
         // v1(04-2 之前的文件):补齐 sec_*/dev_stats/hints 默认值,偏好保留
@@ -434,13 +440,26 @@ pub fn load_from(path: &std::path::Path) -> (WorkspaceConfig, Option<String>) {
             Ok(cfg) => (normalize(cfg), None),
             Err(e) => (
                 WorkspaceConfig::default(),
-                Some(format!("workspace.json v1 迁移失败,已回退默认布局:{e}")),
+                Some(vb_session::i18n::t_args(
+                    "ui-app-dock-layout-006",
+                    &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                )),
             ),
         },
         _ => (
             WorkspaceConfig::default(),
-            Some(format!(
-                "workspace.json 版本 {version} 与当前 {SCHEMA_VERSION} 不符,已回退默认布局"
+            Some(vb_session::i18n::t_args(
+                "ui-app-dock-layout-007",
+                &[
+                    (
+                        "version",
+                        vb_session::i18n::FluentValue::from((version).to_string()),
+                    ),
+                    (
+                        "SCHEMA_VERSION",
+                        vb_session::i18n::FluentValue::from((SCHEMA_VERSION).to_string()),
+                    ),
+                ],
             )),
         ),
     }
@@ -460,7 +479,7 @@ pub fn load() -> (WorkspaceConfig, Option<String>) {
         Some(p) => load_from(&p),
         None => (
             WorkspaceConfig::default(),
-            Some("找不到配置目录,本次布局不会持久化(可用 VB_WORKSPACE 指定)".into()),
+            Some(vb_session::i18n::t("ui-app-dock-layout-008")),
         ),
     }
 }
@@ -491,7 +510,7 @@ pub fn window_layer_path(window_id: u64) -> Option<std::path::PathBuf> {
 /// 损坏/非法 → `None` + 中文告警(RB-08:坏文件回退默认,不静默不崩)。
 pub fn load_window_layer(window_id: u64) -> (Option<LayoutSnapshot>, Option<String>) {
     let Some(p) = window_layer_path(window_id) else {
-        return (None, Some("找不到配置目录,窗口布局不会持久化".into()));
+        return (None, Some(vb_session::i18n::t("ui-app-dock-layout-009")));
     };
     let text = match std::fs::read_to_string(&p) {
         Ok(t) => t,
@@ -501,9 +520,15 @@ pub fn load_window_layer(window_id: u64) -> (Option<LayoutSnapshot>, Option<Stri
         Ok(snap) => (Some(snap.normalized()), None),
         Err(e) => (
             None,
-            Some(format!(
-                "窗口布局文件 {} 解析失败,已回退默认布局:{e}",
-                p.display()
+            Some(vb_session::i18n::t_args(
+                "ui-app-dock-layout-010",
+                &[
+                    (
+                        "a1",
+                        vb_session::i18n::FluentValue::from((p.display()).to_string()),
+                    ),
+                    ("e", vb_session::i18n::FluentValue::from((e).to_string())),
+                ],
             )),
         ),
     }
@@ -512,16 +537,35 @@ pub fn load_window_layer(window_id: u64) -> (Option<LayoutSnapshot>, Option<Stri
 /// 写窗口布局层(原子写:临时文件 → rename;失败带路径说明,不静默)。
 pub fn save_window_layer(window_id: u64, snap: &LayoutSnapshot) -> Result<(), String> {
     let Some(p) = window_layer_path(window_id) else {
-        return Err("找不到配置目录,窗口布局未持久化".into());
+        return Err(vb_session::i18n::t("ui-app-dock-layout-011"));
     };
     if let Some(dir) = p.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败:{e}"))?;
+        std::fs::create_dir_all(dir).map_err(|e| {
+            vb_session::i18n::t_args(
+                "ui-app-dock-layout-012",
+                &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+            )
+        })?;
     }
-    let text = serde_json::to_string_pretty(&snap.clone().normalized())
-        .map_err(|e| format!("序列化窗口布局失败:{e}"))?;
+    let text = serde_json::to_string_pretty(&snap.clone().normalized()).map_err(|e| {
+        vb_session::i18n::t_args(
+            "ui-app-dock-layout-013",
+            &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+        )
+    })?;
     let tmp = p.with_extension("json.tmp");
-    std::fs::write(&tmp, text).map_err(|e| format!("写窗口布局失败:{e}"))?;
-    std::fs::rename(&tmp, &p).map_err(|e| format!("提交窗口布局失败:{e}"))
+    std::fs::write(&tmp, text).map_err(|e| {
+        vb_session::i18n::t_args(
+            "ui-app-dock-layout-014",
+            &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+        )
+    })?;
+    std::fs::rename(&tmp, &p).map_err(|e| {
+        vb_session::i18n::t_args(
+            "ui-app-dock-layout-015",
+            &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+        )
+    })
 }
 
 impl LayoutSnapshot {
@@ -582,20 +626,40 @@ pub fn load_for_window(window_id: u64) -> (WorkspaceConfig, Option<String>) {
 /// 写回配置(原子性:先写临时文件再改名,避免半截 JSON)。
 pub fn save_to(path: &std::path::Path, cfg: &WorkspaceConfig) -> Result<(), String> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败:{e}"))?;
+        std::fs::create_dir_all(dir).map_err(|e| {
+            vb_session::i18n::t_args(
+                "ui-app-dock-layout-012",
+                &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+            )
+        })?;
     }
     let mut cfg = cfg.clone();
     cfg.schema_version = SCHEMA_VERSION;
-    let text =
-        serde_json::to_string_pretty(&cfg).map_err(|e| format!("序列化工作区配置失败:{e}"))?;
+    let text = serde_json::to_string_pretty(&cfg).map_err(|e| {
+        vb_session::i18n::t_args(
+            "ui-app-dock-layout-016",
+            &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+        )
+    })?;
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, text).map_err(|e| format!("写工作区配置失败:{e}"))?;
-    std::fs::rename(&tmp, path).map_err(|e| format!("提交工作区配置失败:{e}"))
+    std::fs::write(&tmp, text).map_err(|e| {
+        vb_session::i18n::t_args(
+            "ui-app-dock-layout-017",
+            &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+        )
+    })?;
+    std::fs::rename(&tmp, path).map_err(|e| {
+        vb_session::i18n::t_args(
+            "ui-app-dock-layout-018",
+            &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+        )
+    })
 }
 
 /// 写回真实路径(无路径 → 报错说明,不静默)。
 pub fn save(cfg: &WorkspaceConfig) -> Result<(), String> {
-    let p = config_path().ok_or_else(|| "找不到配置目录,布局未持久化".to_string())?;
+    let p =
+        config_path().ok_or_else(|| vb_session::i18n::t("ui-app-dock-layout-019").to_string())?;
     save_to(&p, cfg)
 }
 

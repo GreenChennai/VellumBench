@@ -23,15 +23,15 @@ use crate::i18n::Lang;
 
 /// 九分类页签(标题与顺序固定;`prefs_tab` 存下标)。
 pub(crate) const PREF_PAGES: [&str; 9] = [
-    "常规",
-    "文字",
-    "单位与标尺",
-    "参考线与网格",
-    "智能参考线",
-    "画板",
-    "性能",
-    "外观",
-    "数据",
+    "常规",         // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    "文字",         // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    "单位与标尺",   // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    "参考线与网格", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    "智能参考线",   // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    "画板",         // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    "性能",         // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    "外观",         // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    "数据",         // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
 ];
 
 impl VellumApp {
@@ -41,7 +41,7 @@ impl VellumApp {
             return;
         }
         let mut open = true;
-        egui::Window::new("首选项")
+        egui::Window::new(vb_session::i18n::t("ui-app-dialogs-002"))
             .open(&mut open)
             .collapsible(false)
             .default_size([520.0, 380.0])
@@ -70,10 +70,13 @@ impl VellumApp {
                 ui.separator();
                 ui.horizontal(|ui| {
                     // 恢复默认:九类全部回默认值(即时生效 + 落盘)
-                    if ui.button("恢复默认").clicked() {
+                    if ui
+                        .button(vb_session::i18n::t("ui-app-prefs-dialog-004"))
+                        .clicked()
+                    {
                         self.prefs_restore_defaults();
                     }
-                    ui.weak("改动即时生效,自动写入 workspace.json");
+                    ui.weak(vb_session::i18n::t("ui-app-prefs-dialog-005"));
                 });
             });
         self.prefs_open = open;
@@ -87,10 +90,7 @@ impl VellumApp {
         // H-1:动效总开关(视图菜单「界面动效」同款;持久化 workspace.json)
         let mut motion = self.motion_enabled;
         if ui
-            .checkbox(
-                &mut motion,
-                "界面动效(对话框/面板淡入、悬停过渡;关闭后立即到位)",
-            )
+            .checkbox(&mut motion, vb_session::i18n::t("ui-app-prefs-dialog-006"))
             .changed()
         {
             self.motion_enabled = motion;
@@ -102,7 +102,7 @@ impl VellumApp {
         // §8.3.5:密度档(图层行等列表行高 24/28;默认 comfortable)
         let mut compact = self.density_compact;
         if ui
-            .checkbox(&mut compact, "紧凑密度(列表行高 24;默认 comfortable 28)")
+            .checkbox(&mut compact, vb_session::i18n::t("ui-app-prefs-dialog-007"))
             .changed()
         {
             self.density_compact = compact;
@@ -110,20 +110,23 @@ impl VellumApp {
         }
         let mut show_tools = self.show_all_tools;
         if ui
-            .checkbox(&mut show_tools, "显示未支持工具(置灰展示,点击见计划说明)")
+            .checkbox(
+                &mut show_tools,
+                vb_session::i18n::t("ui-app-prefs-dialog-008"),
+            )
             .changed()
         {
             self.show_all_tools = show_tools;
         }
         let mut fidelity = self.pencil_fidelity;
         ui.horizontal(|ui| {
-            ui.label("铅笔保真度容差");
+            ui.label(vb_session::i18n::t("ui-app-prefs-dialog-009"));
             ui.add(
                 egui::DragValue::new(&mut fidelity)
                     .range(1.0..=20.0)
                     .suffix(" px"),
             );
-            ui.weak("(自由绘制抽稀容差,越大越平滑)");
+            ui.weak(vb_session::i18n::t("ui-app-prefs-dialog-010"));
         });
         if (fidelity - self.pencil_fidelity).abs() > f64::EPSILON {
             self.pencil_fidelity = fidelity;
@@ -135,7 +138,10 @@ impl VellumApp {
             let mut sel = cur;
             ui.horizontal(|ui| {
                 ui.label(crate::i18n::t("prefs.ui-language"));
-                if ui.selectable_label(cur == Lang::Zh, "中文").clicked() {
+                if ui
+                    .selectable_label(cur == Lang::Zh, vb_session::i18n::t("ui-common-chinese"))
+                    .clicked()
+                {
                     sel = Lang::Zh;
                 }
                 if ui.selectable_label(cur == Lang::En, "English").clicked() {
@@ -144,19 +150,25 @@ impl VellumApp {
             });
             if sel != cur {
                 crate::i18n::set_lang(sel);
-                self.say(format!("界面语言 → {}", sel.code()));
+                self.say(vb_session::i18n::t_args(
+                    "ui-app-prefs-dialog-011",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from((sel.code()).to_string()),
+                    )],
+                ));
             }
             ui.weak(crate::i18n::t("prefs.ui-language-help"));
         }
         ui.add_space(6.0);
-        ui.weak("对应菜单:编辑 → 设置 → 显示未支持工具 / 铅笔保真度");
+        ui.weak(vb_session::i18n::t("ui-app-prefs-dialog-012"));
     }
 
     /// ②文字:新建文本默认样式(字符面板「默认样式」区同源)。
     fn prefs_page_type(&mut self, ui: &mut egui::Ui) {
         let mut size = self.text_default.font_size.unwrap_or(24.0);
         ui.horizontal(|ui| {
-            ui.label("新建文本默认字号");
+            ui.label(vb_session::i18n::t("ui-app-prefs-dialog-013"));
             ui.add(
                 egui::DragValue::new(&mut size)
                     .range(4.0..=200.0)
@@ -175,7 +187,7 @@ impl VellumApp {
         {
             let mut col = egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a);
             ui.horizontal(|ui| {
-                ui.label("新建文本默认颜色");
+                ui.label(vb_session::i18n::t("ui-app-prefs-dialog-014"));
                 if ui.color_edit_button_srgba(&mut col).changed() {
                     let [r, g, b, a] = col.to_array();
                     self.text_default.color =
@@ -186,11 +198,12 @@ impl VellumApp {
         // 默认字体(空 = 继承;文档已有字体见字符面板「文档已有」快选)
         let mut family = self.text_default.font_family.clone().unwrap_or_default();
         ui.horizontal(|ui| {
-            ui.label("新建文本默认字体");
+            ui.label(vb_session::i18n::t("ui-app-prefs-dialog-015"));
             if ui
                 .add_sized(
                     [180.0, theme::row_height(ui.ctx())],
-                    egui::TextEdit::singleline(&mut family).hint_text("(继承)"),
+                    egui::TextEdit::singleline(&mut family)
+                        .hint_text(vb_session::i18n::t("ui-app-prefs-dialog-016")),
                 )
                 .changed()
             {
@@ -202,51 +215,69 @@ impl VellumApp {
             }
         });
         ui.add_space(6.0);
-        ui.weak("只影响此后新建的文本对象;已有文本不变");
+        ui.weak(vb_session::i18n::t("ui-app-prefs-dialog-017"));
     }
 
     /// ③单位与标尺:HTML/CSS 唯一长度单位是 px(诚实标注,不给假选项);
     /// 标尺默认显隐在此收编。
     fn prefs_page_units(&mut self, ui: &mut egui::Ui) {
-        ui.label("长度单位:像素 px(HTML/CSS 唯一单位,不可换算)");
+        ui.label(vb_session::i18n::t("ui-app-prefs-dialog-018"));
         let mut rulers = self.rulers_on;
-        if ui.checkbox(&mut rulers, "显示标尺").changed() {
+        if ui
+            .checkbox(
+                &mut rulers,
+                vb_session::i18n::t("ui-menu-view-toggle_rulers"),
+            )
+            .changed()
+        {
             self.rulers_on = rulers;
         }
-        ui.weak("对应菜单:视图 → 显示标尺;默认显隐随工作区记忆");
+        ui.weak(vb_session::i18n::t("ui-app-prefs-dialog-020"));
     }
 
     /// ④参考线与网格:网格基础间距(画布网格分级基数)+ 默认显隐收编。
     fn prefs_page_grid(&mut self, ui: &mut egui::Ui) {
         let mut size = self.grid_size;
         ui.horizontal(|ui| {
-            ui.label("网格基础间距");
+            ui.label(vb_session::i18n::t("ui-app-prefs-dialog-021"));
             ui.add(
                 egui::DragValue::new(&mut size)
                     .range(2.0..=256.0)
                     .suffix(" px"),
             );
-            ui.weak("(缩放时按 4× 分级,小于 16px/格自动放大)");
+            ui.weak(vb_session::i18n::t("ui-app-prefs-dialog-022"));
         });
         if (size - self.grid_size).abs() > f64::EPSILON {
             self.grid_size = size;
         }
         let mut grid_on = self.grid_on;
-        if ui.checkbox(&mut grid_on, "显示网格").changed() {
+        if ui
+            .checkbox(
+                &mut grid_on,
+                vb_session::i18n::t("ui-menu-view-toggle_grid"),
+            )
+            .changed()
+        {
             self.grid_on = grid_on;
         }
         let mut guides = self.guides_visible;
-        if ui.checkbox(&mut guides, "显示参考线").changed() {
+        if ui
+            .checkbox(
+                &mut guides,
+                vb_session::i18n::t("ui-menu-view-toggle_guides"),
+            )
+            .changed()
+        {
             self.guides_visible = guides;
         }
-        ui.weak("对应菜单:视图 → 显示网格 / 显示参考线");
+        ui.weak(vb_session::i18n::t("ui-app-prefs-dialog-024"));
     }
 
     /// ⑤智能参考线(吸附):默认开关收编。
     fn prefs_page_smart_guides(&mut self, ui: &mut egui::Ui) {
         let mut on = self.smart_guides_on;
         if ui
-            .checkbox(&mut on, "启用智能参考线(对齐/间距吸附提示)")
+            .checkbox(&mut on, vb_session::i18n::t("ui-app-prefs-dialog-025"))
             .changed()
         {
             self.smart_guides_on = on;
@@ -254,14 +285,14 @@ impl VellumApp {
                 self.smart_guides.clear();
             }
         }
-        ui.weak("对应菜单:视图 → 智能参考线;提示色品红,行为对齐 AI");
+        ui.weak(vb_session::i18n::t("ui-app-prefs-dialog-026"));
     }
 
     /// ⑥画板:新画板默认预设(画板面板「+ 新建」与控制面板「+画板」取此尺寸)。
     fn prefs_page_artboard(&mut self, ui: &mut egui::Ui) {
         let presets = super::panels::artboards::AB_PRESETS;
         let idx = self.artboard_preset.min(presets.len() - 1);
-        ui.label("新画板默认尺寸");
+        ui.label(vb_session::i18n::t("ui-app-prefs-dialog-027"));
         ui.horizontal_wrapped(|ui| {
             for (i, (name, w, h)) in presets.iter().enumerate() {
                 if ui
@@ -273,33 +304,39 @@ impl VellumApp {
             }
         });
         ui.add_space(6.0);
-        ui.weak("只影响此后新建的画板;改已有画板尺寸用「画板」面板");
+        ui.weak(vb_session::i18n::t("ui-app-prefs-dialog-028"));
     }
 
     /// ⑦性能:渲染后端**只读**展示(诚实标注 —— 本版本无切换开关,
     /// 不给假选项;调试数据仍在「视图 → 开发者统计」)。
     fn prefs_page_performance(&mut self, ui: &mut egui::Ui) {
-        ui.label("渲染后端:Vello(wgpu)");
+        ui.label(vb_session::i18n::t("ui-app-prefs-dialog-029"));
         match self.gpu.is_some() {
-            true => ui.label("GPU 画布:可用"),
+            true => ui.label(vb_session::i18n::t("ui-app-prefs-dialog-030")),
             false => ui.colored_label(
                 theme::tokens(ui.ctx()).warn,
-                "GPU 画布:不可用(降级渲染;见状态栏标注)",
+                vb_session::i18n::t("ui-app-prefs-dialog-031"),
             ),
         };
         ui.add_space(6.0);
-        ui.weak("本版本不提供渲染后端切换;FPS/显卡型号见「视图 → 开发者统计」");
+        ui.weak(vb_session::i18n::t("ui-app-prefs-dialog-032"));
     }
 
     /// ⑧外观:主题 / UI 缩放 / 提示条(全部收编既有项;原菜单入口保留)。
     fn prefs_page_appearance(&mut self, ui: &mut egui::Ui) {
         let mut dark = self.theme_dark;
         ui.horizontal(|ui| {
-            ui.label("主题");
-            if ui.selectable_label(dark, "深色").clicked() {
+            ui.label(vb_session::i18n::t("ui-common-theme"));
+            if ui
+                .selectable_label(dark, vb_session::i18n::t("ui-common-dark"))
+                .clicked()
+            {
                 dark = true;
             }
-            if ui.selectable_label(!dark, "浅色").clicked() {
+            if ui
+                .selectable_label(!dark, vb_session::i18n::t("ui-common-light"))
+                .clicked()
+            {
                 dark = false;
             }
         });
@@ -312,33 +349,33 @@ impl VellumApp {
         }
         let mut scale = self.ui_scale;
         ui.horizontal(|ui| {
-            ui.label("界面缩放");
+            ui.label(vb_session::i18n::t("ui-common-ui-scale"));
             ui.add(
                 egui::DragValue::new(&mut scale)
                     .speed(0.01)
                     .range(0.5..=3.0)
                     .suffix("×"),
             );
-            ui.weak("(叠加在系统 DPI 之上)");
+            ui.weak(vb_session::i18n::t("ui-app-prefs-dialog-033"));
         });
         if (scale - self.ui_scale).abs() > f32::EPSILON && scale.is_finite() {
             self.ui_scale = scale;
         }
         let mut hints = self.hints;
         if ui
-            .checkbox(&mut hints, "显示提示条(操作提示/入门教学)")
+            .checkbox(&mut hints, vb_session::i18n::t("ui-app-prefs-dialog-034"))
             .changed()
         {
             self.hints = hints;
         }
-        ui.weak("对应菜单:视图 → 浅色主题 / 界面缩放 / 提示");
+        ui.weak(vb_session::i18n::t("ui-app-prefs-dialog-035"));
     }
 
     /// ⑨数据:自动保存间隔(档位)+ 快照保留数(收编 07-A 既有项)。
     fn prefs_page_data(&mut self, ui: &mut egui::Ui) {
         let mut interval = self.autosave_interval_secs;
         ui.horizontal(|ui| {
-            ui.label("自动保存间隔");
+            ui.label(vb_session::i18n::t("ui-app-prefs-dialog-036"));
             let steps = crate::autosave::INTERVAL_STEPS;
             let pos = steps
                 .iter()
@@ -351,7 +388,7 @@ impl VellumApp {
                 });
             for (i, &step) in steps.iter().enumerate() {
                 let txt = if step == 0 {
-                    "关".to_string()
+                    vb_session::i18n::t("ui-common-off").to_string()
                 } else {
                     format!("{step}s")
                 };
@@ -363,21 +400,28 @@ impl VellumApp {
         if interval != self.autosave_interval_secs {
             self.autosave_interval_secs = interval;
             self.say(match interval {
-                0 => "自动保存:关闭(请常按 Ctrl+S)".into(),
-                s => format!("自动保存:每 {s} 秒"),
+                0 => vb_session::i18n::t("ui-app-prefs-dialog-037"),
+                s => vb_session::i18n::t_args(
+                    "ui-app-prefs-dialog-038",
+                    &[("s", vb_session::i18n::FluentValue::from((s).to_string()))],
+                ),
             });
         }
         let mut keep = self.autosave_keep;
         ui.horizontal(|ui| {
-            ui.label("快照保留数");
-            ui.add(egui::DragValue::new(&mut keep).range(1..=3).suffix(" 份"));
-            ui.weak("(滚动保留,写入项目 .vb-autosave/)");
+            ui.label(vb_session::i18n::t("ui-app-prefs-dialog-039"));
+            ui.add(
+                egui::DragValue::new(&mut keep)
+                    .range(1..=3)
+                    .suffix(vb_session::i18n::t("ui-app-prefs-dialog-040")),
+            );
+            ui.weak(vb_session::i18n::t("ui-app-prefs-dialog-041"));
         });
         if keep != self.autosave_keep {
             self.autosave_keep = keep;
         }
         ui.add_space(6.0);
-        ui.weak("快照绝不覆盖 index.html;「设置 → 自动保存间隔」入口保留兼容");
+        ui.weak(vb_session::i18n::t("ui-app-prefs-dialog-042"));
     }
 
     /// 「恢复默认」:九类全部回默认值(即时生效;落盘走脏检查)。
@@ -413,7 +457,7 @@ impl VellumApp {
         self.autosave_keep = d.autosave_keep;
         // 05-7:界面语言回默认(中文)
         crate::i18n::set_lang(Lang::from_code(&d.ui_lang));
-        self.say("首选项已恢复默认(布局归「窗口 → 工作区」管理)");
+        self.say(vb_session::i18n::t("ui-app-prefs-dialog-043"));
     }
 }
 

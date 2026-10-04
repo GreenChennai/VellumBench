@@ -85,9 +85,9 @@ impl AllOf {
 
     fn label(self) -> &'static str {
         match self {
-            AllOf::Text => "文本对象",
-            AllOf::Locked => "锁定对象",
-            AllOf::Hidden => "隐藏对象",
+            AllOf::Text => "文本对象", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            AllOf::Locked => "锁定对象", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            AllOf::Hidden => "隐藏对象", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
         }
     }
 }
@@ -139,7 +139,7 @@ fn all_selectable(doc: &Document) -> Vec<String> {
         .collect()
 }
 
-/// 判据取值(取不到 → `None`,该对象不参与"相同")。
+/// 判据取值(取不到 → `None`,该对象不参与vb_session::i18n::t("ui-app-menu-commands-004"))。
 fn same_value(doc: &Document, sid: &str, key: SameKey) -> Option<String> {
     match key {
         SameKey::Fill => color_panel::read_target_color(doc, sid, false),
@@ -247,10 +247,10 @@ impl VellumApp {
             "text.find_font" => {
                 let missing = crate::app::font_dialog::scan_missing_fonts(&self.doc);
                 if missing.is_empty() {
-                    self.say("查找字体:文档没有缺失字体(判定口径见对话框说明)");
+                    self.say(vb_session::i18n::t("ui-app-menu-commands-005"));
                 } else {
                     self.font_dialog = Some(crate::app::font_dialog::FontDialogState::new(missing));
-                    self.say("查找字体:发现缺失字体,已打开替换对话框");
+                    self.say(vb_session::i18n::t("ui-app-menu-commands-006"));
                 }
                 true
             }
@@ -280,9 +280,12 @@ impl VellumApp {
                     }
                 }
                 if n == 0 {
-                    self.toast_warn("更改大小写:选中对象里没有可改的文本");
+                    self.toast_warn(vb_session::i18n::t("ui-app-menu-commands-007"));
                 } else {
-                    self.say(format!("已更改 {n} 个文本对象的大小写"));
+                    self.say(vb_session::i18n::t_args(
+                        "ui-app-menu-commands-008",
+                        &[("n", vb_session::i18n::FluentValue::from((n).to_string()))],
+                    ));
                 }
                 true
             }
@@ -291,9 +294,18 @@ impl VellumApp {
                 let before = self.selection.len();
                 let hits = inverse_targets(&self.doc, &self.selection);
                 self.selection = hits.into();
-                self.say(format!(
-                    "反向选择:{before} → {} 个对象",
-                    self.selection.len()
+                self.say(vb_session::i18n::t_args(
+                    "ui-app-menu-commands-009",
+                    &[
+                        (
+                            "before",
+                            vb_session::i18n::FluentValue::from((before).to_string()),
+                        ),
+                        (
+                            "a1",
+                            vb_session::i18n::FluentValue::from((self.selection.len()).to_string()),
+                        ),
+                    ],
                 ));
                 true
             }
@@ -301,15 +313,24 @@ impl VellumApp {
                 match step_target(&self.doc, &self.selection, id == "select.next_object") {
                     Some((sid, i, n)) => {
                         self.selection = vec![sid].into();
-                        self.say(format!("已选中 {} / {}", i + 1, n));
+                        self.say(vb_session::i18n::t_args(
+                            "ui-app-menu-commands-010",
+                            &[
+                                (
+                                    "a1",
+                                    vb_session::i18n::FluentValue::from((i + 1).to_string()),
+                                ),
+                                ("a2", vb_session::i18n::FluentValue::from((n).to_string())),
+                            ],
+                        ));
                     }
-                    None => self.say("选择:当前画板没有可选对象"),
+                    None => self.say(vb_session::i18n::t("ui-app-menu-commands-011")),
                 }
                 true
             }
             "select.same_fill" | "select.same_stroke" | "select.same_stroke_width" => {
                 let Some(base) = self.selection.last().cloned() else {
-                    self.toast_warn("选择相同:先选中一个参照对象");
+                    self.toast_warn(vb_session::i18n::t("ui-app-menu-commands-012"));
                     return true;
                 };
                 let key = match id {
@@ -319,11 +340,14 @@ impl VellumApp {
                 };
                 let hits = same_targets(&self.doc, &base, key);
                 if hits.is_empty() {
-                    self.toast_warn("选择相同:参照对象没有该属性");
+                    self.toast_warn(vb_session::i18n::t("ui-app-menu-commands-013"));
                 } else {
                     let n = hits.len();
                     self.selection = hits.into();
-                    self.say(format!("选择相同:{n} 个对象"));
+                    self.say(vb_session::i18n::t_args(
+                        "ui-app-menu-commands-014",
+                        &[("n", vb_session::i18n::FluentValue::from((n).to_string()))],
+                    ));
                 }
                 true
             }
@@ -337,9 +361,24 @@ impl VellumApp {
                 let n = hits.len();
                 self.selection = hits.into();
                 if n == 0 {
-                    self.say(format!("没有{}", which.label()));
+                    self.say(vb_session::i18n::t_args(
+                        "ui-app-menu-commands-015",
+                        &[(
+                            "a1",
+                            vb_session::i18n::FluentValue::from((which.label()).to_string()),
+                        )],
+                    ));
                 } else {
-                    self.say(format!("已选中 {n} 个{}", which.label()));
+                    self.say(vb_session::i18n::t_args(
+                        "ui-app-menu-commands-016",
+                        &[
+                            ("n", vb_session::i18n::FluentValue::from((n).to_string())),
+                            (
+                                "a1",
+                                vb_session::i18n::FluentValue::from((which.label()).to_string()),
+                            ),
+                        ],
+                    ));
                 }
                 true
             }
@@ -347,8 +386,7 @@ impl VellumApp {
             "effect.repeat_last" => {
                 match self.last_effect.clone() {
                     Some(e) => self.apply_effect(e),
-                    None => self
-                        .toast_warn("应用上一个效果:还没有可重复的效果(先用「效果」菜单添加一个)"),
+                    None => self.toast_warn(vb_session::i18n::t("ui-app-menu-commands-017")),
                 }
                 true
             }
@@ -364,11 +402,11 @@ impl VellumApp {
             // 用户预设列表切换/删除;预设落 workspace.json workspace_presets)
             "window.new_workspace" => {
                 self.workspace_dialog_open = true;
-                self.say("工作区:可保存当前布局为命名预设,并可切换/删除");
+                self.say(vb_session::i18n::t("ui-app-menu-commands-018"));
                 true
             }
             // 工作区预设与 `workspace.json` 联动(副文档 07-4-2):
-            // 预设会**覆盖**工具栏停靠位(这正是"工作区"的意义),并立即落盘。
+            // 预设会**覆盖**工具栏停靠位(这正是"工作区"的意义),并立即落盘。 // vb-literal-ok: match 模式位字符串(内部判别值,非渲染文案)
             // 04-2:预设同步次级面板坞(停靠/组选择),不再出现级联浮窗。
             "window.workspace_basic" => {
                 self.panels_hidden = false;
@@ -381,7 +419,7 @@ impl VellumApp {
                 }
                 self.toolbar_dock = super::dock_layout::DockSide::Left;
                 self.toolbar_columns = 1;
-                self.say("工作区:基本功能(工具箱在左 + 属性面板)");
+                self.say(vb_session::i18n::t("ui-app-menu-commands-019"));
                 self.save_workspace();
                 true
             }
@@ -399,7 +437,7 @@ impl VellumApp {
                 self.sec_focus(super::panel_dock::SecPanel::Char);
                 self.toolbar_dock = super::dock_layout::DockSide::Left;
                 self.toolbar_columns = 1;
-                self.say("工作区:排版(工具箱在左 + 字符/段落面板停靠)");
+                self.say(vb_session::i18n::t("ui-app-menu-commands-020"));
                 self.save_workspace();
                 true
             }
@@ -411,7 +449,7 @@ impl VellumApp {
                 }
                 self.toolbar_dock = super::dock_layout::DockSide::Bottom;
                 self.toolbar_columns = 1;
-                self.say("工作区:导出(工具箱在底 + 导出对话框)");
+                self.say(vb_session::i18n::t("ui-app-menu-commands-021"));
                 self.save_workspace();
                 true
             }
@@ -429,7 +467,13 @@ impl VellumApp {
                 self.panels_hidden = false;
                 self.dock_collapsed = false;
                 self.panel_tab = tab;
-                self.say(format!("面板坞:{}", panels::TAB_LABELS[tab]));
+                self.say(vb_session::i18n::t_args(
+                    "ui-app-menu-commands-022",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from((panels::TAB_LABELS[tab]).to_string()),
+                    )],
+                ));
                 true
             }
             _ => false,
@@ -445,7 +489,7 @@ impl VellumApp {
     /// 对全部选中对象追加一条效果(经外观模型;失败给中文提示)。
     fn apply_effect(&mut self, e: Effect) {
         if self.selection.is_empty() {
-            self.toast_warn("效果:先选中一个对象");
+            self.toast_warn(vb_session::i18n::t("ui-app-menu-commands-023"));
             return;
         }
         let mut ok = 0;
@@ -463,7 +507,10 @@ impl VellumApp {
         if let Some(msg) = err {
             self.toast_warn(msg);
         } else if ok > 0 {
-            self.say(format!("已为 {ok} 个对象添加效果"));
+            self.say(vb_session::i18n::t_args(
+                "ui-app-menu-commands-024",
+                &[("ok", vb_session::i18n::FluentValue::from((ok).to_string()))],
+            ));
         }
     }
 }

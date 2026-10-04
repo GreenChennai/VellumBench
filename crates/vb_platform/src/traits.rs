@@ -65,3 +65,18 @@ pub trait DisplayInfo {
 pub trait DarkModeProbe {
     fn is_dark_mode(&self) -> bool;
 }
+
+/// 动效偏好探测(§8.10 reduced-motion,S5 清单 ④)。
+///
+/// 语义:**系统级**「减少动态效果 / 客户区动画」无障碍偏好 —— Windows
+/// 落在 `SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION)`。它与应用内
+/// 动效总开关(`vb_ui::theme` 的 `motion_enabled`,用户显式设置)是
+/// **并联**关系:任一关 → 动画直通(`anim_time` 归零)。
+///
+/// 探测**失败不降级成"关"**:系统不暴露该偏好时返回 `true`(允许动画)
+/// —— 拿不到证据就不替用户决定减少动效(与 [`DarkModeProbe`] 同一
+/// 「读不到 = 取默认」口径)。
+pub trait MotionPreferenceProbe {
+    /// `true` = 系统允许客户端区动画(用户未开启「减少动态效果」)。
+    fn animations_enabled(&self) -> bool;
+}

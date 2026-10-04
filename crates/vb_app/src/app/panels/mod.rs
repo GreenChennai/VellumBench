@@ -40,7 +40,7 @@ pub(crate) const TAB_COUNT: usize = 4;
 const _: () = assert!(TAB_TOKENS == TAB_COUNT - 1);
 
 /// Tab 标题(下标 = 语义 id)。`pub` 供「窗口」菜单命令做状态提示(阶段 5)。
-pub const TAB_LABELS: [&str; TAB_COUNT] = ["属性", "图层", "画板", "令牌"];
+pub const TAB_LABELS: [&str; TAB_COUNT] = ["属性", "图层", "画板", "令牌"]; // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
 /// 折叠图标条上的图标(下标 = 语义 id)。
 const TAB_ICONS: [Name; TAB_COUNT] = [
     Name::PanelProperties,
@@ -72,7 +72,14 @@ impl VellumApp {
                 ui.add_space(theme::space::S2);
                 // 顶部展开按钮(强制折叠窗口下只给视觉反馈,点了不展开)
                 let can_expand = dock::rail_click_can_expand(viewport_width);
-                if icon_button(ui, Name::Expanded, "展开面板坞").clicked() && can_expand {
+                if icon_button(
+                    ui,
+                    Name::Expanded,
+                    &vb_session::i18n::t("ui-app-panels-mod-panels-001"),
+                )
+                .clicked()
+                    && can_expand
+                {
                     self.dock_collapsed = false;
                 }
                 ui.separator();
@@ -80,9 +87,21 @@ impl VellumApp {
                     let tab = self.panel_order[slot];
                     let selected = self.panel_tab == tab;
                     let hint = if can_expand {
-                        format!("{}(点击展开并切换)", TAB_LABELS[tab])
+                        vb_session::i18n::t_args(
+                            "ui-app-panel-dock-004",
+                            &[(
+                                "a1",
+                                vb_session::i18n::FluentValue::from((TAB_LABELS[tab]).to_string()),
+                            )],
+                        )
                     } else {
-                        format!("{}(窗口过窄,仅切换)", TAB_LABELS[tab])
+                        vb_session::i18n::t_args(
+                            "ui-app-panel-dock-005",
+                            &[(
+                                "a1",
+                                vb_session::i18n::FluentValue::from((TAB_LABELS[tab]).to_string()),
+                            )],
+                        )
                     };
                     let (rect, resp) = ui.allocate_exact_size(
                         egui::Vec2::splat(theme::space::ROW_HEIGHT),
@@ -113,6 +132,11 @@ impl VellumApp {
                             self.dock_collapsed = false;
                         }
                     }
+                    // S5(§8.10 诚实清单 ①):折叠图标条的 Tab 图标同样
+                    // 是 allocate 自绘控件,键盘焦点环统一接线。
+                    if resp.has_focus() {
+                        vb_ui::components::paint_focus_ring(ui, rect, &t);
+                    }
                     let _ = resp.on_hover_text(hint);
                 }
             });
@@ -136,7 +160,13 @@ impl VellumApp {
                 let mut reorder: Option<(usize, i32)> = None;
                 ui.horizontal(|ui| {
                     // 折叠按钮(F7 折的是图层语义;这里折整个坞)
-                    if icon_button(ui, Name::Collapsed, "折叠面板坞").clicked() {
+                    if icon_button(
+                        ui,
+                        Name::Collapsed,
+                        &vb_session::i18n::t("ui-app-panels-mod-panels-002"),
+                    )
+                    .clicked()
+                    {
                         self.dock_collapsed = true;
                     }
                     let r = PanelTabs::new(&labels, &mut slot)
@@ -191,11 +221,22 @@ impl VellumApp {
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.horizontal(|ui| {
                 if ab_n > 0 {
-                    if icon_button(ui, Name::PrevArtboard, "上一画板(Ctrl+PageUp)").clicked() {
+                    if icon_button(
+                        ui,
+                        Name::PrevArtboard,
+                        &vb_session::i18n::t("ui-app-panels-mod-panels-003"),
+                    )
+                    .clicked()
+                    {
                         self.run_command("view.prev_artboard", false, false);
                     }
                     ui.label(format!("{}/{}", ab_idx.map(|i| i + 1).unwrap_or(1), ab_n));
-                    if icon_button(ui, Name::NextArtboard, "下一画板(Ctrl+PageDown)").clicked()
+                    if icon_button(
+                        ui,
+                        Name::NextArtboard,
+                        &vb_session::i18n::t("ui-app-panels-mod-panels-004"),
+                    )
+                    .clicked()
                     {
                         self.run_command("view.next_artboard", false, false);
                     }
@@ -208,7 +249,7 @@ impl VellumApp {
                     .add(egui::Button::new(
                         egui::RichText::new(&zoom_text).size(12.0),
                     ))
-                    .on_hover_text("适合窗口(Ctrl+0):全部画板可见;滚轮 / Ctrl+滚轮缩放");
+                    .on_hover_text(vb_session::i18n::t("ui-app-panels-mod-panels-005"));
                 if zoom_resp.hovered() {
                     ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
                 }
@@ -219,11 +260,11 @@ impl VellumApp {
                 // ── §8.9 加载态:后台导出进行中 = 不确定进度 pill ──
                 if self.export_job.is_some() {
                     ui.separator();
-                    if progress_pill(ui, "导出中…")
-                        .on_hover_text("导出在后台线程执行;完成后经 toast 与状态栏提示")
+                    if progress_pill(ui, &vb_session::i18n::t("ui-app-panels-mod-panels-006"))
+                        .on_hover_text(vb_session::i18n::t("ui-app-panels-mod-panels-007"))
                         .clicked()
                     {
-                        self.say("导出仍在后台进行(关闭对话框不会取消)");
+                        self.say(vb_session::i18n::t("ui-app-panels-mod-panels-008"));
                     }
                 }
                 ui.separator();
@@ -267,10 +308,16 @@ impl VellumApp {
                     ui.separator();
                 }
                 if tiers.counters {
-                    ui.label(format!("选中 {}", self.selection.len()));
+                    ui.label(vb_session::i18n::t_args(
+                        "ui-app-panels-mod-panels-009",
+                        &[(
+                            "a1",
+                            vb_session::i18n::FluentValue::from((self.selection.len()).to_string()),
+                        )],
+                    ));
                     if self.outline_mode {
                         ui.separator();
-                        ui.label("轮廓");
+                        ui.label(vb_session::i18n::t("ui-common-outline"));
                     }
                     ui.separator();
                     // rev 保留在状态栏(状态语义);渲染后端属调试数据 → 开发者统计
@@ -278,9 +325,8 @@ impl VellumApp {
                     // 07-A:自动保存印记(轻量常驻;悬停说明落盘位置)
                     if let Some(stamp) = self.autosave_stamp_text() {
                         ui.separator();
-                        ui.label(stamp).on_hover_text(
-                            "自动保存快照写入项目 .vb-autosave/(滚动保留 3 份;不覆盖 index.html)",
-                        );
+                        ui.label(stamp)
+                            .on_hover_text(vb_session::i18n::t("ui-app-panels-mod-panels-010"));
                     }
                 }
                 // 07-R:外部改动印记(Agent/其他进程改盘 → 热重载;点击看详情)。
@@ -288,15 +334,21 @@ impl VellumApp {
                 if let Some(ext) = &self.external_change {
                     ui.separator();
                     let (long, short) = if ext.adopted {
-                        ("外部已改动(已重载)", "外部已改")
+                        (
+                            vb_session::i18n::t("ui-app-panels-mod-panels-011"),
+                            vb_session::i18n::t("ui-app-panels-mod-panels-012"),
+                        )
                     } else {
-                        ("外部已改动(未采用)", "外部未采用")
+                        (
+                            vb_session::i18n::t("ui-app-panels-mod-panels-013"),
+                            vb_session::i18n::t("ui-app-panels-mod-panels-014"),
+                        )
                     };
                     let text = if tiers.long_labels { long } else { short };
                     let tip = if ext.adopted {
-                        "点击查看最近外部改动的时间与触发文件"
+                        vb_session::i18n::t("ui-app-panels-mod-panels-015")
                     } else {
-                        "本地有未保存编辑,未自动采用 —— 点击查看触发文件"
+                        vb_session::i18n::t("ui-app-panels-mod-panels-016")
                     };
                     let color = if ext.adopted {
                         theme::tokens(ui.ctx()).warn
@@ -304,12 +356,34 @@ impl VellumApp {
                         // 07-I:未采用是告警级,走主题 danger 令牌(两主题可读)
                         theme::tokens(ui.ctx()).danger
                     };
-                    let ext_resp = ui.colored_label(color, text);
+                    // S5(§8.10 诚实清单 ①):此前 `ui.colored_label` 是
+                    // hover-only 感知(egui Label 不进 Tab 序)—— 走查表里
+                    // 「Space/Enter 可点」是错的。改为 allocate+click 自绘
+                    // 文本项:Tab 可达 + Space/Enter 可点 + 统一焦点环,
+                    // 与走查表口径一致。
+                    let galley =
+                        ui.painter()
+                            .layout_no_wrap(text, egui::FontId::proportional(12.0), color);
+                    let (ext_rect, ext_resp) =
+                        ui.allocate_exact_size(galley.size(), egui::Sense::click());
+                    ui.painter().galley(
+                        egui::pos2(ext_rect.left(), ext_rect.center().y - galley.size().y * 0.5),
+                        galley,
+                        color,
+                    );
+                    // S5 清单 ③:印记读屏语义 = 完整 tooltip 文本。
+                    ext_resp.widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &tip)
+                    });
                     // U-9:可点项 hover 手势 —— 手型光标 + 下划线,tooltip 提示可点
                     if ext_resp.hovered() {
                         ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
                     }
                     paint_hover_underline(ui, &ext_resp);
+                    // S5:键盘焦点环(与组件层同规格,单一实现)
+                    if ext_resp.has_focus() {
+                        vb_ui::components::paint_focus_ring(ui, ext_rect, &theme::tokens(ui.ctx()));
+                    }
                     if ext_resp.on_hover_text(tip).clicked() {
                         // 09-N 打通(05-4-A2):未采用 = 磁盘与内存有分叉 →
                         // 点印记直接打开三方对比对话框;已重载仍走信息窗。
@@ -326,24 +400,23 @@ impl VellumApp {
                 if self.gpu.is_none() {
                     ui.separator();
                     let text = if tiers.long_labels {
-                        "⚠ 降级渲染"
+                        vb_session::i18n::t("ui-app-panels-mod-panels-017")
                     } else {
-                        "⚠ 降级"
+                        vb_session::i18n::t("ui-app-panels-mod-panels-018")
                     };
                     ui.colored_label(theme::tokens(ui.ctx()).warn, text)
-                        .on_hover_text("GPU/渲染器不可用,画布内容未按完整管线渲染");
+                        .on_hover_text(vb_session::i18n::t("ui-app-panels-mod-panels-019"));
                 }
                 // X-2 口径:画布文字为 egui 近似(常驻低对比标注,与画布
                 // 角落提示一致;真实字形见导出,校对见「视图 → 浏览器校对」)
                 ui.separator();
                 let text = if tiers.long_labels {
-                    "近似渲染"
+                    vb_session::i18n::t("ui-app-panels-mod-panels-020")
                 } else {
-                    "近似"
+                    vb_session::i18n::t("ui-app-panels-mod-panels-021")
                 };
-                ui.label(text).on_hover_text(
-                    "画布文字为近似渲染(ADR-0017);导出为真字形,可用「视图 → 浏览器校对」对拍",
-                );
+                ui.label(text)
+                    .on_hover_text(vb_session::i18n::t("ui-app-panels-mod-panels-022"));
             });
         });
     }
@@ -381,44 +454,77 @@ impl VellumApp {
             return;
         }
         let mut open = true;
-        egui::Window::new("最近外部改动")
+        egui::Window::new(vb_session::i18n::t("ui-app-panels-mod-panels-023"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
                 let Some(ext) = self.external_change.clone() else {
-                    ui.label("本会话还没有检测到外部改动。");
+                    ui.label(vb_session::i18n::t("ui-app-panels-mod-panels-024"));
                     return;
                 };
                 let secs = ext.at.elapsed().as_secs();
                 let ago = if secs < 60 {
-                    format!("{secs} 秒前")
+                    vb_session::i18n::t_args(
+                        "ui-app-panels-mod-panels-025",
+                        &[(
+                            "secs",
+                            vb_session::i18n::FluentValue::from((secs).to_string()),
+                        )],
+                    )
                 } else {
-                    format!("{} 分钟前", secs / 60)
+                    vb_session::i18n::t_args(
+                        "ui-app-panels-mod-panels-026",
+                        &[(
+                            "a1",
+                            vb_session::i18n::FluentValue::from((secs / 60).to_string()),
+                        )],
+                    )
                 };
                 ui.horizontal(|ui| {
                     if ext.adopted {
-                        ui.colored_label(theme::tokens(ui.ctx()).warn, "已重载");
+                        ui.colored_label(
+                            theme::tokens(ui.ctx()).warn,
+                            vb_session::i18n::t("ui-app-panels-mod-panels-027"),
+                        );
                     } else {
-                        ui.colored_label(theme::tokens(ui.ctx()).danger, "未采用");
+                        ui.colored_label(
+                            theme::tokens(ui.ctx()).danger,
+                            vb_session::i18n::t("ui-app-panels-mod-panels-028"),
+                        );
                     }
-                    ui.label(format!("{ago}(Unix {} 秒)", ext.at_unix));
+                    ui.label(vb_session::i18n::t_args(
+                        "ui-app-panels-mod-panels-029",
+                        &[
+                            (
+                                "ago",
+                                vb_session::i18n::FluentValue::from((ago).to_string()),
+                            ),
+                            (
+                                "a1",
+                                vb_session::i18n::FluentValue::from((ext.at_unix).to_string()),
+                            ),
+                        ],
+                    ));
                 });
                 if !ext.adopted {
-                    ui.weak("本地有未保存编辑:未自动采用。可对比磁盘版本后取舍。");
+                    ui.weak(vb_session::i18n::t("ui-app-panels-mod-panels-030"));
                     // 09-N 打通(05-4-A2):信息窗内的对比入口(与状态栏
                     // 印记点击同路,直接打开三方对比对话框)
-                    if ui.button("对比并合并…").clicked() {
+                    if ui
+                        .button(vb_session::i18n::t("ui-menu-file-resolve_conflict"))
+                        .clicked()
+                    {
                         self.conflict_open = true;
                     }
                 }
                 ui.separator();
-                ui.label("触发文件:");
+                ui.label(vb_session::i18n::t("ui-app-panels-mod-panels-032"));
                 for f in &ext.files {
                     ui.monospace(f);
                 }
                 if ext.files.len() >= crate::app::EXTERNAL_FILES_MAX {
-                    ui.weak("…(仅记录最近的触发文件)");
+                    ui.weak(vb_session::i18n::t("ui-app-panels-mod-panels-033"));
                 }
             });
         self.external_info_open = open;
@@ -439,7 +545,7 @@ impl VellumApp {
         });
         let fps = self.frame_stats();
         let mut open = true;
-        egui::Window::new("开发者统计")
+        egui::Window::new(vb_session::i18n::t("ui-menu-view-developer_stats"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -449,7 +555,15 @@ impl VellumApp {
                 match (fps, adapter) {
                     (Some((fps, frame_ms)), Some((backend, name))) => {
                         ui.label(format!("FPS {fps:.0} · 帧时间 {frame_ms:.1} ms"));
-                        ui.label(format!("节点 {}", self.doc.nodes.len()));
+                        ui.label(vb_session::i18n::t_args(
+                            "ui-app-panels-mod-panels-036",
+                            &[(
+                                "a1",
+                                vb_session::i18n::FluentValue::from(
+                                    (self.doc.nodes.len()).to_string(),
+                                ),
+                            )],
+                        ));
                         ui.label(format!("渲染 {backend:?} · {name}"));
                         ui.label(format!(
                             "视口 {:.0}×{:.0} · 缩放 {}%",
@@ -460,28 +574,34 @@ impl VellumApp {
                     }
                     (Some((fps, frame_ms)), None) => {
                         ui.label(format!("FPS {fps:.0} · 帧时间 {frame_ms:.1} ms"));
-                        ui.label(format!("节点 {}", self.doc.nodes.len()));
-                        ui.label("渲染:无 GPU(降级)");
+                        ui.label(vb_session::i18n::t_args(
+                            "ui-app-panels-mod-panels-036",
+                            &[(
+                                "a1",
+                                vb_session::i18n::FluentValue::from(
+                                    (self.doc.nodes.len()).to_string(),
+                                ),
+                            )],
+                        ));
+                        ui.label(vb_session::i18n::t("ui-app-panels-mod-panels-039"));
                     }
                     (None, Some((backend, name))) => {
                         ui.label(format!("FPS 采样中… · 渲染 {backend:?} · {name}"));
                     }
                     (None, None) => {
-                        ui.label("FPS 采样中… · 渲染:无 GPU(降级)");
+                        ui.label(vb_session::i18n::t("ui-app-panels-mod-panels-041"));
                     }
                 }
                 ui.separator();
                 ui.label(
-                    egui::RichText::new(
-                        "调试数据仅开发者可见;用户界面默认不显示任何性能/硬件信息(04-4)。",
-                    )
-                    .size(12.0),
+                    egui::RichText::new(vb_session::i18n::t("ui-app-panels-mod-panels-042"))
+                        .size(12.0),
                 );
             });
         self.dev_stats = open;
     }
 
-    /// FPS/帧时间统计(采样窗口均值;`None` = 样本不足,显示"采样中")。
+    /// FPS/帧时间统计(采样窗口均值;`None` = 样本不足,显示vb_session::i18n::t("ui-app-panels-mod-panels-043"))。
     fn frame_stats(&self) -> Option<(f32, f32)> {
         if self.frame_times.is_empty() {
             return None;

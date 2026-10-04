@@ -25,7 +25,15 @@ impl VellumApp {
                 let alt_click = ctx.input(|i| i.modifiers.alt);
                 let f = if alt_click { 1.0 / 1.25 } else { 1.25 };
                 self.camera.zoom_at(pl.x as f64, pl.y as f64, f);
-                self.status = format!("缩放 {}%", (self.camera.zoom * 100.0) as i64);
+                self.status = vb_session::i18n::t_args(
+                    "ui-app-canvas-input-view-001",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from(
+                            ((self.camera.zoom * 100.0) as i64).to_string(),
+                        ),
+                    )],
+                );
             }
             return true;
         }
@@ -230,7 +238,7 @@ impl VellumApp {
         });
         if inside != Some(true) && idx < self.guides.len() {
             self.guides.remove(idx);
-            self.status = "参考线已删除".into();
+            self.status = vb_session::i18n::t("ui-app-canvas-input-view-002");
         }
     }
 
@@ -255,7 +263,13 @@ impl VellumApp {
                 let ccy = (r.center().y - rect.min.y) as f64;
                 self.camera.pan_x = ccx - (x0 + rw / 2.0) * zoom;
                 self.camera.pan_y = ccy - (y0 + rh / 2.0) * zoom;
-                self.status = format!("缩放到区域 {}%", (zoom * 100.0) as i64);
+                self.status = vb_session::i18n::t_args(
+                    "ui-app-canvas-input-view-003",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from(((zoom * 100.0) as i64).to_string()),
+                    )],
+                );
             }
         }
     }

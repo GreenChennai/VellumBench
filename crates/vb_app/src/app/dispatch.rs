@@ -124,7 +124,7 @@ impl VellumApp {
             || id.starts_with("file.")
             || id.starts_with("view."))
         {
-            self.toast_warn("拖拽进行中:先松手或 Esc 取消");
+            self.toast_warn(vb_session::i18n::t("ui-app-dispatch-001"));
             return;
         }
         // 06-1:按连续段分派(顺序 = 原臂序;行为等价见文件头说明)
@@ -141,7 +141,10 @@ impl VellumApp {
         if !self.run_menu_command(id) {
             debug_assert!(false, "命令 {id} 未在 run_command 中实现");
             log::warn!("未实现的命令:{id}");
-            self.toast_error(format!("命令未实现:{id}"));
+            self.toast_error(vb_session::i18n::t_args(
+                "ui-app-dispatch-002",
+                &[("id", vb_session::i18n::FluentValue::from((id).to_string()))],
+            ));
         }
     }
 
@@ -171,14 +174,14 @@ impl VellumApp {
                     // 04-5-1:新建后自动适合窗口(画布矩形就绪后的第一帧落)
                     self.set_tool(Tool::Select);
                     self.fit_pending = true;
-                    self.status = "新建文档(1440×900)".into();
+                    self.status = vb_session::i18n::t("ui-app-dispatch-003");
                 }
             }
             // 阶段 2(02-5-5):打开项目经外壳 → 新窗口 / 聚焦已有窗口
             "file.open" => {
                 if let Some(tx) = &self.shell_tx {
                     if let Some(dir) = rfd::FileDialog::new()
-                        .set_title("打开项目目录(含 index.html)")
+                        .set_title(vb_session::i18n::t("ui-app-dispatch-004"))
                         .pick_folder()
                     {
                         let _ = tx.send(crate::shell::ShellRequest::OpenProject(dir));
@@ -194,18 +197,18 @@ impl VellumApp {
             "file.close" => {
                 if let Some(tx) = &self.shell_tx {
                     let _ = tx.send(crate::shell::ShellRequest::CloseWindow(self.viewport_id));
-                    self.say("关闭窗口…");
+                    self.say(vb_session::i18n::t("ui-app-dispatch-005"));
                 } else {
-                    self.toast_warn("当前不是多窗口模式,无法关闭窗口");
+                    self.toast_warn(vb_session::i18n::t("ui-app-dispatch-006"));
                 }
             }
             // 阶段 2(02-1):回到主页(--project 启动时主页是子视口,可从这里唤出)
             "file.home" => {
                 if let Some(tx) = &self.shell_tx {
                     let _ = tx.send(crate::shell::ShellRequest::ShowHome);
-                    self.say("已打开主页");
+                    self.say(vb_session::i18n::t("ui-app-dispatch-007"));
                 } else {
-                    self.toast_warn("当前不是多窗口模式,无主页");
+                    self.toast_warn(vb_session::i18n::t("ui-app-dispatch-008"));
                 }
             }
             "file.export_dialog" => self.show_export = true,
@@ -223,15 +226,15 @@ impl VellumApp {
             // 09-M:文档设置(项目名/画板预设/输出模式/网格与参考线)
             "file.doc_settings" => {
                 self.doc_settings_open = true;
-                self.say("文档设置:项目名 / 输出模式 / 网格与参考线(应用后生效)");
+                self.say(vb_session::i18n::t("ui-app-dispatch-009"));
             }
             // 09-N:外部冲突三方对比(仅未采用印记存在时打开;否则提示)
             "file.resolve_conflict" => {
                 if self.has_pending_conflict() {
                     self.conflict_open = true;
-                    self.say("外部冲突对比:磁盘 / 内存 / 自动快照 三方差异与处置动作");
+                    self.say(vb_session::i18n::t("ui-app-dispatch-010"));
                 } else {
-                    self.say("当前没有待处理的外部冲突(磁盘与内存一致,或本会话无外部改动)");
+                    self.say(vb_session::i18n::t("ui-app-dispatch-011"));
                 }
             }
             // ── 编辑 ──
@@ -306,8 +309,15 @@ impl VellumApp {
                     self.selection.retain(|s| self.doc.find_by_sid(s).is_some());
                 }
                 self.status = match label {
-                    Some(l) => format!("{}:{l}", if redo { "重做" } else { "撤销" }),
-                    None => "没有可撤销/重做的操作".into(),
+                    Some(l) => format!(
+                        "{}:{l}",
+                        if redo {
+                            vb_session::i18n::t("ui-menu-edit-redo")
+                        } else {
+                            vb_session::i18n::t("ui-menu-edit-undo")
+                        }
+                    ),
+                    None => vb_session::i18n::t("ui-app-dispatch-012"),
                 };
             }
             "edit.select_all" => {
@@ -326,7 +336,13 @@ impl VellumApp {
                         .map(|id| self.doc.nodes.get(id).unwrap().sid.as_str().to_string())
                         .collect::<Vec<_>>()
                         .into();
-                    self.status = format!("已全选 {} 个对象", self.selection.len());
+                    self.status = vb_session::i18n::t_args(
+                        "ui-app-dispatch-013",
+                        &[(
+                            "a1",
+                            vb_session::i18n::FluentValue::from((self.selection.len()).to_string()),
+                        )],
+                    );
                 }
             }
             // 05-2(X-5):铅笔保真度档位循环(持久化到 workspace.json)
@@ -335,12 +351,12 @@ impl VellumApp {
             // 09-L:首选项九分类
             "edit.preferences" => {
                 self.prefs_open = true;
-                self.say("首选项:常规 / 文字 / 单位与标尺 / 参考线与网格 / 智能参考线 / 画板 / 性能 / 外观 / 数据");
+                self.say(vb_session::i18n::t("ui-app-dispatch-014"));
             }
             // 09-L:键位方案编辑器
             "edit.keyboard_shortcuts" => {
                 self.keymap_open = true;
-                self.say("键盘快捷键:命令列表 + 冲突检测 + 录制新键(方案存 keymap.json)");
+                self.say(vb_session::i18n::t("ui-app-dispatch-015"));
             }
             // ── 对象 ──
             "object.group" => self.group_selection(),
@@ -414,7 +430,7 @@ mod tests {
 /// ADR-0048 §3 的 R0 桥接:命令信封 → 旧宿主分发体。
 ///
 /// 口径诚实说明:`run_command` 返回 `()`,故 [`CommandOutcome::Applied`]
-/// 表示"已提交旧宿主执行",`NotRun` 在 R0 只覆盖"未知命令"拦截;前置
+/// 表示vb_session::i18n::t("ui-app-dispatch-016"),`NotRun` 在 R0 只覆盖vb_session::i18n::t("ui-app-dispatch-017")拦截;前置
 /// 不满足级(无选中等)的逐命令诚实回执属 R1 分发体搬家批次(届时由
 /// 带返回值的分发体给出)。目录 id 经
 /// [`CommandId::from_catalog`](vb_session::command::CommandId::from_catalog)
@@ -426,7 +442,10 @@ impl vb_session::command::Dispatcher for VellumApp {
     ) -> vb_session::command::CommandOutcome {
         let id = req.id.as_str();
         if !shortcuts::is_implemented(id) {
-            return vb_session::command::CommandOutcome::not_run(format!("未知命令:{id}"));
+            return vb_session::command::CommandOutcome::not_run(vb_session::i18n::t_args(
+                "ui-app-dispatch-018",
+                &[("id", vb_session::i18n::FluentValue::from((id).to_string()))],
+            ));
         }
         self.run_command(id, req.modifiers.shift, req.modifiers.alt);
         vb_session::command::CommandOutcome::Applied

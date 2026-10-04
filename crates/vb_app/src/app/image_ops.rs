@@ -3,7 +3,7 @@
 //! 可测边界:文件落位(`copy_asset_into_project`)与命令构造
 //! (`place_image_cmd`)是**纯函数**,对话框拾取只是它们的输入源;
 //! 剪切蒙版的命令序在 [`super::clip_mask`](super::clip_mask)(单测在彼处),
-//! 这里只负责"读选区 → exec → 反馈"。
+//! 这里只负责vb_session::i18n::t("ui-app-image-ops-001")。
 
 use vb_doc::commands::Command;
 use vb_doc::model::{Geom, NodeKind};
@@ -18,7 +18,7 @@ impl VellumApp {
         match clip_mask::clip_mask_cmds(&self.doc, &self.selection) {
             Ok(cmds) => {
                 self.exec(Command::Compound { cmds });
-                self.status = "已建立剪切蒙版(overflow 容器;Ctrl+Alt+7 释放,Ctrl+Z 撤销)".into();
+                self.status = vb_session::i18n::t("ui-app-image-ops-002");
             }
             Err(msg) => self.toast_warn(msg),
         }
@@ -27,13 +27,13 @@ impl VellumApp {
     /// `Mod+Alt+7` 释放:选中蒙版容器 → 内容回原父级 + 标记移除。
     pub(crate) fn apply_release_clip_mask(&mut self) {
         let Some(sid) = self.selection.first().cloned() else {
-            self.toast_warn("释放剪切蒙版:先选中蒙版容器");
+            self.toast_warn(vb_session::i18n::t("ui-app-image-ops-003"));
             return;
         };
         match clip_mask::release_clip_cmds(&self.doc, &sid) {
             Ok(cmds) => {
                 self.exec(Command::Compound { cmds });
-                self.status = "已释放剪切蒙版(内容回到原位置)".into();
+                self.status = vb_session::i18n::t("ui-app-image-ops-004");
             }
             Err(msg) => self.toast_warn(msg),
         }
@@ -45,20 +45,26 @@ impl VellumApp {
     /// 选中的单个图像节点 = 替换 src;否则新建 img 节点(原图尺寸,居中)。
     pub(crate) fn place_image_via_dialog(&mut self) {
         let Some(file) = rfd::FileDialog::new()
-            .set_title("置入图像")
-            .add_filter("图像", &["png", "jpg", "jpeg", "gif", "webp", "svg"])
+            .set_title(vb_session::i18n::t("ui-app-image-ops-005"))
+            .add_filter(
+                vb_session::i18n::t("ui-common-image"),
+                &["png", "jpg", "jpeg", "gif", "webp", "svg"],
+            )
             .pick_file()
         else {
             return;
         };
         let Some(dir) = self.project_dir.clone() else {
-            self.toast_warn("置入图像:先保存或打开一个项目(图像进入 assets/ 目录)");
+            self.toast_warn(vb_session::i18n::t("ui-app-image-ops-006"));
             return;
         };
         let rel = match copy_asset_into_project(&dir, &file) {
             Ok(rel) => rel,
             Err(e) => {
-                self.toast_error(format!("置入图像失败:{e}"));
+                self.toast_error(vb_session::i18n::t_args(
+                    "ui-app-image-ops-007",
+                    &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                ));
                 return;
             }
         };
@@ -69,16 +75,28 @@ impl VellumApp {
             let sid = self.selection.first().unwrap().clone();
             if let Some(cmd) = assets_panel_replace_cmd(&self.doc, &sid, &rel) {
                 self.exec(cmd);
-                self.status = format!("已置入并替换图像引用:{rel}");
+                self.status = vb_session::i18n::t_args(
+                    "ui-app-image-ops-008",
+                    &[(
+                        "rel",
+                        vb_session::i18n::FluentValue::from((rel).to_string()),
+                    )],
+                );
             }
         } else {
             match place_image_cmd(&mut self.doc, &rel, &dir, &file) {
                 Some((cmd, sid)) => {
                     self.exec(cmd);
                     self.selection = vec![sid].into();
-                    self.status = format!("已置入图像:{rel}(新 img 节点,原图尺寸)");
+                    self.status = vb_session::i18n::t_args(
+                        "ui-app-image-ops-009",
+                        &[(
+                            "rel",
+                            vb_session::i18n::FluentValue::from((rel).to_string()),
+                        )],
+                    );
                 }
-                None => self.toast_error("置入图像:无法读取图片尺寸"),
+                None => self.toast_error(vb_session::i18n::t("ui-app-image-ops-010")),
             }
         }
         // 资产面板行的 rev 缓存失效(下次打开面板读到新资产)
@@ -88,22 +106,25 @@ impl VellumApp {
     /// 「替换图像…」(右键图像 / 属性入口):选文件 → SetImageSrc。
     pub(crate) fn replace_image_via_dialog(&mut self) {
         let Some(sid) = self.selection.first().cloned() else {
-            self.toast_warn("替换图像:先选中一个图像对象");
+            self.toast_warn(vb_session::i18n::t("ui-app-image-ops-011"));
             return;
         };
         if assets_panel_replace_target(&self.doc, &sid).is_none() {
-            self.toast_warn("替换图像:选中对象不是图像");
+            self.toast_warn(vb_session::i18n::t("ui-app-image-ops-012"));
             return;
         }
         let Some(file) = rfd::FileDialog::new()
-            .set_title("替换图像(保持几何)")
-            .add_filter("图像", &["png", "jpg", "jpeg", "gif", "webp", "svg"])
+            .set_title(vb_session::i18n::t("ui-app-image-ops-013"))
+            .add_filter(
+                vb_session::i18n::t("ui-common-image"),
+                &["png", "jpg", "jpeg", "gif", "webp", "svg"],
+            )
             .pick_file()
         else {
             return;
         };
         let Some(dir) = self.project_dir.clone() else {
-            self.toast_warn("替换图像:先保存或打开一个项目(图像进入 assets/ 目录)");
+            self.toast_warn(vb_session::i18n::t("ui-app-image-ops-014"));
             return;
         };
         match copy_asset_into_project(&dir, &file) {
@@ -111,10 +132,19 @@ impl VellumApp {
                 if let Some(cmd) = assets_panel_replace_cmd(&self.doc, &sid, &rel) {
                     self.exec(cmd);
                     self.assets_cache = None;
-                    self.status = format!("已替换图像引用:{rel}(几何不变)");
+                    self.status = vb_session::i18n::t_args(
+                        "ui-app-image-ops-015",
+                        &[(
+                            "rel",
+                            vb_session::i18n::FluentValue::from((rel).to_string()),
+                        )],
+                    );
                 }
             }
-            Err(e) => self.toast_error(format!("替换图像失败:{e}")),
+            Err(e) => self.toast_error(vb_session::i18n::t_args(
+                "ui-app-image-ops-016",
+                &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+            )),
         }
     }
 
@@ -173,9 +203,14 @@ pub(crate) fn copy_asset_into_project(
     let name = src
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
-        .ok_or("路径没有文件名")?;
+        .ok_or(vb_session::i18n::t("ui-app-image-ops-018"))?;
     let assets = project_dir.join("assets");
-    std::fs::create_dir_all(&assets).map_err(|e| format!("建 assets/ 失败:{e}"))?;
+    std::fs::create_dir_all(&assets).map_err(|e| {
+        vb_session::i18n::t_args(
+            "ui-app-image-ops-019",
+            &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+        )
+    })?;
     let mut rel = format!("assets/{name}");
     let mut dst = assets.join(&name);
     // 重名不覆盖:追加 -2、-3 …
@@ -193,10 +228,15 @@ pub(crate) fn copy_asset_into_project(
         dst = assets.join(format!("{stem}-{seq}{ext}"));
         seq += 1;
         if seq > 1000 {
-            return Err("重名资产过多".into());
+            return Err(vb_session::i18n::t("ui-app-image-ops-020"));
         }
     }
-    std::fs::copy(src, &dst).map_err(|e| format!("复制失败:{e}"))?;
+    std::fs::copy(src, &dst).map_err(|e| {
+        vb_session::i18n::t_args(
+            "ui-app-image-ops-021",
+            &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+        )
+    })?;
     Ok(rel)
 }
 
@@ -244,7 +284,13 @@ pub(crate) fn place_image_cmd(
         NodeKind::Image {
             src: rel.to_string(),
         },
-        format!("图像 {}", sid.as_str()),
+        vb_session::i18n::t_args(
+            "ui-app-image-ops-022",
+            &[(
+                "a1",
+                vb_session::i18n::FluentValue::from((sid.as_str()).to_string()),
+            )],
+        ),
         sid.clone(),
     );
     n.geom = Geom {

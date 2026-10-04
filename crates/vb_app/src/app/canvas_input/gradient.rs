@@ -30,7 +30,7 @@ impl VellumApp {
             if alt {
                 let targets = self.selection.clone();
                 if targets.is_empty() {
-                    self.status = "渐变:先选中对象".into();
+                    self.status = vb_session::i18n::t("ui-app-canvas-input-gradient-001");
                 } else {
                     for sid in targets {
                         let Some(t) = self.doc.find_by_sid(&sid) else {
@@ -47,10 +47,10 @@ impl VellumApp {
                             });
                         }
                     }
-                    self.status = "已移除渐变(恢复纯色)".into();
+                    self.status = vb_session::i18n::t("ui-app-canvas-input-gradient-002");
                 }
             } else if self.selection.is_empty() {
-                self.status = "渐变:先选中对象,再拖动设定方向".into();
+                self.status = vb_session::i18n::t("ui-app-canvas-input-gradient-003");
             }
             return true;
         }
@@ -61,7 +61,7 @@ impl VellumApp {
     pub(super) fn drag_begin_gradient(&mut self, wx: f64, wy: f64) {
         // 渐变批注者:需要选区;拖动方向 = 渐变方向
         if self.selection.is_empty() {
-            self.status = "渐变:先选中对象".into();
+            self.status = vb_session::i18n::t("ui-app-canvas-input-gradient-001");
         } else {
             self.drag = Drag::GradientAnnotate {
                 start: (wx, wy),
