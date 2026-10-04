@@ -100,10 +100,8 @@ impl VellumApp {
         // NumField 提交会话兜底收口:任何快捷键/菜单命令都意味着
         // 用户离开了数值框编辑(键盘输入在 TextEdit 上下文不会派发到这),
         // 会话不该跨过一次显式命令继续合并。
-        if self.num_commit_open {
-            self.num_commit_open = false;
-            self.undo.end_session();
-        }
+        // (UI-10:守卫清除即收口,幂等)
+        self.num_commit_end();
         // 拖拽进行中收敛可派发集合:删除正在拖的对象会让后续每帧 SetGeom
         // 打到死 sid 上刷屏报错;切工具会让 drag 状态与新工具错位
         if matches!(

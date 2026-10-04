@@ -164,6 +164,23 @@ pub struct LayoutSnapshot {
     pub sec_group_order: Vec<usize>,
     /// 次级坞当前组。
     pub sec_active_group: usize,
+    /// UI-12:主右坞宽度记忆(px;旧快照文件缺省补默认)。
+    #[serde(default = "default_dock_width")]
+    pub dock_width: f32,
+    /// UI-12:次级坞宽度记忆(px)。
+    #[serde(default = "default_sec_dock_width")]
+    pub sec_dock_width: f32,
+    /// UI-12:次级坞用户折叠偏好。
+    #[serde(default)]
+    pub sec_dock_collapsed: bool,
+}
+
+fn default_dock_width() -> f32 {
+    vb_ui::theme::space::DOCK_WIDTH
+}
+
+fn default_sec_dock_width() -> f32 {
+    super::panel_dock::SEC_DOCK_WIDTH
 }
 
 impl LayoutSnapshot {
@@ -197,6 +214,15 @@ impl LayoutSnapshot {
         }
         if self.sec_active_group >= SEC_GROUPS {
             self.sec_active_group = 0;
+        }
+        // UI-12:坞宽记忆夹回合法拖拽域(手改怪值回默认)
+        if !(vb_ui::dock::DOCK_MIN..=vb_ui::dock::DOCK_MAX).contains(&self.dock_width) {
+            self.dock_width = vb_ui::theme::space::DOCK_WIDTH;
+        }
+        if !(super::panel_dock::SEC_DOCK_MIN..=super::panel_dock::SEC_DOCK_MAX)
+            .contains(&self.sec_dock_width)
+        {
+            self.sec_dock_width = super::panel_dock::SEC_DOCK_WIDTH;
         }
         self
     }
@@ -429,6 +455,120 @@ pub fn load() -> (WorkspaceConfig, Option<String>) {
             Some("找不到配置目录,本次布局不会持久化(可用 VB_WORKSPACE 指定)".into()),
         ),
     }
+}
+
+// ── UI-12(2026-10-05,S6):每窗口独立布局层 ──
+//
+// 旧口径(02-5-3):多窗口并写同一个 workspace.json,「最后写入胜」——
+// 窗口 A 的停靠/面板布局会被窗口 B 的一次落盘整体覆盖。新口径:
+// - **窗口布局字段**(工具栏停靠/面板坞/次级坞/坞宽)→ 每窗口独立层文件
+//   `workspace.win-<视口id>.json`,窗口只写自己的层,互不覆盖;
+// - **进程级偏好**(主题/缩放/语言/动效/自动保存/预设)仍走全局
+//   workspace.json(语义本就是进程级,最后写入胜无害);
+// - 根视口(ROOT,独立模式/根项目窗)不产生层文件,行为与旧口径一致;
+// - 层文件缺失 → 全局默认;**损坏 → 告警 + 整层回退**(RB-08,不崩)。
+
+/// 窗口层文件路径(`workspace.win-<id:x>.json`,与全局文件同目录同名族;
+/// 尊重 `VB_WORKSPACE` —— 测试把它指到具体文件时,层文件是其同名派生)。
+pub fn window_layer_path(window_id: u64) -> Option<std::path::PathBuf> {
+    let base = config_path()?;
+    let name = base
+        .file_name()
+        .map(|n| format!("{}.win-{window_id:x}.json", n.to_string_lossy()))
+        .unwrap_or_else(|| format!("workspace.win-{window_id:x}.json"));
+    Some(base.with_file_name(name))
+}
+
+/// 读取窗口布局层。返回 `(层, 告警)`;文件不存在 = 首次运行(无告警);
+/// 损坏/非法 → `None` + 中文告警(RB-08:坏文件回退默认,不静默不崩)。
+pub fn load_window_layer(window_id: u64) -> (Option<LayoutSnapshot>, Option<String>) {
+    let Some(p) = window_layer_path(window_id) else {
+        return (None, Some("找不到配置目录,窗口布局不会持久化".into()));
+    };
+    let text = match std::fs::read_to_string(&p) {
+        Ok(t) => t,
+        Err(_) => return (None, None),
+    };
+    match serde_json::from_str::<LayoutSnapshot>(&text) {
+        Ok(snap) => (Some(snap.normalized()), None),
+        Err(e) => (
+            None,
+            Some(format!(
+                "窗口布局文件 {} 解析失败,已回退默认布局:{e}",
+                p.display()
+            )),
+        ),
+    }
+}
+
+/// 写窗口布局层(原子写:临时文件 → rename;失败带路径说明,不静默)。
+pub fn save_window_layer(window_id: u64, snap: &LayoutSnapshot) -> Result<(), String> {
+    let Some(p) = window_layer_path(window_id) else {
+        return Err("找不到配置目录,窗口布局未持久化".into());
+    };
+    if let Some(dir) = p.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败:{e}"))?;
+    }
+    let text = serde_json::to_string_pretty(&snap.clone().normalized())
+        .map_err(|e| format!("序列化窗口布局失败:{e}"))?;
+    let tmp = p.with_extension("json.tmp");
+    std::fs::write(&tmp, text).map_err(|e| format!("写窗口布局失败:{e}"))?;
+    std::fs::rename(&tmp, &p).map_err(|e| format!("提交窗口布局失败:{e}"))
+}
+
+impl LayoutSnapshot {
+    /// 从全局配置抽取窗口布局字段(UI-12:构造基线,避免误报脏)。
+    pub fn from_config(cfg: &WorkspaceConfig) -> Self {
+        LayoutSnapshot {
+            toolbar_dock: cfg.toolbar_dock,
+            toolbar_columns: cfg.toolbar_columns,
+            dock_collapsed: cfg.dock_collapsed,
+            panel_order: cfg.panel_order.clone(),
+            panel_tab: cfg.panel_tab,
+            panels_hidden: cfg.panels_hidden,
+            sec_floating: cfg.sec_floating.clone(),
+            sec_pos: cfg.sec_pos.clone(),
+            sec_group_order: cfg.sec_group_order.clone(),
+            sec_active_group: cfg.sec_active_group,
+            dock_width: cfg.dock_width,
+            sec_dock_width: cfg.sec_dock_width,
+            sec_dock_collapsed: cfg.sec_dock_collapsed,
+        }
+    }
+}
+
+/// UI-12 外壳聚合读取:全局偏好(含既有回退/迁移/告警语义)+ 指定窗口
+/// 布局层覆盖。层缺失/损坏 → 保持全局值并回传告警(坏文件回退默认,RB-08)。
+pub fn load_for_window(window_id: u64) -> (WorkspaceConfig, Option<String>) {
+    let (mut cfg, mut warns) = {
+        let (c, w) = load();
+        (c, w.map(|s| vec![s]).unwrap_or_default())
+    };
+    let (layer, warn) = load_window_layer(window_id);
+    if let Some(w) = warn {
+        warns.push(w);
+    }
+    if let Some(l) = layer {
+        cfg.toolbar_dock = l.toolbar_dock;
+        cfg.toolbar_columns = l.toolbar_columns;
+        cfg.dock_collapsed = l.dock_collapsed;
+        cfg.panel_order = l.panel_order;
+        cfg.panel_tab = l.panel_tab;
+        cfg.panels_hidden = l.panels_hidden;
+        cfg.sec_floating = l.sec_floating;
+        cfg.sec_pos = l.sec_pos;
+        cfg.sec_group_order = l.sec_group_order;
+        cfg.sec_active_group = l.sec_active_group;
+        cfg.dock_width = l.dock_width;
+        cfg.sec_dock_width = l.sec_dock_width;
+        cfg.sec_dock_collapsed = l.sec_dock_collapsed;
+    }
+    let warn = if warns.is_empty() {
+        None
+    } else {
+        Some(warns.join("; "))
+    };
+    (cfg, warn)
 }
 
 /// 写回配置(原子性:先写临时文件再改名,避免半截 JSON)。
@@ -788,6 +928,9 @@ mod tests {
                 sec_pos: vec![[10.0, 20.0]; 13],
                 sec_group_order: vec![0, 1, 2, 3, 4, 5, 6],
                 sec_active_group: 3,
+                // UI-12 新增字段:取全局默认(与 normalize 夹回值一致,
+                // 往返断言不受影响)
+                ..LayoutSnapshot::from_config(&WorkspaceConfig::default())
             },
         });
         save_to(&p, &cfg).unwrap();
@@ -853,6 +996,147 @@ mod tests {
             "越界主坞宽回默认"
         );
         assert_eq!(cfg.sec_dock_width, crate::app::panel_dock::SEC_DOCK_WIDTH);
+        let _ = std::fs::remove_file(&p);
+    }
+}
+
+// ── UI-12 / COUP-09 门禁(单测) ──
+
+#[cfg(test)]
+mod window_layer_tests {
+    use super::*;
+
+    /// UI-12:窗口层 save/load 往返(布局字段逐值还原)。
+    #[test]
+    fn window_layer_roundtrips() {
+        // VB_WORKSPACE 是进程级环境变量,跨测试串行(dock_layout 其余
+        // 单测用显式路径,不受影响)
+        let _env = crate::ENV_LOCK.lock();
+        // 层文件与全局文件同族派生(VB_WORKSPACE 指到具体文件时)
+        let base = std::env::temp_dir().join(format!("vb-ws-win-{}.json", std::process::id()));
+        unsafe {
+            std::env::set_var("VB_WORKSPACE", &base);
+        }
+        let id = 0xfeed_u64;
+        let mut snap = LayoutSnapshot::from_config(&WorkspaceConfig::default());
+        snap.toolbar_dock = DockSide::Left;
+        snap.panel_order = vec![2, 1, 0, 3];
+        snap.dock_width = 360.0;
+        snap.sec_dock_collapsed = true;
+        save_window_layer(id, &snap).unwrap();
+        let (back, warn) = load_window_layer(id);
+        assert!(warn.is_none());
+        assert_eq!(back, Some(snap.normalized()));
+        // 另一窗口 id 互不串扰(独立文件)
+        let (other, _) = load_window_layer(0xbeef_u64);
+        assert_eq!(other, None, "未写过的窗口层必须不存在");
+        let _ = std::fs::remove_file(base);
+        if let Some(p) = window_layer_path(id) {
+            let _ = std::fs::remove_file(p);
+        }
+        if let Some(p) = window_layer_path(0xbeef_u64) {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+
+    /// UI-12(RB-08):坏层文件 → None + 告警,不崩、不半读。
+    #[test]
+    fn corrupt_window_layer_falls_back_with_warning() {
+        // VB_WORKSPACE 是进程级环境变量,跨测试串行(dock_layout 其余
+        // 单测用显式路径,不受影响)
+        let _env = crate::ENV_LOCK.lock();
+        let base = std::env::temp_dir().join(format!("vb-ws-winbad-{}.json", std::process::id()));
+        unsafe {
+            std::env::set_var("VB_WORKSPACE", &base);
+        }
+        let id = 0xd00d_u64;
+        let p = window_layer_path(id).unwrap();
+        std::fs::write(&p, "{ 坏 JSON").unwrap();
+        let (snap, warn) = load_window_layer(id);
+        assert_eq!(snap, None, "坏文件必须整层回退");
+        assert!(warn.unwrap().contains("解析失败"), "必须显式告警");
+        let _ = std::fs::remove_file(&p);
+        let _ = std::fs::remove_file(&base);
+    }
+
+    /// UI-12 外壳聚合读取:全局偏好 + 窗口层覆盖;层缺失 → 全局值原样。
+    #[test]
+    fn load_for_window_merges_global_prefs_with_window_layout() {
+        // VB_WORKSPACE 是进程级环境变量,跨测试串行(dock_layout 其余
+        // 单测用显式路径,不受影响)
+        let _env = crate::ENV_LOCK.lock();
+        let base = std::env::temp_dir().join(format!("vb-ws-merge-{}.json", std::process::id()));
+        unsafe {
+            std::env::set_var("VB_WORKSPACE", &base);
+        }
+        let id = 0x1234_u64;
+        // 全局:深色 + 动效关 + 停靠底部(默认)
+        let g = WorkspaceConfig {
+            motion_enabled: false,
+            theme_dark: true,
+            ..WorkspaceConfig::default()
+        };
+        dock_layout_save_helper(&base, &g);
+        // 窗口层:停靠左 + 折叠
+        let mut snap = LayoutSnapshot::from_config(&g);
+        snap.toolbar_dock = DockSide::Left;
+        snap.dock_collapsed = true;
+        save_window_layer(id, &snap).unwrap();
+
+        let (merged, warn) = load_for_window(id);
+        assert!(warn.is_none());
+        assert_eq!(merged.toolbar_dock, DockSide::Left, "布局取窗口层");
+        assert!(merged.dock_collapsed);
+        assert!(!merged.motion_enabled, "偏好取全局");
+        assert!(merged.theme_dark);
+
+        // 无层文件的窗口:全局布局原样
+        let (plain, warn) = load_for_window(0x9999_u64);
+        assert!(warn.is_none());
+        assert_eq!(plain.toolbar_dock, DockSide::Bottom);
+
+        // 层损坏:回退全局 + 告警(RB-08)
+        let p = window_layer_path(id).unwrap();
+        std::fs::write(&p, "not json").unwrap();
+        let (merged, warn) = load_for_window(id);
+        assert_eq!(merged.toolbar_dock, DockSide::Bottom, "坏层回退全局布局");
+        assert!(warn.unwrap().contains("解析失败"));
+        let _ = std::fs::remove_file(&base);
+        let _ = std::fs::remove_file(&p);
+    }
+
+    fn dock_layout_save_helper(p: &Path, cfg: &WorkspaceConfig) {
+        save_to(p, cfg).unwrap();
+    }
+
+    use std::path::Path;
+
+    /// COUP-09(RB-08 验收):workspace.json 损坏 → 动效开关回默认(开)
+    /// 且带告警 —— 动效单一真相在配置文件,坏文件不许把「关」静默续命,
+    /// 也不许崩。
+    #[test]
+    fn corrupt_workspace_falls_back_to_default_motion() {
+        let p = std::env::temp_dir().join(format!("vb-ws-motion-{}.json", std::process::id()));
+        // 上一轮持久化的「动效关」,随后文件损坏
+        let cfg = WorkspaceConfig {
+            motion_enabled: false,
+            ..WorkspaceConfig::default()
+        };
+        save_to(&p, &cfg).unwrap();
+        std::fs::write(&p, "{\"schema_version\":2,\"motion_enabled\":tr").unwrap();
+        let (cfg, warn) = load_from(&p);
+        assert!(cfg.motion_enabled, "坏文件必须回默认(动效开)");
+        assert_eq!(cfg, WorkspaceConfig::default());
+        assert!(warn.unwrap().contains("解析失败"));
+        // 合法持久化「关」→ 重读仍是关(单一真相生效)
+        let cfg = WorkspaceConfig {
+            motion_enabled: false,
+            ..WorkspaceConfig::default()
+        };
+        save_to(&p, &cfg).unwrap();
+        let (back, warn) = load_from(&p);
+        assert!(warn.is_none());
+        assert!(!back.motion_enabled, "动效开关必须随 workspace.json 持久化");
         let _ = std::fs::remove_file(&p);
     }
 }

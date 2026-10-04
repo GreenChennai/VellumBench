@@ -118,6 +118,18 @@ use external::re_sid_tree;
 // 全部 `Tool::…` 比较与穷尽 match 零改动;doc 注释随类型迁至 vb_session。
 pub use vb_session::tools::ToolId as Tool;
 
+/// NumField 提交会话守卫(UI-10):实例即「undo 会话开」的事实。
+///
+/// 生命周期 = 一次 NumField 连续编辑(scrubby 拖拽/键盘步进/表达式连发,
+/// 跨多帧)。守卫只能经 [`VellumApp::num_commit_begin`] 创建、
+/// [`VellumApp::num_commit_end`] 清除 —— 清除即收口 `UndoStack::end_session`,
+/// 不存在「置了标志忘了关」的第三态;`opened_at` 供诊断展示。
+#[derive(Debug)]
+pub(crate) struct NumCommitGuard {
+    /// 会话打开时刻(诊断用;undo 合并语义不依赖它)。
+    pub(crate) opened_at: std::time::Instant,
+}
+
 pub struct VellumApp {
     pub doc: Document,
     pub undo: UndoStack,
@@ -145,6 +157,10 @@ pub struct VellumApp {
     drag_edited: bool,
     /// 已同步到 egui 的主题(None=尚未同步;B4 主题单一真相)。
     pub(crate) theme_synced: Option<bool>,
+    /// PERF-05/UI-02:上次样式注入指纹(主题深浅, 动效开关);None =
+    /// 尚未注入(首帧必注)。连续帧指纹不变 → 零重注入(测试
+    /// `style_injection_fingerprint_gates_reinjection`)。
+    pub(crate) style_applied: Option<(bool, bool)>,
     /// 当前主题(true=深色)。P2.7 支持浅色。
     pub(crate) theme_dark: bool,
     /// 右侧面板当前 Tab(S1-b:存 **Tab 语义 id**(0=属性 1=图层 2=画板
@@ -160,8 +176,14 @@ pub struct VellumApp {
     panel_order: [usize; panels::TAB_COUNT],
     /// 隐藏/恢复所有面板(S1-b 02-6-5,`Tab`;隐藏右侧坞+状态栏+浮动工具条)。
     panels_hidden: bool,
-    /// NumField 提交会话进行中(02-6-2;true = 连续编辑并入同一条 undo)。
-    num_commit_open: bool,
+    /// NumField 提交会话守卫(UI-10 RAII 化,2026-10-05)。
+    ///
+    /// 旧实现是裸 `bool num_commit_open`:置位/复位散在 `num_commit` 与
+    /// dispatch 兜底两处,跨面板/拖拽/快捷键中断时漏复位 → undo 会话悬空,
+    /// 后续无关编辑被并进同一条 undo。现在**守卫存在 = 会话开**:清除只能
+    /// 经 [`VellumApp::num_commit_end`](守卫被清除即同步 `end_session`),
+    /// 工具切换与 `run_command` 顶层兜底同走该收口出口。
+    num_commit: Option<NumCommitGuard>,
     /// 属性面板七分组折叠状态(S1-c 02-3;下标 = `panels::properties` 组序)。
     prop_groups_open: [bool; 7],
     /// 图层面板搜索框(S1-d 02-4-7;按名过滤,纯前端,不动文档)。
@@ -240,6 +262,9 @@ pub struct VellumApp {
     pub(crate) motion_enabled: bool,
     /// 上次**已持久化**的工作区快照(脏检查;阶段 6 / 07-2 写通)。
     workspace_saved: dock_layout::WorkspaceConfig,
+    /// UI-12:上次已落盘的**窗口布局层**(每窗口独立文件;根视口不用层,
+    /// 保持与全局文件同源的旧口径)。
+    window_layer_saved: dock_layout::LayoutSnapshot,
     /// 变换数值面板显隐(阶段 2 / 03-2,`⇧F8`)
     transform_panel_open: bool,
     /// 变换参考点(九宫格;缩放/倾斜轴心)
@@ -515,13 +540,12 @@ impl VellumApp {
     /// 步进/连续表达式提交**合并为一条 undo**;顺带执行命令与错误 toast。
     ///
     /// 规则:
-    /// - `scrub_started` 或首帧 `changed` → 开会话(幂等);
+    /// - `scrub_started` 或首帧 `changed` → 开会话(幂等,经守卫);
     /// - `scrub_ended` / `focus_lost` → 关会话(松手或点走 = 一次编辑结束);
-    /// - `run_command` 顶层兜底关会话(见上)。
+    /// - `run_command` 顶层兜底 + 工具切换收口(见上)。
     pub(crate) fn num_commit(&mut self, r: vb_ui::NumFieldResponse, cmd: Option<Command>) {
-        if !self.num_commit_open && (r.scrub_started || r.changed) {
-            self.num_commit_open = true;
-            self.undo.begin_session();
+        if self.num_commit.is_none() && (r.scrub_started || r.changed) {
+            self.num_commit_begin();
         }
         if let Some(c) = cmd {
             self.exec(c);
@@ -529,8 +553,30 @@ impl VellumApp {
         if let Some(e) = r.expr_error {
             self.toast_error(e);
         }
-        if r.scrub_ended || (r.focus_lost && self.num_commit_open) {
-            self.num_commit_open = false;
+        if r.scrub_ended || (r.focus_lost && self.num_commit.is_some()) {
+            self.num_commit_end();
+        }
+    }
+
+    /// 开启提交会话(幂等;守卫即会话态,UI-10)。
+    pub(crate) fn num_commit_begin(&mut self) {
+        if self.num_commit.is_some() {
+            return;
+        }
+        self.undo.begin_session();
+        self.num_commit = Some(NumCommitGuard {
+            opened_at: std::time::Instant::now(),
+        });
+    }
+
+    /// 收口提交会话(幂等;守卫清除 = `end_session`,UI-10)。
+    /// 会话时长进调试日志(守卫字段的唯一消费点;undo 合并语义不依赖它)。
+    pub(crate) fn num_commit_end(&mut self) {
+        if let Some(g) = self.num_commit.take() {
+            log::debug!(
+                "num_commit 会话收口(时长 {} ms)",
+                g.opened_at.elapsed().as_millis()
+            );
             self.undo.end_session();
         }
     }
@@ -560,11 +606,24 @@ impl VellumApp {
         "未命名".into()
     }
 
+    /// PERF-05/UI-02:样式注入指纹判定。指纹(主题深浅, 动效开关)与上次
+    /// 注入一致 → `false`(零重注入);不一致或首帧 → `true` 并记账。
+    /// `set_theme`(B4 主题偏好同步)会按主题默认值重建 style,故主题变化
+    /// 路径必须先把指纹清空 —— 见 `frame.rs` 的 theme_synced 分支。
+    pub(crate) fn style_sync_needed(&mut self, dark: bool, motion: bool) -> bool {
+        let needed = self.style_applied != Some((dark, motion));
+        if needed {
+            self.style_applied = Some((dark, motion));
+        }
+        needed
+    }
+
     /// 外壳主题广播(02-3-5:主页与所有窗口跟随同一主题)。
     pub fn set_theme_dark(&mut self, dark: bool) {
         if self.theme_dark != dark {
             self.theme_dark = dark;
             self.theme_synced = None; // 强制下一帧向 egui 重新同步
+            self.style_applied = None; // PERF-05:set_theme 重建 style → 强制重注入
         }
     }
 
@@ -582,6 +641,9 @@ impl VellumApp {
         }
         self.pen_points.clear();
         self.ds_vertex = None;
+        // UI-10:切工具是 NumField 编辑中断的最常见路径 —— 会话守卫就地
+        // 收口(此前裸布尔在部分面板路径上漏复位,undo 会把无关编辑并成一条)
+        self.num_commit_end();
         self.tool = tool;
         // 05-2:X-4 变换中心与度量结果是**工具会话态**,切走即清
         // (回到同族另一工具也重设,避免拖出与当前工具无关的中心)。
@@ -697,3 +759,51 @@ pub(crate) fn fmt_deg(deg: f64) -> String {
 }
 
 // ─────────────────────── 04-5 / 04-3 门禁(单测) ───────────────────────
+
+// ─────────────────────── UI-10 门禁(单测) ───────────────────────
+
+#[cfg(test)]
+mod ui10_tests {
+    use super::Tool;
+    use vb_ui::NumFieldResponse;
+
+    /// UI-10(验收):守卫即会话 —— begin 开、end 收口(幂等)、工具切换
+    /// 收口;`run_command` 兜底同走收口出口。此前裸布尔在这几条路径上
+    /// 漏配对,undo 会把无关编辑并成一条。
+    #[test]
+    fn num_commit_guard_lifecycle_is_leakproof() {
+        let _env = crate::ENV_LOCK.lock();
+        let mut app = crate::app::assemble::tests::app_fresh(None);
+        assert!(!app.undo.session_active(), "初始无会话");
+        // 开(幂等)
+        app.num_commit_begin();
+        app.num_commit_begin();
+        assert!(app.undo.session_active(), "守卫存在 = 会话开");
+        // 收口(幂等)
+        app.num_commit_end();
+        app.num_commit_end();
+        assert!(!app.undo.session_active(), "守卫清除 = end_session");
+        // num_commit 路径:scrub_started 开会话
+        let r = NumFieldResponse {
+            scrub_started: true,
+            ..Default::default()
+        };
+        app.num_commit(r, None);
+        assert!(app.undo.session_active());
+        // 工具切换 = 编辑中断 → 守卫就地收口
+        app.set_tool(app.tool); // 同工具:不收口(early return)
+        assert!(app.undo.session_active(), "同工具切换不干预会话");
+        let other = if app.tool == Tool::Select {
+            Tool::Rect
+        } else {
+            Tool::Select
+        };
+        app.set_tool(other);
+        assert!(!app.undo.session_active(), "切工具必须收口提交会话");
+        // run_command 顶层兜底收口
+        app.num_commit_begin();
+        assert!(app.undo.session_active());
+        app.run_command("view.fit", false, false);
+        assert!(!app.undo.session_active(), "显式命令派发必须兜底收口");
+    }
+}
