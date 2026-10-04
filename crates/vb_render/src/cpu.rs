@@ -267,8 +267,7 @@ fn draw_item(
                         for &gi in line {
                             let g = &run.glyphs[gi];
                             // 行内字符序 → 全文字节偏移(富文本段按字节区间)
-                            let b = byte_base
-                                + char_offs.get(gi).copied().unwrap_or(hard.len());
+                            let b = byte_base + char_offs.get(gi).copied().unwrap_or(hard.len());
                             let color = t
                                 .segments
                                 .iter()

@@ -33,8 +33,8 @@
 //! - LTR 方向;RTL 文本按 LTR 输出(落位由浏览器导出路径兜底)。
 //! - 换行:v0.1 文本节点不自动换行(单行),与画布近似行为一致。
 
-use std::collections::HashMap;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -50,16 +50,22 @@ use vb_common::geom::{BezPath, Point};
 /// 免去 fontique 全库扫描 + 整份字体字节拷贝(PERF-01/DOC-09 主热点)。
 type ResolveKey = (String, u16, String);
 
+/// 一个已解析字体:字体文件字节(共享) + ttc 内的 face 索引。
+type ResolvedFont = (Arc<Vec<u8>>, usize);
+
+/// 项目 webfont 表:家庭(小写)→ (字重 → 字体文件字节)。
+type WebfontTable = HashMap<String, Vec<(u16, Arc<Vec<u8>>)>>;
+
 /// 缓存条目上限(超出整体清空)。选字缓存服务的是「同一文本在布局/渲染/
 /// 导出阶段被反复整形」的热路径,单任务内 distinct 文本数远小于此。
 const RESOLVE_CACHE_CAP: usize = 256;
 
 #[derive(Default)]
 struct RegistryInner {
-    /// 项目 webfont(@font-face):家庭(小写)→ (字重 → 字体文件字节)。
-    webfonts: HashMap<String, Vec<(u16, Arc<Vec<u8>>)>>,
+    /// 项目 webfont(@font-face)表。
+    webfonts: WebfontTable,
     /// 字重感知选字缓存(含负缓存:系统也找不到的族反复查询是大头)。
-    resolved: HashMap<ResolveKey, Option<(Arc<Vec<u8>>, usize)>>,
+    resolved: HashMap<ResolveKey, Option<ResolvedFont>>,
     /// fontique 枚举 + 字体源缓存(DOC-09:此前每次整形重建,全库重扫)。
     system: Option<(fontique::Collection, fontique::SourceCache)>,
     /// swash 整形上下文(内部缓冲复用;输出与每次新建逐位一致)。
@@ -100,7 +106,12 @@ impl FontRegistry {
     ///
     /// DOC-10:读盘失败**不再静默成 0 字节字体**——返回 `Err`(消息含
     /// 家庭/字重/路径/原因),并记入 [`Self::missing_fonts`] 清单。
-    pub fn register_font_file(&self, family: &str, weight: u16, path: PathBuf) -> Result<(), String> {
+    pub fn register_font_file(
+        &self,
+        family: &str,
+        weight: u16,
+        path: PathBuf,
+    ) -> Result<(), String> {
         let data = std::fs::read(&path).map_err(|e| {
             let msg = format!(
                 "@font-face 字体读取失败: family={family} weight={weight} path={} : {e}",
@@ -333,8 +344,7 @@ impl FontRegistry {
                 let Some(&last_i) = line.last() else {
                     continue;
                 };
-                let (Some(first), Some(last)) =
-                    (run.glyphs.get(first_i), run.glyphs.get(last_i))
+                let (Some(first), Some(last)) = (run.glyphs.get(first_i), run.glyphs.get(last_i))
                 else {
                     continue;
                 };
@@ -360,29 +370,32 @@ impl FontRegistry {
         letter_spacing: f32,
     ) -> Vec<(String, ShapedRun, Vec<Vec<usize>>)> {
         text.split('\n')
-            .map(|hard| match self.shape_text_weighted(hard, font_family, font_size, weight) {
-                Some(run) => {
-                    let lines = break_lines(hard, &run, max_width, letter_spacing);
-                    (hard.to_string(), run, lines)
-                }
-                None => (
-                    hard.to_string(),
-                    ShapedRun {
-                        font_data: Arc::new(Vec::new()),
-                        font_index: 0,
-                        glyphs: Vec::new(),
-                        ascent: font_size * 0.8,
-                        descent: font_size * 0.2,
-                        weight,
-                    },
-                    vec![Vec::new()],
-                ),
-            })
+            .map(
+                |hard| match self.shape_text_weighted(hard, font_family, font_size, weight) {
+                    Some(run) => {
+                        let lines = break_lines(hard, &run, max_width, letter_spacing);
+                        (hard.to_string(), run, lines)
+                    }
+                    None => (
+                        hard.to_string(),
+                        ShapedRun {
+                            font_data: Arc::new(Vec::new()),
+                            font_index: 0,
+                            glyphs: Vec::new(),
+                            ascent: font_size * 0.8,
+                            descent: font_size * 0.2,
+                            weight,
+                        },
+                        vec![Vec::new()],
+                    ),
+                },
+            )
             .collect()
     }
 
     /// 视觉行遍历(写出器共用):按硬行整形 + 贪心断行,逐视觉行回调
     /// `(视觉行序, 硬行文本, run, 字形索引, 硬行字节基址)`。
+    #[allow(clippy::too_many_arguments)]
     pub fn for_each_visual_line(
         &self,
         text: &str,
@@ -536,9 +549,7 @@ fn resolve_uncached(
             SourceCache::new(SourceCacheOptions::default()),
         ));
     }
-    let Some((collection, sources)) = inner.system.as_mut() else {
-        return None;
-    };
+    let (collection, sources) = inner.system.as_mut()?;
 
     // 候选族:用户指定族 → 常见中英文族(CJK 兜底,Windows 优先名)
     let trimmed = family.trim().trim_matches('"').trim_matches('\'');
@@ -613,7 +624,11 @@ fn resolve_uncached(
 }
 
 /// 按家庭+字重取注册字体(CSS 字重匹配:就近,先高后低)。
-fn registry_font(inner: &RegistryInner, family: &str, weight: u16) -> Option<(Arc<Vec<u8>>, usize)> {
+fn registry_font(
+    inner: &RegistryInner,
+    family: &str,
+    weight: u16,
+) -> Option<(Arc<Vec<u8>>, usize)> {
     let key = family.trim().to_ascii_lowercase();
     let faces = inner.webfonts.get(&key)?;
     if faces.is_empty() {
@@ -648,7 +663,8 @@ thread_local! {
 
 /// 便捷自由函数当前生效的实例:作用域栈顶 > 进程默认实例。
 fn current_registry() -> Arc<FontRegistry> {
-    SCOPE.with(|s| s.borrow().last().cloned())
+    SCOPE
+        .with(|s| s.borrow().last().cloned())
         .unwrap_or_else(|| default_registry().clone())
 }
 
@@ -1127,7 +1143,11 @@ mod tests {
     fn registries_are_isolated() {
         let a = FontRegistry::new();
         let b = FontRegistry::new();
-        a.register_font_bytes("TestOnlyFamily", 700, b"not a real font but nonempty".to_vec());
+        a.register_font_bytes(
+            "TestOnlyFamily",
+            700,
+            b"not a real font but nonempty".to_vec(),
+        );
         assert!(a.lock().webfonts.contains_key("testonlyfamily"));
         assert!(!b.lock().webfonts.contains_key("testonlyfamily"));
         // 注册表命中返回注册字节本身
@@ -1136,7 +1156,9 @@ mod tests {
             Some(28)
         );
         // 负缓存不跨实例泄漏(b 的选字缓存里没有 a 的注册)
-        let (bd, _i) = b.font_data_for("TestOnlyFamily", 700).expect("系统回退必有命中");
+        let (bd, _i) = b
+            .font_data_for("TestOnlyFamily", 700)
+            .expect("系统回退必有命中");
         assert_ne!(bd.len(), 28, "b 命中的必须是系统回退而非 a 的注册");
     }
 
@@ -1184,7 +1206,7 @@ mod tests {
             "失败必须进缺字体清单: {missing:?}"
         );
         // 未注册出空字节字体条目(旧 unwrap_or_default 行为已根除)
-        assert!(reg.lock().webfonts.get("missingfamily").is_none());
+        assert!(!reg.lock().webfonts.contains_key("missingfamily"));
     }
 
     /// PERF-01:选字缓存命中(同输入第二次 resolve 不再走全库扫描)。
@@ -1193,7 +1215,10 @@ mod tests {
         let reg = FontRegistry::new();
         let first = reg.font_data_for("Microsoft YaHei", 400);
         let second = reg.font_data_for("Microsoft YaHei", 400);
-        assert_eq!(first.map(|(d, i)| (d.len(), i)), second.map(|(d, i)| (d.len(), i)));
+        assert_eq!(
+            first.map(|(d, i)| (d.len(), i)),
+            second.map(|(d, i)| (d.len(), i))
+        );
         // 上限:灌满后整体清空,不无限增长
         for i in 0..(RESOLVE_CACHE_CAP + 8) {
             reg.resolve_weighted("fam", 400, &format!("t{i}"));
