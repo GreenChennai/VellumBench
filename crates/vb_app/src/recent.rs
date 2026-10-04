@@ -29,9 +29,11 @@ mod tests {
         st.touch(Path::new("examples/landing"));
         assert_eq!(st.items.len(), 1);
         assert_eq!(st.items[0].name, "landing");
+        // 键不变式:存储条目与源目录的 path_key 一致(path_key 仅在
+        // Windows 侧小写——POSIX 文件系统大小写敏感,不能 to_lowercase)。
         assert_eq!(
-            path_key(Path::new("examples/landing")),
-            st.items[0].path.to_lowercase()
+            path_key(Path::new(&st.items[0].path)),
+            path_key(Path::new("examples/landing"))
         );
         assert_eq!(
             relative_time(1_800_000_000, 1_800_000_030),
