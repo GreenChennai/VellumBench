@@ -426,8 +426,11 @@ impl VellumApp {
                 vb_ui::theme::motion::HOVER,
             );
             let vp = ctx.viewport_rect();
+            // Middle:压住面板与先创建的窗口,但不盖住本帧随后创建的
+            // 命令面板 Window(同序层后建者在上);用 Foreground 会连
+            // 面板自己一起压暗并挡输入(实测口径:Order 语义)
             let dim = ctx.layer_painter(egui::LayerId::new(
-                egui::Order::Foreground,
+                egui::Order::Middle,
                 egui::Id::new("vb-palette-dim"),
             ));
             dim.rect_filled(
