@@ -47,15 +47,19 @@ Copy-Item -Recurse (Join-Path $root "examples") (Join-Path $stage "examples")
 Copy-Item (Join-Path $root "dist\kiln-call.bat") $stage
 Copy-Item (Join-Path $root "dist\kiln-call.ps1") $stage
 
-# 随包字体目录(空目录占位 + 说明):把 Inter/MiSans 的 ttf/otf 放进来即可生效,
-# 不放则自动回退系统字体(%WINDIR%\Fonts 的微软雅黑等),界面可正常显示中文
+# 随包字体(UI-14):仓库 assets/fonts 已内置 Inter Regular/Medium/SemiBold
+# (SIL OFL 1.1)与 MiSans Regular(小米免费商用,许可文本随目录分发),
+# 打包时原样带入;运行期查找布局与 vb_ui::fonts::bundled_dirs 对应。
+# 目录为空时自动回退系统字体(%WINDIR%\Fonts 的微软雅黑等),中文仍可显示。
 New-Item -ItemType Directory -Force -Path (Join-Path $stage "assets\fonts") | Out-Null
+$repoFonts = Join-Path $root "assets\fonts"
+if (Test-Path $repoFonts) {
+    Copy-Item -Path (Join-Path $repoFonts "*") -Destination (Join-Path $stage "assets\fonts") -Force
+}
 Set-Content -Path (Join-Path $stage "assets\fonts\README.txt") -Encoding UTF8 -Value @(
-    "把字体文件放进本目录即可启用随包字体,候选文件名(vb_ui::fonts):",
-    "  Inter-Regular.otf/.ttf  Inter-Medium.otf/.ttf  Inter-SemiBold.otf/.ttf",
-    "  MiSans-Regular.ttf/.otf  JetBrainsMono-Regular.ttf/.otf",
-    "留空 = 使用系统字体回退链(%WINDIR%\Fonts:微软雅黑/等线/黑体/宋体)。",
-    "也可用环境变量 VB_FONTS_DIR 指向任意字体目录。"
+    "本目录字体随包分发:Inter(SIL OFL 1.1,见 LICENSE-OFL.txt)+ MiSans(小米免费商用,见 LICENSE-MiSans.txt)。",
+    "候选文件名(vb_ui::fonts):Inter-Regular/Medium/SemiBold.otf|.ttf,MiSans-Regular.ttf,JetBrainsMono-Regular.ttf。",
+    "删除字体文件 = 回退系统字体链(%WINDIR%\Fonts);也可用环境变量 VB_FONTS_DIR 指向任意字体目录。"
 )
 
 if (Test-Path $zip) { Remove-Item -Force $zip }

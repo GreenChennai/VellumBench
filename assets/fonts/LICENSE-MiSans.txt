@@ -1,0 +1,16 @@
+MiSans Regular —— 随包字体许可说明
+====================================
+
+来源    :https://hyperos.mi.com/font-download/MiSans.zip(官方发行包,2026-10-05 获取)
+文件    :MiSans-Regular.ttf(取自发行包 MiSans/ttf/)
+版权    :Copyright (c) 小米科技(Xiaomi Corporation)
+
+许可    :MiSans 字体版权属于小米科技,依据官方发布条款面向全社会**免费商用**,
+        允许随软件分发/内嵌,无需另行授权。
+        权威条款以官方页面为准:https://hyperos.mi.com/font
+        (官方发行包内未随附独立许可文本文件,故此处如实记录来源与条款出处,
+        供分发复核;若官方条款变化,以官方页面为准。)
+
+同目录其它字体:
+  Inter-Regular.otf / Inter-Medium.otf / Inter-SemiBold.otf
+  —— SIL Open Font License 1.1,全文见 LICENSE-OFL.txt。
