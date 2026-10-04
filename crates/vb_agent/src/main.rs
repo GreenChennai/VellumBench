@@ -113,8 +113,29 @@ enum Cmd {
 }
 
 fn main() {
+    init_tracing();
     let code = real_main();
     std::process::exit(code);
+}
+
+/// tracing 初始化(RB-11):VB_LOG=trace/debug/info/warn/error 控级别,
+/// 缺省 warn;日志走 stderr(stdout 是 --json 消费契约)。不做全局配置。
+fn init_tracing() {
+    let level = match std::env::var("VB_LOG")
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "trace" => tracing::Level::TRACE,
+        "debug" => tracing::Level::DEBUG,
+        "info" => tracing::Level::INFO,
+        "error" => tracing::Level::ERROR,
+        _ => tracing::Level::WARN,
+    };
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(level)
+        .with_writer(std::io::stderr)
+        .try_init();
 }
 
 fn real_main() -> i32 {
@@ -133,27 +154,25 @@ fn real_main() -> i32 {
             return if help_requested { 0 } else { 1 };
         }
     };
+    let json_mode = cli.json;
     match run(cli) {
         Ok(()) => 0,
-        Err(CliError::Usage(msg)) => {
-            eprintln!("错误:{msg}");
-            1
-        }
-        Err(CliError::NoDoc(msg)) => {
-            eprintln!("{msg}");
-            2
-        }
-        Err(CliError::Conflict(msg)) => {
-            eprintln!("{msg}");
-            3
-        }
-        Err(CliError::Export(msg)) => {
-            eprintln!("{msg}");
-            4
-        }
-        Err(CliError::Other(msg)) => {
-            eprintln!("错误:{msg}");
-            1
+        Err(e) => {
+            let (text, code) = match &e {
+                CliError::Usage(msg) => (format!("错误:{msg}"), 1),
+                CliError::NoDoc(msg) => (msg.clone(), 2),
+                CliError::Conflict(msg) => (msg.clone(), 3),
+                CliError::Export(msg) => (msg.clone(), 4),
+                CliError::Other(msg) => (format!("错误:{msg}"), 1),
+            };
+            // AGT-03:--json 模式错误走结构化输出(stdout),stdout 保持
+            // 单一 JSON 消费契约;退出码契约不变(0/1/2/3/4)
+            if json_mode {
+                println!("{}", json!({"ok": false, "error": text, "exit_code": code}));
+            } else {
+                eprintln!("{text}");
+            }
+            code
         }
     }
 }
@@ -173,10 +192,19 @@ impl From<anyhow::Error> for CliError {
 }
 
 fn open_doc(path: &Path) -> Result<(Document, UndoStack, PathBuf), CliError> {
+    // RB-11:导入是 CLI/MCP 全部命令的关键路径,结构化日志带耗时
+    let t0 = std::time::Instant::now();
     let r = import_project(path).map_err(|e| CliError::Other(format!("导入失败:{e}")))?;
     let dir = r.project_dir.clone();
     let synthetic = r.synthetic_artboard;
     let mut doc = r.doc;
+    tracing::info!(
+        dir = %dir.display(),
+        nodes = doc.nodes.len(),
+        warnings = r.warnings.len(),
+        duration_ms = t0.elapsed().as_millis() as u64,
+        "project imported"
+    );
     for w in &r.warnings {
         eprintln!("⚠ {w}");
     }
@@ -205,8 +233,20 @@ fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Bench { objects } => {
             let t0 = std::time::Instant::now();
             let mut doc = Document::new("Bench", "zh-CN");
-            let ab = doc.artboards[0];
-            doc.nodes.get_mut(ab).unwrap().geom.h = (objects as f64 / 20.0 + 10.0) * 40.0;
+            let Some(ab) = doc.artboards.first().copied() else {
+                return Err(CliError::Other("内部状态异常:bench 文档没有画板".into()));
+            };
+            let ab_sid = doc
+                .nodes
+                .get(ab)
+                .ok_or_else(|| CliError::Other("内部状态异常:画板节点缺失".into()))?
+                .sid
+                .as_str()
+                .to_string();
+            let Some(ab_node) = doc.nodes.get_mut(ab) else {
+                return Err(CliError::Other("内部状态异常:画板节点缺失".into()));
+            };
+            ab_node.geom.h = (objects as f64 / 20.0 + 10.0) * 40.0;
             for i in 0..objects {
                 let sid = doc.alloc_sid();
                 let mut n = vb_doc::model::Node::new(
@@ -231,11 +271,17 @@ fn run(cli: Cli) -> Result<(), CliError> {
                     important: false,
                 });
                 let pid = doc
-                    .find_by_sid(doc.nodes.get(ab).unwrap().sid.as_str())
-                    .unwrap();
+                    .find_by_sid(&ab_sid)
+                    .ok_or_else(|| CliError::Other("内部状态异常:画板 sid 失效".into()))?;
                 let id = doc.nodes.insert(n);
-                doc.nodes.get_mut(id).unwrap().parent = Some(pid);
-                doc.nodes.get_mut(pid).unwrap().children.push(id);
+                let Some(ins) = doc.nodes.get_mut(id) else {
+                    return Err(CliError::Other("内部状态异常:新节点缺失".into()));
+                };
+                ins.parent = Some(pid);
+                let Some(pn) = doc.nodes.get_mut(pid) else {
+                    return Err(CliError::Other("内部状态异常:画板节点缺失".into()));
+                };
+                pn.children.push(id);
             }
             let build_t = t0.elapsed();
             let list = vb_render::encode::encode_artboard(&doc, ab)
@@ -374,7 +420,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
             let (doc, _, _) = open_doc(&doc_path)?;
             let mut out = String::new();
             for &ab in &doc.artboards {
-                let n = doc.nodes.get(ab).unwrap();
+                let Some(n) = doc.nodes.get(ab) else { continue };
                 out.push_str(&format!(
                     "{} {} [{}]  {}×{}  sid={}\n",
                     "  ".repeat(0),
@@ -445,7 +491,10 @@ fn run(cli: Cli) -> Result<(), CliError> {
             let Some(nid) = doc.find_by_sid(&id) else {
                 return Err(CliError::Usage(format!("sid {id} 不存在")));
             };
-            let n = doc.nodes.get(nid).unwrap();
+            let n = doc
+                .nodes
+                .get(nid)
+                .ok_or_else(|| CliError::Usage(format!("sid {id} 内部节点缺失(悬挂 id)")))?;
             if cli.json {
                 let mut o = json!({
                     "sid": n.sid.as_str(),
@@ -494,18 +543,40 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 .map_err(|e| CliError::Other(format!("{e:#}")))?;
             let req: vb_agent::PatchRequest = serde_json::from_str(&text)
                 .map_err(|e| CliError::Usage(format!("patch 解析失败:{e}")))?;
-            match apply_patch(&mut doc, &mut undo, &req) {
+            // AGT-07:dry-run 在**克隆文档 + 独立 undo**上执行 —— 此前只是
+            // 「真应用后不落盘」,真文档已被改写;现在预演对真文档零触碰,
+            // 事务语义(成功或全部回滚)在克隆上照常验证。
+            let mut dry_doc;
+            let mut dry_undo = UndoStack::new();
+            let (target_doc, target_undo) = if dry_run {
+                dry_doc = doc.clone();
+                (&mut dry_doc, &mut dry_undo)
+            } else {
+                (&mut doc, &mut undo)
+            };
+            let t0 = std::time::Instant::now();
+            match apply_patch(target_doc, target_undo, &req) {
                 Ok(outcome) => {
+                    tracing::info!(
+                        ops = req.ops.len(),
+                        dry_run,
+                        duration_ms = t0.elapsed().as_millis() as u64,
+                        rev = outcome.rev,
+                        "patch applied"
+                    );
                     if dry_run {
-                        // dry-run 已应用即回滚(重放进临时 doc);v0.1 简化:应用后不落盘
+                        // 克隆上已验证通过;真文档未触碰、磁盘未写入
                     } else {
                         save_doc(&mut doc, &project_dir)?;
                     }
                     if cli.json {
                         println!(
                             "{}",
-                            json!({"ok": true, "rev": outcome.rev, "created_ids": outcome.created_ids, "changed_ids": outcome.changed_ids, "warnings": outcome.warnings})
+                            json!({"ok": true, "dry_run": dry_run, "rev": outcome.rev, "created_ids": outcome.created_ids, "changed_ids": outcome.changed_ids, "warnings": outcome.warnings})
                         );
+                    } else if dry_run {
+                        println!("ok (dry-run,未写入) rev={}", outcome.rev);
+                        println!("changed: {:?}", outcome.changed_ids);
                     } else {
                         println!("ok rev={}", outcome.rev);
                         println!("changed: {:?}", outcome.changed_ids);
@@ -517,13 +588,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
                         "409 conflict: base_rev={expected} 过期,当前 rev={current}(请重新 outline 后重试)"
                     )))
                 }
-                Err(e @ vb_agent::PatchError::Op(_)) => {
-                    if !dry_run {
-                        // 事务失败:文档不落盘,内存副本回滚即等于回滚
-                        let _ = e;
-                    }
-                    Err(CliError::Usage(format!("{e}")))
-                }
+                Err(e @ vb_agent::PatchError::Op(_)) => Err(CliError::Usage(format!("{e}"))),
             }
         }
         Cmd::Export {
@@ -689,7 +754,10 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 };
                 match resolve_artboard(&doc, a) {
                     Some(id) => {
-                        let name = doc.nodes.get(id).unwrap().name.clone();
+                        let name =
+                            doc.nodes.get(id).map(|n| n.name.clone()).ok_or_else(|| {
+                                CliError::Export(format!("画板 {a} 内部节点缺失"))
+                            })?;
                         vec![(name, id)]
                     }
                     None => return Err(CliError::Export(format!("画板 {a} 不存在"))),
@@ -817,9 +885,16 @@ fn run(cli: Cli) -> Result<(), CliError> {
 }
 
 fn save_doc(doc: &mut Document, path: &Path) -> Result<(), CliError> {
-    // 保存 = canonical 重写项目目录(ADR-0018)
+    // 保存 = canonical 重写项目目录(ADR-0018);RB-11 落盘耗时入日志
+    let t0 = std::time::Instant::now();
     vb_doc::export::write_project(doc, path)
         .map_err(|e| CliError::Other(format!("保存失败:{e}")))?;
+    tracing::info!(
+        dir = %path.display(),
+        rev = doc.rev,
+        duration_ms = t0.elapsed().as_millis() as u64,
+        "project saved"
+    );
     doc.rev += 1;
     Ok(())
 }
@@ -867,26 +942,31 @@ fn outline_children(
 }
 
 fn tree_json(doc: &Document, depth: usize) -> String {
-    fn node_json(doc: &Document, id: vb_doc::model::NodeId, depth: usize) -> serde_json::Value {
-        let n = doc.nodes.get(id).unwrap();
+    // 悬挂 id 跳过而不是 panic(AGT-02/RB-01:退出码契约优先于内部一致性)
+    fn node_json(
+        doc: &Document,
+        id: vb_doc::model::NodeId,
+        depth: usize,
+    ) -> Option<serde_json::Value> {
+        let n = doc.nodes.get(id)?;
         let children: Vec<serde_json::Value> = if depth > 1 {
             n.children
                 .iter()
-                .map(|&c| node_json(doc, c, depth - 1))
+                .filter_map(|&c| node_json(doc, c, depth - 1))
                 .collect()
         } else {
             vec![]
         };
-        json!({
+        Some(json!({
             "sid": n.sid.as_str(), "name": n.name, "tag": n.tag, "kind": n.kind.kind_name(),
             "box": {"x": n.geom.x, "y": n.geom.y, "w": n.geom.w, "h": n.geom.h},
             "children": children,
-        })
+        }))
     }
     let arts: Vec<serde_json::Value> = doc
         .artboards
         .iter()
-        .map(|&a| node_json(doc, a, depth))
+        .filter_map(|&a| node_json(doc, a, depth))
         .collect();
     json!({"rev": doc.rev, "artboards": arts}).to_string()
 }
