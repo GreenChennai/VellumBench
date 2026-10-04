@@ -51,7 +51,11 @@ fn blend(a: Color32, b: Color32, t: f32) -> Color32 {
 /// (`Tokens::focus_ring*`,§8.3.3)。egui 0.35 对一切 `Sense::click`
 /// 控件(含自绘)自动维护 Tab 序与 Space/Enter 激活,但**焦点环要
 /// 自绘** —— 自绘控件在 `resp.has_focus()` 时调它。
-fn paint_focus_ring(ui: &Ui, rect: egui::Rect, t: &theme::Tokens) {
+///
+/// S5(§8.10 诚实清单 ①)起 `pub`:组件层之外的零散自绘可交互点
+/// (图层面板行、状态栏文本项、启动器卡片)与组件层共用**同一实现**
+/// —— 环的规格(accent 1.5px 外 + 内隔离)只允许有一份。
+pub fn paint_focus_ring(ui: &Ui, rect: egui::Rect, t: &theme::Tokens) {
     ui.painter().rect_stroke(
         rect.expand(1.0),
         theme::radius::sm(),
@@ -1392,6 +1396,11 @@ impl<'a> PanelTabs<'a> {
                 if resp.clicked() && !is_active {
                     *self.active = i;
                     changed = true;
+                }
+                // S5(§8.10 诚实清单 ①):Tab 页是 allocate 自绘控件,键盘
+                // 焦点落在其上时必须有可见环(此前只有选中底,环待 S5 补)。
+                if resp.has_focus() {
+                    paint_focus_ring(ui, rect, &t);
                 }
                 if self.reorderable {
                     let mut reorder: Option<(usize, i32)> = None;

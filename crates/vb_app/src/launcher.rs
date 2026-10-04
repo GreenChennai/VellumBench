@@ -366,6 +366,11 @@ impl LauncherUi {
             stroke,
             egui::StrokeKind::Inside,
         );
+        // S5(§8.10 诚实清单 ①):卡片命中区是 allocate 自绘控件
+        // (Sense::click 含 FOCUSABLE),键盘焦点落在其上时补统一焦点环。
+        if resp.has_focus() {
+            vb_ui::components::paint_focus_ring(ui, rect, t);
+        }
 
         // ── 卡片内容(缩略图 | 名称/路径 | 时间+操作)──
         // 右列预留宽度:操作显现时给足一排按钮,静息时只留相对时间 ——
@@ -652,6 +657,15 @@ impl LauncherUi {
                             egui::Sense::click(),
                         )
                         .on_hover_text(desc);
+                    // S5(§8.10 诚实清单 ①):整卡命中区补键盘焦点环
+                    // (Tab 可达 + Space/Enter 可激活,环此前缺失)。
+                    if resp.has_focus() {
+                        vb_ui::components::paint_focus_ring(
+                            ui,
+                            picked.rect,
+                            &vb_ui::theme::tokens(ui.ctx()),
+                        );
+                    }
                     if resp.hovered() {
                         ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
                     }

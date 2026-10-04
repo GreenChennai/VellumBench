@@ -20,19 +20,37 @@ fn count(haystack: &str, needle: &str) -> usize {
 }
 
 /// 自绘焦点环:环调用点 ≥ 自绘可交互控件数
-/// (ToolButton / NumField 标签 / icon_button / checkbox / radio / switch,
-/// 加 TextField 独立实现 = 7 处)。
+/// (ToolButton / NumField 标签 / icon_button / checkbox / radio / switch /
+/// TextField / PanelTabs Tab 页 = 8 处)。
 #[test]
 fn custom_controls_paint_focus_rings() {
     let rings = count(COMPONENTS, "paint_focus_ring(") - 1; // 减定义本身
     assert!(
-        rings >= 7,
-        "G-UI-D:自绘控件的键盘焦点环调用点不足(找到 {rings},需 ≥7)—— \
+        rings >= 8,
+        "G-UI-D:自绘控件的键盘焦点环调用点不足(找到 {rings},需 ≥8)—— \
          新增自绘控件必须在 resp.has_focus() 时画焦点环"
     );
     assert!(
         COMPONENTS.contains("fn paint_focus_ring"),
         "焦点环助手必须存在于 components.rs(单一实现)"
+    );
+}
+
+/// S5(§8.10 诚实清单 ①):PanelTabs 的 Tab 页是 allocate 自绘控件,
+/// 逐控件断言其环真接线(`resp.has_focus()` → `paint_focus_ring`),
+/// 不许只靠总数蒙混。vb_app 侧的图层面板行/状态栏文本项/启动器卡片
+/// 由 `docs/design/ui-focus-a11y.md` 走查表人工钉住(跨 crate 静态扫描
+/// 归属 CI 分档项)。
+#[test]
+fn panel_tabs_tabs_paint_focus_ring() {
+    let body = COMPONENTS
+        .split("pub fn ui_ex")
+        .nth(1)
+        .and_then(|rest| rest.split("pub fn ui(").next())
+        .unwrap_or("");
+    assert!(
+        body.contains("resp.has_focus()") && body.contains("paint_focus_ring("),
+        "G-UI-D:PanelTabs Tab 页缺键盘焦点环(S5 清单 ① 回归)"
     );
 }
 

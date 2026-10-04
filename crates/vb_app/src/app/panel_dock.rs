@@ -542,6 +542,11 @@ impl VellumApp {
                             self.sec_dock_collapsed = false;
                         }
                     }
+                    // S5(§8.10 诚实清单 ①):折叠图标条(次级坞)的组图标
+                    // 同样是 allocate 自绘控件,键盘焦点环统一接线。
+                    if resp.has_focus() {
+                        vb_ui::components::paint_focus_ring(ui, rect, &t);
+                    }
                     let _ = resp.on_hover_text(hint);
                 }
             });

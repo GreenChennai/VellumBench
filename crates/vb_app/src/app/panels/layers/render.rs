@@ -269,6 +269,12 @@ impl VellumApp {
             theme::radius::sm(),
             fill,
         );
+        // S5(§8.10 诚实清单 ①):行是 allocate 自绘控件(Sense::click_and_drag
+        // 含 FOCUSABLE),Tab 可达 + Space/Enter 可选中,此前键盘焦点落在
+        // 行上没有可见环 —— 补统一焦点环(与 ToolButton 同规格)。
+        if resp.has_focus() {
+            vb_ui::components::paint_focus_ring(ui, rect, &t);
+        }
 
         // 布局:缩进 | 展开箭头 | 类型图标 | 标记点 | 名称 | ↑ ↓ 👁 🔒
         let center = rect.center().y;

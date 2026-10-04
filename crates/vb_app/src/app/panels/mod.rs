@@ -132,6 +132,11 @@ impl VellumApp {
                             self.dock_collapsed = false;
                         }
                     }
+                    // S5(§8.10 诚实清单 ①):折叠图标条的 Tab 图标同样
+                    // 是 allocate 自绘控件,键盘焦点环统一接线。
+                    if resp.has_focus() {
+                        vb_ui::components::paint_focus_ring(ui, rect, &t);
+                    }
                     let _ = resp.on_hover_text(hint);
                 }
             });
@@ -351,12 +356,30 @@ impl VellumApp {
                         // 07-I:未采用是告警级,走主题 danger 令牌(两主题可读)
                         theme::tokens(ui.ctx()).danger
                     };
-                    let ext_resp = ui.colored_label(color, text);
+                    // S5(§8.10 诚实清单 ①):此前 `ui.colored_label` 是
+                    // hover-only 感知(egui Label 不进 Tab 序)—— 走查表里
+                    // 「Space/Enter 可点」是错的。改为 allocate+click 自绘
+                    // 文本项:Tab 可达 + Space/Enter 可点 + 统一焦点环,
+                    // 与走查表口径一致。
+                    let galley =
+                        ui.painter()
+                            .layout_no_wrap(text, egui::FontId::proportional(12.0), color);
+                    let (ext_rect, ext_resp) =
+                        ui.allocate_exact_size(galley.size(), egui::Sense::click());
+                    ui.painter().galley(
+                        egui::pos2(ext_rect.left(), ext_rect.center().y - galley.size().y * 0.5),
+                        galley,
+                        color,
+                    );
                     // U-9:可点项 hover 手势 —— 手型光标 + 下划线,tooltip 提示可点
                     if ext_resp.hovered() {
                         ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
                     }
                     paint_hover_underline(ui, &ext_resp);
+                    // S5:键盘焦点环(与组件层同规格,单一实现)
+                    if ext_resp.has_focus() {
+                        vb_ui::components::paint_focus_ring(ui, ext_rect, &theme::tokens(ui.ctx()));
+                    }
                     if ext_resp.on_hover_text(tip).clicked() {
                         // 09-N 打通(05-4-A2):未采用 = 磁盘与内存有分叉 →
                         // 点印记直接打开三方对比对话框;已重载仍走信息窗。
