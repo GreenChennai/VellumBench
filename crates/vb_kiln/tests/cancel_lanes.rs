@@ -245,6 +245,7 @@ fn precancelled_dom_lane_stops_at_entry_boundary() {
         1,
         0,
         Some(token.child()),
+        None,
     )
     .err()
     .expect("预取消必须 Err");
@@ -259,6 +260,7 @@ fn precancelled_dom_lane_stops_at_entry_boundary() {
         1,
         0,
         Some(CancelToken::new()),
+        None,
     )
     .err()
     .expect("缺源文件必须 Err");
@@ -278,6 +280,7 @@ fn precancelled_dom_pages_lane_stops_at_entry_boundary() {
         1,
         0,
         Some(token.child()),
+        None,
     )
     .err()
     .expect("预取消必须 Err");

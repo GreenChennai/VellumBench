@@ -77,10 +77,12 @@ enum Cmd {
         /// 保留透明背景(PNG/GIF/SVG/PDF)
         #[arg(long, default_value_t = false)]
         transparent: bool,
-        /// 最大等待秒(保留参数:当前浏览器车道自带 settle 收敛预算,
-        /// 此参数暂不生效;仅为脚本兼容保留)
-        #[arg(long, default_value_t = 15.0)]
-        max_wait: f32,
+        /// 最大等待秒(EXP-02):浏览器车道 settle/截图/printToPDF/采集的
+        /// 总预算上限 —— 各阶段等待被 min(默认上限, 剩余预算) 收口,预算
+        /// 耗尽立即失败(不再静默挂满 180s/300s)。未给出 = 各阶段默认
+        /// 上限(5s/180s/300s);0 = 同未给出。
+        #[arg(long)]
+        max_wait: Option<f32>,
         /// 高度锁定(CSS px;0=整页。浏览器车道有效)
         #[arg(long, default_value_t = 0)]
         height: u32,
@@ -293,7 +295,7 @@ fn spawn_cancel_listener(token: vb_kiln::cancel::CancelToken) {
 /// → 结构化 cancelled JSON + 退出码 130;真失败 → 沿用既有
 /// {"ok":false,...} + 退出码 4(失败码不变,下游兼容)。
 fn lane_failure_exit(cancel: &vb_kiln::cancel::CancelToken, msg: &str) -> i32 {
-    if cancel.is_cancelled() || vb_kiln::cancel::is_lane_cancelled(msg) {
+    if cancel.is_cancelled() || vb_kiln::cancel::CancelState::of_error(msg).is_cancelled() {
         eprintln!(
             "{{\"ok\":false,\"cancelled\":true,\"error\":\"{}\"}}",
             jesc(msg)
@@ -372,6 +374,55 @@ fn main() {
     std::process::exit(code);
 }
 
+/// 车道放行计划(EXP-13 单一权威点):auto/browser/native × 格式 ×
+/// 矢量路线 × 渲染路线的放行矩阵此前散落 run_export 六处
+/// (want_dom / anim 门 / webcodecs 门 / static 门 / browser 白名单 /
+/// dom-光栅错配告警),调整一处漏一处即车道矩阵漂移。本函数**纯判定**,
+/// 无 IO 无副作用;执行侧(降级标记、JSON、退出码)只按计划行动。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LanePlan {
+    /// 矢量 dom 路线(AI/PDF/SVG/EPS × vector auto/dom × 非 native)。
+    try_dom: bool,
+    /// dom 失败后允许降级(vector=dom 为显式指定,失败即硬失败)。
+    dom_degradable: bool,
+    /// `--vector dom` 用在光栅格式上(预期路线错配:发警告不阻断)。
+    dom_on_raster: bool,
+    /// 动画浏览器车道(GIF/MP4 × 非 native)。
+    try_anim: bool,
+    /// MP4 先试 WebCodecs(auto/webcodecs;GIF 调色板需全帧统计不走)。
+    try_webcodecs: bool,
+    /// 静态截图车道(PNG/PDF/AI × 非 native)。
+    try_static: bool,
+    /// `--engine browser` 但格式不被静态车道支持(PNG/PDF/AI 之外):
+    /// 全部浏览器路线尝试后按参数错误退出(保持既有放行次序)。
+    browser_static_mismatch: bool,
+}
+
+impl LanePlan {
+    /// `render` 非法仅在动画车道确实参与时才报错(与既有行为一致)。
+    fn resolve(fmt_upper: &str, engine: &str, vector: &str, render: &str) -> Result<Self, String> {
+        let native = engine == "native";
+        let static_formats = matches!(fmt_upper, "PNG" | "PDF" | "AI");
+        let plan = LanePlan {
+            try_dom: matches!(fmt_upper, "AI" | "PDF" | "SVG" | "EPS")
+                && matches!(vector, "auto" | "dom")
+                && !native,
+            dom_degradable: vector != "dom",
+            dom_on_raster: vector == "dom" && matches!(fmt_upper, "PNG" | "JPG"),
+            try_anim: matches!(fmt_upper, "GIF" | "MP4") && !native,
+            try_webcodecs: fmt_upper == "MP4" && matches!(render, "auto" | "webcodecs"),
+            try_static: static_formats && !native,
+            browser_static_mismatch: engine == "browser" && !static_formats,
+        };
+        if plan.try_anim && !matches!(render, "auto" | "webcodecs" | "screenshot") {
+            return Err(format!(
+                "--render 取值须为 auto|webcodecs|screenshot(当前 {render})"
+            ));
+        }
+        Ok(plan)
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_export(
     sources: Vec<PathBuf>,
@@ -380,7 +431,7 @@ fn run_export(
     width: u32,
     scale: u32,
     transparent: bool,
-    max_wait: f32,
+    max_wait: Option<f32>,
     height: u32,
     engine: String,
     vector: String,
@@ -404,7 +455,12 @@ fn run_export(
     // 令牌全链路透传(动画/WebCodecs/GIF 内存车道 + native 写出器)
     let cancel = vb_kiln::cancel::CancelToken::new();
     spawn_cancel_listener(cancel.child());
-    let _ = max_wait; // 浏览器车道自带 settle 预算;自研车道无外部等待
+    // EXP-02:--max-wait 接线 —— None/0 = 各阶段默认上限(旧口径)。
+    // 覆盖静态车道(settle/截图/printToPDF)与 dom 采集车道;动画车道
+    // 总时长 = 帧数/fps 属产物语义,不套此预算(逐帧等待本就有界)。
+    let max_wait_budget = max_wait
+        .filter(|s| *s > 0.0)
+        .map(std::time::Duration::from_secs_f32);
     let source = sources[0].clone(); // 单源兼容:各路线内部用第一源
     let dir = if source.is_dir() {
         source.clone()
@@ -448,6 +504,17 @@ fn run_export(
     // auto=浏览器可用即用(保真优先);browser=强制;native=跳过本段
     let engine_mode = engine.trim().to_ascii_lowercase();
     let vector_mode = vector.trim().to_ascii_lowercase();
+    let render_mode = render.trim().to_ascii_lowercase();
+    // EXP-13:车道决策单一权威点 —— 放行矩阵(dom/anim/webcodecs/static/
+    // browser 白名单/错配告警)在此一次算定,run_export 只按计划执行。
+    let fmt_up = fmt_str.to_uppercase();
+    let plan = match LanePlan::resolve(&fmt_up, &engine_mode, &vector_mode, &render_mode) {
+        Ok(p) => p,
+        Err(m) => {
+            eprintln!("{{\"ok\":false,\"error\":\"{m}\"}}");
+            return 2;
+        }
+    };
     // auto 车道失败后落到自研引擎的显式标记:自研引擎对真实海报页会丢照片/
     // 渐变/绝对定位(实测只剩系统字体堆叠),必须让调用方看得见,不能 ok:true
     // 静默混过去(Bug B)。`--engine native` 是用户主动选择,不算降级。
@@ -476,17 +543,10 @@ fn run_export(
     // dom 使 G1 均分 99.93→93.94,消融证明 chrome 逐例复现历史分)。
     // 结构保证:整行文本一个 CID Tj(零逐字断字)、双 OCG 图层、零 Type3、
     // 渐变位图化(pdfium/AI 兼容)、blend 文字矢量救活。
-    if matches!(vector_mode.as_str(), "dom")
-        && matches!(fmt_str.to_uppercase().as_str(), "PNG" | "JPG")
-    {
+    if plan.dom_on_raster {
         eprintln!("{{\"warn\":\"{fmt_str} 为光栅格式,期望路线为浏览器原生截屏(ADR-0022),--vector dom 不适用\"}}");
     }
-    let want_dom = matches!(
-        fmt_str.to_uppercase().as_str(),
-        "AI" | "PDF" | "SVG" | "EPS"
-    ) && matches!(vector_mode.as_str(), "auto" | "dom")
-        && engine_mode != "native";
-    if want_dom {
+    if plan.try_dom {
         // 硬骨头 #3 收口:DOM 快照车道(单页/多页)接同一取消令牌——
         // 入口/采集/写出边界 + CDP 长等待分片轮询;stdin 'c' 一通道生效
         let dom_result = if sources.len() > 1 {
@@ -497,6 +557,7 @@ fn run_export(
                 scale,
                 height,
                 Some(cancel.child()),
+                max_wait_budget,
             )
         } else {
             vb_kiln::domexport::export_dom_with_cancel(
@@ -507,6 +568,7 @@ fn run_export(
                 scale,
                 height,
                 Some(cancel.child()),
+                max_wait_budget,
             )
         };
         match dom_result {
@@ -555,7 +617,7 @@ fn run_export(
                 return 0;
             }
             Err(e) => {
-                if vector_mode == "dom" {
+                if !plan.dom_degradable {
                     return lane_failure_exit(&cancel, &format!("DOM 快照路线失败:{e}"));
                 }
                 lane_fallback_native = true;
@@ -569,11 +631,7 @@ fn run_export(
     // ---- 车道 B 动画逐帧(WPI 理论):GIF/MP4 主路 ----
     // Lane K 静态求值只覆盖 4 类动画轨道(35 分根因),此处让动画在真
     // 浏览器里实时播放并按 1/fps 截屏;无浏览器/native 时降级 Lane K。
-    if matches!(
-        fmt,
-        vb_kiln::writer::Format::Gif | vb_kiln::writer::Format::Mp4
-    ) && engine_mode != "native"
-    {
+    if plan.try_anim {
         // 0.12.2 起动画车道默认 GPU 光栅;--no-gpu / VB_GPU=0 显式关闭
         let out_gpu = !no_gpu
             && if gpu {
@@ -583,11 +641,7 @@ fn run_export(
                     matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "off")
                 })
             };
-        let render_mode = render.to_ascii_lowercase();
-        if !matches!(render_mode.as_str(), "auto" | "webcodecs" | "screenshot") {
-            eprintln!("{{\"ok\":false,\"error\":\"--render 取值须为 auto|webcodecs|screenshot\"}}");
-            return 2;
-        }
+        // --render 合法性已在 LanePlan::resolve 判定(EXP-13)
         let seek_norm = seek_fn.map(|f| f.trim().trim_start_matches("window.").trim().to_string());
         let anim_opts = vb_kiln::animlane::AnimPipeOpts {
             width,
@@ -613,9 +667,7 @@ fn run_export(
         // WebCodecs 车道(0.13):canvas+SEEK 页全 GPU —— 页内硬编 +
         // AnnexB 上传 + ffmpeg -c copy 封装。auto 探针/编码失败自动回退
         // 截图车道;仅 MP4(GIF 调色板需全帧统计,仍走截图车道)。
-        if matches!(fmt, vb_kiln::writer::Format::Mp4)
-            && matches!(render_mode.as_str(), "auto" | "webcodecs")
-        {
+        if plan.try_webcodecs {
             match vb_kiln::webcodecs_lane::export_anim_webcodecs(&source, &anim_opts) {
                 Ok(out) => {
                     for w in &out.warnings {
@@ -740,14 +792,21 @@ fn run_export(
             }
         }
     }
-    if engine_mode == "browser" && !matches!(fmt_str.to_uppercase().as_str(), "PNG" | "PDF" | "AI")
-    {
+    if plan.browser_static_mismatch {
         eprintln!("{{\"ok\":false,\"error\":\"浏览器车道仅支持 PNG/PDF/AI,格式 {fmt_str} 请用 auto/native\"}}");
         return 2;
     }
-    if engine_mode != "native" && matches!(fmt_str.to_uppercase().as_str(), "PNG" | "PDF" | "AI") {
+    if plan.try_static {
+        // EXP-05:白名单判定已上收 resolve_lane;此处解析失败按参数契约
+        // 退出码 2 报错,不再 expect(退出码 101 漂移)。
+        let Some(lane_format) = vb_browser::LaneFormat::parse(&fmt_str) else {
+            eprintln!(
+                "{{\"ok\":false,\"error\":\"格式 {fmt_str} 不被浏览器静态车道支持(PNG/PDF/AI)\"}}"
+            );
+            return 2;
+        };
         let req = vb_browser::LaneRequest {
-            format: vb_browser::LaneFormat::parse(&fmt_str).expect("格式已白名单"),
+            format: lane_format,
             width: lane_w,
             height: lane_h,
             scale: scale.clamp(1, 8),
@@ -762,7 +821,7 @@ fn run_export(
             let t = cancel.clone();
             std::sync::Arc::new(move || t.is_cancelled())
         };
-        match vb_browser::export_source_cancellable(&source, &req, probe) {
+        match vb_browser::export_source_cancellable_bounded(&source, &req, probe, max_wait_budget) {
             Ok(outcome) => {
                 // 车道 B 告警逐条留痕:此前只报计数,告警内容被吞,
                 // 违反「降级必须可观测」(ADR-0046)
@@ -908,7 +967,12 @@ fn run_export(
     // 输出尺寸:光栅格式 = 像素;矢量格式 = 逻辑尺寸 × scale
     let logical_w = report.engine.len(); // 占位防 unused;实际宽高见下
     let _ = logical_w;
-    let (w, h) = raster_dims(&imported, ab, &req);
+    let Some(ab_geom) = imported.doc.node(ab).map(|n| n.geom) else {
+        // 结构不可达(ab 来自 artboards.first()),但按契约诚实收口而非 unwrap
+        eprintln!("{{\"ok\":false,\"error\":\"画板节点缺失(内部状态不一致)\"}}");
+        return 3;
+    };
+    let (w, h) = raster_dims_of(ab_geom, &req);
     let _ = width; // WPI 兼容:Kiln 以画板几何为准
     let _ = &report; // 下述 JSON 多处借用
 
@@ -943,15 +1007,11 @@ fn run_export(
     0
 }
 
-/// 输出宽高(与 ExportContext 一致的公式)。
-fn raster_dims(
-    imported: &vb_doc::import::ImportResult,
-    ab: vb_doc::model::NodeId,
-    req: &ExportRequest,
-) -> (u32, u32) {
-    let n = imported.doc.node(ab).unwrap();
-    let w = ((n.geom.w * req.scale as f64).round() as u32).max(1);
-    let h = ((n.geom.h * req.scale as f64).round() as u32).max(1);
+/// 输出宽高(与 ExportContext 一致的公式;EXP-05:改为对 geom 的全函数,
+/// 节点缺失由调用方按退出码 3 收口,不再 unwrap)。
+fn raster_dims_of(geom: vb_doc::model::Geom, req: &ExportRequest) -> (u32, u32) {
+    let w = ((geom.w * req.scale as f64).round() as u32).max(1);
+    let h = ((geom.h * req.scale as f64).round() as u32).max(1);
     (w, h)
 }
 
@@ -1178,8 +1238,13 @@ fn run_selfcheck() -> i32 {
         sid_card,
     ));
     {
+        // EXP-05:节点均为本函数刚插入,访问失败属内部不一致——按退出码 3
+        // 诚实收口,不 unwrap(退出码 101 漂移破坏脚本判定)。
         use vb_doc::model::Geom;
-        let n = doc.nodes.get_mut(card).unwrap();
+        let Some(n) = doc.nodes.get_mut(card) else {
+            eprintln!("{{\"ok\":false,\"error\":\"selfcheck 内部不一致:节点缺失\"}}");
+            return 3;
+        };
         n.geom = Geom {
             x: 20.0,
             y: 20.0,
@@ -1188,8 +1253,17 @@ fn run_selfcheck() -> i32 {
         };
         n.style_set("background-color", "rgb(16,185,129)"); // vb-token-ok selfcheck 样例数据
         n.style_set("border-radius", "12px");
-        doc.nodes.get_mut(ab).unwrap().children.push(card);
-        doc.nodes.get_mut(card).unwrap().parent = Some(ab);
+        let Some(ab_node) = doc.nodes.get_mut(ab) else {
+            eprintln!("{{\"ok\":false,\"error\":\"selfcheck 内部不一致:画板节点缺失\"}}");
+            return 3;
+        };
+        ab_node.children.push(card);
+        // (ab_node 借用随块内最后一次使用自然结束,再取 card 节点)
+        let Some(card_node) = doc.nodes.get_mut(card) else {
+            eprintln!("{{\"ok\":false,\"error\":\"selfcheck 内部不一致:节点缺失\"}}");
+            return 3;
+        };
+        card_node.parent = Some(ab);
     }
     let passed = Format::all().iter().all(|fmt| {
         let req = ExportRequest {
@@ -1247,6 +1321,47 @@ fn run_selfcheck() -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// EXP-13:车道放行矩阵钉死(ADR-0021/0022 的执行口径)。
+    #[test]
+    fn lane_plan_matrix() {
+        // auto + PDF:dom 主路(可降级)+ static 兜底
+        let p = LanePlan::resolve("PDF", "auto", "auto", "auto").unwrap();
+        assert!(p.try_dom && p.dom_degradable && p.try_static);
+        assert!(!p.try_anim && !p.browser_static_mismatch && !p.dom_on_raster);
+        // --vector dom:失败即硬失败
+        let p = LanePlan::resolve("PDF", "auto", "dom", "auto").unwrap();
+        assert!(p.try_dom && !p.dom_degradable);
+        // --vector dom 用在 PNG = 错配告警,且 dom 不放行(光栅不入闸门)
+        let p = LanePlan::resolve("PNG", "auto", "dom", "auto").unwrap();
+        assert!(p.dom_on_raster && !p.try_dom && p.try_static);
+        // native:全部浏览器路线关闭
+        let p = LanePlan::resolve("PDF", "native", "auto", "auto").unwrap();
+        assert!(!p.try_dom && !p.try_anim && !p.try_static);
+        // MP4 auto:动画 + webcodecs;GIF:无 webcodecs
+        let p = LanePlan::resolve("MP4", "auto", "auto", "auto").unwrap();
+        assert!(p.try_anim && p.try_webcodecs && !p.try_dom && !p.try_static);
+        let p = LanePlan::resolve("GIF", "auto", "auto", "auto").unwrap();
+        assert!(p.try_anim && !p.try_webcodecs);
+        // engine=browser + SVG:dom 仍可试,static 白名单外 → 尝试后报错
+        let p = LanePlan::resolve("SVG", "browser", "auto", "auto").unwrap();
+        assert!(p.try_dom && !p.try_static && p.browser_static_mismatch);
+        // engine=browser + PNG:正常静态车道
+        let p = LanePlan::resolve("PNG", "browser", "auto", "auto").unwrap();
+        assert!(p.try_static && !p.browser_static_mismatch);
+    }
+
+    /// EXP-13:--render 非法仅在动画车道参与时报错(native 不受影响)。
+    #[test]
+    fn lane_plan_render_validation() {
+        assert!(LanePlan::resolve("MP4", "auto", "auto", "bogus").is_err());
+        assert!(LanePlan::resolve("GIF", "auto", "auto", "bogus").is_err());
+        // native 关闭动画车道:render 值不参与判定
+        let p = LanePlan::resolve("MP4", "native", "auto", "bogus").unwrap();
+        assert!(!p.try_anim);
+        // 静态格式 + 非法 render:不报错(render 与该路线无关)
+        assert!(LanePlan::resolve("PNG", "auto", "auto", "bogus").is_ok());
+    }
     use std::io::Cursor;
 
     use vb_kiln::cancel::CancelToken;

@@ -93,23 +93,28 @@ pub fn guard_lane(token: &Option<CancelToken>, checkpoint: &str) -> Result<(), S
     Ok(())
 }
 
-/// 车道取消标记串(anim 车道以 String 报错;取消与失败共用错误通道,
-/// 经此前缀区分三态)。勿在别处硬编码同文案,一律经本模块构造/判定。
+/// 车道取消标记串(anim 车道以 String 报错;取消与失败共用错误通道)。
+/// 勿在别处硬编码同文案,一律经本模块构造/判定。
 ///
 /// **单源 = `vb_browser::cancel::WAIT_CANCELLED_PREFIX`**(编译期别名):
 /// 静态快照车道(硬骨头 #3 收口)的取消错误在 vb_browser 深处产生,两
-/// crate 的字面量经此别名强制一致,`is_lane_cancelled` 对两条车道的取消
-/// 错误统一判定。
+/// crate 的字面量经此别名强制一致。
 pub const LANE_CANCELLED_PREFIX: &str = vb_browser::cancel::WAIT_CANCELLED_PREFIX;
+
+/// 三态判定的类型化出口(COUP-05):跨 crate 契约 = [`vb_browser::cancel::CancelState`]
+/// 枚举,下游(kiln-cli 退出码、分段收割)一律 `CancelState::of_error`
+/// 分类,不再裸 `starts_with`;字符串前缀仅存于构造/解码两点。
+pub use vb_browser::cancel::CancelState;
 
 /// 构造车道取消错误(带检查点标注,便于日志定位取消生效位置)。
 pub fn lane_cancelled(checkpoint: &str) -> String {
     format!("{}(边界:{checkpoint})", LANE_CANCELLED_PREFIX)
 }
 
-/// 判定车道错误串是否为取消(区别于真失败)。
+/// 判定车道错误串是否为取消(区别于真失败)。内部走 [`CancelState`]
+/// 单解码点;新代码建议直接用枚举。
 pub fn is_lane_cancelled(err: &str) -> bool {
-    err.starts_with(LANE_CANCELLED_PREFIX)
+    CancelState::of_error(err).is_cancelled()
 }
 
 #[cfg(test)]
