@@ -536,7 +536,7 @@ pub fn dialog_ui(ui: &mut egui::Ui, dlg: &mut NewProjectDialog) -> Option<Dialog
                 ui.label(vb_session::i18n::t("ui-common-template"));
                 if dlg.templates.is_empty() {
                     ui.colored_label(
-                        // 错误提示走主题 danger 令牌(值即设计令牌 #F24822,两主题可读)
+                        // 错误提示走主题 danger 令牌(设计令牌,S5 收口后深浅两主题 ≥4.5:1)
                         vb_ui::theme::tokens(ui.ctx()).danger,
                         vb_session::i18n::t("ui-new-project-011"),
                     );
@@ -640,7 +640,7 @@ pub fn dialog_ui(ui: &mut egui::Ui, dlg: &mut NewProjectDialog) -> Option<Dialog
 
     if let Some(err) = &dlg.error {
         ui.add_space(4.0);
-        // 错误提示走主题 danger 令牌(值即设计令牌 #F24822,两主题可读)
+        // 错误提示走主题 danger 令牌(设计令牌,S5 收口后深浅两主题 ≥4.5:1)
         ui.colored_label(vb_ui::theme::tokens(ui.ctx()).danger, err);
     }
     ui.add_space(8.0);

@@ -377,9 +377,44 @@ pub fn font(size: f32) -> FontId {
 
 /// 图标文本（`RichText`，默认面板内尺寸）。
 ///
-/// 颜色跟随当前文字色 —— **图标不单独上色**，激活态由调用方改成 accent。
+/// 颜色跟随当前文字色 —— **默认不上色**;唯一允许的显式着色是
+/// 「激活 / 危险」两个状态(§8.5 修订),走 [`tinted`],其余场景
+/// (装饰、品牌化、彩虹图标)仍然禁止。
 pub fn rich(name: Name, size: f32) -> RichText {
     RichText::new(name.glyph().to_string()).font(font(size))
+}
+
+/// 图标语义着色入口(§8.5 修订,S5 清单 ⑥):仅激活 / 危险两态。
+///
+/// 背景:原约束「图标不单独上色」的动机是防彩虹界面;但工具箱选中态、
+/// 危险动作确认等场景需要图标**与文字同样强的状态信号**(激活 accent
+/// 已能辨识,危险态此前无图标级入口)。本入口把"允许上色的状态"收窄
+/// 成枚举,调用方无法塞任意颜色 —— 约束从「不上色」收紧为「只这两态」。
+///
+/// **Filled 变体(诚实降级台账)**:本图标的"实心态"原本依赖 Lucide
+/// filled 子集;实测 iconflow 1.0 的 `pack-lucide` 字体字节**只有
+/// `Lucide Regular` 一个 family**(`filled_variant_ledger_honest` 门禁
+/// 钉住这一事实),filled 变体不存在可解析字形 —— 激活/危险的辨识
+/// **只做着色**(accent/danger),不做形状切换。待 iconflow 发布带
+/// filled 的 Lucide 包,门禁转红提示本条台账落地真变体。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IconTint {
+    /// 激活/选中态(accent)。
+    Accent,
+    /// 危险/破坏态(danger)。
+    Danger,
+}
+
+/// 按 [`IconTint`] 着色的图标文本(尺寸同 [`rich`])。
+pub fn tinted(ui: &egui::Ui, name: Name, size: f32, tint: IconTint) -> RichText {
+    let t = crate::theme::tokens(ui.ctx());
+    let color = match tint {
+        IconTint::Accent => t.accent,
+        IconTint::Danger => t.danger,
+    };
+    RichText::new(name.glyph().to_string())
+        .font(font(size))
+        .color(color)
 }
 
 /// 图标 + 文字并排（间距 6px，见 14 篇 §3.4）。
@@ -489,6 +524,28 @@ mod tests {
                 "图标名 {name} 不符合 Lucide 的 kebab-case 约定"
             );
         }
+    }
+
+    /// S5 清单 ⑥ **诚实降级台账门禁**:Lucide 字体字节目前没有 filled
+    /// 子集(iconflow 1.0 pack-lucide 只带 `Lucide Regular` 一个 family,
+    /// 2026-10-05 对全部 60 图标实测 `Style::Filled` 全部
+    /// `VariantUnavailable`)—— 图标的激活/危险辨识**只做着色**
+    /// ([`tinted`]),不做实心形状切换。若 iconflow 未来发布带 filled
+    /// 的 Lucide 包,本测试转红 = 提示把真 filled 变体接进 [`glyph`]
+    /// 体系并按状态切换字形,不许静默沿用降级。
+    #[test]
+    fn filled_variant_ledger_honest() {
+        let resolvable: Vec<_> = Name::ALL
+            .iter()
+            .filter(|n| {
+                iconflow::try_icon(Pack::Lucide, n.lucide(), Style::Filled, Size::Regular).is_ok()
+            })
+            .map(|n| n.lucide())
+            .collect();
+        assert!(
+            resolvable.is_empty(),
+            "Lucide 字体字节出现了 filled 子集({resolvable:?})——              请把 Filled 变体接进 glyph()/状态切换,移除 icons.rs 的只着色降级台账"
+        );
     }
 
     /// 尺寸三档必须递增（14 / 16 / 20）。
