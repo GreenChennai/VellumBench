@@ -15,12 +15,14 @@ pub mod capture;
 pub mod cdp;
 pub mod domsnap;
 pub mod httpc;
+pub mod limits;
 pub mod page;
 pub mod print;
 pub mod staticsrv;
 pub mod ws;
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 
@@ -69,10 +71,14 @@ pub struct LaneRequest {
     pub artboard_index: usize,
 }
 
-/// 采集视口(P0-3):显式宽 > 0 用之,否则历史兜底 1080;
-/// 高 > 0 用之,否则与宽同值(防 100vh 撑爆的占位口径)。
+/// 采集视口(P0-3):显式宽 > 0 用之,否则历史兜底 1080(limits 模块,
+/// EXP-12);高 > 0 用之,否则与宽同值(防 100vh 撑爆的占位口径)。
 pub fn viewport_dims(width: u32, height: u32) -> (u32, u32) {
-    let w = if width == 0 { 1080 } else { width };
+    let w = if width == 0 {
+        limits::VIEWPORT_FALLBACK_PX
+    } else {
+        width
+    };
     (w, if height == 0 { w } else { height })
 }
 
@@ -87,7 +93,7 @@ pub struct LaneOutcome {
 
 /// 车道 B 一站式导出:静态服务挂载 → 浏览器进程 → 页面会话 → 采集/打印。
 pub fn export_source(source: &Path, req: &LaneRequest) -> Result<LaneOutcome, String> {
-    run_static_lane(source, req, None)
+    run_static_lane(source, req, None, None)
 }
 
 /// 可取消版 [`export_source`](硬骨头 #3 静态快照车道收口,R0)。
@@ -103,10 +109,23 @@ pub fn export_source_cancellable(
     req: &LaneRequest,
     probe: CancelProbe,
 ) -> Result<LaneOutcome, String> {
+    export_source_cancellable_bounded(source, req, probe, None)
+}
+
+/// 带总预算版(EXP-02,`--max-wait` 接线):`max_wait = Some(d)` 时
+/// settle 预算与全部 CDP 长等待(截图 180s / printToPDF 300s /
+/// beginFrame 60s)各自被 min(默认上限, 剩余预算) 收口,预算耗尽立即
+/// 失败——长任务不再静默挂满默认上限。None = 各阶段默认上限(旧口径)。
+pub fn export_source_cancellable_bounded(
+    source: &Path,
+    req: &LaneRequest,
+    probe: CancelProbe,
+    max_wait: Option<Duration>,
+) -> Result<LaneOutcome, String> {
     if probe() {
         return Err(cancel::wait_cancelled("车道起跑前"));
     }
-    run_static_lane(source, req, Some(probe))
+    run_static_lane(source, req, Some(probe), max_wait)
 }
 
 /// 静态单页车道主体(export_source / export_source_cancellable 共用)。
@@ -114,6 +133,7 @@ fn run_static_lane(
     source: &Path,
     req: &LaneRequest,
     probe: Option<CancelProbe>,
+    max_wait: Option<Duration>,
 ) -> Result<LaneOutcome, String> {
     let Some(exe) = discover_browser(None) else {
         return Err("未发现系统浏览器(Edge/Chrome);浏览器车道不可用".into());
@@ -141,7 +161,7 @@ fn run_static_lane(
     };
     let proc = browser::BrowserProcess::launch(&exe)?;
     let engine_hint = proc.version();
-    let mut outcome = export_with_url(&proc, &url, req, &engine_hint, probe.as_ref())?;
+    let mut outcome = export_with_url(&proc, &url, req, &engine_hint, probe.as_ref(), max_wait)?;
     // VB-1:静态资源 404 不许静默(浏览器会静默回退系统字体等)——
     // 服务线程收集的 404 路径在此并入结果告警。
     if let Some(srv) = _srv.as_ref() {
@@ -167,16 +187,23 @@ fn encode(s: &str) -> String {
     out
 }
 
+#[allow(clippy::too_many_arguments)]
 fn export_with_url(
     proc: &browser::BrowserProcess,
     url: &str,
     req: &LaneRequest,
     engine_hint: &str,
     probe: Option<&CancelProbe>,
+    max_wait: Option<Duration>,
 ) -> Result<LaneOutcome, String> {
     let mut page = page::PageSession::attach(proc)?;
     if let Some(p) = probe {
         page.set_cancel_probe(p.clone());
+    }
+    // EXP-02:--max-wait 总预算接线 —— 此后全部 CDP 长等待与 settle 预算
+    // 被剩余预算收口(必须先于 navigate 等首个长等待设置)。
+    if let Some(d) = max_wait {
+        page.set_overall_deadline(Instant::now() + d);
     }
     // 要素 2/3:视口只定宽(高占位同宽,防 100vh 撑爆),DSF 原生倍率。
     // P0-3:画板声明尺寸下发后,宽高均按声明值定视口(此前高占位 = 宽,
@@ -184,7 +211,7 @@ fn export_with_url(
     let (init_w, init_h) = viewport_dims(req.width, req.height);
     page.set_device_metrics(init_w, init_h, req.scale.clamp(1, 8))?;
     page.navigate(url)?;
-    page.wait_network_idle(std::time::Duration::from_secs(3));
+    page.wait_network_idle(page.cap_to_deadline(limits::NETWORK_IDLE_CAP));
     page.sleep(200); // networkidle(500ms 静默)后的末次布局窗(经验值)
 
     match req.format {

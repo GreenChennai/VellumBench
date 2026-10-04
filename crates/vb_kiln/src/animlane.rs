@@ -454,7 +454,11 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
 
     let fps = opts.fps.clamp(1, 60);
     let n = ((fps as f32 * opts.duration_s.max(0.1)).ceil().max(1.0)) as usize;
-    let vw = if opts.width > 0 { opts.width } else { 1080 };
+    let vw = if opts.width > 0 {
+        opts.width
+    } else {
+        vb_browser::limits::VIEWPORT_FALLBACK_PX
+    };
     let vh = if opts.height > 0 { opts.height } else { vw };
     let dsf = opts.scale.clamp(1, 8);
 
@@ -485,10 +489,11 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
     }
 
     // 分段:总帧数均分;workers 上限 = 帧数(每段至少 1 帧)。
-    // **默认 1**:两轮下游实测(9070 GRE)多实例都是负收益——轻量页面
-    // 也随段数变慢(w1 10.6 → w2 5.9 → w3 1.8 帧/s),且 ≥4 段 HTTP 读
-    // 超时;现象是跨实例串行点而非 CPU 不足,在定位清楚前不再按 CPU/2
-    // 猜。并发是显式 opt-in:`--workers 2..16`(超限时段级候选回退兜底)。
+    // **默认 1**(PERF-10 评估结论):两轮下游实测(9070 GRE)多实例都是
+    // 负收益——轻量页面也随段数变慢(w1 10.6 → w2 5.9 → w3 1.8 帧/s),
+    // 且 ≥4 段 HTTP 读超时;现象是跨实例串行点而非 CPU 不足,在定位清楚
+    // 前不再按 CPU/2 猜。并发是显式 opt-in:`--workers 2..16`(超限时段级
+    // 候选回退兜底)。CDP 连接内并行无收益的协议侧分析见 vb_browser::cdp。
     let cores = std::thread::available_parallelism()
         .map(|c| c.get())
         .unwrap_or(4);
@@ -508,14 +513,7 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
     ));
 
     // 临时工作区:段 mp4 + concat 清单
-    let tmp = std::env::temp_dir().join(format!(
-        "kiln-anim-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.subsec_nanos())
-            .unwrap_or(0)
-    ));
+    let tmp = std::env::temp_dir().join(vb_browser::limits::temp_name("anim", ""));
     std::fs::create_dir_all(&tmp).map_err(|e| format!("创建动画工作目录失败:{e}"))?;
 
     // 共享状态进 scope 线程:同一静态服务,W 个独立浏览器实例。
@@ -616,7 +614,7 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
     // 取消收口——清扫临时/分段文件,不落半截产物(与失败同路径清扫)
     let cancelled_hit = seg_results
         .iter()
-        .any(|r| matches!(r, Err(e) if crate::cancel::is_lane_cancelled(e)))
+        .any(|r| matches!(r, Err(e) if crate::cancel::CancelState::of_error(e).is_cancelled()))
         || opts.cancel.as_ref().is_some_and(|t| t.is_cancelled());
     if cancelled_hit {
         let _ = std::fs::remove_dir_all(&tmp);
@@ -865,7 +863,7 @@ fn render_segment(
             }
             Err(e) => {
                 // 取消是终态:候选链回退没有意义,直接收口
-                if crate::cancel::is_lane_cancelled(&e) {
+                if crate::cancel::CancelState::of_error(&e).is_cancelled() {
                     page.close();
                     drop(proc);
                     return Err(e);
@@ -1176,7 +1174,11 @@ pub fn export_anim_inmemory(
     )?;
     let browser = proc.version();
     let mut page = vb_browser::page::PageSession::attach(&proc)?;
-    let vw = if opts.width > 0 { opts.width } else { 1080 };
+    let vw = if opts.width > 0 {
+        opts.width
+    } else {
+        vb_browser::limits::VIEWPORT_FALLBACK_PX
+    };
     let vh = if opts.height > 0 { opts.height } else { vw };
     let dsf = opts.scale.clamp(1, 8);
     page.set_device_metrics(vw, vh, dsf)?;

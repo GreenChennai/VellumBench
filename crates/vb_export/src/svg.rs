@@ -1,9 +1,12 @@
 //! SVG 原生导出:DrawList → SVG(真实文本;渐变/圆角/旋转/透明度)。
 //!
 //! 文本以真实 `<text>` 输出(HTML 是源格式,SVG 同理,ADR-0010)。
+//! 坐标精度与 PDF 车道同源 `vb_common::numfmt::fnum`(EXP-07):f64
+//! 最短往返的浮点噪声(`123.45000000000002`)不再进入产物。
 
 use std::fmt::Write as _;
 
+use vb_common::numfmt::fnum;
 use vb_render::encode::{DrawItem, DrawKind, DrawList, FillDef};
 
 pub fn render_svg(list: &DrawList, scale: u32, transparent: bool) -> String {
@@ -13,7 +16,11 @@ pub fn render_svg(list: &DrawList, scale: u32, transparent: bool) -> String {
     let _ = writeln!(out, r#"<?xml version="1.0" encoding="UTF-8"?>"#);
     let _ = writeln!(
         out,
-        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">"#
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{}" height="{}" viewBox="0 0 {} {}">"#,
+        fnum(w),
+        fnum(h),
+        fnum(w),
+        fnum(h)
     );
     let _ = writeln!(out, "<defs>");
 
@@ -30,7 +37,11 @@ pub fn render_svg(list: &DrawList, scale: u32, transparent: bool) -> String {
             let (ex, ey) = ((x + ep.x as f64) * s, (y + ep.y as f64) * s);
             let _ = write!(
                 defs,
-                r#"  <linearGradient id="g{i}" gradientUnits="userSpaceOnUse" x1="{sx}" y1="{sy}" x2="{ex}" y2="{ey}">"#
+                r#"  <linearGradient id="g{i}" gradientUnits="userSpaceOnUse" x1="{}" y1="{}" x2="{}" y2="{}">"#,
+                fnum(sx),
+                fnum(sy),
+                fnum(ex),
+                fnum(ey)
             );
             defs.push('\n');
             for st in stops {
@@ -38,7 +49,8 @@ pub fn render_svg(list: &DrawList, scale: u32, transparent: bool) -> String {
                 let _ = write!(
                     defs,
                     r#"    <stop offset="{}" stop-color="rgb({r},{g},{b})" stop-opacity="{}"/>"#,
-                    st.pos, st.color[3]
+                    fnum(st.pos),
+                    fnum(st.color[3])
                 );
                 defs.push('\n');
             }
@@ -52,7 +64,10 @@ pub fn render_svg(list: &DrawList, scale: u32, transparent: bool) -> String {
             let r = (iw * iw + ih * ih).sqrt() / 2.0 * s;
             let _ = write!(
                 defs,
-                r#"  <radialGradient id="g{i}" gradientUnits="userSpaceOnUse" cx="{ccx}" cy="{ccy}" r="{r}">"#
+                r#"  <radialGradient id="g{i}" gradientUnits="userSpaceOnUse" cx="{}" cy="{}" r="{}">"#,
+                fnum(ccx),
+                fnum(ccy),
+                fnum(r)
             );
             defs.push('\n');
             for st in stops {
@@ -60,7 +75,8 @@ pub fn render_svg(list: &DrawList, scale: u32, transparent: bool) -> String {
                 let _ = write!(
                     defs,
                     r#"    <stop offset="{}" stop-color="rgb({r2},{g2},{b2})" stop-opacity="{}"/>"#,
-                    st.pos, st.color[3]
+                    fnum(st.pos),
+                    fnum(st.color[3])
                 );
                 defs.push('\n');
             }
@@ -75,7 +91,9 @@ pub fn render_svg(list: &DrawList, scale: u32, transparent: bool) -> String {
         let (r, g, b) = to_255(list.background);
         let _ = writeln!(
             out,
-            r#"<rect x="0" y="0" width="{w}" height="{h}" fill="rgb({r},{g},{b})"/>"#
+            r#"<rect x="0" y="0" width="{}" height="{}" fill="rgb({r},{g},{b})"/>"#,
+            fnum(w),
+            fnum(h)
         );
     }
 
@@ -96,10 +114,10 @@ pub fn render_svg(list: &DrawList, scale: u32, transparent: bool) -> String {
                 let s = scale as f64;
                 clip_defs.push_str(&format!(
                     r#"  <clipPath id="oc{id}"><rect x="{}" y="{}" width="{}" height="{}"/></clipPath>"#,
-                    rect[0] * s,
-                    rect[1] * s,
-                    rect[2] * s,
-                    rect[3] * s,
+                    fnum(rect[0] * s),
+                    fnum(rect[1] * s),
+                    fnum(rect[2] * s),
+                    fnum(rect[3] * s),
                 ));
                 clip_defs.push('\n');
                 clip_ids.push(rect);
@@ -144,12 +162,12 @@ fn fill_attr(item: &DrawItem, i: usize) -> String {
             let (r, g, b) = to_255(*c);
             format!(
                 r#"fill="rgb({r},{g},{b})" fill-opacity="{}""#,
-                c[3] * item.opacity
+                fnum(c[3] * item.opacity)
             )
         }
         Some(FillDef::LinearGradient { .. }) | Some(FillDef::RadialGradient { .. }) => {
             // 节点 opacity:渐变端此前完全不输出,CPU/GPU 端都乘进色标
-            format!(r#"fill="url(#g{i})" fill-opacity="{}""#, item.opacity)
+            format!(r#"fill="url(#g{i})" fill-opacity="{}""#, fnum(item.opacity))
         }
         None => r#"fill="none""#.into(),
     }
@@ -170,10 +188,15 @@ fn write_item(out: &mut String, i: usize, item: &DrawItem, scale: f64) {
     if item.rot.abs() > 1e-9 {
         let cx = x + w / 2.0;
         let cy = y + h / 2.0;
-        tf = format!(r#" transform="rotate({} {cx} {cy})""#, item.rot);
+        tf = format!(
+            r#" transform="rotate({} {} {})""#,
+            fnum(item.rot),
+            fnum(cx),
+            fnum(cy)
+        );
     }
 
-    // P4 矢量路径 → <path d>
+    // P4 矢量路径 → <path d>(坐标统一 fnum,EXP-07)
     if let Some(kpath) = &item.path {
         let mut d = String::new();
         for el in kpath.elements() {
@@ -183,38 +206,38 @@ fn write_item(out: &mut String, i: usize, item: &DrawItem, scale: f64) {
                     let _ = write!(
                         d,
                         "M{} {} ",
-                        (p.x + item.rect[0]) * scale,
-                        (p.y + item.rect[1]) * scale
+                        fnum((p.x + item.rect[0]) * scale),
+                        fnum((p.y + item.rect[1]) * scale)
                     );
                 }
                 PathEl::LineTo(p) => {
                     let _ = write!(
                         d,
                         "L{} {} ",
-                        (p.x + item.rect[0]) * scale,
-                        (p.y + item.rect[1]) * scale
+                        fnum((p.x + item.rect[0]) * scale),
+                        fnum((p.y + item.rect[1]) * scale)
                     );
                 }
                 PathEl::QuadTo(c, p) => {
                     let _ = write!(
                         d,
                         "Q{} {} {} {} ",
-                        (c.x + item.rect[0]) * scale,
-                        (c.y + item.rect[1]) * scale,
-                        (p.x + item.rect[0]) * scale,
-                        (p.y + item.rect[1]) * scale
+                        fnum((c.x + item.rect[0]) * scale),
+                        fnum((c.y + item.rect[1]) * scale),
+                        fnum((p.x + item.rect[0]) * scale),
+                        fnum((p.y + item.rect[1]) * scale)
                     );
                 }
                 PathEl::CurveTo(c1, c2, p) => {
                     let _ = write!(
                         d,
                         "C{} {} {} {} {} {} ",
-                        (c1.x + item.rect[0]) * scale,
-                        (c1.y + item.rect[1]) * scale,
-                        (c2.x + item.rect[0]) * scale,
-                        (c2.y + item.rect[1]) * scale,
-                        (p.x + item.rect[0]) * scale,
-                        (p.y + item.rect[1]) * scale
+                        fnum((c1.x + item.rect[0]) * scale),
+                        fnum((c1.y + item.rect[1]) * scale),
+                        fnum((c2.x + item.rect[0]) * scale),
+                        fnum((c2.y + item.rect[1]) * scale),
+                        fnum((p.x + item.rect[0]) * scale),
+                        fnum((p.y + item.rect[1]) * scale)
                     );
                 }
                 PathEl::ClosePath => d.push('Z'),
@@ -227,17 +250,13 @@ fn write_item(out: &mut String, i: usize, item: &DrawItem, scale: f64) {
                 let (r, g, b2) = to_255(b.color);
                 format!(
                     r#"stroke="rgb({r},{g},{b2})" stroke-width="{}" stroke-opacity="{}""#,
-                    b.width.max(1.0),
-                    b.color[3] * item.opacity
+                    fnum(b.width.max(1.0)),
+                    fnum(b.color[3] * item.opacity)
                 )
             }
             None => r#"stroke="none""#.to_string(),
         };
         let _ = writeln!(out, r#"<path d="{d}" {fa} {stroke}{tf}/>"#);
-        return;
-    }
-
-    if item.kind == DrawKind::VectorPath {
         return;
     }
     #[allow(unreachable_patterns)]
@@ -268,11 +287,14 @@ fn write_item(out: &mut String, i: usize, item: &DrawItem, scale: f64) {
                         // 字体后行宽错位)
                         let _ = write!(
                             out,
-                            r#"<text x="{x}" y="{baseline}" font-size="{}" font-weight="{}" letter-spacing="{ls}" font-family="{}" fill="rgb({br},{bg2},{bb})" fill-opacity="{}"{tf}>"#,
-                            t.font_size * s,
+                            r#"<text x="{}" y="{}" font-size="{}" font-weight="{}" letter-spacing="{}" font-family="{}" fill="rgb({br},{bg2},{bb})" fill-opacity="{}"{tf}>"#,
+                            fnum(x),
+                            fnum(baseline),
+                            fnum(t.font_size * s),
                             t.weight,
+                            fnum(ls),
                             escape_xml(&t.font_family),
-                            t.color[3] * item.opacity,
+                            fnum(t.color[3] * item.opacity),
                         );
                         for part in vb_render::text::split_line_segments(
                             hard,
@@ -292,7 +314,8 @@ fn write_item(out: &mut String, i: usize, item: &DrawItem, scale: f64) {
                                     let fs = sg.font_size.map(|f| f * s).unwrap_or(t.font_size * s);
                                     let _ = write!(
                                         out,
-                                        r#"<tspan fill="rgb({r},{g},{b})" font-weight="{fw}" font-size="{fs}">{}</tspan>"#,
+                                        r#"<tspan fill="rgb({r},{g},{b})" font-weight="{fw}" font-size="{}">{}</tspan>"#,
+                                        fnum(fs),
                                         escape_xml(part.text),
                                     );
                                 }
@@ -308,8 +331,12 @@ fn write_item(out: &mut String, i: usize, item: &DrawItem, scale: f64) {
         DrawKind::FrozenPlaceholder => {
             let _ = write!(
                 out,
-                r#"<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="8" fill="rgb(217,212,204)" fill-opacity="{}"{tf}/><!-- 冻结块:原 HTML 保留于 index.html -->"#,
-                item.opacity
+                r#"<rect x="{}" y="{}" width="{}" height="{}" rx="8" fill="rgb(217,212,204)" fill-opacity="{}"{tf}/><!-- 冻结块:原 HTML 保留于 index.html -->"#,
+                fnum(x),
+                fnum(y),
+                fnum(w),
+                fnum(h),
+                fnum(item.opacity)
             );
             out.push('\n');
         }
@@ -320,8 +347,13 @@ fn write_item(out: &mut String, i: usize, item: &DrawItem, scale: f64) {
                 if let Some(href) = bitmap_data_url(bmp) {
                     let _ = write!(
                         out,
-                        r#"<image x="{x}" y="{y}" width="{w}" height="{h}" opacity="{}" preserveAspectRatio="none" href="{href}"{tf}/><!-- image: {:?} -->"#,
-                        item.opacity, item.src
+                        r#"<image x="{}" y="{}" width="{}" height="{}" opacity="{}" preserveAspectRatio="none" href="{href}"{tf}/><!-- image: {:?} -->"#,
+                        fnum(x),
+                        fnum(y),
+                        fnum(w),
+                        fnum(h),
+                        fnum(item.opacity),
+                        item.src
                     );
                     out.push('\n');
                     return;
@@ -329,7 +361,11 @@ fn write_item(out: &mut String, i: usize, item: &DrawItem, scale: f64) {
             }
             let _ = write!(
                 out,
-                r#"<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="none" stroke="rgb(230,77,77)" stroke-width="2"{tf}/><!-- image missing: {:?} -->"#,
+                r#"<rect x="{}" y="{}" width="{}" height="{}" fill="none" stroke="rgb(230,77,77)" stroke-width="2"{tf}/><!-- image missing: {:?} -->"#,
+                fnum(x),
+                fnum(y),
+                fnum(w),
+                fnum(h),
                 item.src
             );
             out.push('\n');
@@ -342,16 +378,16 @@ fn write_item(out: &mut String, i: usize, item: &DrawItem, scale: f64) {
                 // 先对未缩放尺寸取 clamp 再乘 scale(此前对已缩放尺寸二次
                 // 乘 s,圆角被放大 s²)
                 let r = item.radii[0].min(item.rect[2].min(item.rect[3]) / 2.0) * s;
-                format!(r#" rx="{r}""#)
+                format!(r#" rx="{}""#, fnum(r))
             };
             if item.ellipse {
                 let _ = write!(
                     out,
                     r#"<ellipse cx="{}" cy="{}" rx="{}" ry="{}" {fa}{tf}/>"#,
-                    x + w / 2.0,
-                    y + h / 2.0,
-                    w / 2.0,
-                    h / 2.0
+                    fnum(x + w / 2.0),
+                    fnum(y + h / 2.0),
+                    fnum(w / 2.0),
+                    fnum(h / 2.0)
                 );
             } else if item.radii.iter().any(|r| *r > 0.0)
                 && (item.radii[0] != item.radii[1]
@@ -364,7 +400,11 @@ fn write_item(out: &mut String, i: usize, item: &DrawItem, scale: f64) {
             } else {
                 let _ = write!(
                     out,
-                    r#"<rect x="{x}" y="{y}" width="{w}" height="{h}"{radius} {fa}{tf}/>"#
+                    r#"<rect x="{}" y="{}" width="{}" height="{}"{radius} {fa}{tf}/>"#,
+                    fnum(x),
+                    fnum(y),
+                    fnum(w),
+                    fnum(h)
                 );
             }
             out.push('\n');
@@ -374,23 +414,26 @@ fn write_item(out: &mut String, i: usize, item: &DrawItem, scale: f64) {
                 if item.ellipse {
                     let _ = write!(
                         out,
-                        r#"<ellipse cx="{}" cy="{}" rx="{}" ry="{}" fill="none" stroke="rgb({r},{g},{b2})" stroke-width="{bw}" stroke-opacity="{}"{tf}/>"#,
-                        x + w / 2.0,
-                        y + h / 2.0,
-                        (w - bw) / 2.0,
-                        (h - bw) / 2.0,
-                        b.color[3] * item.opacity
+                        r#"<ellipse cx="{}" cy="{}" rx="{}" ry="{}" fill="none" stroke="rgb({r},{g},{b2})" stroke-width="{}" stroke-opacity="{}"{tf}/>"#,
+                        fnum(x + w / 2.0),
+                        fnum(y + h / 2.0),
+                        fnum((w - bw) / 2.0),
+                        fnum((h - bw) / 2.0),
+                        fnum(bw),
+                        fnum(b.color[3] * item.opacity)
                     );
                 } else {
                     let rr = item.radii[0].min(item.rect[2].min(item.rect[3]) / 2.0) * s;
                     let _ = write!(
                         out,
-                        r#"<rect x="{}" y="{}" width="{}" height="{}" rx="{rr}" fill="none" stroke="rgb({r},{g},{b2})" stroke-width="{bw}" stroke-opacity="{}"{tf}/>"#,
-                        x + bw / 2.0,
-                        y + bw / 2.0,
-                        w - bw,
-                        h - bw,
-                        b.color[3] * item.opacity
+                        r#"<rect x="{}" y="{}" width="{}" height="{}" rx="{}" fill="none" stroke="rgb({r},{g},{b2})" stroke-width="{}" stroke-opacity="{}"{tf}/>"#,
+                        fnum(x + bw / 2.0),
+                        fnum(y + bw / 2.0),
+                        fnum(w - bw),
+                        fnum(h - bw),
+                        fnum(rr),
+                        fnum(bw),
+                        fnum(b.color[3] * item.opacity)
                     );
                 }
                 out.push('\n');
@@ -419,69 +462,97 @@ fn rounded_rect_path(x: f64, y: f64, w: f64, h: f64, radii: [f64; 4], s: f64) ->
     let br = clamp(radii[2]) * s;
     let bl = clamp(radii[3]) * s;
     let mut d = String::new();
-    let _ = write!(d, "M{} {} ", x + tl, y);
-    let _ = write!(d, "L{} {} ", x + w - tr, y);
+    let _ = write!(d, "M{} {} ", fnum(x + tl), fnum(y));
+    let _ = write!(d, "L{} {} ", fnum(x + w - tr), fnum(y));
     if tr > 0.0 {
         let k = KAPPA * tr;
         let _ = write!(
             d,
             "C{} {} {} {} {} {} ",
-            x + w - tr + k,
-            y,
-            x + w,
-            y + tr - k,
-            x + w,
-            y + tr
+            fnum(x + w - tr + k),
+            fnum(y),
+            fnum(x + w),
+            fnum(y + tr - k),
+            fnum(x + w),
+            fnum(y + tr)
         );
     }
-    let _ = write!(d, "L{} {} ", x + w, y + h - br);
+    let _ = write!(d, "L{} {} ", fnum(x + w), fnum(y + h - br));
     if br > 0.0 {
         let k = KAPPA * br;
         let _ = write!(
             d,
             "C{} {} {} {} {} {} ",
-            x + w,
-            y + h - br + k,
-            x + w - br + k,
-            y + h,
-            x + w - br,
-            y + h
+            fnum(x + w),
+            fnum(y + h - br + k),
+            fnum(x + w - br + k),
+            fnum(y + h),
+            fnum(x + w - br),
+            fnum(y + h)
         );
     }
-    let _ = write!(d, "L{} {} ", x + bl, y + h);
+    let _ = write!(d, "L{} {} ", fnum(x + bl), fnum(y + h));
     if bl > 0.0 {
         let k = KAPPA * bl;
         let _ = write!(
             d,
             "C{} {} {} {} {} {} ",
-            x + bl - k,
-            y + h,
-            x,
-            y + h - bl + k,
-            x,
-            y + h - bl
+            fnum(x + bl - k),
+            fnum(y + h),
+            fnum(x),
+            fnum(y + h - bl + k),
+            fnum(x),
+            fnum(y + h - bl)
         );
     }
-    let _ = write!(d, "L{} {} ", x, y + tl);
+    let _ = write!(d, "L{} {} ", fnum(x), fnum(y + tl));
     if tl > 0.0 {
         let k = KAPPA * tl;
         let _ = write!(
             d,
             "C{} {} {} {} {} {} ",
-            x,
-            y + tl - k,
-            x + tl - k,
-            y,
-            x + tl,
-            y
+            fnum(x),
+            fnum(y + tl - k),
+            fnum(x + tl - k),
+            fnum(y),
+            fnum(x + tl),
+            fnum(y)
         );
     }
     d.push('Z');
     d
 }
 
+/// XML 转义(EXP-08):补双引号/单引号 —— `font-family="{}"` 等属性以
+/// 双引号包裹,含 `"` 的字体名此前直接破坏 XML 结构;文本内容同理需要
+/// 完整五元转义,不能只顾 `<` `>`。
 fn escape_xml(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// EXP-08:含双引号的属性值(font-family 等)不得破坏 XML 结构。
+    #[test]
+    fn escape_xml_handles_quotes() {
+        assert_eq!(
+            escape_xml(r#"Heiti "SC", 'Ming'"#),
+            "Heiti &quot;SC&quot;, &apos;Ming&apos;"
+        );
+        assert_eq!(escape_xml(r#"<a & b>"#), "&lt;a &amp; b&gt;");
+    }
+
+    /// EXP-07:SVG 坐标与 PDF fnum 同精度(无浮点噪声尾巴)。
+    #[test]
+    fn fnum_matches_pdf_precision() {
+        assert_eq!(fnum(123.45000000000002), "123.45");
+        assert_eq!(fnum(0.1 + 0.2), "0.3");
+        assert_eq!(fnum(100.0), "100");
+    }
 }

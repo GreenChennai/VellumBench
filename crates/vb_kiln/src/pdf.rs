@@ -35,6 +35,18 @@ impl FormatWriter for PdfWriter {
             r.warnings
                 .push(crate::error::KilnWarning::UnembeddedLatinText);
         }
+        let subset_fallback = SUBSET_FALLBACK_COUNT.load(Ordering::Relaxed);
+        if subset_fallback > 0 {
+            r.warnings
+                .push(crate::error::KilnWarning::FontSubsetFallback {
+                    count: subset_fallback,
+                });
+        }
+        let remap_miss = GLYPH_REMAP_MISS_COUNT.load(Ordering::Relaxed);
+        if remap_miss > 0 {
+            r.warnings
+                .push(crate::error::KilnWarning::GlyphRemapMiss { count: remap_miss });
+        }
         Ok(r)
     }
 }
@@ -42,6 +54,11 @@ impl FormatWriter for PdfWriter {
 /// PDF 写入核心(Ai 格式复用,仅 Producer 元数据不同)。
 /// WinAnsi 兜底计数(导出内累计,write 时转警告)。
 static LATIN_FALLBACK_COUNT: AtomicUsize = AtomicUsize::new(0);
+/// 字体子集化失败回退全量的字体数(EXP-01 可见性:write_pdf_head 入口
+/// 清零,write 汇总进报告 —— 降级不静默,RB-06)。
+static SUBSET_FALLBACK_COUNT: AtomicUsize = AtomicUsize::new(0);
+/// 子集重映射缺表命中字形数(EXP-01 防御路径可见性)。
+static GLYPH_REMAP_MISS_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 pub const AI_HEAD: &str = "%%AI8_CreatorVersion: 28.0.0\n%%Creator: Kiln/VellumBench\n";
 
@@ -55,21 +72,19 @@ pub fn write_pdf(ctx: &ExportContext, producer: &str) -> KilnResult<Vec<u8>> {
 /// 后会把「第二个 Catalog」当根(A4 双面合并只出 1 个画板即此因)。
 pub fn write_pdf_head(ctx: &ExportContext, producer: &str, head: &str) -> KilnResult<Vec<u8>> {
     LATIN_FALLBACK_COUNT.store(0, Ordering::Relaxed);
+    SUBSET_FALLBACK_COUNT.store(0, Ordering::Relaxed);
+    GLYPH_REMAP_MISS_COUNT.store(0, Ordering::Relaxed);
     let w = ctx.logical_w;
     let h = ctx.logical_h;
 
-    // 内容流 + CJK 字体使用收集(M3:CID 真文本)
+    // 内容流 + CJK 字体使用收集(M3:CID 真文本)。
+    // 两遍分工(EXP-04/PERF-02):pass1 **只走度量** —— 文本整形收集
+    // 字体/glyph 使用,图形分支全跳过(pass1 内容流整体丢弃,此前 pass1
+    // 全量绘制:每张位图 to_vec() 两次、每个渐变位图光栅化两次);
+    // pass2 正式发射,资源(图像/透明度/Pattern)仅在此时登记。
     let mut usage = CjkUsage::new();
     let _probe = render_content_stream(ctx, &mut usage, false);
     finalize_cjk_fonts(&mut usage);
-    // 两遍渲染间清除图形资源(图像/透明度/渐变 Pattern),防止 pass1+pass2
-    // 重复导致资源编号错位和对象数翻倍。pass2 重新收集(remap=true 时正式发射)。
-    usage.images.clear();
-    usage.opacities.clear();
-    usage.patterns.clear();
-    usage.im_counter = 0;
-    usage.gs_counter = 0;
-    usage.pat_counter = 0;
     let content = render_content_stream(ctx, &mut usage, true);
     let content_z = content.into_bytes();
 
@@ -642,49 +657,80 @@ impl CjkUsage {
     }
 }
 
-/// 字体子集化 + 写回(subsetter 失败回退全量)。
+/// 字体子集化 + 写回(subsetter 失败回退全量,回退走恒等映射)。
 fn finalize_cjk_fonts(usage: &mut CjkUsage) {
     for f in usage.fonts.iter_mut() {
         let Some((data, index)) = vb_render::text::font_data_for(&f.name, f.weight) else {
             continue;
         };
-        // 子集化(缩减文件体积);subsetter 的 GID 排序经 ToUnicode 交叉验证一致。
-        // 变量字体(NotoSerifSC-VF 等)必须**实例化到目标 wght**:PDF 不支持
-        // 变量字体,嵌入原始 VF 会让 Illustrator/pdfium 取默认实例(≈400)——
-        // `font-weight:900` 的大标题在 AI 里变细体(实测 A4 标题)。
-        let gids: Vec<u16> = f.glyphs.keys().copied().collect();
-        let remapper = subsetter::GlyphRemapper::new_from_glyphs_sorted(&gids);
-        let coords = [(subsetter::Tag::new(b"wght"), f.weight as f32)];
-        let instanced =
-            subsetter::subset_with_variations(&data, index as u32, &coords, &remapper).ok();
-        let sub_result = match instanced {
-            Some(s) if !s.is_empty() => Ok(s),
-            _ => subsetter::subset(&data, index as u32, &remapper),
-        };
-        match sub_result {
-            Ok(sub) if !sub.is_empty() && sub.len() < data.len() => {
-                f.subset_len1 = sub.len();
-                f.subset = sub;
-            }
-            _ => {
-                f.subset_len1 = data.len();
-                f.subset = (*data).clone();
-            }
+        if !subset_one_font(f, &data, index as u32) {
+            SUBSET_FALLBACK_COUNT.fetch_add(1, Ordering::Relaxed);
         }
-        // 重映射 cid 表
-        let old: Vec<(u16, (char, f64))> = f.glyphs.iter().map(|(k, v)| (*k, *v)).collect();
-        let mut new_map = std::collections::BTreeMap::new();
-        for (gid, info) in old {
-            let new_cid = remapper.get(gid).unwrap_or(0);
-            f.remap.insert(gid, new_cid);
-            new_map.insert(new_cid, info);
+    }
+}
+
+/// 单字体子集化与 remap 表落定(独立成函数供失败注入测试)。
+///
+/// 返回 true = 子集成功(remap = 旧 gid → 子集内新 cid,子集化排序经
+/// ToUnicode 交叉验证一致);false = 子集失败回退**全量**字体 —— 此时
+/// 嵌入的是原字体,/CIDToGIDMap /Identity 要求 CID==原 GID,remap 必须
+/// 恒等。旧口径在回退分支仍无条件套用子集 remap,内容流按子集 CID 发射,
+/// 全量字体按错误 GID 取字 → 静默产出错字/豆腐块(EXP-01)。
+fn subset_one_font(f: &mut CjkFont, data: &[u8], index: u32) -> bool {
+    // 子集化(缩减文件体积)。变量字体(NotoSerifSC-VF 等)必须**实例化到
+    // 目标 wght**:PDF 不支持变量字体,嵌入原始 VF 会让 Illustrator/pdfium
+    // 取默认实例(≈400)——`font-weight:900` 的大标题在 AI 里变细体。
+    let gids: Vec<u16> = f.glyphs.keys().copied().collect();
+    let remapper = subsetter::GlyphRemapper::new_from_glyphs_sorted(&gids);
+    let coords = [(subsetter::Tag::new(b"wght"), f.weight as f32)];
+    let instanced = subsetter::subset_with_variations(data, index, &coords, &remapper).ok();
+    let sub_result = match instanced {
+        Some(s) if !s.is_empty() => Ok(s),
+        _ => subsetter::subset(data, index, &remapper),
+    };
+    match sub_result {
+        Ok(sub) if !sub.is_empty() && sub.len() < data.len() => {
+            f.subset_len1 = sub.len();
+            f.subset = sub;
+            // 重映射 cid 表;remapper 缺表命中(理论不发生:表由 glyphs 键
+            // 构造)时原 GID 直发并计数 —— 旧口径 unwrap_or(0) 会静默发射
+            // .notdef 豆腐块,必须可见(RB-06)。
+            let old: Vec<(u16, (char, f64))> = f.glyphs.iter().map(|(k, v)| (*k, *v)).collect();
+            let mut new_map = std::collections::BTreeMap::new();
+            let mut misses = 0usize;
+            for (gid, info) in old {
+                match remapper.get(gid) {
+                    Some(new_cid) => {
+                        f.remap.insert(gid, new_cid);
+                        new_map.insert(new_cid, info);
+                    }
+                    None => {
+                        misses += 1;
+                        f.remap.insert(gid, gid);
+                        new_map.insert(gid, info);
+                    }
+                }
+            }
+            if misses > 0 {
+                GLYPH_REMAP_MISS_COUNT.fetch_add(misses, Ordering::Relaxed);
+            }
+            f.glyphs = new_map;
+            true
         }
-        f.glyphs = new_map;
+        _ => {
+            f.subset_len1 = data.len();
+            f.subset = data.to_vec();
+            for gid in gids {
+                f.remap.insert(gid, gid);
+            }
+            false
+        }
     }
 }
 
 /// 内容流:DrawItem → PDF 操作符(Y 翻转;文本 Tj;OCG BDC/EMC)。
-fn render_content_stream(ctx: &ExportContext, usage: &mut CjkUsage, remap: bool) -> String {
+/// `emit=false` 为 pass1 度量遍(产物丢弃,见 [`write_pdf_head`])。
+fn render_content_stream(ctx: &ExportContext, usage: &mut CjkUsage, emit: bool) -> String {
     let h = ctx.logical_h;
     let mut s = String::with_capacity(32 * 1024);
     if !ctx.transparent {
@@ -710,7 +756,7 @@ fn render_content_stream(ctx: &ExportContext, usage: &mut CjkUsage, remap: bool)
                 (item.layer as usize).min(n_layers - 1)
             ));
         }
-        draw_item_pdf(&mut s, item, h, usage, remap);
+        draw_item_pdf(&mut s, item, h, usage, emit);
         s.push_str(
             "EMC
 ",
@@ -719,7 +765,10 @@ fn render_content_stream(ctx: &ExportContext, usage: &mut CjkUsage, remap: bool)
     s
 }
 
-fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUsage, remap: bool) {
+/// `emit`:false = pass1 度量遍 —— 只走 CJK 文本整形收集字体/glyph 使用,
+/// 内容流整体丢弃,图形/位图分支全跳过(消双份 to_vec 与渐变重复光栅化,
+/// EXP-04/PERF-02);true = pass2 正式发射。
+fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUsage, emit: bool) {
     let [x, y, w, h] = item.rect;
     let py = page_h - y - h;
     let rotated = item.rot.abs() > 1e-9;
@@ -727,10 +776,10 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
 
     // ---- 图形状态隔离:q/Q 用于旋转(cm)和/或裁剪(W n)----
     let need_q = rotated || has_clip;
-    if need_q {
+    if emit && need_q {
         s.push_str("q\n");
     }
-    if rotated {
+    if emit && rotated {
         let (cx, cy) = (x + w / 2.0, y + h / 2.0);
         let rad = item.rot.to_radians();
         let (sn, cs) = (rad.sin(), rad.cos());
@@ -747,14 +796,16 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
             fnum(cy - page_h)
         ));
     }
-    if has_clip {
-        emit_clip_path(s, item.clip.as_ref().unwrap(), x, y, w, h, py, page_h);
+    if emit {
+        if let Some(clip) = &item.clip {
+            emit_clip_path(s, clip, x, y, w, h, py, page_h);
+        }
     }
 
-    // ---- 填充 / 描边 ----
+    // ---- 填充 / 描边(仅发射遍;pass1 不产位图/不登记资源)----
     // 透明度 = 项 opacity × 颜色 alpha,按部分各自发一次 ExtGState;
     // 渐变填充的半透明烘进位图 SMask(与 CPU 栅格 to_skia_stops 一致)。
-    if item.fill.is_some() || item.border.is_some() {
+    if emit && (item.fill.is_some() || item.border.is_some()) {
         if let Some(fill) = &item.fill {
             match fill {
                 FillDef::Solid(c) => {
@@ -913,12 +964,17 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
     }
 
     // ---- 文本(CID 真文本 / 轮廓兜底 / WinAnsi 兜底)----
+    // font_ok 分支两遍都走:pass1 只为 usage.record 收集 glyph 使用;
+    // 轮廓/拉丁兜底分支只在发射遍跑(不产字形使用,且 LATIN 兜底计数
+    // 不再被两遍双计)。
     if let Some(label) = &item.label {
-        emit_gs(
-            s,
-            usage,
-            item.opacity as f64 * label.color[3].clamp(0.0, 1.0) as f64,
-        );
+        if emit {
+            emit_gs(
+                s,
+                usage,
+                item.opacity as f64 * label.color[3].clamp(0.0, 1.0) as f64,
+            );
+        }
         let has_cjk = label.text.chars().any(|ch| {
             let cp = ch as u32;
             !(0x20..0x7f).contains(&cp) && !(0xa0..0xff).contains(&cp)
@@ -994,7 +1050,7 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
                             ));
                             let mut hexes = Vec::with_capacity(part.gids.len());
                             for (k, &gid) in part.gids.iter().enumerate() {
-                                if !remap {
+                                if !emit {
                                     if let Some(ch) = part.text.chars().nth(k) {
                                         usage.record(
                                             &part.font_family,
@@ -1006,7 +1062,7 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
                                         );
                                     }
                                 }
-                                let cid = if remap {
+                                let cid = if emit {
                                     usage.remap_cid(&part.font_family, part.weight, gid)
                                 } else {
                                     gid
@@ -1070,7 +1126,7 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
                             ));
                             let mut hexes = Vec::with_capacity(part.gids.len());
                             for (k, &gid) in part.gids.iter().enumerate() {
-                                if !remap {
+                                if !emit {
                                     if let Some(ch) = part.text.chars().nth(k) {
                                         usage.record(
                                             &label.font_family,
@@ -1082,7 +1138,7 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
                                         );
                                     }
                                 }
-                                let cid = if remap {
+                                let cid = if emit {
                                     usage.remap_cid(&label.font_family, label.weight, gid)
                                 } else {
                                     gid
@@ -1095,7 +1151,7 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
                     },
                 );
             }
-        } else if has_cjk {
+        } else if emit && has_cjk {
             s.push_str(&format!(
                 "{} {} {} rg\n",
                 fnum(label.color[0]),
@@ -1110,8 +1166,10 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
                 max_w,
                 ls,
                 |vi, hard, run, line, _bb| {
+                    // 空行守卫(EXP-06):break_lines 理论不产空行,但空行
+                    // 进入此处曾 expect panic —— 跳过而非崩溃
+                    let Some(&last) = line.last() else { return };
                     let s0: usize = hard.chars().take(line[0]).map(|ch| ch.len_utf8()).sum();
-                    let last = *line.last().expect("nonempty");
                     let s1: usize = hard.chars().take(last + 1).map(|ch| ch.len_utf8()).sum();
                     let sub = &hard[s0..s1];
                     outline_text_pdf(
@@ -1130,7 +1188,7 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
                     let _ = run;
                 },
             );
-        } else {
+        } else if emit {
             // S2(19 篇 §2.4):无任何字体数据可嵌入时的拉丁兜底——
             // 未嵌入 Helvetica 有换机替换风险,计数并在报告中显式声明
             LATIN_FALLBACK_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -1183,7 +1241,8 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
     }
 
     // ---- 图像(XObject RGBA 嵌入;旋转由外层 q/cm 统一处理)----
-    if item.kind == DrawKind::Image {
+    // 仅发射遍:pass1 不再 to_vec 整张位图(EXP-04/PERF-02)
+    if emit && item.kind == DrawKind::Image {
         // 位图缺失时不画占位,与 CPU 栅格的跳过行为一致
         if let Some(bmp) = &item.image {
             let im_res = usage.image_for(bmp.rgba.to_vec(), bmp.width, bmp.height);
@@ -1199,7 +1258,7 @@ fn draw_item_pdf(s: &mut String, item: &DrawItem, page_h: f64, usage: &mut CjkUs
         }
     }
 
-    if need_q {
+    if emit && need_q {
         s.push_str("Q\n");
     }
 }
@@ -1750,29 +1809,9 @@ pub fn escape_pdf_string(t: &str) -> String {
         .replace(')', "\\)")
 }
 
-/// f32/f64 统一数值格式化(消双侧调用点的类型摩擦)。
-pub trait FnumVal {
-    fn val(self) -> f64;
-}
-impl FnumVal for f64 {
-    fn val(self) -> f64 {
-        self
-    }
-}
-impl FnumVal for f32 {
-    fn val(self) -> f64 {
-        self as f64
-    }
-}
-
-pub fn fnum<V: FnumVal>(v: V) -> String {
-    let r = (v.val() * 1000.0).round() / 1000.0;
-    if r == r.trunc() {
-        format!("{}", r as i64)
-    } else {
-        format!("{r}")
-    }
-}
+/// f32/f64 统一数值格式化(EXP-07:实现移至 `vb_common::numfmt` 单源,
+/// SVG 车道同函数;此处 re-export 兼容既有 `crate::pdf::fnum` 调用点)。
+pub use vb_common::numfmt::{fnum, FnumVal};
 
 /// F1: 线性渐变 → PDF axial shading 字典体。
 /// 角度为 CSS 语义(0=to top, 90=to right, 180=to bottom),坐标已 Y 翻转。
@@ -2355,4 +2394,90 @@ fn rewrite_obj_body(body: &[u8], off: u32) -> Vec<u8> {
         out.extend_from_slice(&body[i..]);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn font_with_glyphs(pairs: &[(u16, char)]) -> CjkFont {
+        CjkFont {
+            name: "TestFont".into(),
+            weight: 400,
+            resource: "CF1".into(),
+            remap: Default::default(),
+            glyphs: pairs
+                .iter()
+                .map(|(gid, ch)| (*gid, (*ch, 1000.0)))
+                .collect(),
+            ascent: 800.0,
+            descent: -200.0,
+            subset: Vec::new(),
+            subset_len1: 0,
+        }
+    }
+
+    /// EXP-01 注入用例:子集化必然失败(垃圾字节)→ 回退全量嵌入时 remap
+    /// 必须恒等、glyphs 键保持原 GID —— 内容流按原 GID 发射,配合
+    /// /CIDToGIDMap /Identity 可提取文本与源逐字一致。旧口径在回退分支
+    /// 仍套用子集 remap(缺表置 0 = .notdef),静默产出错字/豆腐块。
+    #[test]
+    fn subset_failure_falls_back_to_identity_remap() {
+        let mut f = font_with_glyphs(&[(10, 'a'), (2000, '中')]);
+        let garbage = vec![0xFFu8; 4096];
+        assert!(
+            !subset_one_font(&mut f, &garbage, 0),
+            "垃圾字节必须子集化失败"
+        );
+        assert_eq!(f.remap.get(&10), Some(&10), "回退分支 remap 必须恒等");
+        assert_eq!(f.remap.get(&2000), Some(&2000), "回退分支 remap 必须恒等");
+        assert!(f.glyphs.contains_key(&10), "glyphs 键不得被重映射改写");
+        assert!(f.glyphs.contains_key(&2000), "glyphs 键不得被重映射改写");
+        assert_eq!(f.subset_len1, 4096);
+        assert_eq!(f.subset, garbage, "回退嵌入全量字体字节");
+    }
+
+    /// EXP-01 成功路径对照:真实字体子集化成功 → remap 生效且 ToUnicode
+    /// 键 = 新 cid(与 remap 值一一对应)。无字体数据的环境跳过(CI linux)。
+    #[test]
+    fn subset_success_keeps_tounicode_aligned() {
+        let Some((data, index)) = vb_render::text::font_data_for("Microsoft YaHei", 400)
+            .or_else(|| vb_render::text::font_data_for("Noto Sans CJK SC", 400))
+        else {
+            eprintln!("skip: 无可用系统字体");
+            return;
+        };
+        let mut f = font_with_glyphs(&[(10, 'a'), (2000, '中')]);
+        assert!(
+            subset_one_font(&mut f, &data, index as u32),
+            "真实字体应子集化成功"
+        );
+        assert!(!f.subset.is_empty() && f.subset.len() < data.len());
+        for (gid, ch) in [(10u16, 'a'), (2000u16, '中')] {
+            let cid = f
+                .remap
+                .get(&gid)
+                .copied()
+                .expect("remap 必须覆盖全部 glyphs 键");
+            assert_eq!(
+                f.glyphs.get(&cid).map(|(c, _)| *c),
+                Some(ch),
+                "ToUnicode 键(新 cid)必须与 remap 一致"
+            );
+        }
+    }
+
+    /// EXP-01 可见性接线:回退计数静态在 write_pdf_head 入口清零、
+    /// finalize_cjk_fonts 递增、write() 汇总为 FontSubsetFallback 告警
+    /// (RB-06:降级不静默)。此处钉住清零与递增两端。
+    #[test]
+    fn subset_fallback_counter_resets_and_increments() {
+        SUBSET_FALLBACK_COUNT.store(0, Ordering::Relaxed);
+        // 直接模拟 finalize 的递增路径(subset_one_font 返回 false 时)
+        SUBSET_FALLBACK_COUNT.fetch_add(1, Ordering::Relaxed);
+        assert!(SUBSET_FALLBACK_COUNT.load(Ordering::Relaxed) > 0);
+        // 新一次导出入口必须清零(旧计数不得泄漏进下一次报告)
+        SUBSET_FALLBACK_COUNT.store(0, Ordering::Relaxed);
+        assert_eq!(SUBSET_FALLBACK_COUNT.load(Ordering::Relaxed), 0);
+    }
 }

@@ -79,11 +79,8 @@ pub fn encode_gif(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
 
 /// ffmpeg 调色板双通道 GIF(参照 WPI gif_exporter 实测方案)。
 fn encode_gif_ffmpeg(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
-    let seq = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(0);
-    let tmp = std::env::temp_dir().join(format!("kiln-gif-{}-{seq}", std::process::id()));
+    // EXP-10:落盘点统一经 limits::temp_name(命名约定即注册,pid 可解析回收)
+    let tmp = std::env::temp_dir().join(vb_browser::limits::temp_name("gif", ""));
     std::fs::create_dir_all(&tmp).map_err(KilnError::Io)?;
 
     let result = (|| -> KilnResult<Vec<u8>> {
@@ -175,11 +172,8 @@ pub fn encode_mp4(ctx: &ExportContext) -> KilnResult<Vec<u8>> {
         // 降级:GIF 流(播放器大多兼容);告警由 Mp4Writer 补
         return encode_gif(ctx);
     }
-    let seq = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(0);
-    let tmp = std::env::temp_dir().join(format!("kiln-mp4-{}-{seq}", std::process::id()));
+    // EXP-10:落盘点统一经 limits::temp_name
+    let tmp = std::env::temp_dir().join(vb_browser::limits::temp_name("mp4", ""));
     std::fs::create_dir_all(&tmp).map_err(KilnError::Io)?;
 
     let result = (|| -> KilnResult<Vec<u8>> {
