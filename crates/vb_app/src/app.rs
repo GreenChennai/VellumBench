@@ -130,6 +130,41 @@ pub(crate) struct NumCommitGuard {
     pub(crate) opened_at: std::time::Instant,
 }
 
+/// S5 清单 ②:面板区焦点(§8.10.2「F6 循环面板区」的状态机面)。
+///
+/// 区跳转 = **可见性抬升 + 本状态机**:把目标区抬到可见(反隐藏/反折叠/
+/// 保持当前 Tab),区内首个控件的键盘焦点仍由 egui 原生 Tab 承担
+/// (egui 0.35 无「区域焦点」公开 API —— 诚实限制,见 ui-focus-a11y.md)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum FocusZone {
+    /// 画布(默认;无面板持有区焦点)。
+    #[default]
+    Canvas,
+    /// 主右坞(属性/图层/画板/令牌,当前 Tab)。
+    RightDock,
+    /// 次级坞(字符/外观/变换…,当前组;全关时循环跳过)。
+    SecDock,
+}
+
+/// S5 清单 ②:面板区循环纯函数(循环顺序与 Esc 层级测试打这里)。
+///
+/// 顺序环:画布 → 右坞 →(次级坞,可用时)→ 画布;`forward = false`
+/// 走反向。次级坞**没有任何开着的面板**时从顺序里剔除(跳到不存在的
+/// 区是骗人);当前区失效(如停在次级坞但面板全关)按画布处理。
+pub(crate) fn next_focus_zone(cur: FocusZone, sec_available: bool, forward: bool) -> FocusZone {
+    let mut order = vec![FocusZone::Canvas, FocusZone::RightDock];
+    if sec_available {
+        order.push(FocusZone::SecDock);
+    }
+    let i = order.iter().position(|z| *z == cur).unwrap_or(0);
+    let n = order.len();
+    if forward {
+        order[(i + 1) % n]
+    } else {
+        order[(i + n - 1) % n]
+    }
+}
+
 pub struct VellumApp {
     pub doc: Document,
     pub undo: UndoStack,
@@ -180,6 +215,10 @@ pub struct VellumApp {
     panel_order: [usize; panels::TAB_COUNT],
     /// 隐藏/恢复所有面板(S1-b 02-6-5,`Tab`;隐藏右侧坞+状态栏+浮动工具条)。
     panels_hidden: bool,
+    /// S5 清单 ②:面板区焦点状态机(会话态,不持久化;
+    /// `view.focus_next_panel` / `view.focus_prev_panel` 推进,
+    /// `view.escape_overlay` 的「面板级」退回画布)。
+    pub(crate) focus_zone: FocusZone,
     /// NumField 提交会话守卫(UI-10 RAII 化,2026-10-05)。
     ///
     /// 旧实现是裸 `bool num_commit_open`:置位/复位散在 `num_commit` 与
@@ -811,6 +850,46 @@ pub(crate) const fn effective_motion(user_enabled: bool, os_animations: bool) ->
 // ─────────────────────── UI-10 门禁(单测) ───────────────────────
 
 // ─────────────────────── S5 清单 ④:动效并联真值表 ───────────────────────
+
+#[cfg(test)]
+mod focus_zone_tests {
+    use super::{next_focus_zone, FocusZone};
+
+    /// 循环顺序:画布 → 右坞 → 次级坞 → 画布(次级坞可用时),
+    /// 反向严格镜像;次级坞不可用时二区环。
+    #[test]
+    fn panel_zone_cycle_order_forward_and_reverse() {
+        // 三区环(次级坞可用)
+        let f = |cur| next_focus_zone(cur, true, true);
+        assert_eq!(f(FocusZone::Canvas), FocusZone::RightDock);
+        assert_eq!(f(FocusZone::RightDock), FocusZone::SecDock);
+        assert_eq!(f(FocusZone::SecDock), FocusZone::Canvas, "循环回卷");
+        // 反向镜像
+        let b = |cur| next_focus_zone(cur, true, false);
+        assert_eq!(b(FocusZone::Canvas), FocusZone::SecDock);
+        assert_eq!(b(FocusZone::SecDock), FocusZone::RightDock);
+        assert_eq!(b(FocusZone::RightDock), FocusZone::Canvas);
+        // 次级坞不可用:顺序剔除,二区环
+        assert_eq!(
+            next_focus_zone(FocusZone::Canvas, false, true),
+            FocusZone::RightDock
+        );
+        assert_eq!(
+            next_focus_zone(FocusZone::RightDock, false, true),
+            FocusZone::Canvas
+        );
+        // 失效区(次级坞面板全关后仍停在 SecDock)按画布处理:
+        // 正向 → 右坞;反向 → 右坞(与「画布反向 = 环上最后一区」一致)
+        assert_eq!(
+            next_focus_zone(FocusZone::SecDock, false, true),
+            FocusZone::RightDock
+        );
+        assert_eq!(
+            next_focus_zone(FocusZone::SecDock, false, false),
+            FocusZone::RightDock
+        );
+    }
+}
 
 #[cfg(test)]
 mod motion_parallel_tests {

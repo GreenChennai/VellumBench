@@ -151,6 +151,74 @@ impl VellumApp {
             "view.next_panel_tab" => {
                 self.panel_tab = (self.panel_tab + 1) % panels::TAB_COUNT;
             }
+            // ── S5 清单 ②(§8.10.2):面板区焦点循环 ──
+            // 区状态机与循环顺序见 [`crate::app::next_focus_zone`]。
+            // 区跳转 = 可见性抬升:反面板隐藏、反用户折叠(窄窗强制折叠
+            // 不受影响,那是布局函数不是偏好)、保持用户排的 panel_order。
+            "view.focus_next_panel" | "view.focus_prev_panel" => {
+                let forward = id == "view.focus_next_panel";
+                let sec_available = !self.panels_hidden
+                    && panel_dock::SecPanel::ALL
+                        .iter()
+                        .copied()
+                        .any(|p| self.sec_is_open(p));
+                self.focus_zone = super::next_focus_zone(self.focus_zone, sec_available, forward);
+                match self.focus_zone {
+                    super::FocusZone::RightDock => {
+                        self.panels_hidden = false;
+                        self.dock_collapsed = false;
+                        self.status = vb_session::i18n::t_args(
+                            "ui-app-dispatch-view-063",
+                            &[(
+                                "a1",
+                                vb_session::i18n::FluentValue::from(
+                                    (panels::TAB_LABELS[self.panel_tab]).to_string(),
+                                ),
+                            )],
+                        );
+                    }
+                    super::FocusZone::SecDock => {
+                        self.panels_hidden = false;
+                        self.sec_dock_collapsed = false;
+                        // 区可用性在循环函数已保证;此处再兜一次组内选中
+                        // (面板全浮窗/组切换后 effective 可能落空)。
+                        if self.sec.active.is_none_or(|p| !self.sec_is_open(p)) {
+                            if let Some(p) = panel_dock::SecPanel::ALL
+                                .iter()
+                                .copied()
+                                .find(|&p| self.sec_is_open(p))
+                            {
+                                self.sec_focus(p);
+                            }
+                        }
+                        let group = panel_dock::SecGroup::from_index(self.sec.active_group);
+                        self.status = vb_session::i18n::t_args(
+                            "ui-app-dispatch-view-064",
+                            &[(
+                                "a1",
+                                vb_session::i18n::FluentValue::from((group.label()).to_string()),
+                            )],
+                        );
+                    }
+                    super::FocusZone::Canvas => {
+                        self.status = vb_session::i18n::t("ui-app-dispatch-view-065");
+                    }
+                }
+            }
+            // ── S5 清单 ②:逐级退出(浮层→面板→画布)的「面板级」原语。
+            // 浮层级由 Esc 回退链的 esc_dialog_top 承担、画布级由既有
+            // canvas.cancel 承担;本命令独立可用(命令面板/Agent),
+            // Esc 键位仍归 canvas.cancel(见 binds.rs 注释)。
+            "view.escape_overlay" => {
+                if self.esc_dialog_top().is_some() {
+                    self.close_esc_dialog_top();
+                } else if self.focus_zone != super::FocusZone::Canvas {
+                    self.focus_zone = super::FocusZone::Canvas;
+                    self.status = vb_session::i18n::t("ui-app-dispatch-view-065");
+                }
+                // 浮层与面板区都没有 → 画布级交还 canvas.cancel 语义
+                // (本命令不重复取消选择;Esc 键路径会继续走它)。
+            }
             // ── S1-b 面板显隐(F7 / Tab;design/02 §四-面板显隐) ──
             "view.toggle_layers_panel" => {
                 let forced = self.last_viewport_width < vb_ui::theme::space::COLLAPSE_BELOW;
@@ -576,5 +644,93 @@ impl VellumApp {
             _ => matched = false,
         }
         matched
+    }
+}
+
+// ─────────────────────── S5 清单 ②门禁(单测) ───────────────────────
+
+#[cfg(test)]
+mod panel_zone_tests {
+    use super::super::FocusZone;
+    use crate::app::assemble::tests::app_fresh;
+    use crate::app::panel_dock::SecPanel;
+    use crate::app::panels::TAB_LAYERS;
+    use crate::app::Tool;
+
+    /// 循环命令:区状态机按「画布 → 右坞 →(次级坞)→ 画布」推进;
+    /// 次级坞无开面板时被剔除;跳右坞/次级坞必须反隐藏、反折叠
+    /// (区跳转要有可见反馈,否则对键盘用户是空操作)。
+    #[test]
+    fn panel_focus_cycle_advances_regions() {
+        let _env = crate::ENV_LOCK.lock();
+        let mut app = app_fresh(None);
+        // 次级坞全关:二区环
+        app.run_command("view.focus_next_panel", false, false);
+        assert_eq!(app.focus_zone, FocusZone::RightDock);
+        assert!(!app.panels_hidden, "区跳转必须反面板隐藏");
+        assert!(!app.dock_collapsed, "区跳转必须反用户折叠");
+        app.run_command("view.focus_next_panel", false, false);
+        assert_eq!(
+            app.focus_zone,
+            FocusZone::Canvas,
+            "次级坞不可用 → 直接回画布"
+        );
+        // 打开一个次级面板:三区环
+        app.sec_set_open(SecPanel::Char, true);
+        app.focus_zone = FocusZone::Canvas;
+        app.run_command("view.focus_next_panel", false, false);
+        app.run_command("view.focus_next_panel", false, false);
+        assert_eq!(app.focus_zone, FocusZone::SecDock);
+        assert!(!app.sec_dock_collapsed, "次级坞区跳转必须反折叠");
+        app.run_command("view.focus_next_panel", false, false);
+        assert_eq!(app.focus_zone, FocusZone::Canvas, "循环回卷");
+        // 反向:画布 →(次级坞)→ 右坞
+        app.run_command("view.focus_prev_panel", false, false);
+        assert_eq!(app.focus_zone, FocusZone::SecDock);
+        app.run_command("view.focus_prev_panel", false, false);
+        assert_eq!(app.focus_zone, FocusZone::RightDock);
+        app.run_command("view.focus_prev_panel", false, false);
+        assert_eq!(app.focus_zone, FocusZone::Canvas);
+    }
+
+    /// Esc 层级(浮层→面板→画布):面板区持焦时第一下 Esc 只退回画布
+    /// (不消费画布级取消);第二下才走画布级(工具回选择)。
+    #[test]
+    fn escape_steps_out_panel_region_before_canvas_cancel() {
+        let _env = crate::ENV_LOCK.lock();
+        let mut app = app_fresh(None);
+        app.sec_set_open(SecPanel::Char, true);
+        app.run_command("tool.rect", false, false);
+        app.run_command("view.focus_next_panel", false, false);
+        assert_eq!(app.focus_zone, FocusZone::RightDock);
+        // Esc(= canvas.cancel):先退面板级,工具保持
+        app.run_command("canvas.cancel", false, false);
+        assert_eq!(app.focus_zone, FocusZone::Canvas, "第一下 Esc 退面板区");
+        assert_eq!(app.tool, Tool::Rect, "面板级消费,画布级取消不动工具");
+        // 第二下 Esc:画布级(工具回选择)
+        app.run_command("canvas.cancel", false, false);
+        assert_eq!(app.tool, Tool::Select, "第二下 Esc 走画布级取消");
+        // 独立命令:浮层/面板都没有时是良性空操作(不炸不误清选区)
+        app.run_command("view.escape_overlay", false, false);
+        assert_eq!(app.focus_zone, FocusZone::Canvas);
+    }
+
+    /// `view.escape_overlay` 独立路径:面板区持焦 → 退回画布;
+    /// 已在画布 → 幂等。与 Esc 键路径(canvas.cancel 内联)同语义。
+    #[test]
+    fn escape_overlay_command_is_the_panel_level_primitive() {
+        let _env = crate::ENV_LOCK.lock();
+        let mut app = app_fresh(None);
+        app.sec_set_open(SecPanel::Char, true);
+        app.run_command("view.focus_prev_panel", false, false);
+        assert_eq!(app.focus_zone, FocusZone::SecDock, "反向第一跳 = 次级坞");
+        app.run_command("view.escape_overlay", false, false);
+        assert_eq!(app.focus_zone, FocusZone::Canvas);
+        app.run_command("view.escape_overlay", false, false);
+        assert_eq!(app.focus_zone, FocusZone::Canvas, "幂等");
+        // Tab 跳转命令不受影响(同族回归钉):F4 循环右坞 Tab
+        app.panel_tab = TAB_LAYERS;
+        app.run_command("view.next_panel_tab", false, false);
+        assert_eq!(app.panel_tab, TAB_LAYERS + 1);
     }
 }

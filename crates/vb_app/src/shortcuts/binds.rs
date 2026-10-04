@@ -608,6 +608,28 @@ pub const SHORTCUTS: &[Shortcut] = &[
         alt: ModMatch::Any,
         ctx: CTX_NO_TEXT,
     },
+    // ── S5 清单 ②(§8.10.2):面板区焦点循环 ──
+    // 设计(22 篇 §键盘焦点体系)是 F6/Ctrl+F6;本宿主 F6 单键已被颜色
+    // 面板占用(design/03 §5.4 既有承诺,registry_is_conflict_free 硬门禁
+    // 不许同键位双绑)—— 循环落在 Ctrl+F6(下一区)/ Ctrl+Shift+F6(上一区),
+    // 偏差记录在 ui-focus-a11y.md。Esc 的「逐级退出」不另绑键位:Esc 键
+    // 仍归 canvas.cancel,其回退链内联 view.escape_overlay(浮层→面板→画布)。
+    Shortcut {
+        id: "view.focus_next_panel",
+        key: Key::F6,
+        ctrl: ModMatch::On,
+        shift: ModMatch::Off,
+        alt: ModMatch::Any,
+        ctx: CTX_NO_TEXT,
+    },
+    Shortcut {
+        id: "view.focus_prev_panel",
+        key: Key::F6,
+        ctrl: ModMatch::On,
+        shift: ModMatch::On,
+        alt: ModMatch::Any,
+        ctx: CTX_NO_TEXT,
+    },
     // ── S1-b 面板显隐(design/02 §四-面板显隐 / design/03 §五) ──
     // F7 = 图层面板(面板坞切到图层 Tab / 折叠);Ctrl+B = 隐藏/恢复所有面板
     // (VS Code 侧栏肌肉记忆)。0.13.2 前这绑在裸 Tab 上:与 egui 内建焦点

@@ -245,6 +245,14 @@ impl VellumApp {
                     };
                     return true;
                 }
+                // S5 清单 ②:逐级退出的「面板级」—— 区焦点停在面板区时,
+                // Esc 先把区焦点退回画布并消费本次按键(画布级的选择清除/
+                // 工具回退留给下一次 Esc;`view.escape_overlay` 同语义)。
+                if self.focus_zone != crate::app::FocusZone::Canvas {
+                    self.focus_zone = crate::app::FocusZone::Canvas;
+                    self.status = vb_session::i18n::t("ui-app-dispatch-view-065");
+                    return true;
+                }
                 self.selection.clear();
                 if !matches!(self.drag, Drag::None) {
                     // Esc 取消语义:拖拽产生的合并条目从 undo 栈整体作废

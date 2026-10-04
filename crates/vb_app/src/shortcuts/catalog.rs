@@ -103,6 +103,12 @@ pub const IMPLEMENTED_IDS: &[&str] = &[
     "view.next_artboard",
     "view.prev_artboard",
     "view.next_panel_tab",
+    // S5 清单 ②:面板区焦点循环(§8.10.2)+ Esc 逐级退出的「面板级」
+    // 原语(Esc 键位仍归 canvas.cancel 的回退链,本命令无独立键位,
+    // 见 dispatch_view 的层级实现)
+    "view.focus_next_panel",
+    "view.focus_prev_panel",
+    "view.escape_overlay",
     "view.zoom_to_selection",
     // S1-b 面板显隐
     "view.toggle_layers_panel",
@@ -344,6 +350,10 @@ pub const CMD_LABELS: &[(&str, &str)] = &[
     ("view.next_artboard", "下一画板"),
     ("view.prev_artboard", "上一画板"),
     ("view.next_panel_tab", "切换右侧面板 Tab"),
+    // S5 清单 ②:面板区焦点循环 + Esc 逐级退出(面板级原语)
+    ("view.focus_next_panel", "面板区焦点循环:下一区"),
+    ("view.focus_prev_panel", "面板区焦点循环:上一区"),
+    ("view.escape_overlay", "逐级退出浮层 / 面板"),
     ("view.zoom_to_selection", "缩放到选区"),
     ("app.about", "关于"),
     // S1-b 面板显隐

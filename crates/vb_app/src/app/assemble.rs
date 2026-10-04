@@ -125,6 +125,8 @@ impl VellumApp {
             dock_collapsed: ws.dock_collapsed,
             panel_order: ws_panel_order,
             panels_hidden: ws.panels_hidden,
+            // S5 清单 ②:面板区焦点状态机(会话态,默认画布)
+            focus_zone: super::FocusZone::Canvas,
             num_commit: None,
             // PERF-05:样式注入指纹(None = 首帧必注入)
             style_applied: None,

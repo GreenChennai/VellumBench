@@ -433,6 +433,21 @@
   keys: { win: "F4" }
   undoable: false
   expose_to_agent: false
+- id: view.focus_next_panel
+  label: 面板区焦点循环:下一区
+  keys: { win: "Ctrl+F6" }
+  undoable: false
+  expose_to_agent: false
+- id: view.focus_prev_panel
+  label: 面板区焦点循环:上一区
+  keys: { win: "Ctrl+Shift+F6" }
+  undoable: false
+  expose_to_agent: false
+- id: view.escape_overlay
+  label: 逐级退出浮层 / 面板
+  keys: { win: "" }
+  undoable: false
+  expose_to_agent: false
 - id: view.zoom_to_selection
   label: 缩放到选区
   keys: { win: "" }
