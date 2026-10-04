@@ -235,11 +235,9 @@ impl PluginManifest {
         Self::parse(&text).map_err(|e| format!("{}:{e}", path.display()))
     }
 
-    /// 解析 entry → 可执行文件绝对路径:
-    /// - `bin:<名>` → 宿主可执行同目录下的 `<名>(.exe)`(workspace 内置
-    ///   插件;cargo 运行时宿主与插件 bin 同在 target/debug);
-    /// - 绝对路径 → 原样;
-    /// - 相对路径 → 相对 manifest 所在目录。
+    /// 解析 entry → 可执行文件绝对路径(**不校验**;仅供展示/迁移用)。
+    ///
+    /// 安全敏感的启动路径一律走 [`Self::resolve_entry_checked`]。
     pub fn resolve_entry(&self, manifest_dir: &Path, host_exe_dir: Option<&Path>) -> PathBuf {
         let exe_ext = if cfg!(windows) { ".exe" } else { "" };
         if let Some(name) = self.entry.strip_prefix("bin:") {
@@ -255,6 +253,129 @@ impl PluginManifest {
             manifest_dir.join(p)
         }
     }
+
+    /// 解析并**校验** entry → 可执行文件绝对路径(PLG-03 安全红线)。
+    ///
+    /// - `bin:<名>` → 宿主可执行同目录(workspace 内置插件);`<名>` 必须
+    ///   是纯文件名(禁路径分隔符与 `..`,防借 bin: 形态穿越);
+    /// - 相对路径 → 相对 manifest 目录;**含 `..` 组件直接拒绝**;
+    /// - 绝对路径 / 相对路径统一做**插件目录包含校验**(词法规范化主判定
+    ///   加 canonicalize 兜底,ADR-0045 同款两层):落点不在插件目录内即
+    ///   拒绝,`"entry": "../../System32/xxx.exe"` 在此被拦下。
+    ///
+    /// 文件尚不存在时:相对路径按词法判定放行(随后的 `is_file` 检查
+    /// 给出「不存在」错误);绝对路径无法验证真实落点 → fail-safe 拒绝。
+    pub fn resolve_entry_checked(
+        &self,
+        manifest_dir: &Path,
+        host_exe_dir: Option<&Path>,
+    ) -> Result<PathBuf, String> {
+        let exe_ext = if cfg!(windows) { ".exe" } else { "" };
+        if let Some(name) = self.entry.strip_prefix("bin:") {
+            if !is_safe_bin_name(name) {
+                return Err(format!(
+                    "plugin.json 的 bin: 入口名「{name}」非法:只允许 1–64 位字母/数字/点/中划线/下划线(禁路径分隔符与 ..)"
+                ));
+            }
+            return Ok(match host_exe_dir {
+                Some(dir) => dir.join(format!("{name}{exe_ext}")),
+                None => PathBuf::from(format!("{name}{exe_ext}")),
+            });
+        }
+        let p = Path::new(&self.entry);
+        if p.components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(format!(
+                "plugin.json 的 entry「{}」含「..」路径组件,已拒绝(防路径穿越)",
+                self.entry
+            ));
+        }
+        let dir_canon = manifest_dir
+            .canonicalize()
+            .map_err(|e| format!("插件目录不可达({}):{e}", manifest_dir.display()))?;
+        let raw = if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            dir_canon.join(p)
+        };
+        // 主判定:词法规范化后必须仍在插件目录内
+        let norm = lexically_normalize(&raw);
+        let dir_prefix = dir_canon.to_string_lossy();
+        let norm_s = norm.to_string_lossy();
+        if !path_contained(&norm_s, &dir_prefix) {
+            return Err(format!(
+                "plugin.json 的 entry「{}」解析后越出插件目录({}),已拒绝",
+                self.entry,
+                dir_canon.display()
+            ));
+        }
+        // 兜底:canonicalize(解析符号链接/目录联接后的真实位置)也必须在内
+        match raw.canonicalize() {
+            Ok(canon) => {
+                if !path_contained(&canon.to_string_lossy(), &dir_prefix) {
+                    return Err(format!(
+                        "plugin.json 的 entry「{}」经符号链接解析后越出插件目录,已拒绝",
+                        self.entry
+                    ));
+                }
+                Ok(canon)
+            }
+            // 文件尚不存在:相对路径保持词法判定结果(调用方 is_file 检查
+            // 会给出「不存在」);绝对路径无法验证真实落点 → fail-safe 拒绝
+            Err(_) if p.is_absolute() => Err(format!(
+                "plugin.json 的 entry「{}」指向的文件不存在(绝对路径无法校验包含关系,已拒绝)",
+                self.entry
+            )),
+            Err(_) => Ok(norm),
+        }
+    }
+}
+
+/// `bin:` 入口名白名单:1–64 位 ASCII 字母/数字/点/中划线/下划线,
+/// 不含路径分隔符(借 bin: 形态写 `..\..\x.exe` 直接拒绝)。
+fn is_safe_bin_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
+        && Path::new(name).file_name().is_some_and(|f| f == name)
+}
+
+/// 词法规范化(ADR-0045 同款:消 `.`/冗余分隔;越出根的 `..` 保留为字面量)。
+fn lexically_normalize(p: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for comp in p.components() {
+        match comp {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !out.pop() {
+                    out.push("..");
+                }
+            }
+            c => out.push(c.as_os_str()),
+        }
+    }
+    out
+}
+
+/// 包含判定(target 是否落在 dir 内;canonicalize 形态比较)。
+/// Windows 文件系统大小写不敏感 → 小写比较;POSIX 大小写敏感 → 原样。
+fn path_contained(target: &str, dir: &str) -> bool {
+    let (t, d) = if cfg!(windows) {
+        (target.to_ascii_lowercase(), dir.to_ascii_lowercase())
+    } else {
+        (target.to_string(), dir.to_string())
+    };
+    if t == d {
+        return false; // 落点 = 插件目录本身,不是文件
+    }
+    // 前缀命中后必须紧跟分隔符,防「C:\plug」误放行「C:\plug-evil」
+    t.starts_with(&d)
+        && t.as_bytes()
+            .get(d.len())
+            .is_some_and(|&b| b == b'/' || b == b'\\')
 }
 
 /// 字符串字段读取(缺字段 / 非字符串 → 中文 Err)。
@@ -266,13 +387,18 @@ fn str_field(obj: &serde_json::Map<String, Value>, key: &str) -> Result<String, 
     }
 }
 
-/// 宽松 semver:`x.y.z`,每段 1–4 位数字(x/y/z 位置)。
+/// semver 段(PLG-10 收紧):1–4 位数字,**禁前导零**(`0` 本身除外)——
+/// 此前 `"0100.0.0"` 可通过,版本排序/比较语义被破坏。
 fn is_semver(v: &str) -> bool {
     let parts: Vec<&str> = v.split('.').collect();
-    parts.len() == 3
-        && parts
-            .iter()
-            .all(|p| !p.is_empty() && p.len() <= 4 && p.chars().all(|c| c.is_ascii_digit()))
+    parts.len() == 3 && parts.iter().all(|p| is_semver_segment(p))
+}
+
+fn is_semver_segment(p: &str) -> bool {
+    !p.is_empty()
+        && p.len() <= 4
+        && p.chars().all(|c| c.is_ascii_digit())
+        && (p == "0" || !p.starts_with('0'))
 }
 
 #[cfg(test)]
@@ -439,5 +565,112 @@ mod tests {
             m3.resolve_entry(Path::new("plugins/x"), None),
             PathBuf::from("plugins/x/run.py")
         );
+    }
+
+    /// PLG-03 安全红线:entry 路径穿越必须被 `resolve_entry_checked` 拒绝。
+    #[test]
+    fn entry_traversal_is_rejected() {
+        let tmp = std::env::temp_dir().join(format!("vb-plg03-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let plug_dir = tmp.join("plug");
+        std::fs::create_dir_all(&plug_dir).unwrap();
+        // 真实存在的越界目标:插件目录外的文件
+        let outside = tmp.join("outside.exe");
+        std::fs::write(&outside, b"mz").unwrap();
+
+        // ① 相对 .. 穿越直接拒绝
+        let m = manifest_with_entry("../outside.exe");
+        let err = m.resolve_entry_checked(&plug_dir, None).unwrap_err();
+        assert!(err.contains(".."), "{err}");
+        // ② 多级 .. 穿越到系统目录形态同样拒绝(即使目标不存在)
+        let m2 = manifest_with_entry("../../Windows/System32/evil.exe");
+        assert!(m2.resolve_entry_checked(&plug_dir, None).is_err());
+        // ③ 绝对路径落点在插件目录外 → 拒绝(canonicalize 兜底层)
+        let m3 = manifest_with_entry(&outside.display().to_string());
+        let err3 = m3.resolve_entry_checked(&plug_dir, None).unwrap_err();
+        assert!(err3.contains("越出") || err3.contains("不存在"), "{err3}");
+        // ④ 前缀相似但不同的兄弟目录不许绕过(plug-evil ≠ plug)
+        let evil_dir = tmp.join("plug-evil");
+        std::fs::create_dir_all(&evil_dir).unwrap();
+        let evil_exe = evil_dir.join("evil.exe");
+        std::fs::write(&evil_exe, b"mz").unwrap();
+        let m4 = manifest_with_entry("../plug-evil/evil.exe");
+        assert!(m4.resolve_entry_checked(&plug_dir, None).is_err());
+        // ⑤ 目录内相对路径放行(存在 → canonical 形;不存在 → 词法形)
+        let m5 = manifest_with_entry("plugin.exe");
+        assert!(m5.resolve_entry_checked(&plug_dir, None).is_ok());
+        // ⑥ bin: 借道路径分隔符拒绝
+        let m6 = manifest_with_entry("bin:..\\evil");
+        assert!(m6.resolve_entry_checked(&plug_dir, None).is_err());
+        let m7 = manifest_with_entry("bin:sub/evil");
+        assert!(m7.resolve_entry_checked(&plug_dir, None).is_err());
+        // ⑦ bin: 合法名放行
+        let m8 = manifest_with_entry("bin:example-stats-plugin");
+        assert!(m8.resolve_entry_checked(&plug_dir, None).is_ok());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// 目录联接/符号链接指到目录外 → canonicalize 兜底层必须拒绝。
+    #[test]
+    #[cfg(windows)]
+    fn entry_junction_escape_is_rejected() {
+        use std::os::windows::fs::symlink_dir;
+        let tmp = std::env::temp_dir().join(format!("vb-plg03-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let plug_dir = tmp.join("plug");
+        std::fs::create_dir_all(&plug_dir).unwrap();
+        let outside = tmp.join("real");
+        std::fs::create_dir_all(&outside).unwrap();
+        let target = outside.join("evil.exe");
+        std::fs::write(&target, b"mz").unwrap();
+        // symlink 需要开发者模式/特权;失败则跳过(不假红)
+        if symlink_dir(&outside, plug_dir.join("link")).is_err() {
+            let _ = std::fs::remove_dir_all(&tmp);
+            return;
+        }
+        let m = manifest_with_entry("link/evil.exe");
+        let err = m.resolve_entry_checked(&plug_dir, None).unwrap_err();
+        assert!(err.contains("符号链接") || err.contains("越出"), "{err}");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    fn manifest_with_entry(entry: &str) -> PluginManifest {
+        PluginManifest::parse(&format!(
+            r#"{{"id":"ab","name":"n","version":"1.0.0","entry":{},"commands":[]}}"#,
+            serde_json::to_string(entry).unwrap(),
+        ))
+        .unwrap()
+    }
+
+    /// PLG-10:is_semver 收紧——前导零/超长段/段数不符一律拒绝。
+    #[test]
+    fn semver_leading_zero_is_rejected() {
+        for bad in [
+            "0100.0.0",
+            "01.0.0",
+            "0.01.0",
+            "00.1.0",
+            "1.0",
+            "1.0.0.0",
+            "12345.0.0",
+            "",
+        ] {
+            assert!(
+                PluginManifest::parse(&format!(
+                    r#"{{"id":"ab","name":"n","version":"{bad}","entry":"e","commands":[]}}"#
+                ))
+                .is_err(),
+                "版本「{bad}」必须拒绝"
+            );
+        }
+        for good in ["0.0.0", "1.0.0", "10.20.30", "9999.0.0"] {
+            assert!(
+                PluginManifest::parse(&format!(
+                    r#"{{"id":"ab","name":"n","version":"{good}","entry":"e","commands":[]}}"#
+                ))
+                .is_ok(),
+                "版本「{good}」必须通过"
+            );
+        }
     }
 }

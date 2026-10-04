@@ -68,6 +68,9 @@ clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 log = "0.4"
 env_logger = "0.11"
+# RB-11 可观测性:vb_agent/vb_plugin 关键路径结构化日志(VB_LOG 控级别)
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
 # R0 i18n 地基(硬骨头 #2 前半):Fluent 运行时 + 语言 id;版本锁 0.17/0.9
 # (MSRV 1.67,低于工具链 1.98;升级走"升级窗口"纪律,不追新)
 fluent = "0.17.0"

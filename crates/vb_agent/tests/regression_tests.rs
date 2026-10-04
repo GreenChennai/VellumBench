@@ -686,3 +686,62 @@ fn boolean_patch_op_union() {
     let lhs_n = doc.nodes.get(doc.find_by_sid(&lhs_id).unwrap()).unwrap();
     assert_eq!(lhs_n.geom.w, 200.0, "lhs 几何应还原");
 }
+
+/// AGT-06:失败事务不得在真文档上泄漏 sid 空间。
+/// 此前 compile_op 在校验期直接消耗真文档的 sid 计数器(insert/group/
+/// new_artboard/duplicate 都要分配),后续 op 编译失败时已耗 sid 不归还,
+/// 违反「全部成功或全部回滚」的字面承诺。现在编译跑在 staging 克隆上,
+/// 失败即整个克隆被丢弃 —— 失败后的下一条 insert 必须拿到与干净文档
+/// 完全相同的 sid。
+#[test]
+fn failed_transaction_does_not_leak_sids() {
+    fn insert_div(parent: &str) -> PatchOp {
+        PatchOp::Insert {
+            parent: parent.to_string(),
+            index: None,
+            node: vb_agent::InsertNodeSpec {
+                tag: "div".into(),
+                name: Some("块".into()),
+                text: None,
+                style: None,
+                attrs: None,
+                r#box: None,
+            },
+        }
+    }
+
+    // 对照组:干净文档上单条 insert 的 sid(分配序列确定)
+    let mut clean = Document::new_default();
+    let mut clean_undo = UndoStack::new();
+    let ab_sid = ab0_sid(&clean);
+    let clean_out = apply_patch(&mut clean, &mut clean_undo, &req(vec![insert_div(&ab_sid)]))
+        .expect("对照组 insert");
+    let expected_sid = clean_out.created_ids[0].clone();
+
+    // 实验组:先跑一条注定失败的事务(insert 先分配,再引用不存在的 sid)
+    let mut doc = Document::new_default();
+    let mut undo = UndoStack::new();
+    let (rev_before, nodes_before) = (doc.rev, doc.nodes.len());
+    let failed = apply_patch(
+        &mut doc,
+        &mut undo,
+        &req(vec![
+            insert_div(&ab_sid),
+            PatchOp::SetText {
+                id: "no-such-sid".into(),
+                text: "x".into(),
+            },
+        ]),
+    );
+    assert!(failed.is_err(), "事务必须失败");
+    assert_eq!(doc.rev, rev_before, "失败事务不得推进 rev");
+    assert_eq!(doc.nodes.len(), nodes_before, "失败事务不得改写树");
+
+    // 失败后再插入:(sid 必须与对照组一致 —— 零泄漏)
+    let out = apply_patch(&mut doc, &mut undo, &req(vec![insert_div(&ab_sid)]))
+        .expect("失败事务后的 insert 必须成功");
+    assert_eq!(
+        out.created_ids[0], expected_sid,
+        "sid 泄漏:失败事务消耗了真文档计数器"
+    );
+}

@@ -160,10 +160,16 @@ pub fn apply_patch(
         }
     }
     // 事务:全部命令先编译成功才应用(08 篇 §五:全部成功或全部回滚)
+    // AGT-06:编译在 **staging 克隆**上进行 —— compile_op 需要分配 sid
+    // (insert/group/new_artboard/duplicate),此前直接消耗真文档计数器,
+    // 后续 op 编译失败时已耗的 sid 不归还,违反「全部成功或全部回滚」的
+    // 字面承诺。现在任一 op 失败即整个 staging 被丢弃,真文档零副作用;
+    // 成功路径的 sid 经命令落回真文档,allocator 的 in-use 兜底保证不冲突。
+    let mut staging = doc.clone();
     let mut cmds = Vec::new();
     let mut warnings = Vec::new();
     for op in &req.ops {
-        let (mut cs, mut ws) = compile_op(doc, op)?;
+        let (mut cs, mut ws) = compile_op(&mut staging, op)?;
         cmds.append(&mut cs);
         warnings.append(&mut ws);
     }
@@ -228,7 +234,17 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<(Vec<Command>, Vec<Str
                 .ok_or_else(|| PatchError::Op(format!("parent {parent} 不存在")))?;
             let mut n = build_node_from_spec(node, doc)?;
             // 容器子级坐标:相对画板累积由宿主保证;插入位置
-            let idx = index.unwrap_or(doc.nodes.get(pid).unwrap().children.len());
+            let idx = match index {
+                Some(i) => *i,
+                None => doc
+                    .nodes
+                    .get(pid)
+                    .ok_or_else(|| {
+                        PatchError::Op(format!("parent {parent} 内部节点缺失(悬挂 id)"))
+                    })?
+                    .children
+                    .len(),
+            };
             if let Some(b) = node.r#box {
                 n.geom = Geom {
                     x: b.x,
@@ -258,7 +274,12 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<(Vec<Command>, Vec<Str
             let nid = doc
                 .find_by_sid(id)
                 .ok_or_else(|| PatchError::Op(format!("{id} 不存在")))?;
-            let mut style = doc.nodes.get(nid).unwrap().style.clone();
+            let mut style = doc
+                .nodes
+                .get(nid)
+                .ok_or_else(|| PatchError::Op(format!("{id} 内部节点缺失(悬挂 id)")))?
+                .style
+                .clone();
             for (p, v) in css {
                 // 与 insert 路径一致:必须过 Decl::parse 校验,否则非法声明
                 // 原样落盘损坏 CSS(导出时不做二次过滤)
@@ -291,7 +312,12 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<(Vec<Command>, Vec<Str
                     )));
                 }
             }
-            let mut merged = doc.nodes.get(nid).unwrap().attrs.clone();
+            let mut merged = doc
+                .nodes
+                .get(nid)
+                .ok_or_else(|| PatchError::Op(format!("{id} 内部节点缺失(悬挂 id)")))?
+                .attrs
+                .clone();
             for (k, v) in attrs {
                 merged.insert(k.clone(), v.clone());
             }
@@ -401,40 +427,38 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<(Vec<Command>, Vec<Str
             let parent = doc
                 .nodes
                 .get(nid)
-                .unwrap()
+                .ok_or_else(|| PatchError::Op(format!("{id} 内部节点缺失(悬挂 id)")))?
                 .parent
                 .ok_or_else(|| PatchError::Op(format!("{id} 没有父级,无法调序")))?;
-            let len = doc.nodes.get(parent).unwrap().children.len();
+            // RB-01/AGT-02:父节点三样信息(长度/当前位置/sid)一次取出,
+            // 不做 unwrap 解包;悬挂 id 走结构化错误
+            let (len, cur, parent_sid) = {
+                let p = doc
+                    .nodes
+                    .get(parent)
+                    .ok_or_else(|| PatchError::Op(format!("{id} 的父级内部节点缺失(悬挂 id)")))?;
+                (
+                    p.children.len(),
+                    p.children.iter().position(|&c| c == nid),
+                    p.sid.as_str().to_string(),
+                )
+            };
             let new_index = match to.as_str() {
                 "front" => len.saturating_sub(1),
                 "back" => 0,
                 "forward" => {
-                    let cur = doc
-                        .nodes
-                        .get(parent)
-                        .unwrap()
-                        .children
-                        .iter()
-                        .position(|&c| c == nid)
-                        .unwrap_or(0);
-                    (cur + 1).min(len - 1)
+                    let cur = cur.unwrap_or(0);
+                    (cur + 1).min(len.saturating_sub(1))
                 }
                 "backward" => {
-                    let cur = doc
-                        .nodes
-                        .get(parent)
-                        .unwrap()
-                        .children
-                        .iter()
-                        .position(|&c| c == nid)
-                        .unwrap_or(0);
+                    let cur = cur.unwrap_or(0);
                     cur.saturating_sub(1)
                 }
                 other => return Err(PatchError::Op(format!("未知 order 目标:{other}"))),
             };
             vec![Command::Move {
                 sid: sid_str(id),
-                new_parent_sid: doc.nodes.get(parent).unwrap().sid.as_str().to_string(),
+                new_parent_sid: parent_sid,
                 new_index,
                 old: None,
             }]
@@ -463,23 +487,27 @@ fn compile_op(doc: &mut Document, op: &PatchOp) -> Result<(Vec<Command>, Vec<Str
                 .fold(0.0f64, f64::max)
                 + 80.0;
             n.geom.y = y;
+            // RB-01/AGT-02:root 侧信息(父 sid/插入位置)以结构化错误兜底
+            let root_sid = doc
+                .nodes
+                .get(doc.root)
+                .ok_or_else(|| PatchError::Op("文档根节点缺失(悬挂 id)".into()))?
+                .sid
+                .as_str()
+                .to_string();
             let index = match after {
                 Some(a_sid) => doc
                     .find_by_sid(a_sid)
                     .and_then(|aid| {
-                        doc.nodes
-                            .get(doc.root)
-                            .unwrap()
-                            .children
-                            .iter()
-                            .position(|&c| c == aid)
+                        let root_children = &doc.nodes.get(doc.root)?.children;
+                        root_children.iter().position(|&c| c == aid)
                     })
                     .map(|p| p + 1)
                     .unwrap_or(usize::MAX),
                 None => usize::MAX,
             };
             vec![Command::Insert {
-                parent_sid: doc.nodes.get(doc.root).unwrap().sid.as_str().to_string(),
+                parent_sid: root_sid,
                 index,
                 tree: NodeTree {
                     node: n,
@@ -566,7 +594,11 @@ fn align_cmds(
             continue;
         };
         let ab = artboard_of(doc, nid);
-        let g = doc.nodes.get(nid).unwrap().geom;
+        let g = doc
+            .nodes
+            .get(nid)
+            .ok_or_else(|| PatchError::Op(format!("{id} 内部节点缺失(悬挂 id)")))?
+            .geom;
         if let Some(entry) = groups.iter_mut().find(|(a, _)| *a == ab) {
             entry.1.push((id.clone(), g, bb));
         } else {

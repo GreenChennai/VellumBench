@@ -23,16 +23,21 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use crate::auth::AuthStore;
+use crate::auth::{AuthStore, EntryBinding};
 use crate::manifest::PluginManifest;
 use crate::process::{Incoming, PluginProcess};
 use crate::protocol::{self, RpcError};
-use crate::DEFAULT_TIMEOUT_MS;
+use crate::{NativeProcessConsent, DEFAULT_TIMEOUT_MS};
 
 /// 日志环容量(每插件;面板可看最近 N 条)。
 pub const LOG_CAP: usize = 200;
 /// 受控 UI 描述的单面板元件上限(防失控刷屏)。
 pub const WIDGET_CAP: usize = 64;
+/// 每帧 poll 处理的入站消息上限(PLG-05 / RB-07:UI 线程每帧工作量
+/// 有界;余量留下一帧。插件入站队列另有 1024 上限,延迟数帧不丢)。
+pub const MAX_INCOMING_PER_POLL: usize = 32;
+/// 每帧并入日志环的 stderr 行上限(同理)。
+pub const MAX_STDERR_PER_POLL: usize = 200;
 
 /// 插件状态机(05-10-5)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,9 +162,9 @@ impl EntryShared {
         }
         // 调试日志同步走 log 门面(调试控制台可见;05-10-3)
         match level {
-            "error" => log::error!("插件日志:{t}"),
-            "warn" => log::warn!("插件日志:{t}"),
-            _ => log::info!("插件日志:{t}"),
+            "error" => tracing::error!("插件日志:{t}"),
+            "warn" => tracing::warn!("插件日志:{t}"),
+            _ => tracing::info!("插件日志:{t}"),
         }
     }
 }
@@ -169,6 +174,9 @@ struct Entry {
     manifest: PluginManifest,
     dir: PathBuf,
     shared: Arc<EntryShared>,
+    /// 入口可执行指纹(装载时算一次,`list` 的授权态展示用;启动时另算
+    /// 新鲜指纹做篡改判定 —— PLG-02。缓存是为了避免逐帧 list 反复读盘哈希)。
+    binding: EntryBinding,
 }
 
 /// 宿主对外的插件信息快照(管理面板渲染用)。
@@ -309,7 +317,13 @@ impl PluginHost {
 
     /// 装载一个条目(初始状态按授权态落:未授权 → Unauthorized)。
     fn load_one(&mut self, dir: &Path, manifest: PluginManifest) {
-        let authorized = self.store.grant_matches(&manifest.id, &manifest.commands);
+        // 授权判定用装载时快照(PLG-02):解析失败/文件缺失 → 空绑定 →
+        // 视为未授权(fail-safe)
+        let binding =
+            checked_entry_binding(&manifest, dir).unwrap_or_else(|_| EntryBinding::empty());
+        let authorized = self
+            .store
+            .grant_matches(&manifest.id, &manifest.commands, &binding);
         let shared = Arc::new(EntryShared {
             state: Mutex::new(if authorized {
                 PluginState::Stopped
@@ -337,6 +351,7 @@ impl PluginHost {
             manifest,
             dir: dir.to_path_buf(),
             shared,
+            binding,
         });
     }
 
@@ -376,9 +391,11 @@ impl PluginHost {
                 version: e.manifest.version.clone(),
                 dir: e.dir.clone(),
                 state: e.shared.state(),
-                authorized: self
-                    .store
-                    .grant_matches(&e.manifest.id, &e.manifest.commands),
+                authorized: self.store.grant_matches(
+                    &e.manifest.id,
+                    &e.manifest.commands,
+                    &e.binding,
+                ),
                 note: e.shared.note.lock().map(|g| g.clone()).unwrap_or_default(),
                 manifest: e.manifest.clone(),
             })
@@ -439,24 +456,51 @@ impl PluginHost {
         self.entries.iter().find(|e| e.manifest.id == id)
     }
 
-    // ---------- 授权(05-10-3)----------
+    // ---------- 授权(05-10-3;PLG-02 入口绑定)----------
 
-    /// 用户在授权弹窗点了「启用」:持久化授权(命令白名单快照)。
-    /// 之后调用方再 `start`。授权文件写失败 → Err(授权绝不静默丢)。
+    /// 用户在授权弹窗点了「启用」:持久化授权(命令白名单快照 + 入口
+    /// 可执行指纹)。之后调用方再 `start`。授权文件写失败 → Err(授权
+    /// 绝不静默丢)。
+    ///
+    /// **授权语义(PLG-02)**:授权绑定「这套命令 + 这个入口二进制」;
+    /// 之后 manifest 或二进制任一变化 → 授权失配,须重新确认。
+    ///
+    /// 兼容路径:未携带 [`NativeProcessConsent`] 时先落地授权,但打
+    /// warn(ADR-0052:安装/授权对话框须展示原生进程告知并强制勾选;
+    /// vb_app 侧接线为待办)。
     pub fn authorize(&mut self, id: &str) -> Result<(), String> {
-        if !self.entries.iter().any(|e| e.manifest.id == id) {
+        tracing::warn!(
+            "插件 {id} 授权未经 NativeProcessConsent 显式确认(兼容路径;PLG-01 (c) 对话框接线待办,ADR-0052)"
+        );
+        self.authorize_with_consent(id, NativeProcessConsent::from_dialog_checkbox(true))
+    }
+
+    /// 授权(**canonical 路径**):UI 须先展示 [`crate::NATIVE_PROCESS_DISCLOSURE`]
+    /// 并取得显式勾选,把 [`NativeProcessConsent`] 传进来;`None`(未勾选)
+    /// → 拒绝授权。
+    pub fn authorize_with_consent(
+        &mut self,
+        id: &str,
+        consent: Option<NativeProcessConsent>,
+    ) -> Result<(), String> {
+        let Some(_consent) = consent.filter(|c| c.is_granted()) else {
+            return Err("未取得用户对「插件为原生进程」告知的显式同意,拒绝授权".into());
+        };
+        let Some(e) = self.entries.iter().find(|e| e.manifest.id == id) else {
             return Err(format!("插件 {id} 未安装"));
-        }
-        let cmds = self
-            .entries
-            .iter()
-            .find(|e| e.manifest.id == id)
-            .map(|e| e.manifest.commands.clone())
-            .unwrap_or_default();
-        self.store.grant(id, &cmds);
+        };
+        let cmds = e.manifest.commands.clone();
+        // 入口指纹:解析失败 → Err(不能授权一个解析不了/越界的入口)
+        let binding = match checked_entry_binding(&e.manifest, &e.dir) {
+            Ok(b) => b,
+            Err(msg) => return Err(format!("无法绑定入口可执行:{msg}")),
+        };
+        self.store.grant(id, &cmds, binding);
         if let Some(e) = self.entry(id) {
-            e.shared
-                .push_log("info", "用户已授权:manifest 权限清单确认");
+            e.shared.push_log(
+                "info",
+                "用户已授权:manifest 权限清单 + 入口可执行指纹已确认",
+            );
         }
         self.persist()?;
         Ok(())
@@ -489,17 +533,30 @@ impl PluginHost {
         if shared.state() == PluginState::Starting || shared.state() == PluginState::Running {
             return Err(format!("插件 {id} 已在运行"));
         }
-        // 授权闸门:manifest 命令清单必须与授权快照一致
-        if !self.store.grant_matches(id, &e.manifest.commands) {
+        // 授权闸门(PLG-02):命令白名单 + 入口可执行指纹都必须与授权
+        // 快照一致(启动时**现算**指纹,二进制被换当场失配)
+        let binding = match checked_entry_binding(&e.manifest, &e.dir) {
+            Ok(b) => b,
+            Err(msg) => {
+                shared.set_state(PluginState::Crashed);
+                shared.set_note(&msg);
+                shared.push_log("error", msg.clone());
+                return Err(msg);
+            }
+        };
+        if !self.store.grant_matches(id, &e.manifest.commands, &binding) {
             shared.set_state(PluginState::Unauthorized);
-            shared.push_log("warn", "启动被拒:插件未授权(或 manifest 权限已变更)");
-            return Err(format!("插件 {id} 未授权,先在授权弹窗确认"));
+            shared.push_log(
+                "warn",
+                "启动被拒:插件未授权(或 manifest 权限/入口可执行与授权快照不一致)",
+            );
+            return Err(format!(
+                "插件 {id} 未授权,先在授权弹窗确认(manifest 或入口文件若被改动需重新授权)"
+            ));
         }
-        // 解析入口可执行
-        let host_exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(Path::to_path_buf));
-        let exe = e.manifest.resolve_entry(&e.dir, host_exe_dir.as_deref());
+        // 解析入口可执行(PLG-03:路径穿越/越界在 checked 解析里已被拒;
+        // 此处 binding.path 就是解析结果,不需要再 resolve 一次)
+        let exe = PathBuf::from(&binding.path);
         if !exe.is_file() {
             shared.set_state(PluginState::Crashed);
             let msg = format!("入口可执行不存在:{}", exe.display());
@@ -520,6 +577,10 @@ impl PluginHost {
                 return Err(e);
             }
         };
+        // 沙箱降级如实入日志环(RB-06:降级必须可观测)
+        if let Some(note) = process.sandbox_note() {
+            shared.push_log("warn", note);
+        }
         *shared
             .proc
             .lock()
@@ -530,24 +591,25 @@ impl PluginHost {
         let plugin_id = e.manifest.id.clone();
         std::thread::Builder::new()
             .name(format!("vb-plugin-handshake-{id}"))
-            .spawn(move || {
-                match handshake(&process, &plugin_id, timeout) {
-                    Ok(()) => {
-                        shared.set_state(PluginState::Running);
-                        shared.push_log("info", format!("「{manifest_name}」已就绪(Running)"));
-                        let _ = process.send_notification(protocol::M_EVENT_STARTED, &json!({}));
+            .spawn(move || match handshake(&process, &plugin_id, timeout) {
+                Ok(warning) => {
+                    if let Some(w) = warning {
+                        shared.push_log("warn", w);
                     }
-                    Err(msg) => {
-                        process.kill();
-                        if shared.stop_requested.load(Ordering::SeqCst) {
-                            // 用户已叫停:状态归 Stopped,不再标崩溃
-                            shared.set_state(PluginState::Stopped);
-                        } else {
-                            let full = format!("握手失败:{msg}(进程已终止)");
-                            shared.set_note(&msg);
-                            shared.set_state(PluginState::Crashed);
-                            shared.push_log("error", full);
-                        }
+                    shared.set_state(PluginState::Running);
+                    shared.push_log("info", format!("「{manifest_name}」已就绪(Running)"));
+                    let _ = process.send_notification(protocol::M_EVENT_STARTED, &json!({}));
+                }
+                Err(msg) => {
+                    process.kill();
+                    if shared.stop_requested.load(Ordering::SeqCst) {
+                        // 用户已叫停:状态归 Stopped,不再标崩溃
+                        shared.set_state(PluginState::Stopped);
+                    } else {
+                        let full = format!("握手失败:{msg}(进程已终止)");
+                        shared.set_note(&msg);
+                        shared.set_state(PluginState::Crashed);
+                        shared.push_log("error", full);
                     }
                 }
             })
@@ -657,7 +719,9 @@ impl PluginHost {
 
     // ---------- 逐帧 poll ----------
 
-    /// 每帧调用:泵 stderr → 日志环;处理插件请求/通知;检测崩溃。
+    /// 每帧调用:泵 stderr → 日志环;处理插件请求/通知(每帧最多
+    /// [`MAX_INCOMING_PER_POLL`] 条,余量留下一帧 —— PLG-05:UI 线程
+    /// 每帧工作量有界);检测崩溃。
     /// **崩溃隔离**:本函数内的一切都不 panic;插件异常只落日志与状态。
     pub fn poll(&mut self, services: &mut dyn HostServices) {
         for e in &self.entries {
@@ -670,20 +734,22 @@ impl PluginHost {
                     shared.push_log("plugin", l);
                 }
                 // ② 崩溃检测(Running 态进程死亡 → Crashed;Starting 由
-                //    握手线程收尾)
+                //    握手线程收尾)。断连原因(超限断连等)优先可观测。
                 if shared.state() == PluginState::Running && !proc.is_alive() {
-                    let code = proc.exit_code();
-                    let msg = match code {
-                        Some(c) => format!("插件进程已退出(退出码 {c})"),
-                        None => "插件进程已退出".to_string(),
+                    let msg = match proc.dead_reason() {
+                        Some(reason) => format!("插件断连:{reason}"),
+                        None => match proc.exit_code() {
+                            Some(c) => format!("插件进程已退出(退出码 {c})"),
+                            None => "插件进程已退出".to_string(),
+                        },
                     };
                     shared.set_note(&msg);
                     shared.set_state(PluginState::Crashed);
                     shared.push_log("error", msg);
                 }
-                // ③ 入站消息(请求 + 通知)
-                let mut incoming = VecDeque::new();
-                proc.drain_incoming(&mut incoming);
+                // ③ 入站消息(请求 + 通知;每帧有界,PLG-05)
+                let mut incoming = Vec::new();
+                proc.drain_incoming(&mut incoming, MAX_INCOMING_PER_POLL);
                 for inc in incoming {
                     self.handle_incoming(e, &proc, services, inc);
                 }
@@ -858,21 +924,50 @@ impl Drop for PluginHost {
 }
 
 /// 握手:发 `initialize` 请求并等响应(05-10-1 的消息形态在此定死)。
-fn handshake(proc: &PluginProcess, plugin_id: &str, timeout: Duration) -> Result<(), String> {
+/// 返回 `Ok(可选警告)`:版本协商通过但有兼容性提醒(如旧插件未回
+/// protocolVersion)时由握手线程记入日志环(PLG-06:降级可观测)。
+fn handshake(
+    proc: &PluginProcess,
+    plugin_id: &str,
+    timeout: Duration,
+) -> Result<Option<String>, String> {
     let params = json!({
         "pluginId": plugin_id,
         "hostVersion": env!("CARGO_PKG_VERSION"),
+        "protocolVersion": crate::PROTOCOL_VERSION,
         "capabilities": crate::HOST_CAPABILITIES,
     });
     let req_id = proc.send_request(protocol::M_INITIALIZE, &params)?;
     let result = proc.call(req_id, timeout)?;
     let result = result.map_err(|e| format!("插件拒绝握手({}:{})", e.code, e.message))?;
-    // 宽松校验:回包须带 name(version/protocolVersion 缺省可容忍 ——
-    // 严格校验留给 manifest,握手回包只当"活体证明")
+    // 宽松校验:回包须带 name(version 缺省可容忍 —— 严格校验留给
+    // manifest,握手回包只当"活体证明")
     if result.get("name").and_then(|v| v.as_str()).is_none() {
         return Err("握手回包缺少 name 字段".into());
     }
-    Ok(())
+    // PLG-06 版本协商:插件声明的协议版本与宿主不一致 → 握手失败,
+    // 不带病运行;未声明(旧插件)→ 容忍但留痕
+    match result.get("protocolVersion").and_then(|v| v.as_str()) {
+        Some(v) if v == crate::PROTOCOL_VERSION => Ok(None),
+        Some(v) => Err(format!(
+            "协议版本不匹配:插件实现 {v},宿主协议 {}(请更新插件或宿主)",
+            crate::PROTOCOL_VERSION
+        )),
+        None => Ok(Some(
+            "插件未声明 protocolVersion(旧版插件),按当前协议继续(PLG-06)".into(),
+        )),
+    }
+}
+
+/// 入口可执行的解析 + 指纹(PLG-02/03 的会合点):checked 解析(含
+/// 路径穿越/越界拒绝)→ 文件 SHA-256。授权与启动走同一函数,保证
+/// 快照与运行时判定可比。
+fn checked_entry_binding(manifest: &PluginManifest, dir: &Path) -> Result<EntryBinding, String> {
+    let host_exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(Path::to_path_buf));
+    let exe = manifest.resolve_entry_checked(dir, host_exe_dir.as_deref())?;
+    Ok(EntryBinding::of(&exe))
 }
 
 /// 单个受控元件解析(未知 kind / 超长文本 → Err,宿主跳过该元件)。
@@ -951,6 +1046,9 @@ mod tests {
         );
         let p = dir.join("plugin.json");
         std::fs::write(&p, text).unwrap();
+        // 入口文件真实存在(PLG-02:授权要哈希入口;PLG-03:相对 entry
+        // 须落在插件目录内)——占位内容即可,启动会在 spawn 处失败
+        std::fs::write(dir.join("whatever.exe"), b"not-a-real-exe").unwrap();
         p
     }
 
@@ -968,11 +1066,35 @@ mod tests {
         // 未授权 → 启动被拒
         assert!(host.start("gate-plug").is_err(), "未授权不得启动");
         assert_eq!(host.list()[0].state, PluginState::Unauthorized);
-        // 授权后仍不启动进程(入口不存在),但授权检查通过到"入口不存在"
+        // 授权后:授权检查通过,spawn 占位文件失败(非可执行)→ Crashed
         host.authorize("gate-plug").unwrap();
         let err = host.start("gate-plug").unwrap_err();
-        assert!(err.contains("入口可执行"), "{err}");
+        assert!(
+            err.contains("启动插件进程失败") || err.contains("入口可执行"),
+            "{err}"
+        );
         assert_eq!(host.list()[0].state, PluginState::Crashed);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// PLG-01 (c):授权的显式同意合同 —— 未勾选构造不出凭证,授权被拒。
+    #[test]
+    fn authorize_requires_explicit_consent() {
+        let tmp = std::env::temp_dir().join(format!("vb-host-consent-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let mf_dir = tmp.join("plug");
+        write_manifest(&mf_dir, &[]);
+        let mut host = PluginHost::new(None);
+        host.install_dir(&mf_dir, &|_| true).unwrap();
+        // 未勾选 → None → 拒绝授权
+        assert!(NativeProcessConsent::from_dialog_checkbox(false).is_none());
+        let err = host.authorize_with_consent("gate-plug", None).unwrap_err();
+        assert!(err.contains("显式同意"), "{err}");
+        // 勾选 → 授权成功
+        let consent = NativeProcessConsent::from_dialog_checkbox(true).expect("勾选必有凭证");
+        host.authorize_with_consent("gate-plug", Some(consent))
+            .unwrap();
+        assert!(host.list()[0].authorized);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

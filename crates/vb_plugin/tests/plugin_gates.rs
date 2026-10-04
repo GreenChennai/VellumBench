@@ -22,18 +22,19 @@ fn plugin_exe() -> PathBuf {
     PathBuf::from(p)
 }
 
-/// 造一个临时 manifest 目录,entry 指向真实示例插件可执行
-/// (夹具参数经 `start_with_args` 传,manifest.entry 只放纯路径)。
+/// 造一个临时 manifest 目录,entry 指向**复制进插件目录**的示例插件
+/// 可执行(PLG-03:entry 须落在插件目录内,相对路径;夹具参数经
+/// `start_with_args` 传)。
 fn make_plugin_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("vb-plugin-gate-{}-{tag}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let entry = plugin_exe().display().to_string();
+    std::fs::copy(plugin_exe(), dir.join("example-stats-plugin.exe")).unwrap();
     let manifest = json!({
         "id": "example-stats",
         "name": "统计元素(示例)",
         "version": "0.1.0",
-        "entry": entry,
+        "entry": "example-stats-plugin.exe",
         "commands": ["edit.select_all"],
         "panels": [{"id": "stats", "title": "元素统计"}],
         "exports": [{"id": "png2x", "title": "导出 PNG @2x", "format": "png"}],
@@ -340,4 +341,114 @@ fn projection_shape_is_stable() {
     for key in ["nodes", "text", "image", "group", "vector", "other"] {
         assert!(p["counts"].get(key).is_some(), "counts 缺 {key}");
     }
+}
+
+/// ⑥ PLG-06 版本协商:插件声明错误协议版本 → 握手失败 → Crashed,
+/// 日志点名「协议版本不匹配」;宿主存活。
+#[test]
+fn gate6_protocol_version_mismatch_rejected() {
+    let dir = make_plugin_dir("g6");
+    let mut host = PluginHost::new(None).with_handshake_timeout(Duration::from_secs(8));
+    let id = host.install_dir(&dir, &|c| c == "edit.select_all").unwrap();
+    host.authorize(&id).unwrap();
+    host.start_with_args(&id, &["--bad-version".into()])
+        .unwrap();
+    let (mut services, _executed) = MockServices::new(true);
+    let st = wait_state(
+        &mut host,
+        &mut services,
+        &id,
+        PluginState::Crashed,
+        Duration::from_secs(10),
+    );
+    assert_eq!(st, PluginState::Crashed, "版本不匹配必须握手失败");
+    assert!(
+        host.logs(&id)
+            .iter()
+            .any(|l| l.text.contains("协议版本不匹配")),
+        "版本失配必须落日志:{:?}",
+        host.logs(&id)
+    );
+    assert_eq!(host.list().len(), 1, "宿主存活");
+    host.stop(&id);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// ⑦ PLG-02 篡改检测:授权后替换入口二进制 → 启动被拒(须重新授权)。
+#[test]
+fn gate7_entry_tamper_after_grant_is_refused() {
+    let dir = make_plugin_dir("g7");
+    let mut host = PluginHost::new(None);
+    let id = host.install_dir(&dir, &|c| c == "edit.select_all").unwrap();
+    host.authorize(&id).unwrap();
+    assert!(host.list()[0].authorized, "授权态成立");
+    // 篡改:改写入口二进制内容(授权快照里的哈希随即失配)
+    let exe = dir.join("example-stats-plugin.exe");
+    std::fs::write(&exe, b"tampered-binary").unwrap();
+    let err = host.start(&id).unwrap_err();
+    assert!(
+        err.contains("重新授权") || err.contains("不一致"),
+        "篡改后启动必须被拒:{err}"
+    );
+    assert_eq!(host.list()[0].state, PluginState::Unauthorized);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// ⑧ PLG-04 单行上限:插件写 9MB 单行 → 断连且断连原因可观测(不 OOM)。
+#[test]
+fn gate8_overlong_stdout_line_disconnects_with_reason() {
+    let proc = vb_plugin::process::PluginProcess::spawn(&plugin_exe(), &["--flood-line".into()])
+        .expect("spawn 示例插件");
+    // 夹具在收到 initialize(并回包)后才写超长行:直接驱动握手
+    let req = proc
+        .send_request(vb_plugin::protocol::M_INITIALIZE, &serde_json::json!({}))
+        .expect("发送 initialize");
+    let _ = proc.call(req, Duration::from_secs(8));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let reason = loop {
+        if Instant::now() >= deadline {
+            panic!("10s 内未检出超长行断连");
+        }
+        if let Some(r) = proc.dead_reason() {
+            break r;
+        }
+        if !proc.is_alive() {
+            panic!("进程退出但无断连原因(dead_reason 缺失)");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert!(
+        reason.contains("单行") && reason.contains("上限") && reason.contains("断连"),
+        "断连原因要点名单行上限断连:{reason}"
+    );
+    proc.kill();
+}
+
+/// ⑨ PLG-04 入站队列上限:插件连发 3000 条通知 → 队列超限断连。
+#[test]
+fn gate9_inbound_queue_overflow_disconnects() {
+    let proc = vb_plugin::process::PluginProcess::spawn(&plugin_exe(), &["--flood-notify".into()])
+        .expect("spawn 示例插件");
+    let req = proc
+        .send_request(vb_plugin::protocol::M_INITIALIZE, &serde_json::json!({}))
+        .expect("发送 initialize");
+    let _ = proc.call(req, Duration::from_secs(8));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let reason = loop {
+        if Instant::now() >= deadline {
+            panic!("10s 内未检出队列超限断连");
+        }
+        if let Some(r) = proc.dead_reason() {
+            break r;
+        }
+        if !proc.is_alive() {
+            panic!("进程退出但无断连原因(dead_reason 缺失)");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert!(
+        reason.contains("入站队列") && reason.contains("上限"),
+        "断连原因要点名入站队列上限:{reason}"
+    );
+    proc.kill();
 }
