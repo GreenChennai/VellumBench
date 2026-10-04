@@ -41,10 +41,10 @@ impl ArtboardPreset {
             ArtboardPreset::Web1920 => "Web · 1920×1080",
             ArtboardPreset::Web1440 => "Web · 1440×900",
             ArtboardPreset::Web1080 => "Web · 1080×1920",
-            ArtboardPreset::Mobile750 => "移动 · 750×1334",
-            ArtboardPreset::Mobile375 => "移动 · 375×667",
+            ArtboardPreset::Mobile750 => "移动 · 750×1334", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            ArtboardPreset::Mobile375 => "移动 · 375×667", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
             ArtboardPreset::A4 => "A4 · 794×1123(96dpi)",
-            ArtboardPreset::Custom => "自定义",
+            ArtboardPreset::Custom => "自定义", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
         }
     }
 
@@ -87,8 +87,8 @@ impl OutputChoice {
 
     pub fn label(self) -> &'static str {
         match self {
-            OutputChoice::ExternalCss => "外链 CSS(styles/main.css)",
-            OutputChoice::SingleFile => "单文件(CSS 内联)",
+            OutputChoice::ExternalCss => "外链 CSS(styles/main.css)", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            OutputChoice::SingleFile => "单文件(CSS 内联)", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
         }
     }
 
@@ -121,7 +121,7 @@ pub struct NewProjectSpec {
 impl Default for NewProjectSpec {
     fn default() -> Self {
         NewProjectSpec {
-            name: "未命名项目".into(),
+            name: "未命名项目".into(), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
             location: default_location(),
             preset: ArtboardPreset::Web1440,
             portrait: false,
@@ -152,21 +152,30 @@ impl NewProjectSpec {
     /// 校验:返回第一条错误(通过则 None)。
     pub fn validate(&self) -> Option<String> {
         if self.name.trim().is_empty() {
-            return Some("项目名不能为空".into());
+            return Some(vb_session::i18n::t("ui-new-project-003"));
         }
         if !self.location.is_dir() {
-            return Some(format!("位置不存在:{}", self.location.display()));
+            return Some(vb_session::i18n::t_args(
+                "ui-new-project-004",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from((self.location.display()).to_string()),
+                )],
+            ));
         }
         if self.target_dir().exists() {
-            return Some(format!(
-                "目录已存在:{}(换个项目名或位置)",
-                self.target_dir().display()
+            return Some(vb_session::i18n::t_args(
+                "ui-new-project-005",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from((self.target_dir().display()).to_string()),
+                )],
             ));
         }
         if matches!(self.preset, ArtboardPreset::Custom)
             && (self.custom_w < 16.0 || self.custom_h < 16.0)
         {
-            return Some("自定义画板尺寸至少 16×16".into());
+            return Some(vb_session::i18n::t("ui-new-project-006"));
         }
         None
     }
@@ -197,7 +206,7 @@ pub fn sanitize_dir_name(name: &str) -> String {
         result = format!("_{result}");
     }
     if result.is_empty() {
-        result = "未命名项目".to_string();
+        result = vb_session::i18n::t("ui-common-untitled-project").to_string();
     }
     result
 }
@@ -210,8 +219,18 @@ pub fn create_project(spec: &NewProjectSpec) -> Result<PathBuf, String> {
         return Err(err);
     }
     let dir = spec.target_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| format!("创建项目目录失败:{e}"))?;
-    std::fs::create_dir_all(dir.join("assets")).map_err(|e| format!("创建 assets 失败:{e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        vb_session::i18n::t_args(
+            "ui-new-project-007",
+            &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+        )
+    })?;
+    std::fs::create_dir_all(dir.join("assets")).map_err(|e| {
+        vb_session::i18n::t_args(
+            "ui-new-project-008",
+            &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+        )
+    })?;
 
     // 合法序列化路径:new_default(单画板 1440×900)→ 改标题/输出/画板几何 → write_project
     let mut doc = Document::new_default();
@@ -224,13 +243,23 @@ pub fn create_project(spec: &NewProjectSpec) -> Result<PathBuf, String> {
         if let Some(n) = doc.nodes.get_mut(first) {
             n.geom.w = w;
             n.geom.h = h;
-            n.name = "画板 1".into();
+            n.name = vb_session::i18n::t("ui-app-nav-001");
         }
     }
     let gap = 80.0;
     for i in 1..spec.artboards.clamp(1, 12) {
         let y = h * i as f64 + gap * i as f64;
-        doc.new_artboard(&format!("画板 {}", i + 1), w, h);
+        doc.new_artboard(
+            &vb_session::i18n::t_args(
+                "ui-app-commands-037",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from((i + 1).to_string()),
+                )],
+            ),
+            w,
+            h,
+        );
         // new_artboard 落在 (0,0),平移到纵向排布位(直接改几何:尚无 undo 栈)
         if let Some(id) = doc.artboards.last() {
             if let Some(n) = doc.nodes.get_mut(*id) {
@@ -238,7 +267,12 @@ pub fn create_project(spec: &NewProjectSpec) -> Result<PathBuf, String> {
             }
         }
     }
-    vb_doc::export::write_project(&doc, &dir).map_err(|e| format!("写项目文件失败:{e}"))?;
+    vb_doc::export::write_project(&doc, &dir).map_err(|e| {
+        vb_session::i18n::t_args(
+            "ui-new-project-009",
+            &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+        )
+    })?;
     Ok(dir)
 }
 
@@ -270,7 +304,7 @@ pub fn templates_root() -> Option<PathBuf> {
         );
     }
     // 目录必须真的装着模板(至少一个含 index.html 的子目录)才认:
-    // 排除 target/debug/examples 这类"存在但为空"的 cargo 约定目录
+    // 排除 target/debug/examples 这类vb_session::i18n::t("ui-new-project-010")的 cargo 约定目录
     candidates
         .into_iter()
         .find(|p| looks_like_templates_root(p))
@@ -312,36 +346,92 @@ pub fn create_from_template(
     name: &str,
 ) -> Result<PathBuf, String> {
     if name.trim().is_empty() {
-        return Err("项目名不能为空".into());
+        return Err(vb_session::i18n::t("ui-new-project-003"));
     }
     if !location.is_dir() {
-        return Err(format!("位置不存在:{}", location.display()));
+        return Err(vb_session::i18n::t_args(
+            "ui-new-project-004",
+            &[(
+                "a1",
+                vb_session::i18n::FluentValue::from((location.display()).to_string()),
+            )],
+        ));
     }
     let Some(root) = templates_root() else {
-        return Err("找不到模板目录(examples);可用 VB_TEMPLATES 指定".into());
+        return Err(vb_session::i18n::t("ui-new-project-011"));
     };
     let src = root.join(sanitize_dir_name(template));
     if !src.join("index.html").is_file() {
-        return Err(format!("模板不存在:{}", src.display()));
+        return Err(vb_session::i18n::t_args(
+            "ui-new-project-012",
+            &[(
+                "a1",
+                vb_session::i18n::FluentValue::from((src.display()).to_string()),
+            )],
+        ));
     }
     let dst = location.join(sanitize_dir_name(name));
     if dst.exists() {
-        return Err(format!("目录已存在:{}(换个项目名或位置)", dst.display()));
+        return Err(vb_session::i18n::t_args(
+            "ui-new-project-005",
+            &[(
+                "a1",
+                vb_session::i18n::FluentValue::from((dst.display()).to_string()),
+            )],
+        ));
     }
     copy_dir_recursive(&src, &dst)?;
     Ok(dst)
 }
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
-    std::fs::create_dir_all(dst).map_err(|e| format!("创建目录 {} 失败:{e}", dst.display()))?;
-    for entry in std::fs::read_dir(src).map_err(|e| format!("读 {} 失败:{e}", src.display()))? {
-        let entry = entry.map_err(|e| format!("读目录项失败:{e}"))?;
+    std::fs::create_dir_all(dst).map_err(|e| {
+        vb_session::i18n::t_args(
+            "ui-new-project-013",
+            &[
+                (
+                    "a1",
+                    vb_session::i18n::FluentValue::from((dst.display()).to_string()),
+                ),
+                ("e", vb_session::i18n::FluentValue::from((e).to_string())),
+            ],
+        )
+    })?;
+    for entry in std::fs::read_dir(src).map_err(|e| {
+        vb_session::i18n::t_args(
+            "ui-new-project-014",
+            &[
+                (
+                    "a1",
+                    vb_session::i18n::FluentValue::from((src.display()).to_string()),
+                ),
+                ("e", vb_session::i18n::FluentValue::from((e).to_string())),
+            ],
+        )
+    })? {
+        let entry = entry.map_err(|e| {
+            vb_session::i18n::t_args(
+                "ui-new-project-015",
+                &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+            )
+        })?;
         let from = entry.path();
         let to = dst.join(entry.file_name());
         if from.is_dir() {
             copy_dir_recursive(&from, &to)?;
         } else {
-            std::fs::copy(&from, &to).map_err(|e| format!("复制 {} 失败:{e}", from.display()))?;
+            std::fs::copy(&from, &to).map_err(|e| {
+                vb_session::i18n::t_args(
+                    "ui-new-project-016",
+                    &[
+                        (
+                            "a1",
+                            vb_session::i18n::FluentValue::from((from.display()).to_string()),
+                        ),
+                        ("e", vb_session::i18n::FluentValue::from((e).to_string())),
+                    ],
+                )
+            })?;
         }
     }
     Ok(())
@@ -402,15 +492,28 @@ impl NewProjectDialog {
     fn validate_live(&mut self) {
         self.error = if self.template_mode {
             if self.templates.is_empty() {
-                Some("找不到模板目录(examples);可用 VB_TEMPLATES 指定".into())
+                Some(vb_session::i18n::t("ui-new-project-011"))
             } else if self.spec.name.trim().is_empty() {
-                Some("项目名不能为空".into())
+                Some(vb_session::i18n::t("ui-new-project-003"))
             } else if !self.spec.location.is_dir() {
-                Some(format!("位置不存在:{}", self.spec.location.display()))
+                Some(vb_session::i18n::t_args(
+                    "ui-new-project-004",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from(
+                            (self.spec.location.display()).to_string(),
+                        ),
+                    )],
+                ))
             } else if self.spec.target_dir().exists() {
-                Some(format!(
-                    "目录已存在:{}(换个项目名或位置)",
-                    self.spec.target_dir().display()
+                Some(vb_session::i18n::t_args(
+                    "ui-new-project-005",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from(
+                            (self.spec.target_dir().display()).to_string(),
+                        ),
+                    )],
                 ))
             } else {
                 None
@@ -430,12 +533,12 @@ pub fn dialog_ui(ui: &mut egui::Ui, dlg: &mut NewProjectDialog) -> Option<Dialog
         .spacing([8.0, 6.0])
         .show(ui, |ui| {
             if dlg.template_mode {
-                ui.label("模板");
+                ui.label(vb_session::i18n::t("ui-common-template"));
                 if dlg.templates.is_empty() {
                     ui.colored_label(
                         // 错误提示走主题 danger 令牌(值即设计令牌 #F24822,两主题可读)
                         vb_ui::theme::tokens(ui.ctx()).danger,
-                        "找不到模板目录(examples);可用 VB_TEMPLATES 指定",
+                        vb_session::i18n::t("ui-new-project-011"),
                     );
                 } else {
                     egui::ComboBox::from_id_salt("vb-newproj-template")
@@ -453,7 +556,7 @@ pub fn dialog_ui(ui: &mut egui::Ui, dlg: &mut NewProjectDialog) -> Option<Dialog
                 }
                 ui.end_row();
             } else {
-                ui.label("画板预设");
+                ui.label(vb_session::i18n::t("ui-new-project-017"));
                 egui::ComboBox::from_id_salt("vb-newproj-preset")
                     .selected_text(dlg.spec.preset.label())
                     .show_ui(ui, |ui| {
@@ -463,31 +566,39 @@ pub fn dialog_ui(ui: &mut egui::Ui, dlg: &mut NewProjectDialog) -> Option<Dialog
                     });
                 ui.end_row();
 
-                ui.label("取向");
+                ui.label(vb_session::i18n::t("ui-common-orientation"));
                 ui.horizontal(|ui| {
-                    ui.selectable_value(&mut dlg.spec.portrait, false, "横向");
-                    ui.selectable_value(&mut dlg.spec.portrait, true, "纵向");
+                    ui.selectable_value(
+                        &mut dlg.spec.portrait,
+                        false,
+                        vb_session::i18n::t("ui-common-landscape"),
+                    );
+                    ui.selectable_value(
+                        &mut dlg.spec.portrait,
+                        true,
+                        vb_session::i18n::t("ui-common-portrait"),
+                    );
                     if matches!(dlg.spec.preset, ArtboardPreset::Custom) {
                         ui.separator();
                         ui.add(
                             egui::DragValue::new(&mut dlg.spec.custom_w)
                                 .range(16.0..=100000.0)
-                                .prefix("宽 "),
+                                .prefix(vb_session::i18n::t("ui-new-project-018")),
                         );
                         ui.add(
                             egui::DragValue::new(&mut dlg.spec.custom_h)
                                 .range(16.0..=100000.0)
-                                .prefix("高 "),
+                                .prefix(vb_session::i18n::t("ui-new-project-019")),
                         );
                     }
                 });
                 ui.end_row();
 
-                ui.label("画板数");
+                ui.label(vb_session::i18n::t("ui-common-artboard-count"));
                 ui.add(egui::DragValue::new(&mut dlg.spec.artboards).range(1..=12));
                 ui.end_row();
 
-                ui.label("输出模式");
+                ui.label(vb_session::i18n::t("ui-common-output-mode"));
                 egui::ComboBox::from_id_salt("vb-newproj-output")
                     .selected_text(dlg.spec.output.label())
                     .show_ui(ui, |ui| {
@@ -498,11 +609,11 @@ pub fn dialog_ui(ui: &mut egui::Ui, dlg: &mut NewProjectDialog) -> Option<Dialog
                 ui.end_row();
             }
 
-            ui.label("项目名");
+            ui.label(vb_session::i18n::t("ui-new-project-020"));
             ui.text_edit_singleline(&mut dlg.spec.name);
             ui.end_row();
 
-            ui.label("位置");
+            ui.label(vb_session::i18n::t("ui-common-position"));
             ui.horizontal(|ui| {
                 let mut location = dlg.spec.location.to_string_lossy().to_string();
                 let resp = ui.add_sized(
@@ -512,9 +623,12 @@ pub fn dialog_ui(ui: &mut egui::Ui, dlg: &mut NewProjectDialog) -> Option<Dialog
                 if resp.changed() {
                     dlg.spec.location = PathBuf::from(location);
                 }
-                if ui.button("浏览…").clicked() {
+                if ui
+                    .button(vb_session::i18n::t("ui-new-project-021"))
+                    .clicked()
+                {
                     if let Some(dir) = rfd::FileDialog::new()
-                        .set_title("选择项目位置")
+                        .set_title(vb_session::i18n::t("ui-new-project-022"))
                         .pick_folder()
                     {
                         dlg.spec.location = dir;
@@ -534,7 +648,10 @@ pub fn dialog_ui(ui: &mut egui::Ui, dlg: &mut NewProjectDialog) -> Option<Dialog
     ui.horizontal(|ui| {
         let can_confirm = dlg.error.is_none();
         if ui
-            .add_enabled(can_confirm, egui::Button::new("创建(新窗口打开)"))
+            .add_enabled(
+                can_confirm,
+                egui::Button::new(vb_session::i18n::t("ui-new-project-023")),
+            )
             .clicked()
         {
             action = Some(if dlg.template_mode {
@@ -551,7 +668,7 @@ pub fn dialog_ui(ui: &mut egui::Ui, dlg: &mut NewProjectDialog) -> Option<Dialog
                 DialogAction::Create(dlg.spec.clone())
             });
         }
-        if ui.button("取消").clicked() {
+        if ui.button(vb_session::i18n::t("ui-common-cancel")).clicked() {
             action = Some(DialogAction::Cancel);
         }
     });

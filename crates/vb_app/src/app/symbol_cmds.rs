@@ -35,7 +35,7 @@ impl VellumApp {
     /// 「创建组件」:选区唯一且不是画板 / 主件 / 实例时有效。
     pub(crate) fn symbol_create(&mut self) {
         if self.selection.len() != 1 {
-            self.toast_warn("创建组件:请先选中一个对象(多选不支持)");
+            self.toast_warn(vb_session::i18n::t("ui-app-symbol-cmds-001"));
             return;
         }
         let sid = self.selection[0].clone();
@@ -48,11 +48,18 @@ impl VellumApp {
             Ok((cmd, inst_sid)) => {
                 self.exec(cmd);
                 self.selection = vec![inst_sid].into();
-                self.say(format!(
-                    "已创建组件「{name}」(当前位置成为首个实例;编辑主件将同步全部实例)"
+                self.say(vb_session::i18n::t_args(
+                    "ui-app-symbol-cmds-002",
+                    &[(
+                        "name",
+                        vb_session::i18n::FluentValue::from((name).to_string()),
+                    )],
                 ));
             }
-            Err(e) => self.toast_error(format!("创建组件:{e}")),
+            Err(e) => self.toast_error(vb_session::i18n::t_args(
+                "ui-app-symbol-cmds-003",
+                &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+            )),
         }
     }
 
@@ -60,24 +67,27 @@ impl VellumApp {
     pub(crate) fn symbol_detach(&mut self) {
         let roots = instance_roots_in_selection(self);
         if roots.is_empty() {
-            self.toast_warn("分离实例:选中对象里没有组件实例");
+            self.toast_warn(vb_session::i18n::t("ui-app-symbol-cmds-004"));
             return;
         }
         for r in &roots {
             match sym::symbol_detach_commands(&self.doc, r) {
                 Ok(cmd) => self.exec(cmd),
-                Err(e) => self.toast_error(format!("分离实例:{e}")),
+                Err(e) => self.toast_error(vb_session::i18n::t_args(
+                    "ui-app-symbol-cmds-005",
+                    &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                )),
             }
         }
         self.selection = roots.into();
-        self.say("已分离为普通元素(不再随主件同步)");
+        self.say(vb_session::i18n::t("ui-app-symbol-cmds-006"));
     }
 
     /// 「重置覆盖」:选区内全部实例还原为主件当前内容。
     pub(crate) fn symbol_reset_overrides(&mut self) {
         let roots = instance_roots_in_selection(self);
         if roots.is_empty() {
-            self.toast_warn("重置覆盖:选中对象里没有组件实例");
+            self.toast_warn(vb_session::i18n::t("ui-app-symbol-cmds-007"));
             return;
         }
         let mut n = 0usize;
@@ -87,42 +97,54 @@ impl VellumApp {
                     self.exec(cmd);
                     n += 1;
                 }
-                Err(e) => self.toast_error(format!("重置覆盖:{e}")),
+                Err(e) => self.toast_error(vb_session::i18n::t_args(
+                    "ui-app-symbol-cmds-008",
+                    &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                )),
             }
         }
         self.selection = roots.into();
-        self.say(format!("已还原 {n} 个实例为主件当前内容(覆盖已清除)"));
+        self.say(vb_session::i18n::t_args(
+            "ui-app-symbol-cmds-009",
+            &[("n", vb_session::i18n::FluentValue::from((n).to_string()))],
+        ));
     }
 
     /// 「替换主件定义」:选中一个实例,其当前内容成为新定义并同步其余实例。
     pub(crate) fn symbol_swap_main(&mut self) {
         if self.selection.len() != 1 {
-            self.toast_warn("替换主件定义:请选中一个组件实例");
+            self.toast_warn(vb_session::i18n::t("ui-app-symbol-cmds-010"));
             return;
         }
         let sid = self.selection[0].clone();
         match sym::symbol_swap_main_commands(&mut self.doc, &sid) {
             Ok(cmd) => {
                 self.exec(cmd);
-                self.say("已用该实例内容替换主件定义,并同步其余实例(各自的覆盖仍保留)");
+                self.say(vb_session::i18n::t("ui-app-symbol-cmds-011"));
             }
-            Err(e) => self.toast_error(format!("替换主件定义:{e}")),
+            Err(e) => self.toast_error(vb_session::i18n::t_args(
+                "ui-app-symbol-cmds-012",
+                &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+            )),
         }
     }
 
     /// 「选择所有实例」:种子 = 实例 / 实例内部节点 / 主件定义区节点。
     pub(crate) fn symbol_select_instances(&mut self) {
         let Some(seed) = self.selection.last().cloned() else {
-            self.toast_warn("选择所有实例:先选中一个实例或主件");
+            self.toast_warn(vb_session::i18n::t("ui-app-symbol-cmds-013"));
             return;
         };
         let hits = sym::select_instances_of(&self.doc, &seed);
         if hits.is_empty() {
-            self.toast_warn("选择所有实例:选中对象不属于任何组件");
+            self.toast_warn(vb_session::i18n::t("ui-app-symbol-cmds-014"));
         } else {
             let n = hits.len();
             self.selection = hits.into();
-            self.say(format!("已选中同主件全部实例({n} 个)"));
+            self.say(vb_session::i18n::t_args(
+                "ui-app-symbol-cmds-015",
+                &[("n", vb_session::i18n::FluentValue::from((n).to_string()))],
+            ));
         }
     }
 }

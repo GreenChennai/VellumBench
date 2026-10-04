@@ -1,6 +1,6 @@
 //! 外壳(阶段 2 / 副文档 02-1、02-5):启动流程 + 多窗口管理。
 //!
-//! **架构**:顶层 `eframe::App` 只是一个"外壳"——它持有主页
+//! **架构**:顶层 `eframe::App` 只是一个vb_session::i18n::t("ui-shell-001")——它持有主页
 //! ([`crate::launcher::LauncherUi`])与若干项目窗口(每窗口一份独立
 //! `VellumApp`:独立 Document / 撤销栈 / 选中态 / 面板布局,02-5-1),
 //! 用 `ctx.show_viewport_immediate` 并存渲染(02-1-2 / 02-5-2)。
@@ -9,9 +9,9 @@
 //! - 无参数启动 → 根视口 = 主页(1024×680);
 //! - `--project` 启动 → 根视口 = 第一个项目窗口(1680×1000),主页不出现。
 //!
-//! 因此"关闭根窗口 = 退出进程"(其余窗口一并关闭,有未保存修改时先确认);
+//! 因此vb_session::i18n::t("ui-shell-002")(其余窗口一并关闭,有未保存修改时先确认);
 //! 子项目窗口可独立关闭,互不影响(02-5 验收)。eframe 多 viewport 不做
-//! "隐藏后唤出",只做"并存 + 关闭"(副文档 02 §6 风险)。
+//! vb_session::i18n::t("ui-shell-003"),只做vb_session::i18n::t("ui-shell-004")(副文档 02 §6 风险)。
 //!
 //! **共享配置写策略**(02-5-3;UI-12 改版):`recent.json` 只有外壳一个
 //! 写入者;`workspace.json` 承载**进程级偏好**(主题/缩放/语言/动效等,
@@ -43,7 +43,7 @@ pub enum Launch {
     Project(PathBuf),
     /// `--project <dir> --canvas-shot <out.png> --artboard <sid>`(03-3,隐藏:
     /// 打开项目 → 固定标称相机 → 窗口增长探针 → 画布纹理读回落盘 → 自动退出)。
-    /// 供 `tools/canvas_parity.ps1` 取"画布侧 PNG",不是用户功能。
+    /// 供 `tools/canvas_parity.ps1` 取vb_session::i18n::t("ui-shell-005"),不是用户功能。
     Shot {
         project: PathBuf,
         out: PathBuf,
@@ -77,7 +77,7 @@ pub fn parse_launch(argv: &[String]) -> Launch {
             "--help" | "-h" => return Launch::Help(help_text()),
             "--version" | "-V" => {
                 return Launch::Version(format!(
-                    "Vellum Bench v{}(绘制 HTML 的台面)\n",
+                    "Vellum Bench v{}(绘制 HTML 的台面)\n", // vb-literal-ok: 含换行控制字符,单行 ftl 放不下
                     env!("CARGO_PKG_VERSION")
                 ));
             }
@@ -87,7 +87,7 @@ pub fn parse_launch(argv: &[String]) -> Launch {
                     return Launch::Error(
                         "错误:--project 需要一个项目目录(或 index.html)参数\n\
                          用法:vellumbench --project <目录>\n\
-                         详见:vellumbench --help"
+                         详见:vellumbench --help" // vb-literal-ok: 多行字符串字面量,机械抽取不支持,fn 化留手动(台账)
                             .into(),
                     );
                 }
@@ -99,7 +99,7 @@ pub fn parse_launch(argv: &[String]) -> Launch {
                         "错误:--canvas-shot 需要一个输出 PNG 路径(需与 --project、\
                          --artboard 同用)\n\
                          用法:vellumbench --project <目录> --canvas-shot <out.png> \
-                         --artboard <sid|名称|序号>"
+                         --artboard <sid|名称|序号>" // vb-literal-ok: 多行字符串字面量,机械抽取不支持,fn 化留手动(台账)
                             .into(),
                     );
                 }
@@ -110,7 +110,7 @@ pub fn parse_launch(argv: &[String]) -> Launch {
                     return Launch::Error(
                         "错误:--artboard 需要画板 sid / 名称 / 序号\n\
                          用法:vellumbench --project <目录> --canvas-shot <out.png> \
-                         --artboard <sid|名称|序号>"
+                         --artboard <sid|名称|序号>" // vb-literal-ok: 多行字符串字面量,机械抽取不支持,fn 化留手动(台账)
                             .into(),
                     );
                 }
@@ -132,13 +132,13 @@ pub fn parse_launch(argv: &[String]) -> Launch {
         (None, Some(_), _) | (None, _, Some(_)) => Launch::Error(
             "错误:--canvas-shot / --artboard 必须与 --project 同用\n\
              用法:vellumbench --project <目录> --canvas-shot <out.png> \
-             --artboard <sid|名称|序号>"
+             --artboard <sid|名称|序号>" // vb-literal-ok: 多行字符串字面量,机械抽取不支持,fn 化留手动(台账)
                 .into(),
         ),
         (Some(_), Some(_), None) | (Some(_), None, Some(_)) => Launch::Error(
             "错误:--canvas-shot 与 --artboard 必须同时提供\n\
              用法:vellumbench --project <目录> --canvas-shot <out.png> \
-             --artboard <sid|名称|序号>"
+             --artboard <sid|名称|序号>" // vb-literal-ok: 多行字符串字面量,机械抽取不支持,fn 化留手动(台账)
                 .into(),
         ),
         (None, None, None) => Launch::Home,
@@ -159,7 +159,7 @@ fn help_text() -> String {
          \x20 -V, --version  显示版本号\n\
          \n\
          示例:\n\
-         \x20 vellumbench --project examples\\landing\n",
+         \x20 vellumbench --project examples\\landing\n", // vb-literal-ok: 多行字符串字面量,机械抽取不支持,fn 化留手动(台账)
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -193,7 +193,7 @@ pub enum ShellRequest {
     ShowHome,
     /// 关闭某个项目窗口(有未保存修改时外壳会弹确认,02-5-6)。
     CloseWindow(ViewportId),
-    /// 记录"最近项目"(02-2-2:成功打开/保存时由窗口发起)。
+    /// 记录vb_session::i18n::t("ui-common-recent-projects")(02-2-2:成功打开/保存时由窗口发起)。
     TouchRecent(PathBuf),
     /// 从最近列表移除(02-2-3)。
     RemoveRecent(PathBuf),
@@ -407,7 +407,10 @@ impl ShellApp {
                 ShellRequest::OpenProject(dir) => self.defer_or_open(ctx, &dir),
                 ShellRequest::CreateProject(spec) => match create_project(&spec) {
                     Ok(dir) => self.open_project(ctx, &dir),
-                    Err(e) => self.broadcast_error(format!("新建项目失败:{e}")),
+                    Err(e) => self.broadcast_error(vb_session::i18n::t_args(
+                        "ui-shell-006",
+                        &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                    )),
                 },
                 ShellRequest::CreateFromTemplate {
                     template,
@@ -415,7 +418,10 @@ impl ShellApp {
                     name,
                 } => match create_from_template(&template, &location, &name) {
                     Ok(dir) => self.open_project(ctx, &dir),
-                    Err(e) => self.broadcast_error(format!("模板新建失败:{e}")),
+                    Err(e) => self.broadcast_error(vb_session::i18n::t_args(
+                        "ui-shell-007",
+                        &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                    )),
                 },
                 ShellRequest::ShowHome => self.show_home(),
                 ShellRequest::CloseWindow(id) => self.request_close(ctx, id),
@@ -435,7 +441,13 @@ impl ShellApp {
                     // 02-6-2:一键重开上次会话;失效路径不静默(逐条报错)
                     for dir in self.recent.session.clone() {
                         if !Path::new(&dir).is_dir() {
-                            self.broadcast_error(format!("路径已失效,无法恢复:{dir}"));
+                            self.broadcast_error(vb_session::i18n::t_args(
+                                "ui-shell-008",
+                                &[(
+                                    "dir",
+                                    vb_session::i18n::FluentValue::from((dir).to_string()),
+                                )],
+                            ));
                             continue;
                         }
                         self.open_project(ctx, Path::new(&dir));
@@ -452,7 +464,7 @@ impl ShellApp {
                 }
                 ShellRequest::QuitAll => {
                     // 07-C:退出进程与关闭根窗口同语义 —— 有未保存改动
-                    // 或还有其它窗口时先走退出确认(此前"显式退出不确认"
+                    // 或还有其它窗口时先走退出确认(此前vb_session::i18n::t("ui-shell-009")
                     // 会让脏改动绕过 07-C 铁律;确认框里仍可「直接退出」)。
                     // 无牵挂:同步会话后自然关闭。
                     self.begin_exit(ctx);
@@ -495,7 +507,13 @@ impl ShellApp {
     fn open_project(&mut self, ctx: &egui::Context, raw: &Path) {
         let dir = resolve_project_dir(raw);
         if !dir.is_dir() {
-            self.broadcast_error(format!("路径不存在:{}", dir.display()));
+            self.broadcast_error(vb_session::i18n::t_args(
+                "ui-app-assemble-001",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from((dir.display()).to_string()),
+                )],
+            ));
             return;
         }
         let key = recent::path_key(&dir);
@@ -545,7 +563,10 @@ impl ShellApp {
             }
             Err(e) => {
                 log::warn!("打开项目失败:{e}");
-                self.broadcast_error(format!("打开失败:{e}"));
+                self.broadcast_error(vb_session::i18n::t_args(
+                    "ui-app-external-011",
+                    &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                ));
             }
         }
     }
@@ -844,30 +865,44 @@ impl eframe::App for ShellApp {
                 if *confirm_close {
                     wctx.send_viewport_cmd(ViewportCommand::CancelClose);
                     let mut action = 0u8; // 1=保存并关闭 2=不保存 3=取消
-                    egui::Window::new(format!("关闭前保存? — {}", app.display_name()))
-                        .collapsible(false)
-                        .resizable(false)
-                        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                        .show(wctx, |ui| {
-                            ui.label(format!("「{}」有未保存的修改。", app.display_name()));
-                            // U-7:统一按钮规格 —— 主按钮「保存并关闭」右下
-                            let primary = vb_ui::components::dialog_footer_btn3(
-                                ui,
-                                "保存并关闭",
-                                "不保存",
-                                "取消",
-                            );
-                            match primary {
-                                (true, _, _) => action = 1,
-                                (_, true, _) => action = 2,
-                                (_, _, true) => action = 3,
-                                _ => {}
-                            }
-                            // Esc = 取消(U-7 键位统一;不与文本框冲突)
-                            if wctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-                                action = 3;
-                            }
-                        });
+                    egui::Window::new(vb_session::i18n::t_args(
+                        "ui-shell-010",
+                        &[(
+                            "a1",
+                            vb_session::i18n::FluentValue::from((app.display_name()).to_string()),
+                        )],
+                    ))
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(wctx, |ui| {
+                        ui.label(vb_session::i18n::t_args(
+                            "ui-shell-011",
+                            &[(
+                                "a1",
+                                vb_session::i18n::FluentValue::from(
+                                    (app.display_name()).to_string(),
+                                ),
+                            )],
+                        ));
+                        // U-7:统一按钮规格 —— 主按钮「保存并关闭」右下
+                        let primary = vb_ui::components::dialog_footer_btn3(
+                            ui,
+                            &vb_session::i18n::t("ui-shell-012"),
+                            &vb_session::i18n::t("ui-shell-013"),
+                            &vb_session::i18n::t("ui-common-cancel"),
+                        );
+                        match primary {
+                            (true, _, _) => action = 1,
+                            (_, true, _) => action = 2,
+                            (_, _, true) => action = 3,
+                            _ => {}
+                        }
+                        // Esc = 取消(U-7 键位统一;不与文本框冲突)
+                        if wctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                            action = 3;
+                        }
+                    });
                     match action {
                         // 保存被取消(未选目录等)→ 留在窗口,不算已关闭
                         1 => {
@@ -887,7 +922,7 @@ impl eframe::App for ShellApp {
             });
             if self.wins[i].wants_close {
                 let closed = self.wins.remove(i);
-                // 02-2-2:关闭也是"最近项目"的一次写入时机(刷新 last_opened)
+                // 02-2-2:关闭也是vb_session::i18n::t("ui-common-recent-projects")的一次写入时机(刷新 last_opened)
                 if let Some(d) = closed.project_dir() {
                     self.recent.touch(d);
                     // 07-A:正常关闭 = 会话结束 → 清理该项目快照
@@ -908,7 +943,7 @@ impl eframe::App for ShellApp {
             let tx2 = tx.clone();
             let mut close_home = false;
             let builder = ViewportBuilder::default()
-                .with_title("Vellum Bench — 主页")
+                .with_title(vb_session::i18n::t("ui-shell-014"))
                 .with_inner_size([1024.0, 680.0])
                 .with_min_inner_size([920.0, 600.0])
                 .with_icon(home_icon());
@@ -916,7 +951,7 @@ impl eframe::App for ShellApp {
                 handle_drops(ui, &tx2);
                 home.ui(ui, &items, session_len, &tx2);
                 if ui.ctx().input(|i| i.viewport().close_requested()) {
-                    // 不再调用 show_viewport_immediate → 窗口自然消失(02-1"并存+关闭")
+                    // 不再调用 show_viewport_immediate → 窗口自然消失(02-1vb_session::i18n::t("ui-shell-015"))
                     close_home = true;
                 }
             });
@@ -975,43 +1010,68 @@ impl ShellApp {
         let dirty = self.any_dirty();
         let n = self.child_count();
         let mut action = 0u8; // 1=退出 2=保存全部并退出 3=取消
-        egui::Window::new("退出 Vellum Bench?")
+        egui::Window::new(vb_session::i18n::t("ui-shell-016"))
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ui.ctx(), |ui| {
                 if n > 0 {
-                    ui.label(format!(
-                        "关闭{}将同时关闭其余 {n} 个窗口。",
-                        if self.home_at_root {
-                            "主页"
-                        } else {
-                            "主窗口"
-                        }
+                    ui.label(vb_session::i18n::t_args(
+                        "ui-shell-017",
+                        &[
+                            (
+                                "a1",
+                                vb_session::i18n::FluentValue::from(
+                                    (if self.home_at_root {
+                                        vb_session::i18n::t("ui-shell-018")
+                                    } else {
+                                        vb_session::i18n::t("ui-shell-019")
+                                    })
+                                    .to_string(),
+                                ),
+                            ),
+                            ("n", vb_session::i18n::FluentValue::from((n).to_string())),
+                        ],
                     ));
                 } else {
-                    ui.label(format!(
-                        "关闭{}将退出 Vellum Bench。",
-                        if self.home_at_root {
-                            "主页"
-                        } else {
-                            "主窗口"
-                        }
+                    ui.label(vb_session::i18n::t_args(
+                        "ui-shell-020",
+                        &[(
+                            "a1",
+                            vb_session::i18n::FluentValue::from(
+                                (if self.home_at_root {
+                                    vb_session::i18n::t("ui-shell-018")
+                                } else {
+                                    vb_session::i18n::t("ui-shell-019")
+                                })
+                                .to_string(),
+                            ),
+                        )],
                     ));
                 }
                 if dirty {
                     ui.colored_label(
                         // 数据丢失属告警级,走主题 danger 令牌(同状态栏「外部已改动(未采用)」口径)
                         vb_ui::theme::tokens(ui.ctx()).danger,
-                        "有未保存的修改,直接退出将丢失。",
+                        vb_session::i18n::t("ui-shell-021"),
                     );
                 }
                 // U-7:统一按钮规格 —— 主按钮右下(有未保存改动时 =
                 // 「保存全部并退出」,否则 = 「直接退出」)
                 let (a1, a2, a3) = if dirty {
-                    vb_ui::components::dialog_footer_btn3(ui, "保存全部并退出", "直接退出", "取消")
+                    vb_ui::components::dialog_footer_btn3(
+                        ui,
+                        &vb_session::i18n::t("ui-shell-022"),
+                        &vb_session::i18n::t("ui-shell-023"),
+                        &vb_session::i18n::t("ui-common-cancel"),
+                    )
                 } else {
-                    vb_ui::components::dialog_footer_btn3(ui, "直接退出", "", "取消")
+                    vb_ui::components::dialog_footer_btn3(
+                        ui,
+                        &vb_session::i18n::t("ui-shell-023"),
+                        "",
+                        &vb_session::i18n::t("ui-common-cancel"),
+                    )
                 };
                 if a1 {
                     action = if dirty { 2 } else { 1 };
@@ -1159,7 +1219,7 @@ pub fn run_native(launch: Launch) -> eframe::Result<()> {
         let name = dir
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "未命名".into());
+            .unwrap_or_else(|| vb_session::i18n::t("ui-common-untitled"));
         ViewportBuilder::default()
             .with_inner_size(env_size.unwrap_or([1680.0, 1000.0]))
             .with_min_inner_size([1024.0, 640.0])

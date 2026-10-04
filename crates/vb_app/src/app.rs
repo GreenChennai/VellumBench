@@ -173,7 +173,7 @@ pub struct VellumApp {
     /// 面板坞用户折叠偏好(S1-b 02-1-1)。
     /// 实际折叠 = `vb_ui::dock::should_collapse(视口宽, 本值)` —— 窗口
     /// <1200 时强制折叠且**不回写**本值(拉宽后自动恢复展开)。
-    /// 持久化到 workspace.json 为阶段 7 项(接口已按"单字段可序列化"预留)。
+    /// 持久化到 workspace.json 为阶段 7 项(接口已按vb_session::i18n::t("ui-app-001")预留)。
     dock_collapsed: bool,
     /// Tab 顺序(槽位 → Tab 语义 id;S1-b 02-1-2,右键 Tab 可换,
     /// **内存可换**,持久化到 workspace.json 为阶段 7 项,接口预留)。
@@ -340,7 +340,7 @@ pub struct VellumApp {
     /// 阶段 2:外壳协作通道(打开/新建/关闭/主页/主题/最近列表经外壳单点写;
     /// None = 无外壳的旧式独立构造,走就地打开/新建的兜底路径)。
     pub(crate) shell_tx: Option<std::sync::mpsc::Sender<crate::shell::ShellRequest>>,
-    /// 阶段 2:本窗口的视口 id(外壳据此定位"哪个窗口要关闭/聚焦",02-5-2)。
+    /// 阶段 2:本窗口的视口 id(外壳据此定位vb_session::i18n::t("ui-app-002"),02-5-2)。
     pub(crate) viewport_id: egui::ViewportId,
     /// 阶段 2:「新建项目 / 从模板新建」对话框(02-4-1;确认后发外壳开新窗口)。
     new_dialog: Option<crate::new_project::NewProjectDialog>,
@@ -376,7 +376,7 @@ pub struct VellumApp {
     autosave_interval_secs: u32,
     /// 07-A:节拍计时(首次见脏起表;干净态清空)。
     autosave_last: Option<std::time::Instant>,
-    /// 07-A:最近一次自动保存((Unix 秒, 时刻)—— 状态栏"已自动保存"印记)。
+    /// 07-A:最近一次自动保存((Unix 秒, 时刻)—— 状态栏vb_session::i18n::t("ui-app-003")印记)。
     autosave_at: Option<(i64, std::time::Instant)>,
     /// 07-B:待处理的崩溃恢复提示(打开项目时检出 `.vb-autosave/` 残留)。
     recover: Option<crate::autosave::RecoverPrompt>,
@@ -495,7 +495,7 @@ pub struct VellumApp {
     pub(crate) plugin_logs_open: std::collections::HashSet<String>,
     /// 插件坞面板当前选中的插件下标(多 Running 插件时)。
     pub(crate) plugin_panel_sel: usize,
-    /// 插件面板输入框草稿(键 = "插件/面板/输入id";会话态)。
+    /// 插件面板输入框草稿(键 = vb_session::i18n::t("ui-app-004");会话态)。
     pub(crate) plugin_input_buf: std::collections::HashMap<String, String>,
 }
 
@@ -514,7 +514,10 @@ impl VellumApp {
 
     fn exec(&mut self, cmd: Command) {
         if let Err(e) = self.undo.push(&mut self.doc, cmd) {
-            self.toast_error(format!("命令失败:{e}"));
+            self.toast_error(vb_session::i18n::t_args(
+                "ui-app-005",
+                &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+            ));
             return;
         }
         // 拖拽进行中的每次落盘都标记(Esc 取消时据此作废合并条目)
@@ -610,7 +613,7 @@ impl VellumApp {
                 return name.to_string_lossy().to_string();
             }
         }
-        "未命名".into()
+        vb_session::i18n::t("ui-common-untitled")
     }
 
     /// PERF-05/UI-02:样式注入指纹判定。指纹(主题深浅, 动效开关)与上次
@@ -704,9 +707,12 @@ impl VellumApp {
         };
         self.ui_scale = next;
         self.save_workspace();
-        self.say(format!(
-            "界面缩放 {}%(叠加在系统 DPI 之上;视图 → 界面缩放可调)",
-            (next * 100.0) as i64
+        self.say(vb_session::i18n::t_args(
+            "ui-app-006",
+            &[(
+                "a1",
+                vb_session::i18n::FluentValue::from(((next * 100.0) as i64).to_string()),
+            )],
         ));
     }
 }

@@ -89,7 +89,7 @@ impl VellumApp {
     pub(crate) fn toggle_proofread(&mut self) {
         self.proofread_open = !self.proofread_open;
         if self.proofread_open {
-            self.status = "浏览器校对:选择画板后点「开始校对」".into();
+            self.status = vb_session::i18n::t("ui-app-panels-proofread-001");
         }
     }
 
@@ -131,7 +131,7 @@ impl VellumApp {
         std::thread::spawn(move || {
             let out = (|| -> Result<image::RgbaImage, String> {
                 let Some(dir) = dir else {
-                    return Err("项目目录未知(文档未保存到磁盘)".into());
+                    return Err(vb_session::i18n::t("ui-app-panels-proofread-002"));
                 };
                 let req = vb_browser::LaneRequest {
                     format: vb_browser::LaneFormat::Png,
@@ -145,7 +145,12 @@ impl VellumApp {
                 let outcome = vb_browser::export_source(&dir, &req)?;
                 image::load_from_memory(&outcome.bytes)
                     .map(|img| img.to_rgba8())
-                    .map_err(|e| format!("浏览器截图解码失败:{e}"))
+                    .map_err(|e| {
+                        vb_session::i18n::t_args(
+                            "ui-app-panels-proofread-003",
+                            &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                        )
+                    })
             })();
             let _ = tx.send((out, String::new()));
         });
@@ -167,7 +172,7 @@ impl VellumApp {
             diff_heat: None,
             last_export: None,
         });
-        self.status = "浏览器校对:等待画布帧…".into();
+        self.status = vb_session::i18n::t("ui-app-panels-proofread-004");
     }
 
     /// 每帧驱动(app.rs `ui` 末尾调用;无任务时零开销)。
@@ -186,12 +191,15 @@ impl VellumApp {
                         Ok(img) => {
                             job.canvas_img = Some(img);
                             job.stage = Stage::WaitBrowser;
-                            self.status = "浏览器校对:画布侧已取,浏览器渲染中…".into();
+                            self.status = vb_session::i18n::t("ui-app-panels-proofread-005");
                         }
                         Err(e) => {
                             self.restore_proofread_camera();
                             job.stage = Stage::Done;
-                            self.status = format!("浏览器校对:画布侧读取失败({e})");
+                            self.status = vb_session::i18n::t_args(
+                                "ui-app-panels-proofread-006",
+                                &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                            );
                         }
                     }
                 } else {
@@ -211,21 +219,24 @@ impl VellumApp {
                                     job.stage = Stage::Done;
                                     self.proofread = Some(job);
                                     self.finish_proofread_diff();
-                                    self.status = "浏览器校对:完成".into();
+                                    self.status =
+                                        vb_session::i18n::t("ui-app-panels-proofread-007");
                                     return;
                                 }
                                 Err(e) => {
                                     // 显式降级:不产分数,不假绿
                                     job.browser_error = Some(e);
                                     job.stage = Stage::Done;
-                                    self.status = "浏览器校对不可用(降级,未产出分数)".into();
+                                    self.status =
+                                        vb_session::i18n::t("ui-app-panels-proofread-008");
                                 }
                             }
                         }
                         Err(std::sync::mpsc::TryRecvError::Empty) => {}
                         Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                             job.browser_rx = None;
-                            job.browser_error = Some("浏览器校对线程异常退出".into());
+                            job.browser_error =
+                                Some(vb_session::i18n::t("ui-app-panels-proofread-009"));
                             job.stage = Stage::Done;
                             self.restore_proofread_camera();
                         }
@@ -284,7 +295,7 @@ impl VellumApp {
             return;
         }
         let mut open = self.proofread_open;
-        egui::Window::new("浏览器校对")
+        egui::Window::new(vb_session::i18n::t("ui-common-browser-proof"))
             .open(&mut open)
             .default_width(1100.0)
             .default_height(660.0)
@@ -306,11 +317,16 @@ impl VellumApp {
                     .nodes
                     .get(a)
                     .map(|n| format!("{}({})", n.name, n.sid.as_str()))
-                    .unwrap_or_else(|| format!("画板 {i}"))
+                    .unwrap_or_else(|| {
+                        vb_session::i18n::t_args(
+                            "ui-app-panels-proofread-010",
+                            &[("i", vb_session::i18n::FluentValue::from((i).to_string()))],
+                        )
+                    })
             })
             .collect();
         let mut picked = self.proofread_target;
-        egui::ComboBox::from_label("画板")
+        egui::ComboBox::from_label(vb_session::i18n::t("ui-menu-window-tab_artboards"))
             .selected_text(labels.get(picked).cloned().unwrap_or_else(|| "—".into()))
             .show_ui(ui, |ui| {
                 for (i, l) in labels.iter().enumerate() {
@@ -326,7 +342,10 @@ impl VellumApp {
             .map(|j| !matches!(j.stage, Stage::Done))
             .unwrap_or(false);
         ui.add_enabled_ui(!running, |ui| {
-            if ui.button("开始校对").clicked() {
+            if ui
+                .button(vb_session::i18n::t("ui-app-panels-proofread-011"))
+                .clicked()
+            {
                 self.proofread_begin(self.proofread_target);
             }
         });
@@ -338,7 +357,7 @@ impl VellumApp {
         let Some(job) = self.proofread.as_ref() else {
             ui.label(
                 "把「画布上的渲染」与「真实浏览器渲染」并排对拍:确认画布近似的偏差范围, \
-                 以及验证保存后的 HTML 在浏览器里的效果。",
+                 以及验证保存后的 HTML 在浏览器里的效果。", // vb-literal-ok: 多行字符串字面量,机械抽取不支持,fn 化留手动(台账)
             );
             return;
         };
@@ -347,32 +366,38 @@ impl VellumApp {
         if let Some(err) = &job.browser_error {
             ui.colored_label(
                 vb_ui::theme::tokens(ui.ctx()).warn,
-                format!("⚠ 浏览器校对不可用:{err}。本次校对降级,不产出分数(不假绿)。"),
+                vb_session::i18n::t_args(
+                    "ui-app-panels-proofread-012",
+                    &[(
+                        "err",
+                        vb_session::i18n::FluentValue::from((err).to_string()),
+                    )],
+                ),
             );
         }
         if matches!(job.stage, Stage::WaitCanvasFrames(_)) {
-            ui.label("等待画布帧(相机对准中)…");
+            ui.label(vb_session::i18n::t("ui-app-panels-proofread-013"));
             return;
         }
         if matches!(job.stage, Stage::WaitBrowser) {
-            ui.label("画布侧已取;浏览器渲染中(系统 Edge/Chrome,后台)…");
+            ui.label(vb_session::i18n::t("ui-app-panels-proofread-014"));
             return;
         }
 
         // 结果区:分数 + 说明
         if let (Some(score), Some(ratio)) = (job.score, job.diff_ratio) {
             ui.label(format!(
-                "差异分数 {score:.4}(灰度不一致像素占比 {:.2}%;分数由本次采样生成)",
+                "差异分数 {score:.4}(灰度不一致像素占比 {:.2}%;分数由本次采样生成)", // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
                 ratio * 100.0
             ));
             ui.small(
                 "口径:画布侧为 Vello 形状层(不含画布 egui 文字近似层),\
-                 文字区域计入差异 —— 分数偏保守,用于趋势观察。",
+                 文字区域计入差异 —— 分数偏保守,用于趋势观察。", // vb-literal-ok: 多行字符串字面量,机械抽取不支持,fn 化留手动(台账)
             );
         } else if job.browser_error.is_some() {
-            ui.label("无分数(浏览器侧降级)。画布侧截图仍可查看。");
+            ui.label(vb_session::i18n::t("ui-app-panels-proofread-016"));
         } else if job.canvas_img.is_none() {
-            ui.label("画布侧未采样。");
+            ui.label(vb_session::i18n::t("ui-app-panels-proofread-017"));
         }
         ui.separator();
 
@@ -392,24 +417,48 @@ impl VellumApp {
 
         let mut want_export = false;
         ui.horizontal(|ui| {
-            ui.checkbox(&mut self.proofread_show_heat, "显示差异热力图");
+            ui.checkbox(
+                &mut self.proofread_show_heat,
+                vb_session::i18n::t("ui-app-panels-proofread-018"),
+            );
             ui.separator();
-            ui.radio_value(&mut self.proofread_mode, 0, "并排");
-            ui.radio_value(&mut self.proofread_mode, 1, "叠加");
-            ui.radio_value(&mut self.proofread_mode, 2, "滑块");
+            ui.radio_value(
+                &mut self.proofread_mode,
+                0,
+                vb_session::i18n::t("ui-app-panels-proofread-019"),
+            );
+            ui.radio_value(
+                &mut self.proofread_mode,
+                1,
+                vb_session::i18n::t("ui-app-panels-proofread-020"),
+            );
+            ui.radio_value(
+                &mut self.proofread_mode,
+                2,
+                vb_session::i18n::t("ui-app-panels-proofread-021"),
+            );
             if self.proofread_mode == 2 {
-                ui.add(egui::Slider::new(&mut self.proofread_slider, 0.0..=1.0).text("分割"));
+                ui.add(
+                    egui::Slider::new(&mut self.proofread_slider, 0.0..=1.0)
+                        .text(vb_session::i18n::t("ui-app-panels-proofread-022")),
+                );
             }
             let can_export = job.diff_heat.is_some();
             if ui
-                .add_enabled(can_export, egui::Button::new("导出对比图"))
+                .add_enabled(
+                    can_export,
+                    egui::Button::new(vb_session::i18n::t("ui-app-panels-proofread-023")),
+                )
                 .clicked()
             {
                 want_export = true; // 借还后再执行(需要 &mut self)
             }
         });
         if let Some(p) = &job.last_export {
-            ui.small(format!("上次导出:{p}"));
+            ui.small(vb_session::i18n::t_args(
+                "ui-app-panels-proofread-024",
+                &[("p", vb_session::i18n::FluentValue::from((p).to_string()))],
+            ));
         }
 
         // 图像展示(克隆所需图像到局部,避开借用)
@@ -439,19 +488,25 @@ impl VellumApp {
             0 => {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
-                        ui.label(format!("画布 · {}", job.target_name));
+                        ui.label(vb_session::i18n::t_args(
+                            "ui-app-panels-proofread-025",
+                            &[(
+                                "a1",
+                                vb_session::i18n::FluentValue::from((job.target_name).to_string()),
+                            )],
+                        ));
                         if let Some(t) = &tex_canvas {
                             img_ui(ui, t, half);
                         } else {
-                            ui.label("(无)");
+                            ui.label(vb_session::i18n::t("ui-app-panels-proofread-026"));
                         }
                     });
                     ui.vertical(|ui| {
-                        ui.label("浏览器");
+                        ui.label(vb_session::i18n::t("ui-app-panels-proofread-027"));
                         if let Some(t) = &tex_browser {
                             img_ui(ui, t, half);
                         } else {
-                            ui.label("(无 —— 浏览器侧降级)");
+                            ui.label(vb_session::i18n::t("ui-app-panels-proofread-028"));
                         }
                     });
                 });
@@ -461,7 +516,7 @@ impl VellumApp {
                     let blended = blend(c, b, slider);
                     let tex = make_tex(ctx, "proofread-blend".into(), &blended);
                     img_ui(ui, &tex, one);
-                    ui.small("叠加:透明度滑块(0 = 画布,1 = 浏览器)");
+                    ui.small(vb_session::i18n::t("ui-app-panels-proofread-029"));
                 }
             }
             _ => {
@@ -475,14 +530,14 @@ impl VellumApp {
                     }
                     let tex = make_tex(ctx, "proofread-slider".into(), &view);
                     img_ui(ui, &tex, one);
-                    ui.small("滑块对比:左侧 = 画布,右侧 = 浏览器");
+                    ui.small(vb_session::i18n::t("ui-app-panels-proofread-030"));
                 }
             }
         }
         if self.proofread_show_heat {
             if let Some(h) = &tex_heat {
                 ui.separator();
-                ui.label("差异热力图(红 = 不一致)");
+                ui.label(vb_session::i18n::t("ui-app-panels-proofread-031"));
                 img_ui(ui, h, one);
             }
         }
@@ -510,12 +565,12 @@ impl VellumApp {
             Some(out)
         })();
         let Some(out) = out else {
-            self.status = "对比图导出失败(缺画布/浏览器/热力图之一)".into();
+            self.status = vb_session::i18n::t("ui-app-panels-proofread-032");
             return;
         };
         let dir = std::env::temp_dir().join("vb-iter").join("proofread");
         if std::fs::create_dir_all(&dir).is_err() {
-            self.status = "对比图导出失败:建目录失败".into();
+            self.status = vb_session::i18n::t("ui-app-panels-proofread-033");
             return;
         }
         let path = dir.join(format!(
@@ -527,9 +582,20 @@ impl VellumApp {
                 if let Some(job) = self.proofread.as_mut() {
                     job.last_export = Some(path.display().to_string());
                 }
-                self.status = format!("对比图已导出:{}", path.display());
+                self.status = vb_session::i18n::t_args(
+                    "ui-app-panels-proofread-034",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from((path.display()).to_string()),
+                    )],
+                );
             }
-            Err(e) => self.status = format!("对比图导出失败:{e}"),
+            Err(e) => {
+                self.status = vb_session::i18n::t_args(
+                    "ui-app-panels-proofread-035",
+                    &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                )
+            }
         }
     }
 }

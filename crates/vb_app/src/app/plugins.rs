@@ -41,10 +41,16 @@ impl HostServices for PluginServices<'_> {
     fn run_command(&mut self, plugin: &str, command: &str) -> Result<Value, String> {
         // 防御:插件管理入口不得被插件调用(防递归 / 防插件自我授权)
         if matches!(command, "edit.plugins" | "view.toggle_plugins_panel") {
-            return Err("插件不得调用插件管理入口(防递归与自我授权)".into());
+            return Err(vb_session::i18n::t("ui-app-plugins-001"));
         }
         if !crate::shortcuts::is_implemented(command) {
-            return Err(format!("命令 {command} 不是宿主已注册命令"));
+            return Err(vb_session::i18n::t_args(
+                "ui-app-plugins-002",
+                &[(
+                    "command",
+                    vb_session::i18n::FluentValue::from((command).to_string()),
+                )],
+            ));
         }
         self.0.run_command(command, false, false);
         Ok(json!({"ok": true, "command": command, "via": plugin}))
@@ -73,7 +79,7 @@ impl HostServices for PluginServices<'_> {
     ) -> Result<Value, String> {
         let app = &mut *self.0;
         let Some(ab) = app.active_artboard() else {
-            return Err("当前文档没有画板,无法导出".into());
+            return Err(vb_session::i18n::t("ui-app-plugins-003"));
         };
         let name = app.active_artboard_name();
         let stem = sanitize_file_stem(&format!("{plugin}-{name}-2x"));
@@ -87,8 +93,18 @@ impl HostServices for PluginServices<'_> {
                     app.project_dir.as_deref(),
                 )?;
                 let file = dir.join(format!("{stem}.png"));
-                std::fs::write(&file, &png)
-                    .map_err(|e| format!("写 {} 失败:{e}", file.display()))?;
+                std::fs::write(&file, &png).map_err(|e| {
+                    vb_session::i18n::t_args(
+                        "ui-app-plugins-004",
+                        &[
+                            (
+                                "a1",
+                                vb_session::i18n::FluentValue::from((file.display()).to_string()),
+                            ),
+                            ("e", vb_session::i18n::FluentValue::from((e).to_string())),
+                        ],
+                    )
+                })?;
                 Ok(json!({
                     "ok": true, "export": export_id, "format": "png",
                     "out": file.display().to_string(),
@@ -104,15 +120,31 @@ impl HostServices for PluginServices<'_> {
                     app.project_dir.as_deref(),
                 )?;
                 let file = dir.join(format!("{stem}.svg"));
-                std::fs::write(&file, &svg)
-                    .map_err(|e| format!("写 {} 失败:{e}", file.display()))?;
+                std::fs::write(&file, &svg).map_err(|e| {
+                    vb_session::i18n::t_args(
+                        "ui-app-plugins-004",
+                        &[
+                            (
+                                "a1",
+                                vb_session::i18n::FluentValue::from((file.display()).to_string()),
+                            ),
+                            ("e", vb_session::i18n::FluentValue::from((e).to_string())),
+                        ],
+                    )
+                })?;
                 Ok(json!({
                     "ok": true, "export": export_id, "format": "svg",
                     "out": file.display().to_string(),
                     "bytes": svg.len(),
                 }))
             }
-            other => Err(format!("导出格式 {other} 不受宿主支持(仅 png/svg)")),
+            other => Err(vb_session::i18n::t_args(
+                "ui-app-plugins-005",
+                &[(
+                    "other",
+                    vb_session::i18n::FluentValue::from((other).to_string()),
+                )],
+            )),
         }
     }
 }
@@ -169,26 +201,27 @@ impl VellumApp {
         // 状态/日志色一律走主题令牌(theme.rs 是全仓唯一颜色字面量文件)
         let c_error = vb_ui::theme::Tokens::get(self.theme_dark).danger;
         let mut open = true;
-        egui::Window::new("插件管理")
+        egui::Window::new(vb_session::i18n::t("ui-app-plugins-006"))
             .open(&mut open)
             .collapsible(false)
             .default_size([660.0, 460.0])
             .show(ui.ctx(), |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("插件 = 外部进程(stdio JSON-RPC);默认零权限,首次启用需授权。");
-                    ui.weak(
-                        "注意:插件以你的用户权限原生运行,启用前会展示完整权限告知并要求显式确认。",
-                    );
+                    ui.label(vb_session::i18n::t("ui-app-plugins-007"));
+                    ui.weak(vb_session::i18n::t("ui-app-plugins-008"));
                 });
                 ui.horizontal(|ui| {
-                    if ui.button("安装…(选择 plugin.json)").clicked() {
+                    if ui
+                        .button(vb_session::i18n::t("ui-app-plugins-009"))
+                        .clicked()
+                    {
                         // PLG-09:文件对话框经 vb_platform trait(面板不再
                         // 各自 import rfd;与 launcher 同一 seam)
                         let mut dialog = vb_platform::egui_backend::RfdDialog::new();
                         if let Some(file) = dialog.pick_file(
-                            "选择插件清单 plugin.json",
+                            &vb_session::i18n::t("ui-app-plugins-010"),
                             &[vb_platform::FileFilter {
-                                name: "VellumBench 插件清单",
+                                name: "VellumBench 插件清单", // vb-literal-ok: FileFilter.name 为 &str 平台接缝类型,fn 化留后续
                                 extensions: &["json"],
                             }],
                         ) {
@@ -201,16 +234,28 @@ impl VellumApp {
                                 .install_dir(&dir, &crate::shortcuts::is_implemented)
                             {
                                 Ok(id) => {
-                                    self.toast_warn(format!("插件已安装:{id}(启用前需授权)"));
+                                    self.toast_warn(vb_session::i18n::t_args(
+                                        "ui-app-plugins-012",
+                                        &[(
+                                            "id",
+                                            vb_session::i18n::FluentValue::from((id).to_string()),
+                                        )],
+                                    ));
                                 }
-                                Err(e) => self.toast_error(format!("安装失败:{e}")),
+                                Err(e) => self.toast_error(vb_session::i18n::t_args(
+                                    "ui-app-plugins-013",
+                                    &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                                )),
                             }
                         }
                     }
-                    if ui.button("重载已登记插件").clicked() {
+                    if ui
+                        .button(vb_session::i18n::t("ui-app-plugins-014"))
+                        .clicked()
+                    {
                         self.plugin_host
                             .reload_installed(&crate::shortcuts::is_implemented);
-                        self.say("插件注册表已重载(运行中的插件会被停止)");
+                        self.say(vb_session::i18n::t("ui-app-plugins-015"));
                     }
                 });
                 // 装载失败条目(不阻断其他插件)
@@ -221,24 +266,46 @@ impl VellumApp {
                     .map(|e| (e.dir.display().to_string(), e.error.clone()))
                     .collect();
                 for (dir, err) in &errors {
-                    ui.colored_label(c_error, format!("装载失败 {dir}:{err}"));
+                    ui.colored_label(
+                        c_error,
+                        vb_session::i18n::t_args(
+                            "ui-app-plugins-016",
+                            &[
+                                (
+                                    "dir",
+                                    vb_session::i18n::FluentValue::from((dir).to_string()),
+                                ),
+                                (
+                                    "err",
+                                    vb_session::i18n::FluentValue::from((err).to_string()),
+                                ),
+                            ],
+                        ),
+                    );
                 }
                 ui.separator();
                 // 插件行(快照先行,渲染中可变更结构)
                 let infos = self.plugin_host.list();
                 if infos.is_empty() {
-                    ui.label("尚未安装任何插件。仓库自带示例:plugins/example-stats(统计元素)。");
+                    ui.label(vb_session::i18n::t("ui-app-plugins-017"));
                 }
                 for info in infos {
                     self.plugin_manager_row(ui, &info);
                     ui.separator();
                 }
-                ui.weak(format!(
-                    "授权文件:{}(与 recent.json 同范式;撤销授权即停用)",
-                    self.plugin_host
-                        .auth_path()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_else(|| "(未配置,本会话不持久化)".into())
+                ui.weak(vb_session::i18n::t_args(
+                    "ui-app-plugins-018",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from(
+                            (self
+                                .plugin_host
+                                .auth_path()
+                                .map(|p| p.display().to_string())
+                                .unwrap_or_else(|| vb_session::i18n::t("ui-app-plugins-019")))
+                            .to_string(),
+                        ),
+                    )],
                 ));
             });
         self.plugins_mgr_open = open;
@@ -261,8 +328,14 @@ impl VellumApp {
                 if check && !enabled {
                     if info.authorized {
                         match self.plugin_host.start(&id) {
-                            Ok(()) => self.say(format!("插件 {id}:启动中…")),
-                            Err(e) => self.toast_error(format!("启动失败:{e}")),
+                            Ok(()) => self.say(vb_session::i18n::t_args(
+                                "ui-app-plugins-020",
+                                &[("id", vb_session::i18n::FluentValue::from((id).to_string()))],
+                            )),
+                            Err(e) => self.toast_error(vb_session::i18n::t_args(
+                                "ui-app-plugins-021",
+                                &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                            )),
                         }
                     } else {
                         // 首次启用授权弹窗(05-10-3:拒绝 = 不启用)
@@ -273,7 +346,10 @@ impl VellumApp {
                     }
                 } else if !check && enabled {
                     self.plugin_host.stop(&id);
-                    self.say(format!("插件 {id}:已停止"));
+                    self.say(vb_session::i18n::t_args(
+                        "ui-app-plugins-022",
+                        &[("id", vb_session::i18n::FluentValue::from((id).to_string()))],
+                    ));
                 }
             }
             // 状态徽标
@@ -288,18 +364,29 @@ impl VellumApp {
             ui.weak(format!("v{}", info.version));
             // 重启(崩溃后 / 运行中)
             if matches!(info.state, PluginState::Crashed | PluginState::Running)
-                && ui.button("重启").clicked()
+                && ui
+                    .button(vb_session::i18n::t("ui-common-restart"))
+                    .clicked()
             {
                 let id = info.id.clone();
                 match self.plugin_host.restart(&id) {
-                    Ok(()) => self.say(format!("插件 {id}:重启中…")),
-                    Err(e) => self.toast_error(format!("重启失败:{e}")),
+                    Ok(()) => self.say(vb_session::i18n::t_args(
+                        "ui-app-plugins-023",
+                        &[("id", vb_session::i18n::FluentValue::from((id).to_string()))],
+                    )),
+                    Err(e) => self.toast_error(vb_session::i18n::t_args(
+                        "ui-app-plugins-024",
+                        &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                    )),
                 }
             }
             // 日志环展开
             let log_id = info.id.clone();
             let mut expanded = self.plugin_logs_open.contains(&log_id);
-            if ui.toggle_value(&mut expanded, "日志").changed() {
+            if ui
+                .toggle_value(&mut expanded, vb_session::i18n::t("ui-common-log"))
+                .changed()
+            {
                 if expanded {
                     self.plugin_logs_open.insert(log_id);
                 } else {
@@ -307,16 +394,25 @@ impl VellumApp {
                 }
             }
             // 卸载(停进程 + 清授权登记)
-            if ui.button("卸载").clicked() {
+            if ui
+                .button(vb_session::i18n::t("ui-common-uninstall"))
+                .clicked()
+            {
                 let dir = info.dir.clone();
                 self.plugin_host.uninstall(&dir);
-                self.say(format!("插件 {} 已卸载", info.id));
+                self.say(vb_session::i18n::t_args(
+                    "ui-app-plugins-025",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from((info.id).to_string()),
+                    )],
+                ));
             }
         });
         ui.horizontal(|ui| {
             ui.weak(info.dir.display().to_string());
             if !info.authorized {
-                ui.colored_label(c_warn, "未授权(启用时需在弹窗确认 manifest 权限)");
+                ui.colored_label(c_warn, vb_session::i18n::t("ui-app-plugins-026"));
             }
         });
         if let Some(note) = (!info.note.is_empty()).then(|| info.note.clone()) {
@@ -324,15 +420,29 @@ impl VellumApp {
         }
         // 权限清单摘要(授权闸门的可见性)
         if !info.manifest.commands.is_empty() {
-            ui.weak(format!("命令权限:{}", info.manifest.commands.join(", ")));
+            ui.weak(vb_session::i18n::t_args(
+                "ui-app-plugins-027",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from(
+                        (info.manifest.commands.join(", ")).to_string(),
+                    ),
+                )],
+            ));
         } else {
-            ui.weak("命令权限:无(零权限)");
+            ui.weak(vb_session::i18n::t("ui-app-plugins-028"));
         }
         // 日志环(最近 N 条,时序)
         if self.plugin_logs_open.contains(&info.id) {
             egui::Frame::group(ui.style()).show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
-                ui.weak(format!("日志(最近 {LOG_CAP} 条,新在下):"));
+                ui.weak(vb_session::i18n::t_args(
+                    "ui-app-plugins-029",
+                    &[(
+                        "LOG_CAP",
+                        vb_session::i18n::FluentValue::from((LOG_CAP).to_string()),
+                    )],
+                ));
                 egui::ScrollArea::vertical()
                     .max_height(140.0)
                     .show(ui, |ui| {
@@ -371,91 +481,132 @@ impl VellumApp {
         // 状态/告警色一律走主题令牌(theme.rs 是全仓唯一颜色字面量文件)
         let c_error = vb_ui::theme::Tokens::get(self.theme_dark).danger;
         let mut open = true;
-        egui::Window::new(format!("启用插件「{}」前请授权", info.name))
-            .open(&mut open)
-            .collapsible(false)
-            .default_width(480.0)
-            .show(ui.ctx(), |ui| {
-                ui.label(format!("{} v{}(id:{})", info.name, info.version, info.id));
-                ui.weak(info.dir.display().to_string());
-                ui.separator();
-                ui.strong("该插件声明的全部权限:");
-                if info.manifest.commands.is_empty() {
-                    ui.label("· 宿主命令:无(零权限插件)");
-                } else {
-                    for c in &info.manifest.commands {
-                        let label = crate::shortcuts::CMD_LABELS
-                            .iter()
-                            .find(|(id, _)| id == c)
-                            .map(|(_, l)| *l)
-                            .unwrap_or(c);
-                        ui.label(format!("· 调用宿主命令「{c}」({label})"));
-                    }
-                }
-                for p in &info.manifest.panels {
-                    ui.label(format!("· 注册面板「{}」(受控 UI,禁任意代码)", p.title));
-                }
-                for e in &info.manifest.exports {
-                    ui.label(format!(
-                        "· 注册导出动作「{}」(输出只落你选择的目录)",
-                        e.title
+        egui::Window::new(vb_session::i18n::t_args(
+            "ui-app-plugins-030",
+            &[(
+                "a1",
+                vb_session::i18n::FluentValue::from((info.name).to_string()),
+            )],
+        ))
+        .open(&mut open)
+        .collapsible(false)
+        .default_width(480.0)
+        .show(ui.ctx(), |ui| {
+            ui.label(format!("{} v{}(id:{})", info.name, info.version, info.id));
+            ui.weak(info.dir.display().to_string());
+            ui.separator();
+            ui.strong(vb_session::i18n::t("ui-app-plugins-031"));
+            if info.manifest.commands.is_empty() {
+                ui.label(vb_session::i18n::t("ui-app-plugins-032"));
+            } else {
+                for c in &info.manifest.commands {
+                    let label = crate::shortcuts::CMD_LABELS
+                        .iter()
+                        .find(|(id, _)| id == c)
+                        .map(|(_, l)| *l)
+                        .unwrap_or(c);
+                    ui.label(vb_session::i18n::t_args(
+                        "ui-app-plugins-033",
+                        &[
+                            ("c", vb_session::i18n::FluentValue::from((c).to_string())),
+                            (
+                                "label",
+                                vb_session::i18n::FluentValue::from((label).to_string()),
+                            ),
+                        ],
                     ));
                 }
-                ui.separator();
-                // PLG-01(P0):原生进程权限告知 —— 插件是普通用户权限进程,
-                // 白名单只约束诚实插件;安装/首次启用必须让用户知情并显式接受。
-                ui.colored_label(c_error, "⚠ 权限告知(必读)");
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(vb_plugin::NATIVE_PROCESS_DISCLOSURE).strong(),
-                    )
-                    .wrap(),
+            }
+            for p in &info.manifest.panels {
+                ui.label(vb_session::i18n::t_args(
+                    "ui-app-plugins-034",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from((p.title).to_string()),
+                    )],
+                ));
+            }
+            for e in &info.manifest.exports {
+                ui.label(vb_session::i18n::t_args(
+                    "ui-app-plugins-035",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from((e.title).to_string()),
+                    )],
+                ));
+            }
+            ui.separator();
+            // PLG-01(P0):原生进程权限告知 —— 插件是普通用户权限进程,
+            // 白名单只约束诚实插件;安装/首次启用必须让用户知情并显式接受。
+            ui.colored_label(c_error, vb_session::i18n::t("ui-app-plugins-036"));
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(vb_plugin::NATIVE_PROCESS_DISCLOSURE).strong(),
+                )
+                .wrap(),
+            );
+            ui.separator();
+            ui.weak(vb_session::i18n::t("ui-app-plugins-037"));
+            ui.weak(vb_session::i18n::t("ui-app-plugins-038"));
+            ui.weak(vb_session::i18n::t("ui-app-plugins-039"));
+            ui.separator();
+            // 强制勾选:未勾选时「启用(授权)」不可点(凭证在此产生)
+            let mut consent = auth.consent_checked;
+            ui.checkbox(&mut consent, vb_session::i18n::t("ui-app-plugins-040"));
+            auth.consent_checked = consent;
+            let consent_ok =
+                vb_plugin::NativeProcessConsent::from_dialog_checkbox(auth.consent_checked);
+            ui.horizontal(|ui| {
+                let enable = ui.add_enabled(
+                    consent_ok.is_some(),
+                    egui::Button::new(vb_session::i18n::t("ui-app-plugins-041")),
                 );
-                ui.separator();
-                ui.weak("授权后插件只能调用上列命令;越权调用会被拒绝并记录。");
-                ui.weak("插件是独立进程:崩溃 / 超时只影响它自己,宿主可一键重启。");
-                ui.weak("插件没有直改文档文件的通道,修改文档只能经宿主命令(可撤销)。");
-                ui.separator();
-                // 强制勾选:未勾选时「启用(授权)」不可点(凭证在此产生)
-                let mut consent = auth.consent_checked;
-                ui.checkbox(
-                    &mut consent,
-                    "我已阅读并理解:此插件是以我本人权限运行的原生进程",
-                );
-                auth.consent_checked = consent;
-                let consent_ok =
-                    vb_plugin::NativeProcessConsent::from_dialog_checkbox(auth.consent_checked);
-                ui.horizontal(|ui| {
-                    let enable =
-                        ui.add_enabled(consent_ok.is_some(), egui::Button::new("启用(授权)"));
-                    if enable.clicked() {
-                        let id = info.id.clone();
-                        // 勾选凭证进入 vb_plugin 既有告知合同(未勾选在
-                        // 宿主侧同样拒绝 —— 双重闸门,防 UI 侧漏检)
-                        match self.plugin_host.authorize_with_consent(&id, consent_ok) {
-                            Ok(()) => match self.plugin_host.start(&id) {
-                                Ok(()) => {
-                                    self.say(format!("插件 {id}:已授权并启动"));
-                                    // 有面板 → 顺手打开插件坞面板(可见反馈)
-                                    if !info.manifest.panels.is_empty() {
-                                        self.plugins_panel_open = true;
-                                        self.sec_focus(panel_dock::SecPanel::Plugins);
-                                    }
+                if enable.clicked() {
+                    let id = info.id.clone();
+                    // 勾选凭证进入 vb_plugin 既有告知合同(未勾选在
+                    // 宿主侧同样拒绝 —— 双重闸门,防 UI 侧漏检)
+                    match self.plugin_host.authorize_with_consent(&id, consent_ok) {
+                        Ok(()) => match self.plugin_host.start(&id) {
+                            Ok(()) => {
+                                self.say(vb_session::i18n::t_args(
+                                    "ui-app-plugins-042",
+                                    &[(
+                                        "id",
+                                        vb_session::i18n::FluentValue::from((id).to_string()),
+                                    )],
+                                ));
+                                // 有面板 → 顺手打开插件坞面板(可见反馈)
+                                if !info.manifest.panels.is_empty() {
+                                    self.plugins_panel_open = true;
+                                    self.sec_focus(panel_dock::SecPanel::Plugins);
                                 }
-                                Err(e) => self.toast_error(format!("已授权但启动失败:{e}")),
-                            },
-                            Err(e) => self.toast_error(format!("授权失败:{e}")),
-                        }
-                        self.plugin_auth = None;
+                            }
+                            Err(e) => self.toast_error(vb_session::i18n::t_args(
+                                "ui-app-plugins-043",
+                                &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                            )),
+                        },
+                        Err(e) => self.toast_error(vb_session::i18n::t_args(
+                            "ui-app-plugins-044",
+                            &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                        )),
                     }
-                    if ui.button("取消").clicked() {
-                        // 拒绝 = 不启用(状态保持未授权)
-                        self.plugin_host.deny(&info.id);
-                        self.say(format!("插件 {}:未授权,保持停用", info.id));
-                        self.plugin_auth = None;
-                    }
-                });
+                    self.plugin_auth = None;
+                }
+                if ui.button(vb_session::i18n::t("ui-common-cancel")).clicked() {
+                    // 拒绝 = 不启用(状态保持未授权)
+                    self.plugin_host.deny(&info.id);
+                    self.say(vb_session::i18n::t_args(
+                        "ui-app-plugins-045",
+                        &[(
+                            "a1",
+                            vb_session::i18n::FluentValue::from((info.id).to_string()),
+                        )],
+                    ));
+                    self.plugin_auth = None;
+                }
             });
+        });
         // PLG-01:勾选态回写(auth 是本帧克隆;闭包借用已随 show 结束)
         if let Some(pa) = &mut self.plugin_auth {
             pa.consent_checked = auth.consent_checked;
@@ -477,10 +628,13 @@ impl VellumApp {
     pub(crate) fn plugins_panel_body(&mut self, ui: &mut egui::Ui) {
         let running = self.plugin_host.running_with_panels();
         if running.is_empty() {
-            ui.label("尚无运行中的插件面板。");
-            ui.weak("在「编辑 → 插件管理…」安装并启用插件(首次启用需授权)。");
+            ui.label(vb_session::i18n::t("ui-app-plugins-046"));
+            ui.weak(vb_session::i18n::t("ui-app-plugins-047"));
             ui.add_space(8.0);
-            if ui.button("打开插件管理…").clicked() {
+            if ui
+                .button(vb_session::i18n::t("ui-app-plugins-048"))
+                .clicked()
+            {
                 self.run_command("edit.plugins", false, false);
             }
             return;
@@ -497,13 +651,28 @@ impl VellumApp {
         let id = id.clone();
         let name = name.clone();
         let panels = panels.clone();
-        ui.weak(format!("{name}(Running;只读投影 + 受控 UI)"));
+        ui.weak(vb_session::i18n::t_args(
+            "ui-app-plugins-049",
+            &[(
+                "name",
+                vb_session::i18n::FluentValue::from((name).to_string()),
+            )],
+        ));
         ui.separator();
         // 导出动作(05-10-4 ④):输出只落用户选择的目录
         if let Some(info) = self.plugin_host.list().into_iter().find(|p| p.id == id) {
             for e in &info.manifest.exports {
                 ui.horizontal(|ui| {
-                    if ui.button(format!("导出:{}…", e.title)).clicked() {
+                    if ui
+                        .button(vb_session::i18n::t_args(
+                            "ui-app-plugins-050",
+                            &[(
+                                "a1",
+                                vb_session::i18n::FluentValue::from((e.title).to_string()),
+                            )],
+                        ))
+                        .clicked()
+                    {
                         // PLG-09:目录选择同样经 vb_platform trait
                         let mut dialog = vb_platform::egui_backend::RfdDialog::new();
                         if let Some(dir) = dialog.pick_folder() {
@@ -511,14 +680,26 @@ impl VellumApp {
                                 host.run_export(services, &id, &e.id, Some(&dir))
                             });
                             match res {
-                                Ok(v) => self.say(format!(
-                                    "导出完成:{}",
-                                    v.get("out").and_then(|x| x.as_str()).unwrap_or("")
+                                Ok(v) => self.say(vb_session::i18n::t_args(
+                                    "ui-app-plugins-051",
+                                    &[(
+                                        "a1",
+                                        vb_session::i18n::FluentValue::from(
+                                            (v.get("out").and_then(|x| x.as_str()).unwrap_or(""))
+                                                .to_string(),
+                                        ),
+                                    )],
                                 )),
-                                Err(err) => self.toast_error(format!("导出失败:{err}")),
+                                Err(err) => self.toast_error(vb_session::i18n::t_args(
+                                    "ui-app-plugins-052",
+                                    &[(
+                                        "err",
+                                        vb_session::i18n::FluentValue::from((err).to_string()),
+                                    )],
+                                )),
                             }
                         } else {
-                            self.toast_warn("导出已取消:未选择目录");
+                            self.toast_warn(vb_session::i18n::t("ui-app-plugins-053"));
                         }
                     }
                 });
@@ -532,7 +713,7 @@ impl VellumApp {
             ui.strong(&panel.title);
             match self.plugin_host.panel_ui(&id, &panel.id) {
                 None => {
-                    ui.weak("等待插件提交面板内容…(点插件面板按钮,或在管理窗口重启插件)");
+                    ui.weak(vb_session::i18n::t("ui-app-plugins-054"));
                 }
                 Some(desc) => {
                     self.render_plugin_widgets(ui, &id, &panel.id, &desc.widgets);
@@ -596,7 +777,13 @@ impl VellumApp {
                         let (pid, plid, iid) =
                             (plugin_id.to_string(), panel_id.to_string(), id.clone());
                         match self.plugin_host.send_input(&pid, &plid, &iid, &text) {
-                            Ok(()) => self.say(format!("已提交输入到插件 {pid}")),
+                            Ok(()) => self.say(vb_session::i18n::t_args(
+                                "ui-app-plugins-055",
+                                &[(
+                                    "pid",
+                                    vb_session::i18n::FluentValue::from((pid).to_string()),
+                                )],
+                            )),
                             Err(e) => self.toast_error(e),
                         }
                     }
@@ -632,7 +819,10 @@ impl VellumApp {
                     .install_dir(&dir, &crate::shortcuts::is_implemented)
                 {
                     Ok(id) => {
-                        self.say(format!("插件已装载:{id}(启用前需授权)"));
+                        self.say(vb_session::i18n::t_args(
+                            "ui-app-plugins-056",
+                            &[("id", vb_session::i18n::FluentValue::from((id).to_string()))],
+                        ));
                         self.plugins_mgr_open = true;
                     }
                     Err(e) => eprintln!("VB_PLUGIN_LOAD:装载失败({d}):{e}"),

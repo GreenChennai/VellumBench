@@ -15,10 +15,10 @@ use super::{Drag, GpuCanvas, Tool, VellumApp};
 /// 矩形。调用方把返回值写回 `self.canvas_rect`,同帧输入命中与缩放适配
 /// 读到的就是与本帧绘制一致的矩形。
 pub(crate) fn canvas_rect_next(stored: Option<Rect>, current: Rect) -> Rect {
-    // 历史实现(下方注释)是"旧矩形 ∩ 当前矩形"——交集**只缩不涨**:
+    // 历史实现(下方注释)是vb_session::i18n::t("ui-app-canvas-001")——交集**只缩不涨**:
     // 窗口首帧偏小(启动瞬态/停靠面板未稳)后再放大,画布矩形被钉死在
     // 历史最小值,GPU 纹理不再随之增长,首屏之外的内容(第二画板等)
-    // 永远画不出来,表现为"画板被无辜裁掉"(P0-③ 实测:1696×1039 启动
+    // 永远画不出来,表现为vb_session::i18n::t("ui-app-canvas-002")(P0-③ 实测:1696×1039 启动
     // 后放到 2560×1400,stored 仍为 (3,71)-(1397,935),Features 画板
     // 只剩约 180px 可见,而文档模型是正确的 520px)。
     // `stored.map(|r| r.intersect(current))`
@@ -80,7 +80,7 @@ impl VellumApp {
                 painter.text(
                     pos2(rect.right() - 6.0, rect.bottom() - 6.0),
                     Align2::RIGHT_BOTTOM,
-                    "预览为近似渲染 · 视图 → 浏览器校对可对比",
+                    vb_session::i18n::t("ui-app-canvas-003"),
                     FontId::proportional(11.0),
                     hint_t.text_3,
                 );
@@ -104,13 +104,19 @@ impl VellumApp {
                         })
                     });
                     response.context_menu(|ui| {
-                        if is_image && ui.button("替换图像…").clicked() {
+                        if is_image
+                            && ui
+                                .button(vb_session::i18n::t("ui-menu-object-replace_image"))
+                                .clicked()
+                        {
                             self.run_command("object.replace_image", false, false);
                             ui.close();
                         }
                         if !self.selection.is_empty()
                             && !self.guides_locked
-                            && ui.button("从对象生成参考线(取对象边)").clicked()
+                            && ui
+                                .button(vb_session::i18n::t("ui-app-canvas-005"))
+                                .clicked()
                         {
                             self.run_command("view.guides_from_selection", false, false);
                             ui.close();
@@ -148,10 +154,13 @@ impl VellumApp {
                     })
                 }
                 Err(e) => {
-                    // 绝不静默:画布白屏但没有解释等于应用"坏了"。toast 一次
+                    // 绝不静默:画布白屏但没有解释等于应用vb_session::i18n::t("ui-app-canvas-006")。toast 一次
                     // (failed 标记防每帧刷屏),画布区由调用方画降级占位
                     eprintln!("Vello 初始化失败(画布将无内容):{e}");
-                    self.toast_error(format!("GPU 画布初始化失败,画布区空白:{e}"));
+                    self.toast_error(vb_session::i18n::t_args(
+                        "ui-app-canvas-007",
+                        &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                    ));
                     self.gpu_init_failed = true;
                     return;
                 }
@@ -411,7 +420,7 @@ impl VellumApp {
 
         // ── 05-5:断点预览带(活动画板左缘起断点宽度的区域)──
         // 诚实边界:画布内容仍按默认样式渲染(不模拟 @media),预览带 +
-        // 状态栏提示指出"覆盖样式以浏览器校对为准";带内宽 = 断点视宽。
+        // 状态栏提示指出vb_session::i18n::t("ui-app-canvas-008");带内宽 = 断点视宽。
         if let (Some(bp), Some(ab)) = (self.active_breakpoint, self.active_artboard()) {
             if let Some(n) = self.doc.nodes.get(ab) {
                 let (ax, ay) = (n.geom.x, n.geom.y);
@@ -702,9 +711,22 @@ impl VellumApp {
             painter.text(
                 pos2(viewport.left() + 8.0, viewport.top() + 8.0),
                 Align2::LEFT_TOP,
-                format!(
-                    "像素预览 {}×(世界 1px = {} 物理 px;视图 → 像素预览可关)",
-                    self.camera.zoom as i64, self.camera.zoom as i64
+                vb_session::i18n::t_args(
+                    "ui-app-canvas-009",
+                    &[
+                        (
+                            "a1",
+                            vb_session::i18n::FluentValue::from(
+                                (self.camera.zoom as i64).to_string(),
+                            ),
+                        ),
+                        (
+                            "a2",
+                            vb_session::i18n::FluentValue::from(
+                                (self.camera.zoom as i64).to_string(),
+                            ),
+                        ),
+                    ],
                 ),
                 FontId::monospace(11.0),
                 semantic::GUIDE_RULER,
@@ -830,7 +852,7 @@ impl VellumApp {
                     painter.text(
                         pos2(r.left() + 6.0, r.top() + 4.0),
                         Align2::LEFT_TOP,
-                        "冻结块",
+                        vb_session::i18n::t("ui-common-freeze-block"),
                         FontId::proportional(11.0),
                         t.text_3,
                     );

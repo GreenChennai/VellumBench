@@ -2,7 +2,7 @@
 //!
 //! **职责单一**:主页是纯入口,不编辑文档(02 §3 决策);所有动作都有
 //! 命令 ID(`home.*`,登记在 `shortcuts::IMPLEMENTED_IDS` 与 commands.yaml,
-//! 验收要求"Agent 可复现"),经 [`ShellRequest`] 发给外壳执行。
+//! 验收要求vb_session::i18n::t("ui-launcher-001")),经 [`ShellRequest`] 发给外壳执行。
 //!
 //! 视觉沿用 `vb_ui` 令牌(`Tokens::get`),不做第二套视觉(02 §6 风险)。
 
@@ -97,16 +97,34 @@ impl LauncherUi {
                 ui.label(vb_ui::components::strong("Vellum Bench"));
                 ui.weak(format!("v{}", env!("CARGO_PKG_VERSION")));
                 ui.separator();
-                if ui.button("新建项目").clicked() {
+                if ui
+                    .button(vb_session::i18n::t("ui-common-new-project"))
+                    .clicked()
+                {
                     self.run_home_command("home.new_project", tx, &view);
                 }
-                if ui.button("打开项目…").clicked() {
+                if ui
+                    .button(vb_session::i18n::t("ui-menu-file-open"))
+                    .clicked()
+                {
                     self.run_home_command("home.open_project", tx, &view);
                 }
-                if ui.button("从模板新建").clicked() {
+                if ui
+                    .button(vb_session::i18n::t("ui-app-dialogs-016"))
+                    .clicked()
+                {
                     self.run_home_command("home.new_from_template", tx, &view);
                 }
-                if session_len > 0 && ui.button(format!("恢复上次会话({session_len})")).clicked()
+                if session_len > 0
+                    && ui
+                        .button(vb_session::i18n::t_args(
+                            "ui-launcher-003",
+                            &[(
+                                "session_len",
+                                vb_session::i18n::FluentValue::from((session_len).to_string()),
+                            )],
+                        ))
+                        .clicked()
                 {
                     self.run_home_command("home.restore_session", tx, &view);
                 }
@@ -114,7 +132,7 @@ impl LauncherUi {
                     let resp = ui.add_sized(
                         [240.0, vb_ui::theme::row_height(ui.ctx())],
                         egui::TextEdit::singleline(&mut self.search)
-                            .hint_text("搜索名称或路径…(Ctrl+F)"),
+                            .hint_text(vb_session::i18n::t("ui-launcher-004")),
                     );
                     if self.focus_search {
                         resp.request_focus();
@@ -134,12 +152,23 @@ impl LauncherUi {
             ui.separator();
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.weak(format!("v{} · 许可 ACL-1.0", env!("CARGO_PKG_VERSION")));
+                ui.weak(vb_session::i18n::t_args(
+                    "ui-launcher-005",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from(
+                            (env!("CARGO_PKG_VERSION")).to_string(),
+                        ),
+                    )],
+                ));
                 ui.separator();
-                if ui.button("能力台账").clicked() {
+                if ui
+                    .button(vb_session::i18n::t("ui-app-capabilities-ui-001"))
+                    .clicked()
+                {
                     self.run_home_command("home.capabilities", tx, &view);
                 }
-                ui.weak("主页是主窗口:关闭主页 = 退出 Vellum Bench");
+                ui.weak(vb_session::i18n::t("ui-launcher-006"));
                 if let Some((msg, at)) = &self.message {
                     if at.elapsed() < std::time::Duration::from_secs(8) {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -160,7 +189,13 @@ impl LauncherUi {
             if view.is_empty() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(40.0);
-                    ui.weak(format!("没有匹配「{}」的项目", self.search));
+                    ui.weak(vb_session::i18n::t_args(
+                        "ui-launcher-007",
+                        &[(
+                            "a1",
+                            vb_session::i18n::FluentValue::from((self.search).to_string()),
+                        )],
+                    ));
                 });
                 return;
             }
@@ -357,12 +392,10 @@ impl LauncherUi {
                     ui.label(egui::RichText::new(name).strong().color(name_color));
                     if artboard {
                         ui.label(egui::RichText::new("artboard").small().color(t.accent))
-                            .on_hover_text(
-                                "来源:artboard 项目(index.html 带画板标记类,可直接打开编辑)",
-                            );
+                            .on_hover_text(vb_session::i18n::t("ui-launcher-008"));
                     }
                     if stale {
-                        ui.colored_label(t.danger, "路径已失效");
+                        ui.colored_label(t.danger, vb_session::i18n::t("ui-launcher-009"));
                     }
                 });
                 ui.label(egui::RichText::new(&item.path).small().color(if stale {
@@ -377,14 +410,14 @@ impl LauncherUi {
                 if !actions_visible {
                     return;
                 }
-                if ui.button("移除").clicked() {
+                if ui.button(vb_session::i18n::t("ui-common-remove")).clicked() {
                     self.confirm_remove = Some(item.path.clone());
                 }
                 let reveal = ui.add_enabled(
                     !stale,
                     egui::Button::new(vb_ui::icons::rich(vb_ui::icons::Name::KindImage, 14.0)),
                 );
-                let reveal = reveal.on_hover_text("在资源管理器中显示");
+                let reveal = reveal.on_hover_text(vb_session::i18n::t("ui-launcher-010"));
                 if reveal.clicked() {
                     reveal_in_explorer(&item.path);
                 }
@@ -392,7 +425,7 @@ impl LauncherUi {
                     vb_ui::icons::Name::Copy,
                     14.0,
                 )));
-                let copy = copy.on_hover_text("复制路径");
+                let copy = copy.on_hover_text(vb_session::i18n::t("ui-launcher-011"));
                 if copy.clicked() {
                     // 硬骨头 #13 接线:剪贴板经 vb_platform trait(egui 命令
                     // 通道,与 ctx.copy_text 同一宿主路径);面板不再直呼 egui
@@ -401,16 +434,19 @@ impl LauncherUi {
                     let _ = clip.set_text(&item.path);
                 }
                 let pin_label = if item.pinned {
-                    "取消固定"
+                    vb_session::i18n::t("ui-common-unpin")
                 } else {
-                    "固定"
+                    vb_session::i18n::t("ui-common-pin")
                 };
                 if ui.button(pin_label).clicked() {
                     let _ = tx.send(ShellRequest::TogglePinRecent(PathBuf::from(
                         item.path.clone(),
                     )));
                 }
-                let open_btn = ui.add_enabled(!stale, egui::Button::new("打开"));
+                let open_btn = ui.add_enabled(
+                    !stale,
+                    egui::Button::new(vb_session::i18n::t("ui-common-open")),
+                );
                 if open_btn.clicked() {
                     let _ = tx.send(ShellRequest::OpenProject(PathBuf::from(item.path.clone())));
                 }
@@ -425,14 +461,20 @@ impl LauncherUi {
             let _ = tx.send(ShellRequest::OpenProject(PathBuf::from(item.path.clone())));
         }
         resp.context_menu(|ui| {
-            if ui.add_enabled(!stale, egui::Button::new("打开")).clicked() {
+            if ui
+                .add_enabled(
+                    !stale,
+                    egui::Button::new(vb_session::i18n::t("ui-common-open")),
+                )
+                .clicked()
+            {
                 let _ = tx.send(ShellRequest::OpenProject(PathBuf::from(item.path.clone())));
                 ui.close();
             }
             let pin_label = if item.pinned {
-                "取消固定"
+                vb_session::i18n::t("ui-common-unpin")
             } else {
-                "固定"
+                vb_session::i18n::t("ui-common-pin")
             };
             if ui.button(pin_label).clicked() {
                 let _ = tx.send(ShellRequest::TogglePinRecent(PathBuf::from(
@@ -440,7 +482,7 @@ impl LauncherUi {
                 )));
                 ui.close();
             }
-            if ui.button("复制路径").clicked() {
+            if ui.button(vb_session::i18n::t("ui-launcher-011")).clicked() {
                 // PLG-09:剪贴板统一走 vb_platform Clipboard trait(与卡片
                 // 悬浮按钮同一条 egui 命令通道,不再直呼 ctx.copy_text)
                 let mut clip = vb_platform::egui_backend::EguiClipboard::new(ui.ctx().clone());
@@ -448,20 +490,29 @@ impl LauncherUi {
                 ui.close();
             }
             if ui
-                .add_enabled(!stale, egui::Button::new("在资源管理器中显示"))
+                .add_enabled(
+                    !stale,
+                    egui::Button::new(vb_session::i18n::t("ui-launcher-010")),
+                )
                 .clicked()
             {
                 reveal_in_explorer(&item.path);
                 ui.close();
             }
             ui.separator();
-            if ui.button("移除记录").clicked() {
+            if ui.button(vb_session::i18n::t("ui-launcher-012")).clicked() {
                 self.confirm_remove = Some(item.path.clone());
                 ui.close();
             }
         });
         let _ = resp.on_hover_text(if stale {
-            format!("{}(路径已失效)", item.path)
+            vb_session::i18n::t_args(
+                "ui-launcher-013",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from((item.path).to_string()),
+                )],
+            )
         } else {
             item.path.clone()
         });
@@ -550,33 +601,37 @@ impl LauncherUi {
     fn empty_state(&mut self, ui: &mut egui::Ui, tx: &Sender<ShellRequest>, view: &[&RecentItem]) {
         // U-1 + §8.9 首启:空态插图式引导 + **「新建/打开/模板」三卡**
         // (整卡可点,图标 + 标题 + 一句说明;卡 = L2 材质/lg 圆角)。
-        // 三卡代替三个小按钮:首启的第一屏给出明确的"三条路"。
+        // 三卡代替三个小按钮:首启的第一屏给出明确的vb_session::i18n::t("ui-launcher-014")。
         ui.vertical_centered(|ui| {
             ui.add_space(48.0);
             ui.label(vb_ui::icons::rich(vb_ui::icons::Name::KindArtboard, 48.0).color(t_faint(ui)));
             ui.add_space(8.0);
-            ui.label(egui::RichText::new("还没有项目").heading().strong());
+            ui.label(
+                egui::RichText::new(vb_session::i18n::t("ui-launcher-015"))
+                    .heading()
+                    .strong(),
+            );
             ui.add_space(4.0);
-            ui.weak("从下面开始,或打开一个含 index.html 的项目目录;也可以把目录拖进本窗口。");
+            ui.weak(vb_session::i18n::t("ui-launcher-016"));
             ui.add_space(16.0);
             ui.horizontal(|ui| {
                 for (icon, title, desc, cmd) in [
                     (
                         vb_ui::icons::Name::AddLayer,
-                        "新建项目",
-                        "空白画板,从零开始",
+                        vb_session::i18n::t("ui-common-new-project"),
+                        vb_session::i18n::t("ui-launcher-017"),
                         "home.new_project",
                     ),
                     (
                         vb_ui::icons::Name::Expanded,
-                        "打开项目…",
-                        "选择含 index.html 的目录",
+                        vb_session::i18n::t("ui-menu-file-open"),
+                        vb_session::i18n::t("ui-launcher-018"),
                         "home.open_project",
                     ),
                     (
                         vb_ui::icons::Name::PanelTokens,
-                        "从模板新建",
-                        "内置 landing 等起手模板",
+                        vb_session::i18n::t("ui-app-dialogs-016"),
+                        vb_session::i18n::t("ui-launcher-019"),
                         "home.new_from_template",
                     ),
                 ] {
@@ -586,8 +641,8 @@ impl LauncherUi {
                             ui.add_space(4.0);
                             ui.label(vb_ui::icons::rich(icon, 28.0).color(t_accent(ui)));
                             ui.add_space(4.0);
-                            ui.label(vb_ui::components::strong(title));
-                            ui.label(vb_ui::components::caption(ui, desc));
+                            ui.label(vb_ui::components::strong(&title));
+                            ui.label(vb_ui::components::caption(ui, &desc));
                         });
                     });
                     let resp = ui
@@ -627,8 +682,17 @@ impl LauncherUi {
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.add(egui::Spinner::new().size(16.0));
-                            ui.label(egui::RichText::new(format!("正在打开「{name}」…")).strong());
-                            ui.weak("(首次打开含渲染初始化,约需几秒)");
+                            ui.label(
+                                egui::RichText::new(vb_session::i18n::t_args(
+                                    "ui-launcher-020",
+                                    &[(
+                                        "name",
+                                        vb_session::i18n::FluentValue::from((name).to_string()),
+                                    )],
+                                ))
+                                .strong(),
+                            );
+                            ui.weak(vb_session::i18n::t("ui-launcher-021"));
                         });
                     });
             });
@@ -644,9 +708,9 @@ impl LauncherUi {
         let mut open = true;
         let mut done = false;
         egui::Window::new(if template_mode {
-            "从模板新建"
+            vb_session::i18n::t("ui-app-dialogs-016")
         } else {
-            "新建项目"
+            vb_session::i18n::t("ui-common-new-project")
         })
         .open(&mut open)
         .collapsible(false)
@@ -686,20 +750,20 @@ impl LauncherUi {
             return;
         };
         let mut done = false;
-        egui::Window::new("移除最近项目记录?")
+        egui::Window::new(vb_session::i18n::t("ui-launcher-022"))
             .collapsible(false)
             .resizable(false)
             .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                ui.label(format!("将从列表移除:\n{}", path));
-                ui.weak("只移除记录,不删除磁盘上的项目文件。");
+                ui.label(format!("将从列表移除:\n{}", path)); // vb-literal-ok: 含换行控制字符,单行 ftl 放不下
+                ui.weak(vb_session::i18n::t("ui-launcher-023"));
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("移除").clicked() {
+                    if ui.button(vb_session::i18n::t("ui-common-remove")).clicked() {
                         let _ = tx.send(ShellRequest::RemoveRecent(PathBuf::from(path.clone())));
                         done = true;
                     }
-                    if ui.button("取消").clicked() {
+                    if ui.button(vb_session::i18n::t("ui-common-cancel")).clicked() {
                         done = true;
                     }
                 });
@@ -714,7 +778,7 @@ impl LauncherUi {
             return;
         }
         let mut open = self.show_caps;
-        egui::Window::new("能力台账(做了什么 / 没做什么)")
+        egui::Window::new(vb_session::i18n::t("ui-launcher-024"))
             .open(&mut open)
             .collapsible(false)
             .default_width(560.0)
@@ -725,10 +789,10 @@ impl LauncherUi {
                             ui.weak(c.id);
                             ui.label(c.name);
                             let badge = match c.status {
-                                CapStatus::Done => "已落地",
-                                CapStatus::Partial(_) => "部分",
-                                CapStatus::Planned(_) => "计划",
-                                CapStatus::Dropped(_) => "不做",
+                                CapStatus::Done => vb_session::i18n::t("ui-launcher-025"),
+                                CapStatus::Partial(_) => vb_session::i18n::t("ui-launcher-026"),
+                                CapStatus::Planned(_) => vb_session::i18n::t("ui-common-planned"),
+                                CapStatus::Dropped(_) => vb_session::i18n::t("ui-launcher-027"),
                             };
                             ui.weak(badge);
                         });
@@ -812,7 +876,7 @@ fn t_faint(ui: &egui::Ui) -> Color32 {
     Tokens::get(ui.ctx().theme() == egui::Theme::Dark).text_3
 }
 
-/// 首启三卡的图标色(accent;单一功能色只用于"可交互强调",§8.2)。
+/// 首启三卡的图标色(accent;单一功能色只用于vb_session::i18n::t("ui-launcher-028"),§8.2)。
 fn t_accent(ui: &egui::Ui) -> Color32 {
     Tokens::get(ui.ctx().theme() == egui::Theme::Dark).accent
 }

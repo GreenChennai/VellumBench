@@ -106,7 +106,13 @@ impl VellumApp {
             let cmds = style_prop_remove_cmds(&self.doc, &sids, prop);
             if let Some(cmd) = combine(cmds) {
                 self.exec(cmd);
-                self.say(format!("{label} 已清除"));
+                self.say(vb_session::i18n::t_args(
+                    "ui-app-control-panel-editors-001",
+                    &[(
+                        "label",
+                        vb_session::i18n::FluentValue::from((label).to_string()),
+                    )],
+                ));
             }
         } else if r.changed {
             let [cr, cg, cb, ca] = col.to_srgba_unmultiplied();
@@ -189,7 +195,13 @@ impl VellumApp {
             .unwrap_or_else(|| "left".into());
         let mut sel = cur.clone();
         egui::ComboBox::from_id_salt("ctl_text_align")
-            .selected_text(format!("对齐 {sel}"))
+            .selected_text(vb_session::i18n::t_args(
+                "ui-app-control-panel-editors-002",
+                &[(
+                    "sel",
+                    vb_session::i18n::FluentValue::from((sel).to_string()),
+                )],
+            ))
             .show_ui(ui, |ui| {
                 for v in ["left", "center", "right", "justify"] {
                     ui.selectable_value(&mut sel, v.to_string(), v);
@@ -210,12 +222,20 @@ impl VellumApp {
         let mut sel = cur_kind.unwrap_or(GradKind::Linear);
         egui::ComboBox::from_id_salt("ctl_g_kind")
             .selected_text(match sel {
-                GradKind::Linear => "线性",
-                GradKind::Radial => "径向",
+                GradKind::Linear => vb_session::i18n::t("ui-common-linear"),
+                GradKind::Radial => vb_session::i18n::t("ui-common-radial"),
             })
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut sel, GradKind::Linear, "线性");
-                ui.selectable_value(&mut sel, GradKind::Radial, "径向");
+                ui.selectable_value(
+                    &mut sel,
+                    GradKind::Linear,
+                    vb_session::i18n::t("ui-common-linear"),
+                );
+                ui.selectable_value(
+                    &mut sel,
+                    GradKind::Radial,
+                    vb_session::i18n::t("ui-common-radial"),
+                );
             });
         if cur_kind == Some(sel) {
             return;
@@ -233,7 +253,7 @@ impl VellumApp {
             return;
         };
         let mut v = a0;
-        let r = NumField::new("角度", &mut v)
+        let r = NumField::new(&vb_session::i18n::t("ui-common-angle"), &mut v)
             .speed(1.0)
             .step(15.0)
             .range(0.0, 360.0)
@@ -264,7 +284,13 @@ impl VellumApp {
             .map(|(n, _, _)| *n)
             .unwrap_or(PRESET_CUSTOM);
         egui::ComboBox::from_id_salt("ctl_ab_preset")
-            .selected_text(format!("预设 {label}"))
+            .selected_text(vb_session::i18n::t_args(
+                "ui-app-control-panel-editors-003",
+                &[(
+                    "label",
+                    vb_session::i18n::FluentValue::from((label).to_string()),
+                )],
+            ))
             .show_ui(ui, |ui| {
                 for (name, pw, ph) in AB_PRESETS {
                     let active = (pw - w).abs() < 0.5 && (ph - h).abs() < 0.5;
@@ -273,7 +299,13 @@ impl VellumApp {
                             geom_axes_cmd(&self.doc, &sid, &[(GeomAxis::W, pw), (GeomAxis::H, ph)])
                         {
                             self.exec(cmd);
-                            self.say(format!("画板预设 → {name}"));
+                            self.say(vb_session::i18n::t_args(
+                                "ui-app-control-panel-editors-004",
+                                &[(
+                                    "name",
+                                    vb_session::i18n::FluentValue::from((name).to_string()),
+                                )],
+                            ));
                         }
                     }
                 }
@@ -289,13 +321,31 @@ impl VellumApp {
             let n = self.doc.nodes.get(ab).unwrap();
             (n.geom.w, n.geom.h, n.sid.as_str().to_string())
         };
-        let mut sel = if w >= h { "横" } else { "竖" };
-        let before = sel;
+        let mut sel = if w >= h {
+            vb_session::i18n::t("ui-app-control-panel-editors-005")
+        } else {
+            vb_session::i18n::t("ui-app-control-panel-editors-006")
+        };
+        let before = sel.clone();
         egui::ComboBox::from_id_salt("ctl_ab_orient")
-            .selected_text(format!("取向 {sel}"))
+            .selected_text(vb_session::i18n::t_args(
+                "ui-app-control-panel-editors-007",
+                &[(
+                    "sel",
+                    vb_session::i18n::FluentValue::from((sel).to_string()),
+                )],
+            ))
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut sel, "横", "横向");
-                ui.selectable_value(&mut sel, "竖", "纵向");
+                ui.selectable_value(
+                    &mut sel,
+                    vb_session::i18n::t("ui-app-control-panel-editors-005"),
+                    vb_session::i18n::t("ui-common-landscape"),
+                );
+                ui.selectable_value(
+                    &mut sel,
+                    vb_session::i18n::t("ui-app-control-panel-editors-006"),
+                    vb_session::i18n::t("ui-common-portrait"),
+                );
             });
         if sel != before {
             if let Some(cmd) = geom_axes_cmd(
@@ -304,9 +354,19 @@ impl VellumApp {
                 &[(GeomAxis::W, h.max(1.0)), (GeomAxis::H, w.max(1.0))],
             ) {
                 self.exec(cmd);
-                self.say(format!(
-                    "画板取向 → {}",
-                    if sel == "横" { "横向" } else { "纵向" }
+                self.say(vb_session::i18n::t_args(
+                    "ui-app-control-panel-editors-008",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from(
+                            (if sel == vb_session::i18n::t("ui-app-control-panel-editors-005") {
+                                vb_session::i18n::t("ui-common-landscape")
+                            } else {
+                                vb_session::i18n::t("ui-common-portrait")
+                            })
+                            .to_string(),
+                        ),
+                    )],
                 ));
             }
         }
@@ -379,7 +439,13 @@ impl VellumApp {
             let cmds = rename_cmds(&self.doc, &[sid], buf.trim());
             if let Some(cmd) = combine(cmds) {
                 self.exec(cmd);
-                self.say(format!("画板已改名 → {}", buf.trim()));
+                self.say(vb_session::i18n::t_args(
+                    "ui-app-control-panel-editors-009",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from((buf.trim()).to_string()),
+                    )],
+                ));
             }
         }
     }
@@ -401,7 +467,7 @@ impl VellumApp {
             .map(|c| Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a))
             .unwrap_or(Color32::WHITE);
         let tokens = self.doc.tokens.clone();
-        let r = ColorField::new("画板底", &mut col)
+        let r = ColorField::new(&vb_session::i18n::t("ui-common-artboard-bg"), &mut col)
             .doc_tokens(&tokens)
             .ui(ui);
         if let Some(name) = r.var_picked {
@@ -413,13 +479,19 @@ impl VellumApp {
             );
             if let Some(cmd) = combine(cmds) {
                 self.exec(cmd);
-                self.say(format!("画板底 → var(--{name})"));
+                self.say(vb_session::i18n::t_args(
+                    "ui-app-control-panel-editors-010",
+                    &[(
+                        "name",
+                        vb_session::i18n::FluentValue::from((name).to_string()),
+                    )],
+                ));
             }
         } else if r.cleared {
             let cmds = style_prop_remove_cmds(&self.doc, &[sid], "background-color");
             if let Some(cmd) = combine(cmds) {
                 self.exec(cmd);
-                self.say("画板底已清除");
+                self.say(vb_session::i18n::t("ui-app-control-panel-editors-011"));
             }
         } else if r.changed {
             let [cr, cg, cb, ca] = col.to_srgba_unmultiplied();
@@ -435,7 +507,7 @@ impl VellumApp {
     /// 写回 SetVector,与画布锚点拖拽同一路径)。
     pub(super) fn anchor_field_ui(&mut self, ui: &mut egui::Ui, field: &CtlField) {
         let Some((sid, vi)) = self.anchor_target() else {
-            ui.weak("选中矢量路径后可改锚点坐标");
+            ui.weak(vb_session::i18n::t("ui-app-control-panel-editors-012"));
             return;
         };
         let Some(nid) = self.doc.find_by_sid(&sid) else {

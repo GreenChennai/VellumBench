@@ -101,7 +101,7 @@ impl VellumApp {
     pub(super) fn active_artboard_name(&self) -> String {
         self.active_artboard()
             .and_then(|a| self.doc.nodes.get(a).map(|n| n.name.clone()))
-            .unwrap_or_else(|| "无".into())
+            .unwrap_or_else(|| vb_session::i18n::t("ui-common-none"))
     }
 
     pub(super) fn artboard_at_world(&self, wx: f64, wy: f64) -> Option<vb_doc::model::NodeId> {
@@ -148,8 +148,10 @@ impl VellumApp {
             // 兜底:命令层「至少一块画板」守卫之外的第二道保险(导入 0 画板
             // 文档后直接开画等)。恢复路径直接落一块默认画板,不走 undo。
             None => {
-                let id = self.doc.new_artboard("画板 1", 1440.0, 900.0);
-                self.status = "画布为空,已重建默认画板".into();
+                let id =
+                    self.doc
+                        .new_artboard(&vb_session::i18n::t("ui-app-nav-001"), 1440.0, 900.0);
+                self.status = vb_session::i18n::t("ui-app-nav-002");
                 id
             }
         }

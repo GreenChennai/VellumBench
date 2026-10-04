@@ -51,7 +51,7 @@ impl VellumApp {
             // 无文本选中:置灰 + 引导(design/14 空态);默认样式区仍可用
             ui.label(caption(
                 ui,
-                "未选中文本对象 —— 选中后在此编辑字符样式;下方为新建文本默认样式。",
+                &vb_session::i18n::t("ui-app-panels-charpara-char-001"),
             ));
             ui.separator();
             self.default_style_body(ui);
@@ -60,26 +60,32 @@ impl VellumApp {
         let runs = p.has_runs;
         ui.horizontal(|ui| {
             ui.label(if runs {
-                "作用于:段内 run"
+                vb_session::i18n::t("ui-app-panels-charpara-char-002")
             } else {
-                "作用于:整段"
+                vb_session::i18n::t("ui-app-panels-charpara-char-003")
             });
             if runs {
-                if ui.button("移除全部 run").clicked() {
+                if ui
+                    .button(vb_session::i18n::t("ui-app-panels-charpara-char-004"))
+                    .clicked()
+                {
                     if let Some(cmd) = clear_runs_cmd(&self.doc, &p.sid) {
                         self.exec(cmd);
-                        self.say("已移除段内 run(回到整段样式)");
+                        self.say(vb_session::i18n::t("ui-app-panels-charpara-char-005"));
                     }
                 }
             } else {
                 let can = make_full_run_cmd(&self.doc, &p.sid).is_some();
                 if ui
-                    .add_enabled(can, egui::Button::new("整段转 run"))
+                    .add_enabled(
+                        can,
+                        egui::Button::new(vb_session::i18n::t("ui-app-panels-charpara-char-006")),
+                    )
                     .clicked()
                 {
                     if let Some(cmd) = make_full_run_cmd(&self.doc, &p.sid) {
                         self.exec(cmd);
-                        self.say("已把全文包成单 run(字符样式现作用于 run)");
+                        self.say(vb_session::i18n::t("ui-app-panels-charpara-char-007"));
                     }
                 }
             }
@@ -102,7 +108,7 @@ impl VellumApp {
             node_family.clone().unwrap_or_default()
         };
         ui.horizontal(|ui| {
-            ui.label("字体");
+            ui.label(vb_session::i18n::t("ui-common-font"));
             // 04-3-1:高度从字号派生(P1-② 压叠根因:写死 18pt 装不下 CJK 字形)
             let h = theme::row_height(ui.ctx());
             if ui
@@ -116,7 +122,10 @@ impl VellumApp {
         let families = doc_font_families(&self.doc);
         if !families.is_empty() {
             ui.horizontal(|ui| {
-                ui.label(caption(ui, "文档已有:"));
+                ui.label(caption(
+                    ui,
+                    &vb_session::i18n::t("ui-app-panels-charpara-char-008"),
+                ));
                 for f in families.iter().take(3) {
                     if ui.selectable_label(false, f).clicked() {
                         self.commit_char_family(&sid, runs, node_family.as_deref(), f);
@@ -137,7 +146,10 @@ impl VellumApp {
             } else {
                 node_bold
             };
-            if ui.checkbox(&mut bold, "粗体").changed() {
+            if ui
+                .checkbox(&mut bold, vb_session::i18n::t("ui-common-bold"))
+                .changed()
+            {
                 self.commit_char_bold(&sid, runs, bold);
             }
             let node_italic = style
@@ -150,7 +162,10 @@ impl VellumApp {
             } else {
                 node_italic
             };
-            if ui.checkbox(&mut italic, "斜体").changed() {
+            if ui
+                .checkbox(&mut italic, vb_session::i18n::t("ui-common-italic"))
+                .changed()
+            {
                 self.commit_char_italic(&sid, runs, italic);
             }
         });
@@ -184,14 +199,17 @@ impl VellumApp {
         // 基线偏移(仅 run 落点)
         ui.add_enabled_ui(runs, |ui| {
             let mut bs = seg.baseline_shift.unwrap_or(0.0);
-            let r = NumField::new("基线", &mut bs)
-                .speed(0.5)
-                .step(1.0)
-                .range(-200.0, 200.0)
-                .unit("px")
-                .label_width(44.0)
-                .width(56.0)
-                .ui(ui);
+            let r = NumField::new(
+                &vb_session::i18n::t("ui-app-panels-charpara-char-009"),
+                &mut bs,
+            )
+            .speed(0.5)
+            .step(1.0)
+            .range(-200.0, 200.0)
+            .unit("px")
+            .label_width(44.0)
+            .width(56.0)
+            .ui(ui);
             let cmd = r.changed.then(|| {
                 seg_field_cmd(&self.doc, &sid, move |s| {
                     s.baseline_shift = if bs == 0.0 { None } else { Some(bs) };
@@ -200,7 +218,10 @@ impl VellumApp {
             self.num_commit(r, cmd.flatten());
         });
         if !runs {
-            ui.label(caption(ui, "基线偏移:仅段内 run(整段落点无有效 CSS)"));
+            ui.label(caption(
+                ui,
+                &vb_session::i18n::t("ui-app-panels-charpara-char-010"),
+            ));
         }
 
         // 下划线 / 删除线
@@ -220,10 +241,22 @@ impl VellumApp {
             } else {
                 node_deco.contains("line-through")
             };
-            if ui.checkbox(&mut ul, "下划线").changed() {
+            if ui
+                .checkbox(
+                    &mut ul,
+                    vb_session::i18n::t("ui-app-panels-charpara-char-011"),
+                )
+                .changed()
+            {
                 self.commit_char_deco(&sid, runs, ul, st);
             }
-            if ui.checkbox(&mut st, "删除线").changed() {
+            if ui
+                .checkbox(
+                    &mut st,
+                    vb_session::i18n::t("ui-app-panels-charpara-char-012"),
+                )
+                .changed()
+            {
                 self.commit_char_deco(&sid, runs, ul, st);
             }
         });
@@ -242,7 +275,7 @@ impl VellumApp {
                 })
                 .unwrap_or_default();
             ui.horizontal(|ui| {
-                ui.label("语言");
+                ui.label(vb_session::i18n::t("ui-app-panels-charpara-char-013"));
                 let h = theme::row_height(ui.ctx());
                 if ui
                     .add_sized([120.0, h], egui::TextEdit::singleline(&mut lang))
@@ -258,7 +291,10 @@ impl VellumApp {
             });
         });
         if runs {
-            ui.label(caption(ui, "语言 / 抗锯齿:仅整段(继承节点)"));
+            ui.label(caption(
+                ui,
+                &vb_session::i18n::t("ui-app-panels-charpara-char-014"),
+            ));
         }
 
         // 抗锯齿(仅整段;-webkit-font-smoothing)
@@ -269,16 +305,26 @@ impl VellumApp {
                 .map(|d| d.value.clone());
             let mut sel = cur.clone().unwrap_or_else(|| "auto".into());
             egui::ComboBox::from_id_salt("char_smoothing")
-                .selected_text(format!(
-                    "抗锯齿 {}",
-                    if sel == "auto" {
-                        "自动"
-                    } else {
-                        sel.as_str()
-                    }
+                .selected_text(vb_session::i18n::t_args(
+                    "ui-app-panels-charpara-char-015",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from(
+                            (if sel == "auto" {
+                                vb_session::i18n::t("ui-app-panels-charpara-char-016")
+                            } else {
+                                sel.as_str().to_string()
+                            })
+                            .to_string(),
+                        ),
+                    )],
                 ))
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut sel, "auto".into(), "自动");
+                    ui.selectable_value(
+                        &mut sel,
+                        "auto".into(),
+                        vb_session::i18n::t("ui-app-panels-charpara-char-016"),
+                    );
                     for v in [
                         "antialiased",
                         "subpixel-antialiased",
@@ -305,11 +351,11 @@ impl VellumApp {
         ui.separator();
         ui.label(caption(
             ui,
-            "字偶距 / 垂直缩放 / 水平缩放 / 字符旋转:冻结点 —— 无对称 CSS 往返落点,不做假控件(04a 报告处置表)",
+            &vb_session::i18n::t("ui-app-panels-charpara-char-017"),
         ));
         ui.label(caption(
             ui,
-            "画布文字为近似渲染(ADR-0017);导出为真字形,以浏览器校对为准。",
+            &vb_session::i18n::t("ui-app-panels-charpara-char-018"),
         ));
 
         ui.separator();
@@ -318,9 +364,9 @@ impl VellumApp {
 
     /// 新建文本默认样式(会话级;04-3-3:新建文本继承此处,替换写死 24px/黑)。
     fn default_style_body(&mut self, ui: &mut egui::Ui) {
-        ui.strong("新建文本默认样式");
+        ui.strong(vb_session::i18n::t("ui-app-panels-charpara-char-019"));
         let mut fs = self.text_default.font_size.unwrap_or(24.0);
-        let r = NumField::new("字号", &mut fs)
+        let r = NumField::new(&vb_session::i18n::t("ui-common-font-size"), &mut fs)
             .speed(1.0)
             .step(1.0)
             .range(1.0, 500.0)
@@ -332,7 +378,7 @@ impl VellumApp {
             self.text_default.font_size = Some(fs);
         }
         let mut lh = self.text_default.line_height.unwrap_or(0.0);
-        let r = NumField::new("行距", &mut lh)
+        let r = NumField::new(&vb_session::i18n::t("ui-common-line-height"), &mut lh)
             .speed(1.0)
             .step(1.0)
             .range(0.0, 2000.0)
@@ -344,7 +390,7 @@ impl VellumApp {
             self.text_default.line_height = if lh > 0.0 { Some(lh) } else { None };
         }
         let mut ls = self.text_default.letter_spacing.unwrap_or(0.0);
-        let r = NumField::new("字距", &mut ls)
+        let r = NumField::new(&vb_session::i18n::t("ui-common-letter-spacing"), &mut ls)
             .speed(0.5)
             .step(1.0)
             .range(-50.0, 500.0)
@@ -357,11 +403,17 @@ impl VellumApp {
         }
         ui.horizontal(|ui| {
             let mut bold = self.text_default.bold == Some(true);
-            if ui.checkbox(&mut bold, "粗体").changed() {
+            if ui
+                .checkbox(&mut bold, vb_session::i18n::t("ui-common-bold"))
+                .changed()
+            {
                 self.text_default.bold = Some(bold);
             }
             let mut italic = self.text_default.italic == Some(true);
-            if ui.checkbox(&mut italic, "斜体").changed() {
+            if ui
+                .checkbox(&mut italic, vb_session::i18n::t("ui-common-italic"))
+                .changed()
+            {
                 self.text_default.italic = Some(italic);
             }
         });
@@ -374,14 +426,14 @@ impl VellumApp {
         let mut col = vb_common::color::parse_color(&cur)
             .map(|c| Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a))
             .unwrap_or(Color32::BLACK);
-        let r = ColorField::new("字色", &mut col).ui(ui);
+        let r = ColorField::new(&vb_session::i18n::t("ui-common-text-color"), &mut col).ui(ui);
         if r.changed && !r.cleared {
             let [cr, cg, cb, ca] = col.to_srgba_unmultiplied();
             self.text_default.color = Some(vb_common::Rgba::new(cr, cg, cb, ca).to_shortest_hex());
         }
         ui.label(caption(
             ui,
-            "默认样式为会话状态(持久化 → workspace.json,阶段 7 登记)。",
+            &vb_session::i18n::t("ui-app-panels-charpara-char-020"),
         ));
     }
 
@@ -491,7 +543,10 @@ impl VellumApp {
             });
             self.num_commit(r, cmd.flatten());
             if !has {
-                ui.label(caption(ui, "(继承节点;输入数值即写 run 覆盖)"));
+                ui.label(caption(
+                    ui,
+                    &vb_session::i18n::t("ui-app-panels-charpara-char-021"),
+                ));
             }
         } else if let Some(v0) = node_val {
             let mut v = v0;
@@ -514,7 +569,16 @@ impl VellumApp {
             });
             self.num_commit(r, cmd.flatten());
         } else {
-            ui.label(caption(ui, &format!("{label}:未声明(继承)")));
+            ui.label(caption(
+                ui,
+                &vb_session::i18n::t_args(
+                    "ui-app-panels-charpara-char-022",
+                    &[(
+                        "label",
+                        vb_session::i18n::FluentValue::from((label).to_string()),
+                    )],
+                ),
+            ));
         }
     }
 }

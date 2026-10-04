@@ -31,7 +31,7 @@ pub fn print_pdf_name(title: &str) -> String {
         .collect();
     let cleaned = cleaned.trim().trim_matches('.').to_string();
     let safe = if cleaned.is_empty() {
-        "未命名".to_string()
+        vb_session::i18n::t("ui-common-untitled").to_string()
     } else {
         cleaned
     };
@@ -42,7 +42,13 @@ pub fn print_pdf_name(title: &str) -> String {
 /// `xdg-open`/`open`)。返回中文错误说明(不静默)。
 pub fn open_with_default_app(path: &std::path::Path) -> Result<(), String> {
     if !path.is_file() {
-        return Err(format!("文件不存在:{}", path.display()));
+        return Err(vb_session::i18n::t_args(
+            "ui-app-workspace-dialog-001",
+            &[(
+                "a1",
+                vb_session::i18n::FluentValue::from((path.display()).to_string()),
+            )],
+        ));
     }
     #[cfg(windows)]
     {
@@ -51,7 +57,12 @@ pub fn open_with_default_app(path: &std::path::Path) -> Result<(), String> {
             .arg(path)
             .spawn()
             .map(|_| ())
-            .map_err(|e| format!("调用系统默认程序失败:{e}"))
+            .map_err(|e| {
+                vb_session::i18n::t_args(
+                    "ui-app-workspace-dialog-002",
+                    &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                )
+            })
     }
     #[cfg(target_os = "macos")]
     {
@@ -59,7 +70,12 @@ pub fn open_with_default_app(path: &std::path::Path) -> Result<(), String> {
             .arg(path)
             .spawn()
             .map(|_| ())
-            .map_err(|e| format!("调用系统默认程序失败:{e}"))
+            .map_err(|e| {
+                vb_session::i18n::t_args(
+                    "ui-app-workspace-dialog-002",
+                    &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                )
+            })
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -67,7 +83,12 @@ pub fn open_with_default_app(path: &std::path::Path) -> Result<(), String> {
             .arg(path)
             .spawn()
             .map(|_| ())
-            .map_err(|e| format!("调用系统默认程序失败:{e}"))
+            .map_err(|e| {
+                vb_session::i18n::t_args(
+                    "ui-app-workspace-dialog-002",
+                    &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                )
+            })
     }
 }
 
@@ -75,7 +96,7 @@ impl VellumApp {
     /// 「文件 → 打印…」:当前画板 → 临时 PDF(Kiln)→ 系统默认程序打开。
     pub(crate) fn print_current_artboard(&mut self) {
         let Some(ab) = self.active_artboard() else {
-            self.toast_warn("打印:当前没有画板");
+            self.toast_warn(vb_session::i18n::t("ui-app-workspace-dialog-003"));
             return;
         };
         let name = self.doc.nodes.get(ab).unwrap().name.clone();
@@ -92,20 +113,54 @@ impl VellumApp {
             Ok((bytes, report)) => match std::fs::write(&out, &bytes) {
                 Ok(()) => match open_with_default_app(&out) {
                     Ok(()) => {
-                        self.status = format!(
-                            "打印:画板「{name}」已导出临时 PDF({} KB,{})并交系统打开({});在 PDF 程序中执行打印",
-                            bytes.len() / 1024,
-                            report.summary(),
-                            out.display()
+                        self.status = vb_session::i18n::t_args(
+                            "ui-app-workspace-dialog-004",
+                            &[
+                                (
+                                    "name",
+                                    vb_session::i18n::FluentValue::from((name).to_string()),
+                                ),
+                                (
+                                    "a1",
+                                    vb_session::i18n::FluentValue::from(
+                                        (bytes.len() / 1024).to_string(),
+                                    ),
+                                ),
+                                (
+                                    "a2",
+                                    vb_session::i18n::FluentValue::from(
+                                        (report.summary()).to_string(),
+                                    ),
+                                ),
+                                (
+                                    "a3",
+                                    vb_session::i18n::FluentValue::from(
+                                        (out.display()).to_string(),
+                                    ),
+                                ),
+                            ],
                         );
                     }
-                    Err(e) => {
-                        self.toast_error(format!("PDF 已生成({}),但打开失败:{e}", out.display()))
-                    }
+                    Err(e) => self.toast_error(vb_session::i18n::t_args(
+                        "ui-app-workspace-dialog-005",
+                        &[
+                            (
+                                "a1",
+                                vb_session::i18n::FluentValue::from((out.display()).to_string()),
+                            ),
+                            ("e", vb_session::i18n::FluentValue::from((e).to_string())),
+                        ],
+                    )),
                 },
-                Err(e) => self.toast_error(format!("写临时 PDF 失败:{e}")),
+                Err(e) => self.toast_error(vb_session::i18n::t_args(
+                    "ui-app-workspace-dialog-006",
+                    &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                )),
             },
-            Err(e) => self.toast_error(format!("Kiln PDF 导出失败:{e}")),
+            Err(e) => self.toast_error(vb_session::i18n::t_args(
+                "ui-app-workspace-dialog-007",
+                &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+            )),
         }
     }
 }
@@ -121,22 +176,25 @@ impl VellumApp {
         }
         let mut open = true;
         let mut action: Option<(WorkspaceAction, String)> = None;
-        egui::Window::new("工作区")
+        egui::Window::new(vb_session::i18n::t("ui-common-workspace"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
                 // 保存当前布局
-                ui.label("把当前布局(工具箱停靠 / 面板坞 / 次级面板摆放)存为预设:");
+                ui.label(vb_session::i18n::t("ui-app-workspace-dialog-008"));
                 ui.horizontal(|ui| {
                     let resp = ui.add_sized(
                         [220.0, vb_ui::theme::row_height(ui.ctx())],
                         egui::TextEdit::singleline(&mut self.workspace_dialog_name)
-                            .hint_text("工作区名…"),
+                            .hint_text(vb_session::i18n::t("ui-app-workspace-dialog-009")),
                     );
                     let can_save = !self.workspace_dialog_name.trim().is_empty();
                     let clicked = ui
-                        .add_enabled(can_save, egui::Button::new("保存为预设"))
+                        .add_enabled(
+                            can_save,
+                            egui::Button::new(vb_session::i18n::t("ui-app-workspace-dialog-010")),
+                        )
                         .clicked();
                     let enter = resp.lost_focus()
                         && ui.input(|i| i.key_pressed(egui::Key::Enter))
@@ -149,21 +207,27 @@ impl VellumApp {
                 });
                 ui.separator();
                 // 内置三档(既有工作区命令,入口仍在「窗口」菜单)
-                ui.weak("内置:基本功能 / 排版 / 导出(见「窗口」菜单);下面是自定义预设:");
+                ui.weak(vb_session::i18n::t("ui-app-workspace-dialog-011"));
                 let presets = self.workspace_presets();
                 if presets.is_empty() {
-                    ui.weak("(暂无自定义工作区)");
+                    ui.weak(vb_session::i18n::t("ui-app-workspace-dialog-012"));
                 } else {
                     let names: Vec<String> = presets.iter().map(|p| p.name.clone()).collect();
                     for name in &names {
                         ui.horizontal(|ui| {
                             ui.label(format!("◦ {name}"));
                             let n = name.clone();
-                            if ui.small_button("切换").clicked() {
+                            if ui
+                                .small_button(vb_session::i18n::t("ui-app-workspace-dialog-013"))
+                                .clicked()
+                            {
                                 action = Some((WorkspaceAction::Apply, n));
                             }
                             let n = name.clone();
-                            if ui.small_button("删除").clicked() {
+                            if ui
+                                .small_button(vb_session::i18n::t("ui-menu-object-delete"))
+                                .clicked()
+                            {
                                 action = Some((WorkspaceAction::Delete, n));
                             }
                         });

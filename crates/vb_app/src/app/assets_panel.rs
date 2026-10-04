@@ -61,10 +61,10 @@ pub enum AssetKind {
 impl AssetKind {
     pub fn label(self) -> &'static str {
         match self {
-            AssetKind::Image => "图片",
-            AssetKind::Font => "字体",
-            AssetKind::Style => "样式",
-            AssetKind::Other => "文件",
+            AssetKind::Image => "图片", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            AssetKind::Font => "字体", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            AssetKind::Style => "样式", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            AssetKind::Other => "文件", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
         }
     }
 }
@@ -165,13 +165,24 @@ impl VellumApp {
     /// 资产面板正文(次级坞「资产」Tab;`panel_dock::sec_panel_body` 转发)。
     pub(crate) fn assets_panel_body(&mut self, ui: &mut egui::Ui) {
         let Some(dir) = self.project_dir.clone() else {
-            ui.label("当前文档没有项目目录(先保存或打开一个项目)。");
+            ui.label(vb_session::i18n::t("ui-app-assets-panel-002"));
             return;
         };
         ui.horizontal(|ui| {
-            ui.label(format!("项目:{}", crate::recent::display_name(&dir)));
+            ui.label(vb_session::i18n::t_args(
+                "ui-app-assets-panel-003",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from(
+                        (crate::recent::display_name(&dir)).to_string(),
+                    ),
+                )],
+            ));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("刷新").clicked() {
+                if ui
+                    .button(vb_session::i18n::t("ui-common-refresh"))
+                    .clicked()
+                {
                     self.assets_cache = None;
                 }
             });
@@ -195,23 +206,37 @@ impl VellumApp {
             ui.horizontal(|ui| {
                 ui.add_space(vb_ui::theme::space::S2);
                 ui.label(vb_ui::icons::rich(vb_ui::icons::Name::KindImage, 18.0).color(t.text_3));
-                ui.label("项目还没有 assets/ 目录 —— 拖入或置入图像后会自动出现。");
+                ui.label(vb_session::i18n::t("ui-app-assets-panel-004"));
             });
             ui.add_space(vb_ui::theme::space::S2);
             ui.horizontal_wrapped(|ui| {
-                if ui.button("保存项目(Ctrl+S)").clicked() {
+                if ui
+                    .button(vb_session::i18n::t("ui-app-assets-panel-005"))
+                    .clicked()
+                {
                     self.run_command("file.save", false, false);
                 }
-                if ui.button("图像置入…").clicked() {
+                if ui
+                    .button(vb_session::i18n::t("ui-app-assets-panel-006"))
+                    .clicked()
+                {
                     self.run_command("file.place_image", false, false);
                 }
             });
         } else {
             let unused = rows.iter().filter(|r| !r.used()).count();
-            ui.label(format!(
-                "{} 个资产,{} 个未被引用(CSS url() 只计数,无可定位节点)",
-                rows.len(),
-                unused
+            ui.label(vb_session::i18n::t_args(
+                "ui-app-assets-panel-007",
+                &[
+                    (
+                        "a1",
+                        vb_session::i18n::FluentValue::from((rows.len()).to_string()),
+                    ),
+                    (
+                        "a2",
+                        vb_session::i18n::FluentValue::from((unused).to_string()),
+                    ),
+                ],
             ));
         }
         ui.separator();
@@ -247,28 +272,43 @@ impl VellumApp {
                             .find_by_sid(&hit.sid)
                             .and_then(|id| self.doc.nodes.get(id))
                             .map(|n| n.name.clone())
-                            .unwrap_or_else(|| "(已不存在的节点)".into());
+                            .unwrap_or_else(|| vb_session::i18n::t("ui-app-assets-panel-008"));
                         ui.horizontal(|ui| {
                             ui.label(
                                 egui::RichText::new(format!("└ {} → {}", hit.via, hit.sid))
                                     .size(11.5),
                             );
                             let goto = ui
-                                .selectable_label(false, format!("「{name}」·点击定位"))
-                                .on_hover_text("点击选中该图层(定位到引用)");
+                                .selectable_label(
+                                    false,
+                                    vb_session::i18n::t_args(
+                                        "ui-app-assets-panel-009",
+                                        &[(
+                                            "name",
+                                            vb_session::i18n::FluentValue::from((name).to_string()),
+                                        )],
+                                    ),
+                                )
+                                .on_hover_text(vb_session::i18n::t("ui-app-assets-panel-010"));
                             if goto.clicked() {
                                 locate = Some(hit.sid.clone());
                             }
-                            if ui.small_button("替换").clicked() {
+                            if ui
+                                .small_button(vb_session::i18n::t("ui-common-replace"))
+                                .clicked()
+                            {
                                 replace = Some(hit.clone());
                             }
                         });
                     }
                     if row.css_refs > 0 {
                         ui.label(
-                            egui::RichText::new(format!(
-                                "└ css url() ×{}(样式表引用,无节点可定位)",
-                                row.css_refs
+                            egui::RichText::new(vb_session::i18n::t_args(
+                                "ui-app-assets-panel-011",
+                                &[(
+                                    "a1",
+                                    vb_session::i18n::FluentValue::from((row.css_refs).to_string()),
+                                )],
                             ))
                             .size(11.5)
                             .color(theme::tokens(ui.ctx()).text_3),
@@ -277,7 +317,7 @@ impl VellumApp {
                 } else {
                     // 07-I:未使用标记走主题 warn 令牌(浅色自动加深,不硬编码浅橙)
                     ui.label(
-                        egui::RichText::new("└ 未使用 —— 没有任何 src/href/CSS 引用(可归档或删除)")
+                        egui::RichText::new(vb_session::i18n::t("ui-app-assets-panel-012"))
                             .size(11.5)
                             .color(theme::tokens(ui.ctx()).warn),
                     );
@@ -290,9 +330,15 @@ impl VellumApp {
         if let Some(sid) = locate {
             if self.doc.find_by_sid(&sid).is_some() {
                 self.selection = vec![sid.clone()].into();
-                self.say(format!("资产面板:已定位图层({sid})"));
+                self.say(vb_session::i18n::t_args(
+                    "ui-app-assets-panel-013",
+                    &[(
+                        "sid",
+                        vb_session::i18n::FluentValue::from((sid).to_string()),
+                    )],
+                ));
             } else {
-                self.say("该图层已不存在(文档可能已变更;点「刷新」更新面板)");
+                self.say(vb_session::i18n::t("ui-app-assets-panel-014"));
             }
         }
         // 替换:打开候选资产选择窗(只列图片类;走命令层,可撤销)
@@ -356,15 +402,23 @@ impl VellumApp {
         };
         let mut action: Option<String> = None;
         let mut open = true;
-        egui::Window::new("替换图像引用")
+        egui::Window::new(vb_session::i18n::t("ui-app-assets-panel-015"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
-                ui.label(format!(
-                    "把节点 {} 的引用 {} 指向另一个资产:",
-                    pick.sid,
-                    pick.from.as_str()
+                ui.label(vb_session::i18n::t_args(
+                    "ui-app-assets-panel-016",
+                    &[
+                        (
+                            "a1",
+                            vb_session::i18n::FluentValue::from((pick.sid).to_string()),
+                        ),
+                        (
+                            "a2",
+                            vb_session::i18n::FluentValue::from((pick.from.as_str()).to_string()),
+                        ),
+                    ],
                 ));
                 ui.separator();
                 let Some(dir) = self.project_dir.clone() else {
@@ -376,7 +430,7 @@ impl VellumApp {
                     .filter(|r| r.kind == AssetKind::Image && r.rel != pick.from)
                     .collect();
                 if candidates.is_empty() {
-                    ui.label("项目里没有其他图片类资产可换(先放一张图进 assets/)。");
+                    ui.label(vb_session::i18n::t("ui-app-assets-panel-017"));
                     return;
                 }
                 egui::ScrollArea::vertical()
@@ -391,17 +445,23 @@ impl VellumApp {
                             }
                         }
                     });
-                ui.weak("替换走命令层(SetImageSrc,kind 与 attrs 双写同步;Ctrl+Z 可撤销)。");
+                ui.weak(vb_session::i18n::t("ui-app-assets-panel-018"));
             });
         if let Some(new_rel) = action {
             let cmd = replace_cmd(&self.doc, &pick.sid, &new_rel);
             match cmd {
                 Some(c) => {
                     self.exec(c);
-                    self.say(format!("已替换图像引用 → {new_rel}(可撤销)"));
+                    self.say(vb_session::i18n::t_args(
+                        "ui-app-assets-panel-019",
+                        &[(
+                            "new_rel",
+                            vb_session::i18n::FluentValue::from((new_rel).to_string()),
+                        )],
+                    ));
                     self.asset_replace = None;
                 }
-                None => self.toast_warn("该对象不带 src 图像引用,无法替换"),
+                None => self.toast_warn(vb_session::i18n::t("ui-app-assets-panel-020")),
             }
         }
         if !open {

@@ -45,9 +45,9 @@ const BUNDLED_FAMILIES: &[&str] = &[
     "Inter SemiBold",
     "MiSans",
     "Microsoft YaHei",
-    "微软雅黑",
+    "微软雅黑", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     "SimSun",
-    "宋体",
+    "宋体", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     "JetBrains Mono",
 ];
 
@@ -101,7 +101,7 @@ const KNOWN_WINDOWS_FAMILIES: &[&str] = &[
     "Segoe UI Historic",
     "Segoe UI Symbol",
     "SimHei",
-    "黑体",
+    "黑体", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     "SimSun-ExtB",
     "Sitka",
     "Sylfaen",
@@ -112,17 +112,17 @@ const KNOWN_WINDOWS_FAMILIES: &[&str] = &[
     "Verdana",
     "Webdings",
     "Wingdings",
-    "楷体",
+    "楷体", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     "KaiTi",
-    "仿宋",
+    "仿宋", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     "FangSong",
-    "等线",
+    "等线", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     "DengXian",
-    "华文黑体",
+    "华文黑体", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     "PingFang SC",
     "Hiragino Sans GB",
     "Source Han Sans SC",
-    "思源黑体",
+    "思源黑体", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     "Noto Sans SC",
     "Noto Serif SC",
     "Alibaba PuHuiTi",
@@ -293,14 +293,17 @@ impl VellumApp {
         }
         let mut open = true;
         let mut apply: Vec<usize> = Vec::new();
-        egui::Window::new("缺失字体")
+        egui::Window::new(vb_session::i18n::t("ui-app-font-dialog-001"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
-                ui.weak(format!(
-                    "检测到 {} 种文档使用的字体不在本机可用集合内(判定口径:通用族 + 随包/系统回退 + 常见系统字体;非逐字体枚举)。",
-                    dlg.entries.len()
+                ui.weak(vb_session::i18n::t_args(
+                    "ui-app-font-dialog-002",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from((dlg.entries.len()).to_string()),
+                    )],
                 ));
                 ui.separator();
                 let candidates: Vec<Vec<&'static str>> = dlg
@@ -318,7 +321,15 @@ impl VellumApp {
                                 vb_ui::theme::tokens(ui.ctx()).warn,
                                 format!("「{}」", entry.family),
                             );
-                            ui.weak(format!("{} 个对象", entry.sids.len()));
+                            ui.weak(vb_session::i18n::t_args(
+                                "ui-app-font-dialog-003",
+                                &[(
+                                    "a1",
+                                    vb_session::i18n::FluentValue::from(
+                                        (entry.sids.len()).to_string(),
+                                    ),
+                                )],
+                            ));
                             let mut pick = dlg.picks[i];
                             egui::ComboBox::from_id_salt(format!("vb-font-swap-{i}"))
                                 .selected_text(
@@ -330,10 +341,13 @@ impl VellumApp {
                                     }
                                 });
                             self.font_dialog.as_mut().unwrap().picks[i] = pick;
-                            if ui.button("替换").clicked() {
+                            if ui
+                                .button(vb_session::i18n::t("ui-common-replace"))
+                                .clicked()
+                            {
                                 apply.push(i);
                             }
-                            if ui.button("跳过").clicked() {
+                            if ui.button(vb_session::i18n::t("ui-common-skip")).clicked() {
                                 self.font_dialog.as_mut().unwrap().skipped[i] = true;
                             }
                         });
@@ -341,12 +355,18 @@ impl VellumApp {
                 });
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("全部跳过").clicked() {
+                    if ui
+                        .button(vb_session::i18n::t("ui-app-font-dialog-004"))
+                        .clicked()
+                    {
                         if let Some(d) = self.font_dialog.as_mut() {
                             d.skipped = vec![true; d.entries.len()];
                         }
                     }
-                    if ui.button("全部替换(各自首选候选)").clicked() {
+                    if ui
+                        .button(vb_session::i18n::t("ui-app-font-dialog-005"))
+                        .clicked()
+                    {
                         for i in 0..dlg.entries.len() {
                             if !dlg.skipped[i] && !dlg.entries[i].sids.is_empty() {
                                 apply.push(i);
@@ -422,9 +442,22 @@ impl VellumApp {
         if let Some(d) = self.font_dialog.as_mut() {
             d.skipped[index] = true;
         }
-        self.say(format!(
-            "字体替换:「{}」→「{target}」({count} 个对象,可撤销)",
-            entry.family
+        self.say(vb_session::i18n::t_args(
+            "ui-app-font-dialog-006",
+            &[
+                (
+                    "a1",
+                    vb_session::i18n::FluentValue::from((entry.family).to_string()),
+                ),
+                (
+                    "target",
+                    vb_session::i18n::FluentValue::from((target).to_string()),
+                ),
+                (
+                    "count",
+                    vb_session::i18n::FluentValue::from((count).to_string()),
+                ),
+            ],
         ));
     }
 }

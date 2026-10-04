@@ -21,7 +21,7 @@ impl VellumApp {
         let Some(p) = self.text_projection() else {
             ui.label(caption(
                 ui,
-                "未选中文本对象 —— 段落属性作用于整个文本对象,请先选中。",
+                &vb_session::i18n::t("ui-app-panels-charpara-para-001"),
             ));
             return;
         };
@@ -29,7 +29,7 @@ impl VellumApp {
         let style = p.style.clone();
 
         // ── 9 式对齐(当前式高亮 = 投影) ──
-        ui.label("对齐");
+        ui.label(vb_session::i18n::t("ui-common-align"));
         let cur = Align9::from_style(&style);
         for row in Align9::ALL.chunks(5) {
             ui.horizontal(|ui| {
@@ -44,7 +44,13 @@ impl VellumApp {
                         let cmds = para_align_cmds(&self.doc, &sids, *a);
                         if let Some(cmd) = combine(cmds) {
                             self.exec(cmd);
-                            self.say(format!("对齐 → {}", a.label()));
+                            self.say(vb_session::i18n::t_args(
+                                "ui-app-panels-charpara-para-002",
+                                &[(
+                                    "a1",
+                                    vb_session::i18n::FluentValue::from((a.label()).to_string()),
+                                )],
+                            ));
                         }
                     }
                 }
@@ -75,27 +81,44 @@ impl VellumApp {
             if overflow > 0.5 {
                 ui.colored_label(
                     theme::semantic::overflow_dot(self.theme_dark),
-                    format!("文本溢出约 {}px", overflow.ceil() as i64),
+                    vb_session::i18n::t_args(
+                        "ui-app-panels-charpara-para-003",
+                        &[(
+                            "a1",
+                            vb_session::i18n::FluentValue::from(
+                                (overflow.ceil() as i64).to_string(),
+                            ),
+                        )],
+                    ),
                 );
-                if ui.button("自动扩高(补足内容高度)").clicked() {
+                if ui
+                    .button(vb_session::i18n::t("ui-app-panels-charpara-para-004"))
+                    .clicked()
+                {
                     if let Some(cmd) = area_fit_height_cmd(&self.doc, &sid) {
                         self.exec(cmd);
-                        self.say("区域文本已自动扩高(SetGeom,可撤销)");
+                        self.say(vb_session::i18n::t("ui-app-canvas-input-select-002"));
                     }
                 }
             } else {
-                ui.label(caption(ui, "区域文本:内容未溢出"));
+                ui.label(caption(
+                    ui,
+                    &vb_session::i18n::t("ui-app-panels-charpara-para-005"),
+                ));
             }
-            ui.label(caption(ui, "双击画布区域文本右下角溢出红点也可自动扩高。"));
+            ui.label(caption(
+                ui,
+                &vb_session::i18n::t("ui-app-panels-charpara-para-006"),
+            ));
         } else {
             ui.label(caption(
                 ui,
-                "区域文本属性仅作用于区域文本(点文本宽度自适应)",
+                &vb_session::i18n::t("ui-app-panels-charpara-para-007"),
             ));
         }
         ui.label(caption(
             ui,
-            "画布文字为近似渲染(ADR-0017);导出为真字形,以浏览器校对为准。",
+            &vb_session::i18n::t("ui-app-panels-charpara-char-018"),
         ));
     }
 
@@ -125,7 +148,16 @@ impl VellumApp {
                 self.num_commit(r, cmd.flatten());
             }
             None => {
-                ui.label(caption(ui, &format!("{}:未声明(0 / 继承)", spec.label)));
+                ui.label(caption(
+                    ui,
+                    &vb_session::i18n::t_args(
+                        "ui-app-panels-charpara-para-008",
+                        &[(
+                            "a1",
+                            vb_session::i18n::FluentValue::from((spec.label).to_string()),
+                        )],
+                    ),
+                ));
             }
         }
     }

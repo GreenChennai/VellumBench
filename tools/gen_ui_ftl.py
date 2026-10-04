@@ -218,7 +218,11 @@ def find_matching_paren(src: str, open_pos: int) -> int:
 
 
 def split_top_args(src: str, open_pos: int, close_pos: int):
-    """把 (open_pos, close_pos) 之间的实参按顶层逗号切开,返回 [(start, end)]。"""
+    """把 (open_pos, close_pos) 之间的实参按顶层逗号切开,返回 [(start, end)]。
+
+    括号深度计 ([ 与 )];**大括号也计深**(match 块/结构体字面量内的
+    逗号不是实参分隔符)。
+    """
     parts = []
     depth = 0
     last = open_pos + 1
@@ -238,9 +242,9 @@ def split_top_args(src: str, open_pos: int, close_pos: int):
             continue
         if c == '"':
             instr = True
-        elif c in "([":
+        elif c in "([{" :
             depth += 1
-        elif c in ")]":
+        elif c in ")]}":
             depth -= 1
         elif c == "," and depth == 0:
             parts.append((last, i))
@@ -363,11 +367,35 @@ def scan_sites(path: pathlib.Path, rel: str):
     return out, src
 
 
+def _in_const_context(src: str, blanked: str, pos: int) -> bool:
+    """pos 是否处于某个 const/static 初始化器内(词法启发):
+
+    向前找最近的 `const`/`static` 关键字;若它与 pos 之间存在 `=` 且
+    **没有 `;`**(初始化器以 `;` 收尾),则 pos 在初始化器里。
+    """
+    for kw in ("const", "static"):
+        k = blanked.rfind(kw, 0, pos)
+        while k >= 0:
+            before_ok = k == 0 or not (blanked[k - 1].isalnum() or blanked[k - 1] == "_")
+            after = blanked[k + len(kw) :]
+            after_ok = bool(re.match(r"\s", after[:1])) or after[:1] == "{"
+            if before_ok and after_ok:
+                seg = blanked[k:pos]
+                eq = seg.find("=")
+                # `;` 只看 `=` 之后(类型段如 [T; 3] 带分号,不算收尾)
+                if eq >= 0 and ";" not in seg[eq:]:
+                    return True
+            k = blanked.rfind(kw, 0, k)
+    return False
+
+
 def _classify(src: str, blanked: str, site: Site) -> Site:
     # 常量/静态初始化(无法在 const 上下文调用 fn)
     line_start = src.rfind("\n", 0, site.start) + 1
     line_head = src[line_start : site.start].strip()
-    if re.match(r"(pub\s+)?(const|static)\b", line_head):
+    if re.match(r"(pub\s+)?(const|static)\b", line_head) or _in_const_context(
+        src, blanked, site.start
+    ):
         site.kind = "manual:const"
         site.note = "const/static 初始化器不能调用 fn"
         return site
@@ -411,6 +439,9 @@ def _classify(src: str, blanked: str, site: Site) -> Site:
     site.macro_start = k
     site.kind = {"format": "format", "write": "write", "writeln": "write",
                  "anyhow": "anyhow", "bail": "bail"}[name]
+    if convert_format_value(site.text) is None:
+        site.kind = "manual:spec"
+        site.note = "format 规格含精度/宽度/Debug,Fluent 占位符表达不了,留手动"
     return site
 
 
@@ -618,8 +649,11 @@ def write_sections(zh_body: str, en_body: str):
 
 
 # ────────────────────────── 改写 ──────────────────────────
-def targs_rust(key: str, args, src: str, open_pos: int, close_pos: int):
-    """生成 t_args(…) 调用文本;args = [(name, positional_index_or_None)]。"""
+def targs_rust(key: str, args, src: str, open_pos: int, close_pos: int, keys=None):
+    """生成 t_args(…) 调用文本;args = [(name, positional_index_or_None)]。
+
+    keys 传入时,位置实参表达式中的嵌套 CJK 字面量递归取词。
+    """
     parts = []
     fa_cache = None
     for an, k in args:
@@ -634,19 +668,122 @@ def targs_rust(key: str, args, src: str, open_pos: int, close_pos: int):
             expr = src[fa_cache[idx][0] : fa_cache[idx][1]].strip()
             if not expr:
                 return None
+            if keys:
+                expr = rewrite_nested(expr, keys)
         parts.append(f'("{an}", {FV}(({expr}).to_string()))')
     inner = ", ".join(parts)
     return f"{TARGS_CALL}\"{key}\", &[{inner}])"
 
 
+NESTED_LIT = re.compile(r'"((?:[^"\\]|\\.)*)"')
+NESTED_FMT = re.compile(r"\b(format|anyhow|bail)!\(")
+
+
+def rewrite_nested(expr: str, keys) -> str:
+    """实参表达式里的嵌套 CJK → t()/t_args(从右向左,防偏移互踩)。
+
+    - 嵌套的 format!/anyhow!/bail!(CJK 格式串)整体转换成
+      `format!("{}", t_args(…))` / `anyhow!(…)` 形式;
+    - 残余的裸 CJK 字面量 → t("key")(key 缺失则原样保留)。
+    """
+    out = expr
+    # 先处理嵌套 format 族调用(从右向左)
+    while True:
+        hits = [
+            m for m in NESTED_FMT.finditer(out)
+            if CJK.search(_first_lit(out, m.end()))
+        ]
+        if not hits:
+            break
+        m = hits[-1]
+        open_pos = m.end() - 1
+        try:
+            close_pos = find_matching_paren(out, open_pos)
+        except SystemExit:
+            break
+        args = split_top_args(out, open_pos, close_pos)
+        if not args:
+            break
+        lit = _first_lit_span(out, args[0][0], args[0][1])
+        if lit is None:
+            break
+        ls, le, raw = lit
+        try:
+            text = decode_rust(raw)
+        except SystemExit:
+            break
+        key = keys.get(text)
+        if not key:
+            break
+        conv = convert_format_value(text)
+        if conv is None:
+            break
+        _, fargs = conv
+        inner_src = out
+        call = (
+            targs_rust(key, fargs, inner_src, open_pos, close_pos, keys)
+            if fargs
+            else None
+        )
+        if call is None:
+            break
+        if not fargs:
+            call = f'{T_CALL}{key}")'
+        name = m.group(1)
+        rep = call if name == "format" else f'{name}!("{{}}", {call})'
+        out = out[: m.start()] + rep + out[close_pos + 1 :]
+
+    def sub(m):
+        raw = m.group(1)
+        if not CJK.search(raw):
+            return m.group(0)
+        try:
+            text = decode_rust(raw)
+        except SystemExit:
+            return m.group(0)
+        key = keys.get(text)
+        if not key:
+            return m.group(0)
+        return f'{T_CALL}{key}")'
+
+    return NESTED_LIT.sub(sub, out)
+
+
+def _first_lit_span(src: str, a: int, b: int):
+    m = LIT.search(src, a, b)
+    if not m:
+        return None
+    return m.start(1), m.end(1), m.group(1)
+
+
+def _first_lit(src: str, from_pos: int) -> str:
+    m = LIT.search(src, from_pos)
+    return m.group(1) if m else ""
+
+
 def rewrite(src: str, sites, keys):
-    """从右向左改写;返回(新源码, 改写数, 跳过数)。"""
+    """从右向左改写;返回(新源码, 改写数, 跳过数)。
+
+    嵌套规则:format 族调用 span 内的 CJK 字面量不再单独成编辑(由调用
+    改写整体替换),其实参表达式经 rewrite_nested 递归取词,防止编辑区间
+    重叠互踩。
+    """
+    call_spans = [
+        (s.macro_start, s.close_pos + 1, s)
+        for s in sites
+        if not s.manual and s.kind in ("format", "write", "anyhow", "bail")
+    ]
     edits = []
     skipped = 0
     for s in sites:
         if s.manual:
             skipped += 1
             continue
+        if any(
+            other is not s and a <= s.start - 1 and b >= s.end + 1
+            for a, b, other in call_spans
+        ):
+            continue  # 嵌套在外层 format 族 span 内,由外层改写吞并(实参经 rewrite_nested)
         key = keys.get(s.text)
         if not key:
             skipped += 1
@@ -660,7 +797,9 @@ def rewrite(src: str, sites, keys):
             continue
         _, fargs = conv
         call = (
-            targs_rust(key, fargs, src, s.open_pos, s.close_pos) if fargs else None
+            targs_rust(key, fargs, src, s.open_pos, s.close_pos, keys)
+            if fargs
+            else None
         )
         if call is None:
             skipped += 1
@@ -707,11 +846,12 @@ def main():
     ap.add_argument("--apply", action="store_true", help="改写调用点")
     ap.add_argument("--files", default="", help="apply 子串过滤(逗号分隔)")
     ap.add_argument("--report", action="store_true", help="统计与手动清单")
+    ap.add_argument("--mark-manual", action="store_true", help="给 manual:* 行加 vb-literal-ok 标记")
     a = ap.parse_args()
 
     sidecar = json.loads(SIDECAR.read_text(encoding="utf-8")) if SIDECAR.exists() else {}
 
-    if a.report or not (a.gen or a.apply):
+    if a.report or not (a.gen or a.apply or a.mark_manual):
         sites = all_sites()
         by_kind = collections.Counter(s.kind for s in sites)
         print("=== 分类统计 ===")
@@ -786,6 +926,34 @@ def main():
             tot_s += n_skip
             print(f"{rel}: 改写 {n_edit},跳过 {n_skip}")
         print(f"合计:改写 {tot_e},跳过 {tot_s}")
+        sys.exit(0)
+
+    if a.mark_manual:
+        # 给 manual:* 位点所在行加 `// vb-literal-ok: <理由>` 行豁免
+        # (const 静态表 / match 模式位 / 控制字符;理由必须真实)。
+        REASONS = {
+            "manual:const": " // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)",
+            "manual:pattern": " // vb-literal-ok: match 模式位字符串(内部判别值,非渲染文案)",
+            "manual:ctl": " // vb-literal-ok: 含换行控制字符,单行 ftl 放不下",
+            "manual:spec": " // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动",
+        }
+        by_rel = {}
+        for s in sites:
+            if s.kind in REASONS:
+                by_rel.setdefault(s.rel, []).append(s)
+        n = 0
+        for rel, ss in sorted(by_rel.items()):
+            p = SRC / rel
+            lines = p.read_text(encoding="utf-8").split("\n")
+            for s in sorted(ss, key=lambda x: x.line, reverse=True):
+                ln = lines[s.line - 1]
+                if "vb-literal-ok:" in ln:
+                    continue
+                lines[s.line - 1] = ln.rstrip() + REASONS[s.kind]
+                n += 1
+            p.write_text("\n".join(lines), encoding="utf-8", newline="")
+            print(f"{rel}: 标记 {sum(1 for s in ss)}")
+        print(f"合计标记 {n}")
         sys.exit(0)
 
 

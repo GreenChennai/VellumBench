@@ -35,38 +35,38 @@ const SNAP_BAND: f32 = 56.0;
 /// 路径族(钢笔·铅笔·曲率·剪刀)| 文字·画板·上色·切片 | 视图族。
 const TOOLS: &[(Tool, Name, &str, &str)] = &[
     // 选择族
-    (Tool::Select, Name::ToolSelect, "选择", "V"),
-    (Tool::DirectSelect, Name::ToolDirectSelect, "直接选择", "A"),
-    (Tool::GroupSelect, Name::ToolGroupSelect, "编组选择", "Y"),
+    (Tool::Select, Name::ToolSelect, "选择", "V"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    (Tool::DirectSelect, Name::ToolDirectSelect, "直接选择", "A"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    (Tool::GroupSelect, Name::ToolGroupSelect, "编组选择", "Y"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     // 变换族(05-2 X-4:单击设中心 → 拖拽变换;06 篇 §3.10)
-    (Tool::Rotate, Name::ToolRotate, "旋转", "R"),
-    (Tool::Mirror, Name::ToolMirror, "镜像", "O"),
-    (Tool::Scale, Name::ToolScale, "缩放", "S"),
+    (Tool::Rotate, Name::ToolRotate, "旋转", "R"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    (Tool::Mirror, Name::ToolMirror, "镜像", "O"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    (Tool::Scale, Name::ToolScale, "缩放", "S"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     (
         Tool::FreeTransform,
         Name::ToolFreeTransform,
-        "自由变换",
+        "自由变换", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
         "E",
     ),
     // 形状族
-    (Tool::Rect, Name::ToolRect, "矩形", "M"),
-    (Tool::Ellipse, Name::ToolEllipse, "椭圆", "L"),
-    (Tool::Line, Name::Crosshair, "直线", "\\"),
+    (Tool::Rect, Name::ToolRect, "矩形", "M"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    (Tool::Ellipse, Name::ToolEllipse, "椭圆", "L"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    (Tool::Line, Name::Crosshair, "直线", "\\"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     // 路径族(05-2 X-5:铅笔 N 自由绘制、曲率 Shift+` 自动拟合)
-    (Tool::Pen, Name::KindVector, "钢笔", "P"),
-    (Tool::Pencil, Name::ToolPencil, "铅笔", "N"),
-    (Tool::Curvature, Name::ToolCurvature, "曲率", "Shift+`"),
-    (Tool::Scissors, Name::ToolScissors, "剪刀", "C"),
+    (Tool::Pen, Name::KindVector, "钢笔", "P"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    (Tool::Pencil, Name::ToolPencil, "铅笔", "N"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    (Tool::Curvature, Name::ToolCurvature, "曲率", "Shift+`"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    (Tool::Scissors, Name::ToolScissors, "剪刀", "C"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     // 文字 / 画板 / 上色(吸管·渐变)/ 切片(09-C)
-    (Tool::Text, Name::ToolText, "文字", "T"),
-    (Tool::Artboard, Name::ToolArtboard, "画板", "Shift+O"),
-    (Tool::Eyedropper, Name::ToolEyedropper, "吸管", "I"),
-    (Tool::Gradient, Name::ToolGradient, "渐变", "G"),
-    (Tool::Slice, Name::KindSlice, "切片", "Shift+K"),
+    (Tool::Text, Name::ToolText, "文字", "T"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    (Tool::Artboard, Name::ToolArtboard, "画板", "Shift+O"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    (Tool::Eyedropper, Name::ToolEyedropper, "吸管", "I"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    (Tool::Gradient, Name::ToolGradient, "渐变", "G"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    (Tool::Slice, Name::KindSlice, "切片", "Shift+K"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     // 视图族(05-2 09-E:度量工具入视图族)
-    (Tool::Zoom, Name::ZoomIn, "缩放", "Z"),
-    (Tool::Hand, Name::ToolHand, "抓手", "H"),
-    (Tool::Measure, Name::ToolMeasure, "度量", ""),
+    (Tool::Zoom, Name::ZoomIn, "缩放", "Z"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    (Tool::Hand, Name::ToolHand, "抓手", "H"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    (Tool::Measure, Name::ToolMeasure, "度量", ""), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
 ];
 
 /// 全部工具箱条目(门禁测试与渲染共用)。
@@ -151,7 +151,7 @@ impl VellumApp {
     /// 按当前停靠位装配工具箱 Panel(`ui()` 在画布之前调用)。
     ///
     /// **装配位置由调用方决定**(底向必须在状态栏之前,保证状态栏永远最底),
-    /// 本函数只负责"往该边放一个 Panel"。
+    /// 本函数只负责vb_session::i18n::t("ui-app-toolbar-008")。
     pub(crate) fn docked_toolbar(&mut self, ui: &mut egui::Ui) {
         let t = Tokens::get(self.theme_dark);
         let side = self.toolbar_dock;
@@ -222,7 +222,13 @@ impl VellumApp {
             painter.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
-                format!("吸附到{}", preview.label()),
+                vb_session::i18n::t_args(
+                    "ui-app-toolbar-009",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from((preview.label()).to_string()),
+                    )],
+                ),
                 egui::FontId::proportional(12.0),
                 t.text,
             );
@@ -256,13 +262,32 @@ impl VellumApp {
                 .sense(Sense::drag())
                 .selectable(false),
         );
-        let grip = grip.on_hover_text(format!(
-            "拖动到窗口边缘吸附停靠(当前:{}{})",
-            self.toolbar_dock.label(),
-            match self.toolbar_dock {
-                s if s.is_vertical() => format!(" · {} 列", self.toolbar_columns),
-                _ => String::new(),
-            }
+        let grip = grip.on_hover_text(vb_session::i18n::t_args(
+            "ui-app-toolbar-010",
+            &[
+                (
+                    "a1",
+                    vb_session::i18n::FluentValue::from((self.toolbar_dock.label()).to_string()),
+                ),
+                (
+                    "a2",
+                    vb_session::i18n::FluentValue::from(
+                        (match self.toolbar_dock {
+                            s if s.is_vertical() => vb_session::i18n::t_args(
+                                "ui-app-toolbar-011",
+                                &[(
+                                    "a1",
+                                    vb_session::i18n::FluentValue::from(
+                                        (self.toolbar_columns).to_string(),
+                                    ),
+                                )],
+                            ),
+                            _ => String::new(),
+                        })
+                        .to_string(),
+                    ),
+                ),
+            ],
         ));
         if grip.drag_started() {
             self.toolbar_dragging = true;
@@ -279,7 +304,7 @@ impl VellumApp {
             if let Some(side) = self.toolbar_dock_preview.take() {
                 self.set_toolbar_dock(side);
             } else {
-                self.say("工具栏:未吸附到边缘,已回弹(不做浮动)");
+                self.say(vb_session::i18n::t("ui-app-toolbar-012"));
             }
         }
     }
@@ -338,7 +363,10 @@ impl VellumApp {
                 let fam = family_of(*tool);
                 if fam.len() > 1 {
                     resp.context_menu(|ui| {
-                        ui.label(vb_ui::components::caption(ui, "同族工具"));
+                        ui.label(vb_ui::components::caption(
+                            ui,
+                            &vb_session::i18n::t("ui-app-toolbar-013"),
+                        ));
                         for (t2, _, lb2, k2) in fam {
                             let text = if k2.is_empty() {
                                 (*lb2).to_string()
@@ -431,7 +459,10 @@ impl VellumApp {
                     .inner_margin(theme::space::S3)
                     .show(ui, |ui| {
                         ui.set_min_width(128.0);
-                        ui.label(vb_ui::components::caption(ui, "同族工具(长按展开)"));
+                        ui.label(vb_ui::components::caption(
+                            ui,
+                            &vb_session::i18n::t("ui-app-toolbar-014"),
+                        ));
                         ui.separator();
                         for (t2, icon, lb2, k2) in &fam {
                             let text = vb_ui::components::key_badge_text(lb2, k2);
@@ -495,7 +526,7 @@ impl VellumApp {
         }
     }
 
-    /// 底部浮动工具条(§8.7 ⭐ "Figma UI3 标志设计"):画布底部居中的
+    /// 底部浮动工具条(§8.7 ⭐ vb_session::i18n::t("ui-app-toolbar-015")):画布底部居中的
     /// 浮层 Area —— 高 40、圆角 12、**L4 材质**(中性阶按下标 7 档 +
     /// 表面 96%/92% 不透明 + L4 阴影)、图标 20,当前工具 accent。
     /// 工具箱停靠在底部时自动隐藏(同一排工具不画两遍);
@@ -505,13 +536,13 @@ impl VellumApp {
         // 常用八件:选择族 + 形状 + 文字 + 钢笔 + 抓手(§8.7 示意的
         // "➤ ▭ ◯ T P ╲ ✋");完整 22 工具仍在工具箱。
         const FLOAT_TOOLS: &[(Tool, Name, &str, &str)] = &[
-            (Tool::Select, Name::ToolSelect, "选择", "V"),
-            (Tool::Rect, Name::ToolRect, "矩形", "M"),
-            (Tool::Ellipse, Name::ToolEllipse, "椭圆", "L"),
-            (Tool::Line, Name::Crosshair, "直线", "\\"),
-            (Tool::Text, Name::ToolText, "文字", "T"),
-            (Tool::Pen, Name::KindVector, "钢笔", "P"),
-            (Tool::Hand, Name::ToolHand, "抓手", "H"),
+            (Tool::Select, Name::ToolSelect, "选择", "V"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            (Tool::Rect, Name::ToolRect, "矩形", "M"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            (Tool::Ellipse, Name::ToolEllipse, "椭圆", "L"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            (Tool::Line, Name::Crosshair, "直线", "\\"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            (Tool::Text, Name::ToolText, "文字", "T"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            (Tool::Pen, Name::KindVector, "钢笔", "P"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            (Tool::Hand, Name::ToolHand, "抓手", "H"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
         ];
         let current = self.tool;
         let zoom_pct = (self.camera.zoom * 100.0).round() as i64;
@@ -556,7 +587,7 @@ impl VellumApp {
                                         vb_ui::fonts::font(12.0, vb_ui::fonts::Weight::Medium),
                                     ),
                                 ))
-                                .on_hover_text("适合窗口(Ctrl+0)");
+                                .on_hover_text(vb_session::i18n::t("ui-app-toolbar-016"));
                             if chip.clicked() {
                                 fit_clicked = true;
                             }
@@ -575,18 +606,30 @@ impl VellumApp {
     pub(crate) fn set_toolbar_dock(&mut self, side: DockSide) {
         self.toolbar_dock = side;
         self.toolbar_columns = super::dock_layout::clamp_columns(side, self.toolbar_columns);
-        self.say(format!("工具栏:停靠到{}", side.label()));
+        self.say(vb_session::i18n::t_args(
+            "ui-app-toolbar-017",
+            &[(
+                "a1",
+                vb_session::i18n::FluentValue::from((side.label()).to_string()),
+            )],
+        ));
         self.save_workspace();
     }
 
     /// 切换单/双列(仅左/右停靠有效)。
     pub(crate) fn set_toolbar_columns(&mut self, columns: u8) {
         if !self.toolbar_dock.is_vertical() {
-            self.toast_warn("单/双列仅在左/右停靠时可用(顶/底停靠是单行)");
+            self.toast_warn(vb_session::i18n::t("ui-app-toolbar-018"));
             return;
         }
         self.toolbar_columns = columns.clamp(1, 2);
-        self.say(format!("工具栏:{} 列", self.toolbar_columns));
+        self.say(vb_session::i18n::t_args(
+            "ui-app-toolbar-019",
+            &[(
+                "a1",
+                vb_session::i18n::FluentValue::from((self.toolbar_columns).to_string()),
+            )],
+        ));
         self.save_workspace();
     }
 
@@ -737,7 +780,10 @@ impl VellumApp {
         }
         match super::dock_layout::save(&cfg) {
             Ok(()) => self.workspace_saved = cfg,
-            Err(e) => self.toast_warn(format!("布局未持久化:{e}")),
+            Err(e) => self.toast_warn(vb_session::i18n::t_args(
+                "ui-app-toolbar-020",
+                &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+            )),
         }
         // 窗口层(UI-12):子窗口布局独立落盘;根视口同步基线不写文件
         if self.is_root_window() {
@@ -746,7 +792,10 @@ impl VellumApp {
             let id = self.viewport_id.0.value();
             match super::dock_layout::save_window_layer(id, &layer) {
                 Ok(()) => self.window_layer_saved = layer,
-                Err(e) => self.toast_warn(format!("窗口布局未持久化:{e}")),
+                Err(e) => self.toast_warn(vb_session::i18n::t_args(
+                    "ui-app-toolbar-021",
+                    &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                )),
             }
         }
     }
@@ -761,13 +810,16 @@ impl VellumApp {
                 self.workspace_saved = cfg;
             }
             Err(e) => {
-                self.toast_warn(format!("工作区未持久化:{e}"));
+                self.toast_warn(vb_session::i18n::t_args(
+                    "ui-app-toolbar-022",
+                    &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                ));
                 // 回滚内存列表,保持与磁盘一致(磁盘读不到就清空本次改动)
                 match super::dock_layout::config_path().map(|p| super::dock_layout::load_from(&p)) {
                     Some((disk, _)) => {
                         self.workspace_saved.workspace_presets = disk.workspace_presets
                     }
-                    None => self.toast_warn("找不到配置目录,工作区预设不会持久化"),
+                    None => self.toast_warn(vb_session::i18n::t("ui-app-toolbar-023")),
                 }
             }
         }
@@ -845,7 +897,7 @@ impl VellumApp {
     pub(crate) fn workspace_preset_save(&mut self, name: &str) {
         let name = name.trim();
         if name.is_empty() {
-            self.toast_warn("工作区名不能为空");
+            self.toast_warn(vb_session::i18n::t("ui-app-toolbar-024"));
             return;
         }
         let cur = self.workspace_config();
@@ -874,7 +926,13 @@ impl VellumApp {
         }
         self.workspace_saved.workspace_presets = list;
         self.save_workspace_presets_only();
-        self.say(format!("工作区「{name}」已保存"));
+        self.say(vb_session::i18n::t_args(
+            "ui-app-toolbar-025",
+            &[(
+                "name",
+                vb_session::i18n::FluentValue::from((name).to_string()),
+            )],
+        ));
     }
 
     /// 删除命名工作区预设(立即落盘)。
@@ -883,12 +941,24 @@ impl VellumApp {
         let before = list.len();
         list.retain(|p| p.name != name);
         if list.len() == before {
-            self.say(format!("工作区「{name}」不存在"));
+            self.say(vb_session::i18n::t_args(
+                "ui-app-toolbar-026",
+                &[(
+                    "name",
+                    vb_session::i18n::FluentValue::from((name).to_string()),
+                )],
+            ));
             return;
         }
         self.workspace_saved.workspace_presets = list;
         self.save_workspace_presets_only();
-        self.say(format!("工作区「{name}」已删除"));
+        self.say(vb_session::i18n::t_args(
+            "ui-app-toolbar-027",
+            &[(
+                "name",
+                vb_session::i18n::FluentValue::from((name).to_string()),
+            )],
+        ));
     }
 
     /// 应用命名工作区预设(布局字段整组换血 + 立即落盘)。
@@ -900,7 +970,13 @@ impl VellumApp {
             .find(|p| p.name == name)
             .cloned()
         else {
-            self.toast_warn(format!("工作区「{name}」不存在(可能已在其它窗口删除)"));
+            self.toast_warn(vb_session::i18n::t_args(
+                "ui-app-toolbar-028",
+                &[(
+                    "name",
+                    vb_session::i18n::FluentValue::from((name).to_string()),
+                )],
+            ));
             return;
         };
         let l = p.layout;
@@ -952,7 +1028,13 @@ impl VellumApp {
             a
         };
         self.sec.active_group = l.sec_active_group.min(6);
-        self.say(format!("工作区:「{name}」"));
+        self.say(vb_session::i18n::t_args(
+            "ui-app-toolbar-029",
+            &[(
+                "name",
+                vb_session::i18n::FluentValue::from((name).to_string()),
+            )],
+        ));
         self.save_workspace();
     }
 }

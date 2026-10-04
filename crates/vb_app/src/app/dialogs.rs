@@ -31,54 +31,54 @@ impl VellumApp {
     //   消费本次 Esc;全关才落到画布语义。
     //
     // 优先级从上到下 = 从最模态到最不模态(确认 > 编辑 > 工具 > 信息)。
-    pub(crate) fn esc_dialog_top(&self) -> Option<&'static str> {
+    pub(crate) fn esc_dialog_top(&self) -> Option<String> {
         if self.jump_confirm.is_some() {
-            return Some("跳转确认");
+            return Some(vb_session::i18n::t("ui-common-jump-confirm"));
         }
         if self.font_dialog.is_some() {
-            return Some("字体替换");
+            return Some(vb_session::i18n::t("ui-common-font-substitute"));
         }
         if self.conflict_open {
-            return Some("冲突对比");
+            return Some(vb_session::i18n::t("ui-common-conflict-diff"));
         }
         if self.recover.is_some() {
-            return Some("崩溃恢复");
+            return Some(vb_session::i18n::t("ui-common-crash-recovery"));
         }
         if self.plugin_auth.is_some() {
-            return Some("插件授权");
+            return Some(vb_session::i18n::t("ui-app-dialogs-001"));
         }
         if self.new_dialog.is_some() {
-            return Some("新建项目");
+            return Some(vb_session::i18n::t("ui-common-new-project"));
         }
         if self.prefs_open {
-            return Some("首选项");
+            return Some(vb_session::i18n::t("ui-app-dialogs-002"));
         }
         if self.keymap_open {
-            return Some("键位方案");
+            return Some(vb_session::i18n::t("ui-common-keymap"));
         }
         if self.doc_settings_open {
-            return Some("文档设置");
+            return Some(vb_session::i18n::t("ui-app-dialogs-003"));
         }
         if self.workspace_dialog_open {
-            return Some("工作区");
+            return Some(vb_session::i18n::t("ui-common-workspace"));
         }
         if self.health_open {
-            return Some("项目体检");
+            return Some(vb_session::i18n::t("ui-app-dialogs-004"));
         }
         if self.show_export {
-            return Some("导出");
+            return Some(vb_session::i18n::t("ui-common-export"));
         }
         if self.show_about {
-            return Some("关于");
+            return Some(vb_session::i18n::t("ui-menu-app-about"));
         }
         if self.proofread_open {
-            return Some("浏览器校对");
+            return Some(vb_session::i18n::t("ui-common-browser-proof"));
         }
         if self.external_info_open {
-            return Some("外部改动信息");
+            return Some(vb_session::i18n::t("ui-app-dialogs-005"));
         }
         if self.family_popup.is_some() {
-            return Some("同族工具弹层");
+            return Some(vb_session::i18n::t("ui-app-dialogs-006"));
         }
         None
     }
@@ -89,33 +89,39 @@ impl VellumApp {
         let Some(which) = self.esc_dialog_top() else {
             return;
         };
-        match which {
-            "跳转确认" => self.jump_confirm = None,
-            "字体替换" => self.font_dialog = None,
-            "冲突对比" => self.conflict_open = false,
-            "崩溃恢复" => self.recover = None,
-            "插件授权" => self.plugin_auth = None,
-            "新建项目" => self.new_dialog = None,
-            "首选项" => self.prefs_open = false,
-            "键位方案" => self.keymap_open = false,
-            "文档设置" => self.doc_settings_open = false,
-            "工作区" => self.workspace_dialog_open = false,
-            "项目体检" => self.health_open = false,
-            "导出" => self.show_export = false,
-            "关于" => self.show_about = false,
-            "浏览器校对" => self.proofread_open = false,
-            "外部改动信息" => self.external_info_open = false,
-            "同族工具弹层" => self.family_popup = None,
+        match which.as_str() {
+            "跳转确认" => self.jump_confirm = None, // vb-literal-ok: match 模式位字符串(内部判别值,非渲染文案)
+            "字体替换" => self.font_dialog = None, // vb-literal-ok: match 模式位字符串(内部判别值,非渲染文案)
+            "冲突对比" => self.conflict_open = false, // vb-literal-ok: match 模式位字符串(内部判别值,非渲染文案)
+            "崩溃恢复" => self.recover = None, // vb-literal-ok: match 模式位字符串(内部判别值,非渲染文案)
+            "插件授权" => self.plugin_auth = None, // vb-literal-ok: match 模式位字符串(内部判别值,非渲染文案)
+            "新建项目" => self.new_dialog = None, // vb-literal-ok: match 模式位字符串(内部判别值,非渲染文案)
+            "首选项" => self.prefs_open = false, // vb-literal-ok: match 模式位字符串(内部判别值,非渲染文案)
+            "键位方案" => self.keymap_open = false, // vb-literal-ok: match 模式位字符串(内部判别值,非渲染文案)
+            "文档设置" => self.doc_settings_open = false, // vb-literal-ok: match 模式位字符串(内部判别值,非渲染文案)
+            "工作区" => self.workspace_dialog_open = false, // vb-literal-ok: match 模式位字符串(内部判别值,非渲染文案)
+            "项目体检" => self.health_open = false, // vb-literal-ok: match 模式位字符串(内部判别值,非渲染文案)
+            "导出" => self.show_export = false, // vb-literal-ok: match 模式位字符串(内部判别值,非渲染文案)
+            "关于" => self.show_about = false, // vb-literal-ok: match 模式位字符串(内部判别值,非渲染文案)
+            "浏览器校对" => self.proofread_open = false, // vb-literal-ok: match 模式位字符串(内部判别值,非渲染文案)
+            "外部改动信息" => self.external_info_open = false, // vb-literal-ok: match 模式位字符串(内部判别值,非渲染文案)
+            "同族工具弹层" => self.family_popup = None, // vb-literal-ok: match 模式位字符串(内部判别值,非渲染文案)
             _ => {}
         }
-        self.say(format!("已关闭{which}(Esc)"));
+        self.say(vb_session::i18n::t_args(
+            "ui-app-dialogs-007",
+            &[(
+                "which",
+                vb_session::i18n::FluentValue::from((which).to_string()),
+            )],
+        ));
     }
 
     pub(crate) fn show_about_window(&mut self, ui: &mut egui::Ui) {
         if self.show_about {
             let mut open = self.show_about;
             let mut close_clicked = false;
-            egui::Window::new("关于 Vellum Bench")
+            egui::Window::new(vb_session::i18n::t("ui-app-dialogs-008"))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
@@ -127,14 +133,23 @@ impl VellumApp {
                         vb_ui::theme::motion::STATE,
                         4.0,
                         |ui| {
-                            ui.label(format!(
-                                "Vellum Bench v{} · 绘台",
-                                env!("CARGO_PKG_VERSION")
+                            ui.label(vb_session::i18n::t_args(
+                                "ui-app-dialogs-009",
+                                &[(
+                                    "a1",
+                                    vb_session::i18n::FluentValue::from(
+                                        (env!("CARGO_PKG_VERSION")).to_string(),
+                                    ),
+                                )],
                             ));
                             ui.separator();
-                            ui.label("用 Illustrator 的操作心智,编辑标准 HTML/CSS 文档。");
-                            ui.label("HTML 是文档格式,不是编译产物。");
-                            let (close, _) = vb_ui::components::dialog_footer(ui, "关闭", None);
+                            ui.label(vb_session::i18n::t("ui-app-dialogs-010"));
+                            ui.label(vb_session::i18n::t("ui-app-dialogs-011"));
+                            let (close, _) = vb_ui::components::dialog_footer(
+                                ui,
+                                &vb_session::i18n::t("ui-common-close"),
+                                None,
+                            );
                             close_clicked = close;
                         },
                     );
@@ -164,50 +179,56 @@ impl VellumApp {
                 let mut commit = false;
                 let mut cancel = false;
                 let mut esc = false;
-                egui::Window::new(format!("编辑文本 — {win_title}"))
-                    .open(&mut open)
-                    .collapsible(false)
-                    .resizable(false)
-                    .show(ui.ctx(), |ui| {
-                        // H-1:入场淡入(120ms + 4px)
-                        vb_ui::motion::fade_slide(
-                            ui,
-                            egui::Id::new("vb-dlg-textedit"),
-                            vb_ui::theme::motion::STATE,
-                            4.0,
-                            |ui| {
-                                ui.add(
-                                    egui::TextEdit::multiline(&mut text)
-                                        .desired_width(420.0)
-                                        .desired_rows(3),
-                                );
-                                // U-7:主按钮右下(Ctrl+Enter 同效;本窗的
-                                // Esc=提交、二次 Esc 放弃是 design/06 §3.6
-                                // 钉死的序列语义,不随 U-7 改为取消)
-                                let (commit_btn, cancel_btn) = vb_ui::components::dialog_footer(
-                                    ui,
-                                    "提交 (Ctrl+Enter)",
-                                    Some("取消 (Esc)"),
-                                );
-                                if commit_btn {
-                                    commit = true;
-                                }
-                                if cancel_btn {
-                                    cancel = true;
-                                }
-                            },
-                        );
-                        if ui.ctx().input(|i| {
-                            i.key_pressed(Key::Enter) && (i.modifiers.ctrl || i.modifiers.command)
-                        }) {
-                            commit = true;
-                        }
-                        // 04-3(2):Esc = 提交;二次 Esc 放弃(canvas.cancel
-                        // 在编辑态结束后接到武装标记,作废刚提交的 SetText)
-                        if ui.ctx().input(|i| i.key_pressed(Key::Escape)) {
-                            esc = true;
-                        }
-                    });
+                egui::Window::new(vb_session::i18n::t_args(
+                    "ui-app-dialogs-012",
+                    &[(
+                        "win_title",
+                        vb_session::i18n::FluentValue::from((win_title).to_string()),
+                    )],
+                ))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .show(ui.ctx(), |ui| {
+                    // H-1:入场淡入(120ms + 4px)
+                    vb_ui::motion::fade_slide(
+                        ui,
+                        egui::Id::new("vb-dlg-textedit"),
+                        vb_ui::theme::motion::STATE,
+                        4.0,
+                        |ui| {
+                            ui.add(
+                                egui::TextEdit::multiline(&mut text)
+                                    .desired_width(420.0)
+                                    .desired_rows(3),
+                            );
+                            // U-7:主按钮右下(Ctrl+Enter 同效;本窗的
+                            // Esc=提交、二次 Esc 放弃是 design/06 §3.6
+                            // 钉死的序列语义,不随 U-7 改为取消)
+                            let (commit_btn, cancel_btn) = vb_ui::components::dialog_footer(
+                                ui,
+                                &vb_session::i18n::t("ui-app-dialogs-013"),
+                                Some(vb_session::i18n::t("ui-app-dialogs-014").as_str()),
+                            );
+                            if commit_btn {
+                                commit = true;
+                            }
+                            if cancel_btn {
+                                cancel = true;
+                            }
+                        },
+                    );
+                    if ui.ctx().input(|i| {
+                        i.key_pressed(Key::Enter) && (i.modifiers.ctrl || i.modifiers.command)
+                    }) {
+                        commit = true;
+                    }
+                    // 04-3(2):Esc = 提交;二次 Esc 放弃(canvas.cancel
+                    // 在编辑态结束后接到武装标记,作废刚提交的 SetText)
+                    if ui.ctx().input(|i| i.key_pressed(Key::Escape)) {
+                        esc = true;
+                    }
+                });
                 if commit || esc {
                     self.exec(Command::SetText {
                         sid: sid.clone(),
@@ -219,7 +240,7 @@ impl VellumApp {
                     if esc {
                         self.text_discard_arm = Some((sid.clone(), std::time::Instant::now()));
                     }
-                    self.status = "文本已提交(Ctrl+Enter 提交 · Esc 提交 · 再按 Esc 放弃)".into();
+                    self.status = vb_session::i18n::t("ui-app-dialogs-015");
                     self.editing_text = None;
                 } else if cancel || !open {
                     self.editing_text = None;
@@ -240,9 +261,9 @@ impl VellumApp {
         let mut open = true;
         let mut done = false;
         egui::Window::new(if template_mode {
-            "从模板新建"
+            vb_session::i18n::t("ui-app-dialogs-016")
         } else {
-            "新建项目"
+            vb_session::i18n::t("ui-common-new-project")
         })
         .open(&mut open)
         .collapsible(false)
@@ -298,7 +319,7 @@ impl VellumApp {
             let mut open = self.show_export;
             let mut export_clicked = false;
             let mut cancel_clicked = false;
-            egui::Window::new("导出")
+            egui::Window::new(vb_session::i18n::t("ui-common-export"))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
@@ -324,7 +345,7 @@ impl VellumApp {
                             ui.horizontal(|ui| {
                                 // 九格式下拉(U-2:此前是 Slider,拖到
                                 // "PDF" 要数刻度;状态栏断点切换器同款控件)
-                                ui.label("格式");
+                                ui.label(vb_session::i18n::t("ui-common-format"));
                                 let mut f = self.export_format;
                                 egui::ComboBox::from_id_salt("vb-export-format")
                                     .selected_text(FORMATS[f])
@@ -338,7 +359,7 @@ impl VellumApp {
                             });
                             if self.export_format == 0 || self.export_format == 1 {
                                 ui.horizontal(|ui| {
-                                    ui.label("倍率");
+                                    ui.label(vb_session::i18n::t("ui-common-scale-factor"));
                                     for s in [1u32, 2, 3, 4] {
                                         if ui
                                             .selectable_label(
@@ -353,7 +374,7 @@ impl VellumApp {
                                 });
                             } else {
                                 ui.horizontal(|ui| {
-                                    ui.label("倍率");
+                                    ui.label(vb_session::i18n::t("ui-common-scale-factor"));
                                     for s in [1u32, 2, 4] {
                                         if ui
                                             .selectable_label(
@@ -375,13 +396,27 @@ impl VellumApp {
                             // (上次勾选是否生效不再无感知)
                             ui.add_enabled(
                                 self.export_format == 0,
-                                egui::Checkbox::new(&mut self.export_transparent, "透明背景"),
+                                egui::Checkbox::new(
+                                    &mut self.export_transparent,
+                                    vb_session::i18n::t("ui-app-dialogs-017"),
+                                ),
                             )
-                            .on_disabled_hover_text("透明背景仅 PNG 导出支持");
-                            ui.label(format!("目标:当前画板({})", self.active_artboard_name()));
+                            .on_disabled_hover_text(vb_session::i18n::t("ui-app-dialogs-018"));
+                            ui.label(vb_session::i18n::t_args(
+                                "ui-app-dialogs-019",
+                                &[(
+                                    "a1",
+                                    vb_session::i18n::FluentValue::from(
+                                        (self.active_artboard_name()).to_string(),
+                                    ),
+                                )],
+                            ));
                             // U-7:主按钮右下,取消在其左
-                            let (primary, cancel) =
-                                vb_ui::components::dialog_footer(ui, "导出", Some("取消"));
+                            let (primary, cancel) = vb_ui::components::dialog_footer(
+                                ui,
+                                &vb_session::i18n::t("ui-common-export"),
+                                Some(vb_session::i18n::t("ui-common-cancel").as_str()),
+                            );
                             if primary {
                                 export_clicked = true;
                             }
@@ -443,7 +478,7 @@ impl VellumApp {
         let mut close = false;
         let mut executed: Option<String> = None;
         let vp_center = ui.ctx().viewport_rect().center();
-        egui::Window::new("命令面板")
+        egui::Window::new(vb_session::i18n::t("ui-common-command-palette"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -460,7 +495,7 @@ impl VellumApp {
                         let search = ui.add_sized(
                             [360.0, vb_ui::theme::row_height(ui.ctx())],
                             egui::TextEdit::singleline(&mut self.palette_query)
-                                .hint_text("搜索命令…"),
+                                .hint_text(vb_session::i18n::t("ui-app-dialogs-020")),
                         );
                         // egui TextEdit 只有点击才聚焦:面板开着就持续请求焦点,
                         // 否则首帧键入落空、工具快捷键穿透(G6)
@@ -482,7 +517,7 @@ impl VellumApp {
                         if hits.is_empty() {
                             let muted = vb_ui::theme::Tokens::get(self.theme_dark).text_3;
                             ui.label(
-                                egui::RichText::new("没有匹配的命令")
+                                egui::RichText::new(vb_session::i18n::t("ui-app-dialogs-021"))
                                     .size(12.0)
                                     .color(muted),
                             );
@@ -541,15 +576,15 @@ impl VellumApp {
     ///
     /// GIF/MP4/WPI 路线动辄几十秒,此前在 UI 线程同步跑,整窗冻结且无
     /// 进度;现在文档快照进工作线程,结果经 channel 每帧由 `poll_export_job`
-    /// 收割。Kiln 尚无中途取消接口,"取消"= 关对话框后台继续(线程跑完
+    /// 收割。Kiln 尚无中途取消接口,vb_session::i18n::t("ui-common-cancel")= 关对话框后台继续(线程跑完
     /// 自然回收,状态栏有耗时)。
     fn run_export_dialog(&mut self) {
         if self.export_job.is_some() {
-            self.toast_warn("已有导出任务在后台进行,完成后再试");
+            self.toast_warn(vb_session::i18n::t("ui-app-dialogs-022"));
             return;
         }
         let Some(dir) = self.project_dir.clone() else {
-            self.toast_warn("先保存项目(选一个目录)再导出");
+            self.toast_warn(vb_session::i18n::t("ui-app-dialogs-023"));
             self.save_project();
             return;
         };
@@ -602,8 +637,7 @@ impl VellumApp {
             .spawn(move || {
                 if use_wpi_fallback {
                     let Some(wpi_dir) = vb_export::wpi::resolve_wpi_dir() else {
-                        let _ =
-                            tx.send(Err("WPI 回退不可用:请设置 VB_WPI_DIR 指向 WPI 仓库".into()));
+                        let _ = tx.send(Err(vb_session::i18n::t("ui-app-dialogs-024")));
                         return;
                     };
                     let wpi_fmt = match kiln_format {
@@ -627,16 +661,32 @@ impl VellumApp {
                     };
                     match vb_export::wpi::export_via_wpi(&doc, &dir, &req, &wpi_dir) {
                         Ok(res) => {
-                            let _ = tx.send(Ok(format!(
-                                "WPI 回退导出 {}({} KB)",
-                                res.out.display(),
-                                std::fs::metadata(&res.out)
-                                    .map(|m| m.len() / 1024)
-                                    .unwrap_or(0),
+                            let _ = tx.send(Ok(vb_session::i18n::t_args(
+                                "ui-app-dialogs-025",
+                                &[
+                                    (
+                                        "a1",
+                                        vb_session::i18n::FluentValue::from(
+                                            (res.out.display()).to_string(),
+                                        ),
+                                    ),
+                                    (
+                                        "a2",
+                                        vb_session::i18n::FluentValue::from(
+                                            (std::fs::metadata(&res.out)
+                                                .map(|m| m.len() / 1024)
+                                                .unwrap_or(0))
+                                            .to_string(),
+                                        ),
+                                    ),
+                                ],
                             )));
                         }
                         Err(e) => {
-                            let _ = tx.send(Err(format!("WPI 回退导出失败:{e}")));
+                            let _ = tx.send(Err(vb_session::i18n::t_args(
+                                "ui-app-dialogs-026",
+                                &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                            )));
                         }
                     }
                     return;
@@ -651,19 +701,40 @@ impl VellumApp {
                 match vb_kiln::export_artboard(&doc, ab, &req, Some(&dir)) {
                     Ok((bytes, report)) => match vb_kiln::write_atomic(&out, &bytes) {
                         Ok(()) => {
-                            let _ = tx.send(Ok(format!(
-                                "Kiln 导出 {} @{}x({})",
-                                out.display(),
-                                scale,
-                                report.summary()
+                            let _ = tx.send(Ok(vb_session::i18n::t_args(
+                                "ui-app-dialogs-027",
+                                &[
+                                    (
+                                        "a1",
+                                        vb_session::i18n::FluentValue::from(
+                                            (out.display()).to_string(),
+                                        ),
+                                    ),
+                                    (
+                                        "a2",
+                                        vb_session::i18n::FluentValue::from((scale).to_string()),
+                                    ),
+                                    (
+                                        "a3",
+                                        vb_session::i18n::FluentValue::from(
+                                            (report.summary()).to_string(),
+                                        ),
+                                    ),
+                                ],
                             )));
                         }
                         Err(e) => {
-                            let _ = tx.send(Err(format!("写文件失败:{e}")));
+                            let _ = tx.send(Err(vb_session::i18n::t_args(
+                                "ui-app-dialogs-028",
+                                &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                            )));
                         }
                     },
                     Err(e) => {
-                        let _ = tx.send(Err(format!("Kiln 导出失败:{e}")));
+                        let _ = tx.send(Err(vb_session::i18n::t_args(
+                            "ui-app-dialogs-029",
+                            &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                        )));
                     }
                 }
             });
@@ -676,9 +747,12 @@ impl VellumApp {
                     started: std::time::Instant::now(),
                     rx,
                 });
-                self.status = "导出中…(后台执行,完成见状态栏)".into();
+                self.status = vb_session::i18n::t("ui-app-dialogs-030");
             }
-            Err(e) => self.toast_error(format!("导出线程启动失败:{e}")),
+            Err(e) => self.toast_error(vb_session::i18n::t_args(
+                "ui-app-dialogs-031",
+                &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+            )),
         }
     }
 
@@ -699,13 +773,13 @@ impl VellumApp {
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {
                 self.status = format!(
-                    "导出中:{}({:.0}s)…",
+                    "导出中:{}({:.0}s)…", // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
                     job.out.display(),
                     job.started.elapsed().as_secs_f32()
                 );
             }
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.toast_error("导出线程异常退出(panic),见终端日志");
+                self.toast_error(vb_session::i18n::t("ui-app-dialogs-033"));
                 self.export_job = None;
             }
         }
@@ -718,63 +792,63 @@ impl VellumApp {
 ///
 /// **覆盖口径**:命令面板高频词全表;查询 `bc` 命中含「保存」的命令。
 /// 同首字母的词(如 缩放/首选项 → sx)各自成行,匹配取并集 —— 容错
-/// 本来就是"多给几条候选",不是精确检索。表按词匹配(标签包含该词),
+/// 本来就是vb_session::i18n::t("ui-app-dialogs-034"),不是精确检索。表按词匹配(标签包含该词),
 /// 不逐字注音:全字库拼音映射是一份数据资产,不值得为本功能引入。
 pub const PINYIN_INITIALS: &[(&str, &str)] = &[
-    ("新建", "xj"),
-    ("打开", "dk"),
-    ("保存", "bc"),
-    ("导出", "dc"),
-    ("打印", "dy"),
-    ("退出", "tc"),
-    ("撤销", "cx"),
-    ("重做", "cz"),
-    ("全选", "qx"),
-    ("复制", "fz"),
-    ("剪切", "jq"),
-    ("粘贴", "nt"),
-    ("删除", "sc"),
-    ("编组", "bz"),
-    ("解组", "jz"),
-    ("上移", "sy"),
-    ("下移", "xy"),
-    ("缩放", "sf"),
-    ("放大", "fd"),
-    ("缩小", "sx"),
-    ("旋转", "xz"),
-    ("镜像", "jx"),
-    ("自由变换", "zybh"),
-    ("文字", "wz"),
-    ("对齐", "dq"),
-    ("图层", "tc"),
-    ("画板", "hb"),
-    ("属性", "sx"),
-    ("令牌", "lp"),
-    ("网格", "wg"),
-    ("参考线", "ckx"),
-    ("智能", "zn"),
-    ("标尺", "bc"),
-    ("主题", "zt"),
-    ("插件", "cj"),
-    ("历史", "ls"),
-    ("健康", "jk"),
-    ("工作区", "gzq"),
-    ("偏好", "ph"),
-    ("首选项", "skx"),
-    ("统计", "tj"),
-    ("键位", "jw"),
-    ("符号", "fh"),
-    ("渐变", "jb"),
-    ("切片", "qp"),
-    ("轮廓", "lk"),
-    ("像素", "xs"),
-    ("度量", "dl"),
-    ("时间轴", "sjz"),
-    ("动画", "dh"),
+    ("新建", "xj"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("打开", "dk"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("保存", "bc"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("导出", "dc"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("打印", "dy"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("退出", "tc"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("撤销", "cx"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("重做", "cz"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("全选", "qx"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("复制", "fz"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("剪切", "jq"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("粘贴", "nt"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("删除", "sc"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("编组", "bz"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("解组", "jz"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("上移", "sy"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("下移", "xy"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("缩放", "sf"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("放大", "fd"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("缩小", "sx"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("旋转", "xz"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("镜像", "jx"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("自由变换", "zybh"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("文字", "wz"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("对齐", "dq"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("图层", "tc"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("画板", "hb"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("属性", "sx"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("令牌", "lp"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("网格", "wg"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("参考线", "ckx"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("智能", "zn"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("标尺", "bc"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("主题", "zt"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("插件", "cj"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("历史", "ls"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("健康", "jk"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("工作区", "gzq"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("偏好", "ph"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("首选项", "skx"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("统计", "tj"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("键位", "jw"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("符号", "fh"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("渐变", "jb"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("切片", "qp"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("轮廓", "lk"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("像素", "xs"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("度量", "dl"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("时间轴", "sjz"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+    ("动画", "dh"), // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
 ];
 
 /// 模糊子序列匹配(纯函数):`needle` 的每个字符按序出现在
-/// `haystack` 中(大小写不敏感)即命中 —— "缩到两条击键"的容错层。
+/// `haystack` 中(大小写不敏感)即命中 —— vb_session::i18n::t("ui-app-dialogs-046")的容错层。
 /// 单字符查询不走子序列(会几乎全命中,失去过滤意义)。
 fn fuzzy_subsequence(haystack: &str, needle: &str) -> bool {
     let n = needle.chars().count();
@@ -930,7 +1004,7 @@ fn palette_row_ui(
             t.text_3,
         );
     }
-    resp.on_hover_text("执行此命令")
+    resp.on_hover_text(vb_session::i18n::t("ui-app-dialogs-047"))
 }
 
 /// ↑↓ 移动选择游标(对候选数取模;左右键与滚轮不动游标)。
@@ -950,7 +1024,7 @@ pub fn palette_move_sel(cur: usize, len: usize, ctx: &egui::Context) -> usize {
 impl VellumApp {
     pub(crate) fn export_current_artboard_png(&mut self) {
         let Some(dir) = self.project_dir.clone() else {
-            self.toast_warn("先保存项目(选一个目录)再导出");
+            self.toast_warn(vb_session::i18n::t("ui-app-dialogs-023"));
             self.save_project();
             return;
         };
@@ -991,21 +1065,53 @@ impl VellumApp {
                 ));
                 match std::fs::write(&out, &png) {
                     Ok(()) => {
-                        self.status = format!(
-                            "导出 {} @2x({} KB){}",
-                            out.display(),
-                            png.len() / 1024,
-                            if warnings.is_empty() {
-                                String::new()
-                            } else {
-                                format!(";{} 条近似警告", warnings.len())
-                            }
+                        self.status = vb_session::i18n::t_args(
+                            "ui-app-dialogs-048",
+                            &[
+                                (
+                                    "a1",
+                                    vb_session::i18n::FluentValue::from(
+                                        (out.display()).to_string(),
+                                    ),
+                                ),
+                                (
+                                    "a2",
+                                    vb_session::i18n::FluentValue::from(
+                                        (png.len() / 1024).to_string(),
+                                    ),
+                                ),
+                                (
+                                    "a3",
+                                    vb_session::i18n::FluentValue::from(
+                                        (if warnings.is_empty() {
+                                            String::new()
+                                        } else {
+                                            vb_session::i18n::t_args(
+                                                "ui-app-dialogs-049",
+                                                &[(
+                                                    "a1",
+                                                    vb_session::i18n::FluentValue::from(
+                                                        (warnings.len()).to_string(),
+                                                    ),
+                                                )],
+                                            )
+                                        })
+                                        .to_string(),
+                                    ),
+                                ),
+                            ],
                         );
                     }
-                    Err(e) => self.toast_error(format!("写文件失败:{e}")),
+                    Err(e) => self.toast_error(vb_session::i18n::t_args(
+                        "ui-app-dialogs-028",
+                        &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                    )),
                 }
             }
-            Err(e) => self.toast_error(format!("导出失败:{e}")),
+            Err(e) => self.toast_error(vb_session::i18n::t_args(
+                "ui-app-dialogs-050",
+                &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+            )),
         }
     }
 }

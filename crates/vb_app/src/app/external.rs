@@ -15,7 +15,7 @@ use super::{Drag, Tool, VellumApp};
 pub struct ExternalChange {
     /// 触发时刻(Unix 秒)。
     pub at_unix: i64,
-    /// 触发时刻(单调钟;信息窗的"多久前"用)。
+    /// 触发时刻(单调钟;信息窗的vb_session::i18n::t("ui-app-external-001")用)。
     pub at: std::time::Instant,
     /// 触发文件(相对项目根;最多记 [`EXTERNAL_FILES_MAX`] 个防刷屏)。
     pub files: Vec<String>,
@@ -23,7 +23,7 @@ pub struct ExternalChange {
     pub adopted: bool,
 }
 
-/// 07-R:印记记录的触发文件上限(超出部分在信息窗里以"…等 N 个"归纳)。
+/// 07-R:印记记录的触发文件上限(超出部分在信息窗里以vb_session::i18n::t("ui-app-external-002")归纳)。
 pub const EXTERNAL_FILES_MAX: usize = 8;
 
 impl VellumApp {
@@ -32,12 +32,12 @@ impl VellumApp {
     pub(crate) fn save_project(&mut self) -> bool {
         if self.project_dir.is_none() {
             let picked = rfd::FileDialog::new()
-                .set_title("选择项目保存目录")
+                .set_title(vb_session::i18n::t("ui-app-external-003"))
                 .pick_folder();
             self.project_dir = picked;
         }
         let Some(dir) = self.project_dir.clone() else {
-            self.status = "已取消保存".into();
+            self.status = vb_session::i18n::t("ui-app-external-004");
             return false;
         };
         match vb_doc::export::write_project(&self.doc, &dir) {
@@ -45,14 +45,25 @@ impl VellumApp {
                 self.doc.rev += 1;
                 self.saved_rev = self.doc.rev;
                 self.last_self_write = Some(std::time::Instant::now());
-                self.status = format!(
-                    "已保存 {} → {}",
-                    files
-                        .iter()
-                        .map(|p| p.file_name().unwrap_or_default().to_string_lossy())
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    dir.display()
+                self.status = vb_session::i18n::t_args(
+                    "ui-app-external-005",
+                    &[
+                        (
+                            "a1",
+                            vb_session::i18n::FluentValue::from(
+                                (files
+                                    .iter()
+                                    .map(|p| p.file_name().unwrap_or_default().to_string_lossy())
+                                    .collect::<Vec<_>>()
+                                    .join(", "))
+                                .to_string(),
+                            ),
+                        ),
+                        (
+                            "a2",
+                            vb_session::i18n::FluentValue::from((dir.display()).to_string()),
+                        ),
+                    ],
                 );
                 // 02-2-2:保存也记最近(经外壳单点写 recent.json)
                 if let Some(tx) = &self.shell_tx {
@@ -66,7 +77,10 @@ impl VellumApp {
                 true
             }
             Err(e) => {
-                self.toast_error(format!("保存失败:{e}"));
+                self.toast_error(vb_session::i18n::t_args(
+                    "ui-app-external-006",
+                    &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                ));
                 false
             }
         }
@@ -162,9 +176,15 @@ impl VellumApp {
                         files: stamp_files(&dir),
                         adopted: true,
                     });
-                    self.status = format!("检测到外部修改,已自动采用(Agent 热重载,{n} 画板)");
+                    self.status = vb_session::i18n::t_args(
+                        "ui-app-external-007",
+                        &[("n", vb_session::i18n::FluentValue::from((n).to_string()))],
+                    );
                 }
-                Err(e) => self.toast_error(format!("热重载失败:{e}")),
+                Err(e) => self.toast_error(vb_session::i18n::t_args(
+                    "ui-app-external-008",
+                    &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                )),
             }
         } else {
             // 07-R:外部改动印记(未采用 —— 本地有未保存编辑)
@@ -174,7 +194,7 @@ impl VellumApp {
                 files: stamp_files(&dir),
                 adopted: false,
             });
-            self.toast_warn("检测到磁盘修改,但本地有未保存编辑(未自动采用;先 Ctrl+S 或撤销)");
+            self.toast_warn(vb_session::i18n::t("ui-app-external-009"));
         }
     }
 
@@ -182,7 +202,7 @@ impl VellumApp {
     /// 「打开项目…」经外壳开新窗口(02-5-1 一项目一窗口),不走这里。
     pub(super) fn open_project_inplace(&mut self) {
         if let Some(dir) = rfd::FileDialog::new()
-            .set_title("打开项目目录(含 index.html)")
+            .set_title(vb_session::i18n::t("ui-app-dispatch-004"))
             .pick_folder()
         {
             match import_with_layout(&dir) {
@@ -203,9 +223,21 @@ impl VellumApp {
                     // 04-5-1/2:打开项目 → 自动适合窗口 + 强制回选择工具
                     self.set_tool(Tool::Select);
                     self.fit_pending = true;
-                    self.status = format!("已打开 {}(画板 {n})", dir.display());
+                    self.status = vb_session::i18n::t_args(
+                        "ui-app-external-010",
+                        &[
+                            (
+                                "a1",
+                                vb_session::i18n::FluentValue::from((dir.display()).to_string()),
+                            ),
+                            ("n", vb_session::i18n::FluentValue::from((n).to_string())),
+                        ],
+                    );
                 }
-                Err(e) => self.toast_error(format!("打开失败:{e}")),
+                Err(e) => self.toast_error(vb_session::i18n::t_args(
+                    "ui-app-external-011",
+                    &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                )),
             }
         }
     }

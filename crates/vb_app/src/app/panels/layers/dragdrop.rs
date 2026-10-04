@@ -60,12 +60,15 @@ impl VellumApp {
     ) {
         resp.context_menu(|ui| {
             // ── 改名(与双击行内编辑同一入口)──
-            if ui.button("改名").clicked() {
+            if ui
+                .button(vb_session::i18n::t("ui-app-panels-layers-dragdrop-001"))
+                .clicked()
+            {
                 self.editing_layer = Some(r.sid.clone());
                 ui.close();
             }
             // ── 复制(克隆子树插到自身之后;走 Insert 命令,可撤销)──
-            if !r.is_artboard && ui.button("复制").clicked() {
+            if !r.is_artboard && ui.button(vb_session::i18n::t("ui-common-copy")).clicked() {
                 let parent_sid = r.parent_sid.clone().unwrap_or_default();
                 let mut doc = std::mem::take(&mut self.doc);
                 let dup = dup_insert_cmd(&mut doc, &r.sid, &parent_sid, r.index + 1);
@@ -80,22 +83,33 @@ impl VellumApp {
                     ));
                     self.exec(Command::Compound { cmds });
                     self.selection = vec![new_sid].into();
-                    self.say("已复制(副本插到原对象之后;Ctrl+Z 可撤销)");
+                    self.say(vb_session::i18n::t("ui-app-panels-layers-dragdrop-002"));
                 }
                 ui.close();
             }
             // ── 删除(画板行不删:保底至少一块画板的守卫在选区删除路径)──
-            if !r.is_artboard && ui.button("删除").clicked() {
+            if !r.is_artboard
+                && ui
+                    .button(vb_session::i18n::t("ui-menu-object-delete"))
+                    .clicked()
+            {
                 self.selection = vec![r.sid.clone()].into();
                 self.exec(Command::Delete {
                     target_sid: r.sid.clone(),
                     captured: None,
                 });
-                self.say("已删除(Ctrl+Z 撤销)");
+                self.say(vb_session::i18n::t("ui-app-commands-002"));
                 ui.close();
             }
             // ── 显隐 / 锁定(与行内眼睛/锁同一命令)──
-            if ui.button(if r.hidden { "显示" } else { "隐藏" }).clicked() {
+            if ui
+                .button(if r.hidden {
+                    vb_session::i18n::t("ui-common-show")
+                } else {
+                    vb_session::i18n::t("ui-common-hide")
+                })
+                .clicked()
+            {
                 self.exec(Command::SetFlags {
                     sid: r.sid.clone(),
                     hidden: Some(!r.hidden),
@@ -104,7 +118,14 @@ impl VellumApp {
                 });
                 ui.close();
             }
-            if ui.button(if r.locked { "解锁" } else { "锁定" }).clicked() {
+            if ui
+                .button(if r.locked {
+                    vb_session::i18n::t("ui-common-unlock")
+                } else {
+                    vb_session::i18n::t("ui-common-lock")
+                })
+                .clicked()
+            {
                 self.exec(Command::SetFlags {
                     sid: r.sid.clone(),
                     hidden: None,
@@ -114,33 +135,56 @@ impl VellumApp {
                 ui.close();
             }
             // ── 前后移(与行内 ↑ ↓ 同一命令路径)──
-            if ui.button("前移一层").clicked() {
+            if ui
+                .button(vb_session::i18n::t("ui-menu-object-bring_forward"))
+                .clicked()
+            {
                 self.reorder(&r.sid, 1);
                 ui.close();
             }
-            if ui.button("后移一层").clicked() {
+            if ui
+                .button(vb_session::i18n::t("ui-menu-object-send_backward"))
+                .clicked()
+            {
                 self.reorder(&r.sid, -1);
                 ui.close();
             }
             ui.separator();
             // ── 编组(多选同父;走既有 group_selection 命令路径)──
-            if self.selection.len() >= 2 && ui.button("编组(Ctrl+G)").clicked() {
+            if self.selection.len() >= 2
+                && ui
+                    .button(vb_session::i18n::t("ui-app-panels-layers-dragdrop-003"))
+                    .clicked()
+            {
                 self.group_selection();
                 ui.close();
             }
             // 隔离(仅容器;复用既有隔离模式栈)
-            if r.container && ui.button("隔离(进入隔离模式)").clicked() {
+            if r.container
+                && ui
+                    .button(vb_session::i18n::t("ui-app-panels-layers-dragdrop-004"))
+                    .clicked()
+            {
                 if let Some(nid) = self.doc.find_by_sid(&r.sid) {
                     self.isolate_stack.push(nid);
                     self.selection = vec![r.sid.clone()].into();
-                    self.say(format!("已进入隔离模式:{}(Esc 退出)", r.name));
+                    self.say(vb_session::i18n::t_args(
+                        "ui-app-panels-layers-dragdrop-005",
+                        &[(
+                            "a1",
+                            vb_session::i18n::FluentValue::from((r.name).to_string()),
+                        )],
+                    ));
                 }
                 ui.close();
             }
-            if ui.button("锁定其他").clicked() {
+            if ui
+                .button(vb_session::i18n::t("ui-app-panels-layers-dragdrop-006"))
+                .clicked()
+            {
                 let others = others_of(&self.doc, &r.sid);
                 if others.is_empty() {
-                    self.say("锁定其他:没有其他对象");
+                    self.say(vb_session::i18n::t("ui-app-panels-layers-dragdrop-007"));
                 } else {
                     let n = others.len();
                     let cmds = others
@@ -153,14 +197,20 @@ impl VellumApp {
                         })
                         .collect();
                     self.exec(Command::Compound { cmds });
-                    self.say(format!("已锁定其他 {n} 个对象"));
+                    self.say(vb_session::i18n::t_args(
+                        "ui-app-panels-layers-dragdrop-008",
+                        &[("n", vb_session::i18n::FluentValue::from((n).to_string()))],
+                    ));
                 }
                 ui.close();
             }
-            if ui.button("隐藏其他").clicked() {
+            if ui
+                .button(vb_session::i18n::t("ui-app-panels-layers-dragdrop-009"))
+                .clicked()
+            {
                 let others = others_of(&self.doc, &r.sid);
                 if others.is_empty() {
-                    self.say("隐藏其他:没有其他对象");
+                    self.say(vb_session::i18n::t("ui-app-panels-layers-dragdrop-010"));
                 } else {
                     let n = others.len();
                     let cmds = others
@@ -174,18 +224,31 @@ impl VellumApp {
                         .collect();
                     self.exec(Command::Compound { cmds });
                     self.selection = vec![r.sid.clone()].into();
-                    self.say(format!("已隐藏其他 {n} 个对象"));
+                    self.say(vb_session::i18n::t_args(
+                        "ui-app-panels-layers-dragdrop-011",
+                        &[("n", vb_session::i18n::FluentValue::from((n).to_string()))],
+                    ));
                 }
                 ui.close();
             }
-            if ui.button("选择同类").clicked() {
+            if ui
+                .button(vb_session::i18n::t("ui-app-panels-layers-dragdrop-012"))
+                .clicked()
+            {
                 let sids = same_kind_sids(&self.doc, &r.sid);
                 let n = sids.len();
                 self.selection = sids.into();
-                self.say(format!("已选择同类 {n} 个对象"));
+                self.say(vb_session::i18n::t_args(
+                    "ui-app-panels-layers-dragdrop-013",
+                    &[("n", vb_session::i18n::FluentValue::from((n).to_string()))],
+                ));
                 ui.close();
             }
-            if !r.is_artboard && ui.button("转换为编组").clicked() {
+            if !r.is_artboard
+                && ui
+                    .button(vb_session::i18n::t("ui-app-panels-layers-dragdrop-014"))
+                    .clicked()
+            {
                 let mut doc = std::mem::take(&mut self.doc);
                 let cmd = wrap_in_group_cmd(&mut doc, &r.sid);
                 let gsid = cmd.as_ref().and_then(|c| match c {
@@ -199,9 +262,9 @@ impl VellumApp {
                         if let Some(g) = gsid {
                             self.selection = vec![g].into();
                         }
-                        self.say("已转换为编组");
+                        self.say(vb_session::i18n::t("ui-app-panels-layers-dragdrop-015"));
                     }
-                    None => self.say("转换为编组:该对象不支持"),
+                    None => self.say(vb_session::i18n::t("ui-app-panels-layers-dragdrop-016")),
                 }
                 ui.close();
             }
@@ -241,7 +304,7 @@ impl VellumApp {
                 ));
                 self.exec(Command::Compound { cmds });
                 self.selection = vec![new_sid].into();
-                self.say("已复制到目标位置(Alt+拖拽)");
+                self.say(vb_session::i18n::t("ui-app-panels-layers-dragdrop-017"));
             }
         } else {
             let cmds = move_cmds(&self.doc, &drag.sid, &parent_sid, index);
@@ -258,9 +321,9 @@ impl VellumApp {
             };
             if moved {
                 self.say(if matches!(target, DropTarget::Into { .. }) {
-                    "已移入目标位置(世界位置保持)"
+                    vb_session::i18n::t("ui-app-panels-layers-dragdrop-018")
                 } else {
-                    "已调整层序"
+                    vb_session::i18n::t("ui-app-panels-layers-dragdrop-019")
                 });
             }
             self.selection = vec![drag.sid.clone()].into();

@@ -20,7 +20,7 @@ use super::VellumApp;
 #[derive(Default)]
 pub(crate) struct KeymapEditor {
     /// 命令行表:(组名, 命令 id)。「编辑 → 键盘快捷键…」打开时重建。
-    pub rows: Vec<(&'static str, &'static str)>,
+    pub rows: Vec<(String, &'static str)>,
     /// 组过滤选择(下标进 [`Self::group_names`];0 = 全部,末位 = 其他)。
     pub group_sel: usize,
     /// 关键字过滤(标签 / id 子串,大小写不敏感)。
@@ -37,10 +37,10 @@ pub(crate) struct KeymapEditor {
 
 impl KeymapEditor {
     /// 组名表(过滤下拉;「全部」+ 各菜单 + 「其他」)。
-    pub fn group_names() -> Vec<&'static str> {
-        let mut v = vec!["全部"];
-        v.extend(crate::shortcuts::MENU_TITLES.iter().copied());
-        v.push("其他");
+    pub fn group_names() -> Vec<String> {
+        let mut v: Vec<String> = vec![crate::i18n::t("ui-common-all")]; // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+        v.extend(crate::shortcuts::MENU_TITLES.iter().map(|s| s.to_string()));
+        v.push(vb_session::i18n::t("ui-common-other"));
         v
     }
 
@@ -70,22 +70,21 @@ impl KeymapEditor {
     }
 
     /// 过滤后的行(组选择 + 关键字;关键字对中文标签与 id 生效)。
-    pub fn filtered(&self) -> Vec<(&'static str, &'static str)> {
+    pub fn filtered(&self) -> Vec<(String, &'static str)> {
         let groups = Self::group_names();
         let sel = self.group_sel;
         let others = Self::others_index();
         let q = self.filter.trim().to_lowercase();
         self.rows
             .iter()
-            .copied()
-            .filter(|&(group, id)| {
+            .filter(|(group, id)| {
                 let in_menu = crate::shortcuts::MENUS
                     .iter()
                     .flat_map(|m| m.iter())
-                    .any(|i| i.id == id);
+                    .any(|i| i.id == *id);
                 let group_hit = sel == 0
                     || (sel == others && !in_menu)
-                    || (sel > 0 && sel < others && group == groups[sel]);
+                    || (sel > 0 && sel < others && *group == groups[sel]);
                 let text_hit = q.is_empty()
                     || id.to_lowercase().contains(&q)
                     || crate::shortcuts::command_label(id)
@@ -93,12 +92,13 @@ impl KeymapEditor {
                         .unwrap_or(false);
                 group_hit && text_hit
             })
+            .cloned()
             .collect()
     }
 
     /// 测试别名:过滤后的行(与 [`Self::filtered`] 同义)。
     #[cfg(test)]
-    pub fn visible_rows(&self) -> Vec<(&'static str, &'static str)> {
+    pub fn visible_rows(&self) -> Vec<(String, &'static str)> {
         self.filtered()
     }
 }
@@ -146,7 +146,7 @@ impl VellumApp {
         }
         let mut open = true;
         let mut action: Option<KeymapAction> = None;
-        egui::Window::new("键盘快捷键")
+        egui::Window::new(vb_session::i18n::t("ui-app-keymap-dialog-001"))
             .open(&mut open)
             .collapsible(false)
             .default_size([580.0, 460.0])
@@ -154,20 +154,29 @@ impl VellumApp {
                 // 过滤行:组下拉 + 关键字
                 let groups = KeymapEditor::group_names();
                 ui.horizontal(|ui| {
-                    ui.label("分组");
+                    ui.label(vb_session::i18n::t("ui-app-keymap-dialog-002"));
                     let sel = self.keymap_editor.group_sel;
                     egui::ComboBox::from_id_salt("vb-keymap-group")
-                        .selected_text(groups.get(sel).copied().unwrap_or("全部"))
+                        .selected_text(
+                            groups
+                                .get(sel)
+                                .cloned()
+                                .unwrap_or_else(|| vb_session::i18n::t("ui-common-all")),
+                        )
                         .show_ui(ui, |ui| {
                             for (i, g) in groups.iter().enumerate() {
-                                ui.selectable_value(&mut self.keymap_editor.group_sel, i, *g);
+                                ui.selectable_value(
+                                    &mut self.keymap_editor.group_sel,
+                                    i,
+                                    g.as_str(),
+                                );
                             }
                         });
-                    ui.label("搜索");
+                    ui.label(vb_session::i18n::t("ui-common-search"));
                     ui.add_sized(
                         [150.0, vb_ui::theme::row_height(ui.ctx())],
                         egui::TextEdit::singleline(&mut self.keymap_editor.filter)
-                            .hint_text("命令名 / id…"),
+                            .hint_text(vb_session::i18n::t("ui-app-keymap-dialog-003")),
                     );
                 });
                 ui.separator();
@@ -181,7 +190,13 @@ impl VellumApp {
                         .unwrap_or("");
                     ui.colored_label(
                         vb_ui::theme::tokens(ui.ctx()).warn,
-                        format!("正在录制「{label}」:请按下新的组合键(Esc 取消)"),
+                        vb_session::i18n::t_args(
+                            "ui-app-keymap-dialog-004",
+                            &[(
+                                "label",
+                                vb_session::i18n::FluentValue::from((label).to_string()),
+                            )],
+                        ),
                     );
                     ui.separator();
                 }
@@ -189,7 +204,7 @@ impl VellumApp {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     let rows = self.keymap_editor.filtered();
                     for (group, id) in rows {
-                        self.keymap_row(ui, group, id, &mut action);
+                        self.keymap_row(ui, &group, id, &mut action);
                     }
                 });
                 ui.separator();
@@ -198,12 +213,21 @@ impl VellumApp {
                     ui.colored_label(vb_ui::theme::tokens(ui.ctx()).danger, err);
                 }
                 ui.horizontal(|ui| {
-                    if ui.button("恢复默认方案").clicked() {
+                    if ui
+                        .button(vb_session::i18n::t("ui-app-keymap-dialog-005"))
+                        .clicked()
+                    {
                         action = Some(KeymapAction::ResetAll);
                     }
                     ui.weak(match keymap::keymap_path() {
-                        Some(p) => format!("方案文件:{}", p.display()),
-                        None => "方案文件:不可用(未找到配置目录)".to_string(),
+                        Some(p) => vb_session::i18n::t_args(
+                            "ui-app-keymap-dialog-006",
+                            &[(
+                                "a1",
+                                vb_session::i18n::FluentValue::from((p.display()).to_string()),
+                            )],
+                        ),
+                        None => vb_session::i18n::t("ui-app-keymap-dialog-007").to_string(),
                     });
                 });
             });
@@ -227,7 +251,7 @@ impl VellumApp {
     fn keymap_row(
         &mut self,
         ui: &mut egui::Ui,
-        group: &'static str,
+        group: &str,
         id: &'static str,
         action: &mut Option<KeymapAction>,
     ) {
@@ -247,13 +271,29 @@ impl VellumApp {
             let text = if conflict_ids.is_empty() {
                 egui::RichText::new(format!("{group} · {label}")).size(12.0)
             } else {
-                egui::RichText::new(format!(
-                    "{group} · {label}(与 {} 冲突)",
-                    conflict_ids
-                        .iter()
-                        .map(|c| crate::shortcuts::command_label(c).unwrap_or(c))
-                        .collect::<Vec<_>>()
-                        .join("、")
+                egui::RichText::new(vb_session::i18n::t_args(
+                    "ui-app-keymap-dialog-008",
+                    &[
+                        (
+                            "group",
+                            vb_session::i18n::FluentValue::from((group).to_string()),
+                        ),
+                        (
+                            "label",
+                            vb_session::i18n::FluentValue::from((label).to_string()),
+                        ),
+                        (
+                            "a1",
+                            vb_session::i18n::FluentValue::from(
+                                (conflict_ids
+                                    .iter()
+                                    .map(|c| crate::shortcuts::command_label(c).unwrap_or(c))
+                                    .collect::<Vec<_>>()
+                                    .join("、"))
+                                .to_string(),
+                            ),
+                        ),
+                    ],
                 ))
                 .size(12.0)
                 .color(t.danger)
@@ -276,18 +316,27 @@ impl VellumApp {
             if pending_here {
                 if let Some((k, c, s, a)) = self.keymap_editor.pending {
                     ui.colored_label(t.warn, keymap::combo_text(k, c, s, a));
-                    if ui.small_button("应用").clicked() {
+                    if ui
+                        .small_button(vb_session::i18n::t("ui-common-apply"))
+                        .clicked()
+                    {
                         *action = Some(KeymapAction::Apply {
                             id: id.to_string(),
                             combo: keymap::combo_text(k, c, s, a),
                         });
                     }
-                    if ui.small_button("取消").clicked() {
+                    if ui
+                        .small_button(vb_session::i18n::t("ui-common-cancel"))
+                        .clicked()
+                    {
                         self.keymap_editor.pending = None;
                         self.keymap_editor.pending_row = None;
                     }
                 }
-            } else if ui.small_button("修改").clicked() {
+            } else if ui
+                .small_button(vb_session::i18n::t("ui-common-modify"))
+                .clicked()
+            {
                 // 进入录制态(清旧 pending 与错误)
                 self.keymap_editor.pending = None;
                 self.keymap_editor.pending_row = Some(id.to_string());
@@ -298,7 +347,11 @@ impl VellumApp {
                     .iter()
                     .position(|(_, rid)| *rid == id);
             }
-            if overridden && ui.small_button("还原").clicked() {
+            if overridden
+                && ui
+                    .small_button(vb_session::i18n::t("ui-app-keymap-dialog-009"))
+                    .clicked()
+            {
                 *action = Some(KeymapAction::Clear { id: id.to_string() });
             }
         });
@@ -307,7 +360,13 @@ impl VellumApp {
     /// 应用一条覆盖(冲突 → 拒绝并给中文原因;成功 → 重建有效集 + 落盘)。
     pub(crate) fn keymap_apply(&mut self, id: String, combo: String) {
         let Some((k, c, s, a)) = keymap::parse_combo(&combo) else {
-            self.keymap_editor.error = Some(format!("无法识别组合键「{combo}」"));
+            self.keymap_editor.error = Some(vb_session::i18n::t_args(
+                "ui-app-keymap-dialog-010",
+                &[(
+                    "combo",
+                    vb_session::i18n::FluentValue::from((combo).to_string()),
+                )],
+            ));
             return;
         };
         let hits = keymap::combo_conflicts(&self.keymap, &self.keymap_live, &(k, c, s, a), &id);
@@ -316,9 +375,18 @@ impl VellumApp {
                 .iter()
                 .map(|h| crate::shortcuts::command_label(h).unwrap_or(h))
                 .collect();
-            self.keymap_editor.error = Some(format!(
-                "已拒绝:「{combo}」已被 {} 使用(同一组合键只能绑定一个命令)",
-                names.join("、")
+            self.keymap_editor.error = Some(vb_session::i18n::t_args(
+                "ui-app-keymap-dialog-011",
+                &[
+                    (
+                        "combo",
+                        vb_session::i18n::FluentValue::from((combo).to_string()),
+                    ),
+                    (
+                        "a1",
+                        vb_session::i18n::FluentValue::from((names.join("、")).to_string()),
+                    ),
+                ],
             ));
             return;
         }
@@ -330,9 +398,20 @@ impl VellumApp {
         });
         self.keymap_reload_live();
         let label = crate::shortcuts::command_label(&id).unwrap_or(&id);
-        self.say(format!(
-            "键位已更新:{label} → {}",
-            self.menu_key_text(&id).unwrap_or_default()
+        self.say(vb_session::i18n::t_args(
+            "ui-app-keymap-dialog-012",
+            &[
+                (
+                    "label",
+                    vb_session::i18n::FluentValue::from((label).to_string()),
+                ),
+                (
+                    "a1",
+                    vb_session::i18n::FluentValue::from(
+                        (self.menu_key_text(&id).unwrap_or_default()).to_string(),
+                    ),
+                ),
+            ],
         ));
     }
 
@@ -342,9 +421,22 @@ impl VellumApp {
         self.keymap_reload_live();
         self.keymap_editor.error = None;
         let label = crate::shortcuts::command_label(&id).unwrap_or(&id);
-        self.say(format!(
-            "「{label}」已还原默认键位({})",
-            crate::shortcuts::key_text_for(&id).unwrap_or_else(|| "无绑定".into())
+        self.say(vb_session::i18n::t_args(
+            "ui-app-keymap-dialog-013",
+            &[
+                (
+                    "label",
+                    vb_session::i18n::FluentValue::from((label).to_string()),
+                ),
+                (
+                    "a1",
+                    vb_session::i18n::FluentValue::from(
+                        (crate::shortcuts::key_text_for(&id)
+                            .unwrap_or_else(|| vb_session::i18n::t("ui-app-keymap-dialog-014")))
+                        .to_string(),
+                    ),
+                ),
+            ],
         ));
     }
 
@@ -353,7 +445,7 @@ impl VellumApp {
         self.keymap.bindings.clear();
         self.keymap_reload_live();
         self.keymap_editor.error = None;
-        self.say("键位方案已恢复默认(所有自定义覆盖已清除)");
+        self.say(vb_session::i18n::t("ui-app-keymap-dialog-015"));
     }
 
     /// 重建有效键位集并落盘(apply/clear/reset 的共同尾部)。

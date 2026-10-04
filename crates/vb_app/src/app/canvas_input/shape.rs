@@ -45,7 +45,7 @@ impl VellumApp {
                             w: 120.0,
                             h: 80.0,
                         });
-                        self.status = "已创建对象(单击默认尺寸)".into();
+                        self.status = vb_session::i18n::t("ui-app-canvas-input-shape-001");
                     }
                 }
                 return true;
@@ -57,7 +57,7 @@ impl VellumApp {
             if !self.selection.is_empty() {
                 self.slice_from_selection();
             } else {
-                self.status = "切片:拖框建立切片,或先选中对象再单击(从选区建立)".into();
+                self.status = vb_session::i18n::t("ui-app-canvas-input-shape-002");
             }
             return true;
         }

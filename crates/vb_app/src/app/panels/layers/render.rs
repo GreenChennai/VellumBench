@@ -20,7 +20,7 @@ impl VellumApp {
     /// 没有画板时给中文 toast 指路(绝不「点了没反应」)。
     fn layers_new_layer_in_active_artboard(&mut self) {
         let Some(ab) = self.active_artboard() else {
-            self.toast_warn("没有画板:先用画板工具(Shift+O)在画布上创建");
+            self.toast_warn(vb_session::i18n::t("ui-app-panels-layers-render-001"));
             return;
         };
         let (ab_sid, ab_w, ab_h) = {
@@ -31,7 +31,11 @@ impl VellumApp {
                 n.geom.h.max(160.0),
             )
         };
-        let mut node = vb_doc::model::Node::new(NodeKind::Layer, "新图层", self.doc.alloc_sid());
+        let mut node = vb_doc::model::Node::new(
+            NodeKind::Layer,
+            vb_session::i18n::t("ui-app-panels-layers-render-002"),
+            self.doc.alloc_sid(),
+        );
         // 默认尺寸 = 画板的 1/4(上限 240×160),不出界、可拖可改
         node.geom = vb_doc::model::Geom {
             x: 0.0,
@@ -50,11 +54,17 @@ impl VellumApp {
             tree,
         });
         self.selection = vec![sid.clone()].into();
-        self.say(format!("已新建图层 {sid}(画板末尾;Ctrl+Z 可撤销)"));
+        self.say(vb_session::i18n::t_args(
+            "ui-app-panels-layers-render-003",
+            &[(
+                "sid",
+                vb_session::i18n::FluentValue::from((sid).to_string()),
+            )],
+        ));
     }
 
     pub(crate) fn layers_tab(&mut self, ui: &mut egui::Ui) {
-        ui.heading("图层");
+        ui.heading(vb_session::i18n::t("ui-menu-window-tab_layers"));
         ui.separator();
 
         // --- 搜索框(02-4-7;纯前端过滤) ---
@@ -62,7 +72,8 @@ impl VellumApp {
             ui.monospace("🔍");
             ui.add_sized(
                 [ui.available_width(), vb_ui::theme::row_height(ui.ctx())],
-                egui::TextEdit::singleline(&mut self.layer_search).hint_text("搜索图层名"),
+                egui::TextEdit::singleline(&mut self.layer_search)
+                    .hint_text(vb_session::i18n::t("ui-app-panels-layers-render-004")),
             );
         });
         let query = self.layer_search.clone();
@@ -81,26 +92,40 @@ impl VellumApp {
                     // (图标 + display 标题 + body 引导 + 主行动按钮)。
                     // 主行动 = 新建图层(走 Insert 命令路径,可撤销);
                     // 快捷工具行保留在按钮下方(矩形/文字一键切换工具)。
-                    let r = vb_ui::EmptyState::new(Name::KindLayer, "还没有对象")
-                        .body("用左侧工具创建,或双击下方空白新建图层")
-                        .action("新建图层")
-                        .ui(ui);
+                    let r = vb_ui::EmptyState::new(
+                        Name::KindLayer,
+                        &vb_session::i18n::t("ui-app-panels-layers-render-005"),
+                    )
+                    .body(&vb_session::i18n::t("ui-app-panels-layers-render-006"))
+                    .action(&vb_session::i18n::t("ui-app-panels-layers-render-007"))
+                    .ui(ui);
                     if r.action_clicked {
                         self.layers_new_layer_in_active_artboard();
                     }
                     ui.add_space(theme::space::S2);
                     ui.horizontal_wrapped(|ui| {
                         for (id, icon, tip) in [
-                            ("tool.rect", Name::ToolRect, "矩形工具(M):拖框新建"),
-                            ("tool.text", Name::ToolText, "文字工具(T):单击点文本"),
+                            (
+                                "tool.rect",
+                                Name::ToolRect,
+                                vb_session::i18n::t("ui-app-history-009"),
+                            ),
+                            (
+                                "tool.text",
+                                Name::ToolText,
+                                vb_session::i18n::t("ui-app-history-010"),
+                            ),
                         ] {
-                            if icon_button(ui, icon, tip).clicked() {
+                            if icon_button(ui, icon, &tip).clicked() {
                                 self.run_command(id, false, false);
                             }
                         }
                     });
                 } else {
-                    ui.label(caption(ui, "没有匹配的图层(清空搜索框恢复)"));
+                    ui.label(caption(
+                        ui,
+                        &vb_session::i18n::t("ui-app-panels-layers-render-008"),
+                    ));
                 }
             }
             self.layer_drag_overlay(ui, &zones);
@@ -126,7 +151,8 @@ impl VellumApp {
             if blank_resp.double_clicked() {
                 self.layers_new_layer_in_active_artboard();
             }
-            let _ = blank_resp.on_hover_text("双击:新建图层(加到当前画板末尾)");
+            let _ =
+                blank_resp.on_hover_text(vb_session::i18n::t("ui-app-panels-layers-render-009"));
         }
 
         // --- 底部操作行(02-4-5) ---
@@ -134,9 +160,12 @@ impl VellumApp {
         // (登记遗留项,见 02d 报告)。
         ui.separator();
         ui.horizontal(|ui| {
-            if ui.button("⌖ 定位对象").clicked() {
+            if ui
+                .button(vb_session::i18n::t("ui-app-panels-layers-render-010"))
+                .clicked()
+            {
                 if self.selection.is_empty() {
-                    self.say("定位对象:先在图层树选中一个节点");
+                    self.say(vb_session::i18n::t("ui-app-panels-layers-render-011"));
                 } else {
                     self.run_command("view.zoom_to_selection", false, false);
                 }
@@ -274,7 +303,11 @@ impl VellumApp {
                     self.layer_expanded.remove(&r.sid);
                 }
             }
-            crep.on_hover_text(if r.expanded { "收起" } else { "展开" });
+            crep.on_hover_text(if r.expanded {
+                vb_session::i18n::t("ui-common-collapse")
+            } else {
+                vb_session::i18n::t("ui-common-expand")
+            });
         }
         x += 15.0;
 
@@ -308,14 +341,17 @@ impl VellumApp {
         if drep.clicked() {
             let next = cycle_mark(r.mark.as_deref()).map(str::to_string);
             let said = match &next {
-                Some(c) => format!("颜色标记 → {c}(data-vb-mark,已入文档)"),
-                None => "颜色标记已清除".to_string(),
+                Some(c) => vb_session::i18n::t_args(
+                    "ui-app-panels-layers-render-012",
+                    &[("c", vb_session::i18n::FluentValue::from((c).to_string()))],
+                ),
+                None => vb_session::i18n::t("ui-app-panels-layers-render-013").to_string(),
             };
             let cmd = mark_cmd(&self.doc, &r.sid, next);
             self.exec(cmd);
             self.say(said);
         }
-        drep.on_hover_text("图层颜色标记(点击循环;颜色随文档保存)");
+        drep.on_hover_text(vb_session::i18n::t("ui-app-panels-layers-render-014"));
         x += 12.0;
 
         // 名称(冻结块 = 灰色斜体;双击行内改名)
@@ -329,7 +365,7 @@ impl VellumApp {
                 .new_child(egui::UiBuilder::new().max_rect(name_rect))
                 .add(egui::TextEdit::singleline(&mut buf).desired_width(name_rect.width()));
             let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-            // Esc = 取消改名(否则 TextEdit 因 Esc 失焦即"提交",与文本
+            // Esc = 取消改名(否则 TextEdit 因 Esc 失焦即vb_session::i18n::t("ui-common-commit"),与文本
             // 编辑窗的 Esc-Esc 丢弃语义相反);Enter 显式提交
             let escaped = ui.input(|i| i.key_pressed(egui::Key::Escape));
             if escaped {
@@ -343,7 +379,7 @@ impl VellumApp {
                         new: trimmed,
                         old: None,
                     });
-                    self.say("已重命名(data-vb-name 同步)");
+                    self.say(vb_session::i18n::t("ui-app-panels-layers-render-015"));
                 }
             }
         } else {
@@ -369,7 +405,7 @@ impl VellumApp {
             "vbup",
             Name::MoveUp,
             t.text_3,
-            "前移一层",
+            &vb_session::i18n::t("ui-menu-object-bring_forward"),
         ) {
             self.reorder(&r.sid, 1);
         }
@@ -382,7 +418,7 @@ impl VellumApp {
             "vbdown",
             Name::MoveDown,
             t.text_3,
-            "后移一层",
+            &vb_session::i18n::t("ui-menu-object-send_backward"),
         ) {
             self.reorder(&r.sid, -1);
         }
@@ -393,12 +429,12 @@ impl VellumApp {
         };
         let eye_color = if r.hidden { t.warn } else { t.text_3 };
         let eye_tip = if r.hidden {
-            "显示(取消隐藏)"
+            vb_session::i18n::t("ui-app-panels-layers-render-016")
         } else {
-            "隐藏"
+            vb_session::i18n::t("ui-common-hide")
         };
         if self.icon_hit(
-            ui, eye_x, center, btn_w, &r.sid, "vbeye", eye_icon, eye_color, eye_tip,
+            ui, eye_x, center, btn_w, &r.sid, "vbeye", eye_icon, eye_color, &eye_tip,
         ) {
             self.exec(Command::SetFlags {
                 sid: r.sid.clone(),
@@ -413,9 +449,13 @@ impl VellumApp {
             Name::Unlocked
         };
         let lock_color = if r.locked { t.warn } else { t.text_3 };
-        let lock_tip = if r.locked { "解锁" } else { "锁定" };
+        let lock_tip = if r.locked {
+            vb_session::i18n::t("ui-common-unlock")
+        } else {
+            vb_session::i18n::t("ui-common-lock")
+        };
         if self.icon_hit(
-            ui, lock_x, center, btn_w, &r.sid, "vblock", lock_icon, lock_color, lock_tip,
+            ui, lock_x, center, btn_w, &r.sid, "vblock", lock_icon, lock_color, &lock_tip,
         ) {
             self.exec(Command::SetFlags {
                 sid: r.sid.clone(),
@@ -442,12 +482,12 @@ impl VellumApp {
                 dup,
             });
             if dup {
-                self.say("Alt+拖拽:复制到目标位置");
+                self.say(vb_session::i18n::t("ui-app-panels-layers-render-017"));
             }
         }
         if r.frozen {
             resp.clone()
-                .on_hover_text("冻结块:含不支持的 CSS,原样保留(❄)");
+                .on_hover_text(vb_session::i18n::t("ui-app-panels-layers-render-018"));
         }
         self.layer_context_menu(ui, &resp, r);
     }

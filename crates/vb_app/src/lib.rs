@@ -29,6 +29,6 @@ pub use app::{Tool, VellumApp};
 /// 测试专用:串行化 `VB_WORKSPACE` 环境变量的改写(阶段 7 起,多个模块的
 /// 门禁测试都要以独立 workspace 文件隔离持久化;并发 `set_var` 与其它
 /// 线程的 `get_var` 是数据竞争,曾致 ui_scale 持久化断言偶发红)。
-/// 所有"设 env + 触发 workspace 读写"的测试都应持锁运行。
+/// 所有vb_session::i18n::t("ui-lib-001")的测试都应持锁运行。
 #[cfg(test)]
 pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

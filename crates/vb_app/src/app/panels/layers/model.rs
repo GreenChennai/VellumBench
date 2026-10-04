@@ -168,7 +168,13 @@ pub(crate) fn wrap_in_group_cmd(doc: &mut Document, sid: &str) -> Option<Command
     let group_sid = doc.alloc_sid();
     Some(Command::Group {
         member_sids: vec![sid.to_string()],
-        name: format!("编组 {}", group_sid.as_str()),
+        name: vb_session::i18n::t_args(
+            "ui-app-commands-004",
+            &[(
+                "a1",
+                vb_session::i18n::FluentValue::from((group_sid.as_str()).to_string()),
+            )],
+        ),
         group_sid: group_sid.as_str().to_string(),
         old_slots: None,
     })

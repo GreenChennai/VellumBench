@@ -111,7 +111,7 @@ impl eframe::App for VellumApp {
         // Tab(02-6-5):隐藏所有面板 —— 右侧坞/状态栏/浮动工具条都不画,
         // 画布吃满窗口;再按 Tab 恢复。顶部菜单保留(可发现性)。
         // 工具箱停靠(阶段 6 / 07-1)。**装配次序 = 层级规矩**(07 §6 风险):
-        // egui 的底/顶面板"先装者更靠外",故 底向工具栏必须装在**状态栏之后**,
+        // egui 的底/顶面板vb_session::i18n::t("ui-app-chrome-001"),故 底向工具栏必须装在**状态栏之后**,
         // 状态栏才能永远贴底;顶/左/右三向则在状态栏之前装配。
         if !self.panels_hidden && self.toolbar_dock != dock_layout::DockSide::Bottom {
             self.docked_toolbar(ui);
@@ -142,9 +142,14 @@ impl eframe::App for VellumApp {
         if self.fit_pending && self.canvas_rect.is_some() {
             self.fit_pending = false;
             self.fit_view();
-            self.status = format!(
-                "已适合窗口:{}%(打开项目自动适配)",
-                (self.camera.zoom * 100.0) as i64
+            self.status = vb_session::i18n::t_args(
+                "ui-app-chrome-002",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from(
+                        ((self.camera.zoom * 100.0) as i64).to_string(),
+                    ),
+                )],
             );
         }
 

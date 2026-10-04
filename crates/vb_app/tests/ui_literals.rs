@@ -310,8 +310,8 @@ fn line_spans(src: &str) -> Vec<(usize, usize)> {
     let b = src.as_bytes();
     let mut out = Vec::new();
     let mut start = 0;
-    for i in 0..b.len() {
-        if b[i] == b'\n' {
+    for (i, &byte) in b.iter().enumerate() {
+        if byte == b'\n' {
             out.push((start, i + 1));
             start = i + 1;
         }
@@ -589,7 +589,9 @@ fn scanner_line_exempt_needs_real_reason() {
 fn scanner_data_table_whitelist_paths() {
     assert!(is_exempt_data_table(Path::new("shortcuts/catalog.rs")));
     assert!(is_exempt_data_table(Path::new("shortcuts/menus.rs")));
-    assert!(is_exempt_data_table(Path::new("app/control_panel/tests.rs")));
+    assert!(is_exempt_data_table(Path::new(
+        "app/control_panel/tests.rs"
+    )));
     assert!(!is_exempt_data_table(Path::new("shortcuts/binds.rs")));
     assert!(!is_exempt_data_table(Path::new("app/commands.rs")));
     assert!(!is_exempt_data_table(Path::new("shortcuts/sub/catalog.rs")));

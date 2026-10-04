@@ -8,7 +8,7 @@
 //!
 //! 「纯函数边界」:目标盒(`align_target_box`)与间距分布(`space_targets`)
 //! 都不碰 UI,便于逐条断言。二者的**几何内核在 `vb_tools::align`** ——
-//! 与 Agent 的 `align` patch op 同源,避免"两处各算一份、参照系还不一样"。
+//! 与 Agent 的 `align` patch op 同源,避免vb_session::i18n::t("ui-app-align-panel-001")。
 
 use vb_common::geom::Rect;
 use vb_doc::model::{Document, Geom};
@@ -41,7 +41,7 @@ pub fn collect_items(doc: &Document, selection: &[String]) -> Vec<AlignItem> {
 /// - `Artboard`:取**最后一个**选中对象所属画板的本地框(对象 bbox 也是画板
 ///   本地系,两者同帧;跨画板时不混算);
 /// - `KeyObject`:取最后选中对象的 bbox(关键对象不动,其余向它靠);
-/// - `Selection`:多选 = 公共包围盒;**单选回退到所属画板** —— 对齐到"自己"
+/// - `Selection`:多选 = 公共包围盒;**单选回退到所属画板** —— 对齐到vb_session::i18n::t("ui-app-align-panel-002")
 ///   等于没做,而单选居中/贴边是高频手势,故保留本仓库既有语义。
 pub fn align_target_box(
     doc: &Document,
@@ -70,7 +70,7 @@ fn artboard_box(doc: &Document, sid: &str) -> Option<vb_tools::align::AbsBox> {
     Some(vb_tools::align::AbsBox::new(0.0, 0.0, n.geom.w, n.geom.h))
 }
 
-/// 「分布间距」目标:首末不动,中间对象的**间隙**均匀(与"等距中心"不同)。
+/// 「分布间距」目标:首末不动,中间对象的**间隙**均匀(与vb_session::i18n::t("ui-app-align-panel-003")不同)。
 ///
 /// 返回与 `items` 同序的目标 x0(或 y0);不足 3 个 → `None`。
 pub fn space_targets(items: &[AlignItem], horizontal: bool) -> Option<Vec<f64>> {
@@ -85,14 +85,20 @@ impl VellumApp {
     /// 「对齐到」切换(命令与面板下拉共用)。
     pub(crate) fn set_align_to(&mut self, a: AlignTo) {
         self.align_to = a;
-        self.say(format!("对齐到:{}", a.label()));
+        self.say(vb_session::i18n::t_args(
+            "ui-app-align-panel-004",
+            &[(
+                "a1",
+                vb_session::i18n::FluentValue::from((a.label()).to_string()),
+            )],
+        ));
     }
 
-    /// 分布间距(03-5-1 的"分布间距 2 键")。
+    /// 分布间距(03-5-1 的vb_session::i18n::t("ui-app-align-panel-005"))。
     pub(crate) fn distribute_space(&mut self, horizontal: bool) {
         let items = collect_items(&self.doc, &self.selection);
         let Some(targets) = space_targets(&items, horizontal) else {
-            self.toast_warn("分布间距:需要至少选中 3 个对象");
+            self.toast_warn(vb_session::i18n::t("ui-app-align-panel-006"));
             return;
         };
         let mut cmds: Vec<vb_doc::commands::Command> = Vec::new();
@@ -119,7 +125,7 @@ impl VellumApp {
             });
         }
         if cmds.is_empty() {
-            self.say("分布间距:已均匀,无需移动");
+            self.say(vb_session::i18n::t("ui-app-align-panel-007"));
             return;
         }
         let n = cmds.len();
@@ -128,10 +134,22 @@ impl VellumApp {
             self.exec(c);
         }
         self.undo.merging_enabled = true;
-        self.say(format!(
-            "分布间距:{} 个对象已等间隙({})",
-            n,
-            if horizontal { "水平" } else { "垂直" }
+        self.say(vb_session::i18n::t_args(
+            "ui-app-align-panel-008",
+            &[
+                ("a1", vb_session::i18n::FluentValue::from((n).to_string())),
+                (
+                    "a2",
+                    vb_session::i18n::FluentValue::from(
+                        (if horizontal {
+                            vb_session::i18n::t("ui-common-horizontal")
+                        } else {
+                            vb_session::i18n::t("ui-common-vertical")
+                        })
+                        .to_string(),
+                    ),
+                ),
+            ],
         ));
     }
 
@@ -139,7 +157,10 @@ impl VellumApp {
     pub(crate) fn align_panel_body(&mut self, ui: &mut egui::Ui) {
         let to = self.align_to;
         ui.horizontal(|ui| {
-            ui.label(vb_ui::components::caption(ui, "对齐到"));
+            ui.label(vb_ui::components::caption(
+                ui,
+                &vb_session::i18n::t("ui-app-align-panel-009"),
+            ));
             egui::ComboBox::from_id_salt("vb-align-to")
                 .selected_text(to.label())
                 .show_ui(ui, |ui| {
@@ -152,15 +173,27 @@ impl VellumApp {
                 });
         });
         ui.separator();
-        ui.label(vb_ui::components::caption(ui, "对齐(6 键)"));
+        ui.label(vb_ui::components::caption(
+            ui,
+            &vb_session::i18n::t("ui-app-align-panel-010"),
+        ));
         ui.horizontal(|ui| {
             for (id, label) in [
-                ("align.left", "左"),
-                ("align.hcenter", "中"),
-                ("align.right", "右"),
-                ("align.top", "顶"),
-                ("align.vcenter", "中"),
-                ("align.bottom", "底"),
+                ("align.left", vb_session::i18n::t("ui-app-align-panel-011")),
+                (
+                    "align.hcenter",
+                    vb_session::i18n::t("ui-app-align-panel-012"),
+                ),
+                ("align.right", vb_session::i18n::t("ui-app-align-panel-013")),
+                ("align.top", vb_session::i18n::t("ui-app-align-panel-014")),
+                (
+                    "align.vcenter",
+                    vb_session::i18n::t("ui-app-align-panel-012"),
+                ),
+                (
+                    "align.bottom",
+                    vb_session::i18n::t("ui-app-align-panel-015"),
+                ),
             ] {
                 if ui.button(label).clicked() {
                     self.run_command(id, false, false);
@@ -168,20 +201,35 @@ impl VellumApp {
             }
         });
         ui.separator();
-        ui.label(vb_ui::components::caption(ui, "分布"));
+        ui.label(vb_ui::components::caption(
+            ui,
+            &vb_session::i18n::t("ui-app-align-panel-016"),
+        ));
         ui.horizontal(|ui| {
-            if ui.button("水平等距").clicked() {
+            if ui
+                .button(vb_session::i18n::t("ui-app-align-panel-017"))
+                .clicked()
+            {
                 self.run_command("object.distribute_h", false, false);
             }
-            if ui.button("垂直等距").clicked() {
+            if ui
+                .button(vb_session::i18n::t("ui-app-align-panel-018"))
+                .clicked()
+            {
                 self.run_command("object.distribute_v", false, false);
             }
         });
         ui.horizontal(|ui| {
-            if ui.button("水平等间隙").clicked() {
+            if ui
+                .button(vb_session::i18n::t("ui-app-align-panel-019"))
+                .clicked()
+            {
                 self.run_command("object.distribute_hspace", false, false);
             }
-            if ui.button("垂直等间隙").clicked() {
+            if ui
+                .button(vb_session::i18n::t("ui-app-align-panel-020"))
+                .clicked()
+            {
                 self.run_command("object.distribute_vspace", false, false);
             }
         });
@@ -189,7 +237,7 @@ impl VellumApp {
             ui.separator();
             ui.label(vb_ui::components::caption(
                 ui,
-                "关键对象 = 最后选中者(选中框已加粗)。",
+                &vb_session::i18n::t("ui-app-align-panel-021"),
             ));
         }
     }

@@ -148,13 +148,9 @@ pub fn project(doc: &Document, sid: &str) -> Option<GradProj> {
 /// 生成写回命令。`layers` 为回写后的完整层组(见 [`GradProj::with_layer`])。
 pub fn write_cmd(doc: &Document, p: &GradProj, layers: &[String]) -> GradResult {
     match appearance::target_of(&p.kind) {
-        AppearanceTarget::Text => {
-            return Err("文字对象的渐变填充计划于 v2(CSS 无文字渐变);可先改纯色".into())
-        }
-        AppearanceTarget::Vector => {
-            return Err("矢量路径的渐变填充计划于 v2(SVG defs 未建模);可先改纯色".into())
-        }
-        AppearanceTarget::Frozen => return Err("冻结对象(原样片段)不可编辑渐变".into()),
+        AppearanceTarget::Text => return Err(vb_session::i18n::t("ui-app-gradient-panel-001")),
+        AppearanceTarget::Vector => return Err(vb_session::i18n::t("ui-app-gradient-panel-002")),
+        AppearanceTarget::Frozen => return Err(vb_session::i18n::t("ui-app-gradient-panel-003")),
         AppearanceTarget::Box => {}
     }
     let first = layers.first().cloned().unwrap_or_default();
@@ -165,8 +161,11 @@ pub fn write_cmd(doc: &Document, p: &GradProj, layers: &[String]) -> GradResult 
         GradSink::Layer { .. } => {
             let nid = doc
                 .find_by_sid(&p.sid)
-                .ok_or_else(|| "对象不存在".to_string())?;
-            let n = doc.nodes.get(nid).ok_or_else(|| "对象不存在".to_string())?;
+                .ok_or_else(|| vb_session::i18n::t("ui-common-object-missing").to_string())?;
+            let n = doc
+                .nodes
+                .get(nid)
+                .ok_or_else(|| vb_session::i18n::t("ui-common-object-missing").to_string())?;
             let value = layers.join(", ");
             Ok(Some(Command::SetStyle {
                 sid: p.sid.clone(),
@@ -183,7 +182,7 @@ pub fn fallback_for(p: &GradProj, doc: &Document, angle: f64) -> Gradient {
 }
 
 /// 角度渐变(conic):`design/06 §3.11` 标 v2 —— 面板只给禁用项 + 提示。
-pub const CONIC_TOOLTIP: &str = "角度渐变(conic)计划于 v2 支持;当前提供线性与径向";
+pub const CONIC_TOOLTIP: &str = "角度渐变(conic)计划于 v2 支持;当前提供线性与径向"; // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
 
 impl VellumApp {
     /// 离散/参数编辑统一收口:成功入 undo,失败 toast(05-6「绝不沉默」)。
@@ -218,11 +217,11 @@ impl VellumApp {
     /// 写回一个渐变(供面板与画布批注共用)。
     pub(crate) fn grad_commit(&mut self, g: &Gradient, discrete: bool) {
         let Some(sid) = self.selection.last().cloned() else {
-            self.toast_warn("未选中对象");
+            self.toast_warn(vb_session::i18n::t("ui-common-no-selection"));
             return;
         };
         let Some(p) = project(&self.doc, &sid) else {
-            self.toast_warn("对象不存在");
+            self.toast_warn(vb_session::i18n::t("ui-common-object-missing"));
             return;
         };
         let layers = p.with_layer(g);
@@ -251,21 +250,35 @@ impl VellumApp {
         };
         self.gradient_sel = Some(i);
         self.gradient_panel_open = true;
-        self.say(format!(
-            "已选中渐变色标 {}/{} —— 在渐变面板改颜色/位置",
-            i + 1,
-            g.stops.len()
+        self.say(vb_session::i18n::t_args(
+            "ui-app-gradient-panel-004",
+            &[
+                (
+                    "a1",
+                    vb_session::i18n::FluentValue::from((i + 1).to_string()),
+                ),
+                (
+                    "a2",
+                    vb_session::i18n::FluentValue::from((g.stops.len()).to_string()),
+                ),
+            ],
         ));
         true
     }
 
     pub(crate) fn gradient_panel_body(&mut self, ui: &mut egui::Ui) {
         let Some(sid) = self.selection.last().cloned() else {
-            ui.label(caption(ui, "未选中对象 —— 选中一个盒对象后可编辑其渐变。"));
+            ui.label(caption(
+                ui,
+                &vb_session::i18n::t("ui-app-gradient-panel-005"),
+            ));
             return;
         };
         let Some(p) = project(&self.doc, &sid) else {
-            ui.label(caption(ui, "对象已不存在。"));
+            ui.label(caption(
+                ui,
+                &vb_session::i18n::t("ui-app-gradient-panel-006"),
+            ));
             return;
         };
 
@@ -274,16 +287,22 @@ impl VellumApp {
             AppearanceTarget::Text => {
                 ui.label(caption(
                     ui,
-                    "文字对象:文字渐变计划于 v2(可先用字符面板改字色)。",
+                    &vb_session::i18n::t("ui-app-gradient-panel-007"),
                 ));
                 return;
             }
             AppearanceTarget::Vector => {
-                ui.label(caption(ui, "矢量路径:渐变填充计划于 v2(SVG defs 未建模)。"));
+                ui.label(caption(
+                    ui,
+                    &vb_session::i18n::t("ui-app-gradient-panel-008"),
+                ));
                 return;
             }
             AppearanceTarget::Frozen => {
-                ui.label(caption(ui, "冻结对象(原样片段)不可编辑渐变。"));
+                ui.label(caption(
+                    ui,
+                    &vb_session::i18n::t("ui-app-gradient-panel-009"),
+                ));
                 return;
             }
             AppearanceTarget::Box => {}
@@ -294,13 +313,24 @@ impl VellumApp {
 
         // ── 类型 / 角度(控制条)──
         ui.horizontal(|ui| {
-            ui.label("类型");
+            ui.label(vb_session::i18n::t("ui-common-type"));
             let mut kind = grad.as_ref().map(|g| g.kind).unwrap_or(GradKind::Linear);
             let before = kind;
-            ui.selectable_value(&mut kind, GradKind::Linear, "线性");
-            ui.selectable_value(&mut kind, GradKind::Radial, "径向");
-            ui.add_enabled(false, egui::Button::new("角度"))
-                .on_disabled_hover_text(CONIC_TOOLTIP);
+            ui.selectable_value(
+                &mut kind,
+                GradKind::Linear,
+                vb_session::i18n::t("ui-common-linear"),
+            );
+            ui.selectable_value(
+                &mut kind,
+                GradKind::Radial,
+                vb_session::i18n::t("ui-common-radial"),
+            );
+            ui.add_enabled(
+                false,
+                egui::Button::new(vb_session::i18n::t("ui-common-angle")),
+            )
+            .on_disabled_hover_text(CONIC_TOOLTIP);
             if kind != before {
                 if let Some(g) = grad.as_mut() {
                     g.kind = kind;
@@ -318,16 +348,19 @@ impl VellumApp {
                     let layers = p.with_layer(g);
                     self.grad_apply(write_cmd(&self.doc, &p, &layers), true);
                 } else {
-                    self.toast_warn("该对象还没有渐变 —— 点下方「生成渐变」");
+                    self.toast_warn(vb_session::i18n::t("ui-app-gradient-panel-010"));
                 }
             }
         });
 
         let Some(mut g) = grad.take() else {
-            ui.label(caption(ui, "该对象当前没有渐变。"));
+            ui.label(caption(
+                ui,
+                &vb_session::i18n::t("ui-app-gradient-panel-011"),
+            ));
             if ui
-                .button("用当前填充生成线性渐变")
-                .on_hover_text("色标 = 现填充色 0% → 白色 100%(与画布拖动同一落点)")
+                .button(vb_session::i18n::t("ui-app-gradient-panel-012"))
+                .on_hover_text(vb_session::i18n::t("ui-app-gradient-panel-013"))
                 .clicked()
             {
                 let f = fallback_for(&p, &self.doc, 90.0);
@@ -339,7 +372,7 @@ impl VellumApp {
         // ── 角度(线性)──
         if g.kind == GradKind::Linear {
             let mut ang = g.angle;
-            let r = NumField::new("角度", &mut ang)
+            let r = NumField::new(&vb_session::i18n::t("ui-common-angle"), &mut ang)
                 .unit("°")
                 .speed(1.0)
                 .step(1.0)
@@ -375,11 +408,11 @@ impl VellumApp {
         }
         if let Some(i) = bar.double_clicked {
             self.gradient_sel = Some(i);
-            self.say("双击色标:在下方改颜色/位置/不透明度");
+            self.say(vb_session::i18n::t("ui-app-gradient-panel-014"));
         }
         ui.label(caption(
             ui,
-            "拖动圆点改位置 · 点空白加点 · Alt+点击删点 · 拖菱形改中点 · 双击选中改色",
+            &vb_session::i18n::t("ui-app-gradient-panel-015"),
         ));
 
         // ── 选中色标编辑 ──
@@ -387,10 +420,22 @@ impl VellumApp {
         self.gradient_sel = Some(sel);
         ui.separator();
         ui.horizontal(|ui| {
-            ui.label(format!("色标 {}/{}", sel + 1, g.stops.len()));
+            ui.label(vb_session::i18n::t_args(
+                "ui-app-gradient-panel-016",
+                &[
+                    (
+                        "a1",
+                        vb_session::i18n::FluentValue::from((sel + 1).to_string()),
+                    ),
+                    (
+                        "a2",
+                        vb_session::i18n::FluentValue::from((g.stops.len()).to_string()),
+                    ),
+                ],
+            ));
             if ui
-                .button("＋ 加点")
-                .on_hover_text("在选中色标与下一个之间插入中点色")
+                .button(vb_session::i18n::t("ui-app-gradient-panel-017"))
+                .on_hover_text(vb_session::i18n::t("ui-app-gradient-panel-018"))
                 .clicked()
             {
                 if let Some(m) = g.midpoint_default(sel) {
@@ -402,8 +447,11 @@ impl VellumApp {
                 }
             }
             if ui
-                .add_enabled(g.stops.len() > 2, egui::Button::new("删除色标"))
-                .on_disabled_hover_text("渐变至少保留两个色标")
+                .add_enabled(
+                    g.stops.len() > 2,
+                    egui::Button::new(vb_session::i18n::t("ui-app-gradient-panel-019")),
+                )
+                .on_disabled_hover_text(vb_session::i18n::t("ui-app-gradient-panel-020"))
                 .clicked()
             {
                 g.stops.remove(sel);
@@ -412,8 +460,8 @@ impl VellumApp {
                 self.grad_apply(write_cmd(&self.doc, &p, &layers), true);
             }
             if ui
-                .button("反向")
-                .on_hover_text("线性 = 角度 +180°;径向 = 色标镜像")
+                .button(vb_session::i18n::t("ui-menu-select-inverse"))
+                .on_hover_text(vb_session::i18n::t("ui-app-gradient-panel-021"))
                 .clicked()
             {
                 g.reverse();
@@ -423,7 +471,7 @@ impl VellumApp {
         });
 
         let mut pos_pct = g.stops[sel].pos * 100.0;
-        let r_pos = NumField::new("位置", &mut pos_pct)
+        let r_pos = NumField::new(&vb_session::i18n::t("ui-common-position"), &mut pos_pct)
             .unit("%")
             .speed(1.0)
             .step(1.0)
@@ -440,7 +488,9 @@ impl VellumApp {
 
         // 颜色(点击色块 = 紧凑取色器;Alt+点击 = 完整取色器)
         let mut col = gradient::stop_color(&g.stops[sel], &tokens).unwrap_or_default();
-        let cf = ColorField::new("颜色", &mut col).doc_tokens(&tokens).ui(ui);
+        let cf = ColorField::new(&vb_session::i18n::t("ui-common-color"), &mut col)
+            .doc_tokens(&tokens)
+            .ui(ui);
         if cf.changed || cf.var_picked.is_some() {
             g.stops[sel].color = match cf.var_picked {
                 Some(name) => format!("var(--{name})"),
@@ -452,7 +502,7 @@ impl VellumApp {
 
         // 不透明度标(05-2-1)
         let mut alpha_pct = gradient::stop_alpha(&g.stops[sel], &tokens) * 100.0;
-        let r_a = NumField::new("不透明度", &mut alpha_pct)
+        let r_a = NumField::new(&vb_session::i18n::t("ui-common-opacity"), &mut alpha_pct)
             .unit("%")
             .speed(1.0)
             .step(1.0)

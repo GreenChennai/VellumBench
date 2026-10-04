@@ -186,7 +186,7 @@ impl VellumApp {
         let mut open = true;
         let mut applied = false;
         let mut cancel = false;
-        egui::Window::new("文档设置")
+        egui::Window::new(vb_session::i18n::t("ui-app-dialogs-003"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -198,19 +198,27 @@ impl VellumApp {
                     .num_columns(2)
                     .spacing([8.0, 6.0])
                     .show(ui, |ui| {
-                        ui.label("项目名(= 标题)");
+                        ui.label(vb_session::i18n::t("ui-app-doc-settings-001"));
                         ui.add_sized(
                             [240.0, vb_ui::theme::row_height(ui.ctx())],
                             egui::TextEdit::singleline(&mut st.title),
                         );
                         ui.end_row();
-                        ui.label("输出模式");
+                        ui.label(vb_session::i18n::t("ui-common-output-mode"));
                         ui.horizontal(|ui| {
-                            ui.selectable_value(&mut st.output_single, false, "外链 CSS(styles/main.css)");
-                            ui.selectable_value(&mut st.output_single, true, "单文件(CSS 内联)");
+                            ui.selectable_value(
+                                &mut st.output_single,
+                                false,
+                                vb_session::i18n::t("ui-app-doc-settings-002"),
+                            );
+                            ui.selectable_value(
+                                &mut st.output_single,
+                                true,
+                                vb_session::i18n::t("ui-app-doc-settings-003"),
+                            );
                         });
                         ui.end_row();
-                        ui.label("网格间距");
+                        ui.label(vb_session::i18n::t("ui-app-doc-settings-004"));
                         ui.horizontal(|ui| {
                             let mut sp = st.grid.spacing;
                             ui.add(
@@ -219,37 +227,44 @@ impl VellumApp {
                                     .suffix(" px"),
                             );
                             st.grid.spacing = sp;
-                            ui.checkbox(&mut st.grid.show, "显示网格");
+                            ui.checkbox(
+                                &mut st.grid.show,
+                                vb_session::i18n::t("ui-menu-view-toggle_grid"),
+                            );
                         });
                         ui.end_row();
-                        ui.label("参考线");
+                        ui.label(vb_session::i18n::t("ui-common-guides"));
                         ui.add_sized(
                             [240.0, vb_ui::theme::row_height(ui.ctx())],
                             egui::TextEdit::singleline(&mut st.guides)
-                                .hint_text("h=水平线 y,v=垂直线 x,逗号分隔(如 h0,v120)"),
+                                .hint_text(vb_session::i18n::t("ui-app-doc-settings-005")),
                         );
                         ui.end_row();
                         // 05-5:断点清单(响应式;状态栏切换器与属性面板消费)
-                        ui.label(format!("{}({})", crate::i18n::t("bp.switcher"), crate::i18n::t("bp.doc-settings")));
+                        ui.label(format!(
+                            "{}({})",
+                            crate::i18n::t("bp.switcher"),
+                            crate::i18n::t("bp.doc-settings")
+                        ));
                         ui.vertical(|ui| {
                             ui.add_sized(
                                 [240.0, vb_ui::theme::row_height(ui.ctx())],
                                 egui::TextEdit::singleline(&mut st.breakpoints)
-                                    .hint_text("px 逗号分隔(如 375,750,1080;空 = 无)"),
+                                    .hint_text(vb_session::i18n::t("ui-app-doc-settings-006")),
                             );
                             ui.weak(crate::i18n::t("bp.doc-settings-help"));
                         });
                         ui.end_row();
                     });
                 ui.add_space(4.0);
-                ui.weak("网格与参考线存项目级(index.html 的 vb-grid / vb-guides meta),随文件走;保存后生效。");
-                ui.weak("画板尺寸在「画板」面板逐块调整;默认预设见首选项「画板」页。");
+                ui.weak(vb_session::i18n::t("ui-app-doc-settings-007"));
+                ui.weak(vb_session::i18n::t("ui-app-doc-settings-008"));
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("应用").clicked() {
+                    if ui.button(vb_session::i18n::t("ui-common-apply")).clicked() {
                         applied = true;
                     }
-                    if ui.button("取消").clicked() {
+                    if ui.button(vb_session::i18n::t("ui-common-cancel")).clicked() {
                         self.doc_settings_state = None;
                         cancel = true;
                     }
@@ -305,10 +320,18 @@ impl VellumApp {
             .count();
         super::breakpoints::set_meta_breakpoints(&mut self.doc, &bps);
         if bps.len() != entered {
-            self.say(format!(
-                "断点:{} 项中有 {} 项无效已忽略(px 正整数)",
-                entered,
-                entered - bps.len()
+            self.say(vb_session::i18n::t_args(
+                "ui-app-doc-settings-009",
+                &[
+                    (
+                        "a1",
+                        vb_session::i18n::FluentValue::from((entered).to_string()),
+                    ),
+                    (
+                        "a2",
+                        vb_session::i18n::FluentValue::from((entered - bps.len()).to_string()),
+                    ),
+                ],
             ));
         }
         if self
@@ -325,7 +348,7 @@ impl VellumApp {
         // 与「工作区偏好」同级 —— 内容编辑仍全部走命令层)。meta_set 幂等
         // 但无廉价判等,统一按已改处理。
         self.doc.rev += 1;
-        self.say("文档设置已应用(Ctrl+S 或自动保存写盘)");
+        self.say(vb_session::i18n::t("ui-app-doc-settings-010"));
         self.doc_settings_state = None;
         self.doc_settings_open = false;
     }

@@ -195,7 +195,7 @@ pub const SHORTCUTS: &[Shortcut] = &[
         ctx: CTX_NO_TEXT,
     },
     // 07-M 可用性核对补口:design/06 §六「Mod+5 从对象生成参考线」——
-    // 命令早已落地但从未绑键(状态提示一直显示"未绑定");与画布右键
+    // 命令早已落地但从未绑键(状态提示一直显示"未绑定");与画布右键 // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
     // 菜单、视图菜单同一命令 ID,三入口并行。
     Shortcut {
         id: "view.guides_from_selection",

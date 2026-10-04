@@ -1,10 +1,10 @@
-﻿//! 画布出图通道(P0-③ / 03-3 `canvas_parity` 门禁的画布侧采样)。
+//! 画布出图通道(P0-③ / 03-3 `canvas_parity` 门禁的画布侧采样)。
 //!
 //! 隐藏启动参数:`vellumbench --project <dir> --canvas-shot <out.png> --artboard <sid>`
 //!
 //! 流程(见 [`CanvasShotCfg::tick`]):
 //! ① 启动后第 [`Self::STAGE_FRAME`] 帧:把相机**按固定标称框**对准目标画板
-//!    (不读当前画布矩形 —— 否则缺陷会被"相机缩 compensate"掩盖),
+//!    (不读当前画布矩形 —— 否则缺陷会被vb_session::i18n::t("ui-canvas-shot-001")掩盖),
 //!    并把窗口从 1680×1000 调整到 2200×1200。这次**窗口增长**正是探针:
 //!    画布矩形若不能随窗口增长(03-1 的 P0-③ 根因),GPU 纹理停在旧尺寸,
 //!    画板在目标缩放下必然放不全。
@@ -98,13 +98,13 @@ impl VellumApp {
         frame: &eframe::Frame,
     ) -> Result<(image::RgbaImage, f64), String> {
         let Some(rs) = frame.wgpu_render_state() else {
-            return Err("无 wgpu 渲染状态".into());
+            return Err(vb_session::i18n::t("ui-canvas-shot-002"));
         };
         let Some(g) = self.gpu.as_ref() else {
-            return Err("GPU 画布未初始化(vello 不可用?)".into());
+            return Err(vb_session::i18n::t("ui-canvas-shot-003"));
         };
         let Some((tex, _, tex_size, _)) = g.tex.as_ref() else {
-            return Err("画布纹理不存在".into());
+            return Err(vb_session::i18n::t("ui-canvas-shot-004"));
         };
         let (tw, th) = (tex_size[0], tex_size[1]);
         let scale = match self.canvas_rect {
@@ -152,8 +152,13 @@ impl VellumApp {
             timeout: None,
         });
         rx_.recv()
-            .map_err(|_| "map_async 通道关闭".to_string())?
-            .map_err(|e| format!("纹理映射失败:{e}"))?;
+            .map_err(|_| vb_session::i18n::t("ui-canvas-shot-005").to_string())?
+            .map_err(|e| {
+                vb_session::i18n::t_args(
+                    "ui-canvas-shot-006",
+                    &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                )
+            })?;
         let data = slice.get_mapped_range();
         let mut img = image::RgbaImage::new(tw, th);
         for row in 0..th as usize {
@@ -191,8 +196,16 @@ impl VellumApp {
         let x1 = (cx + cw).clamp(0.0, tw).round() as u32;
         let y1 = (cy + ch).clamp(0.0, th).round() as u32;
         if x1 <= x0 || y1 <= y0 {
-            return Err(format!(
-                "画板裁剪矩形为空({x0},{y0})-({x1},{y1});纹理 {tw}x{th}"
+            return Err(vb_session::i18n::t_args(
+                "ui-canvas-shot-007",
+                &[
+                    ("x0", vb_session::i18n::FluentValue::from((x0).to_string())),
+                    ("y0", vb_session::i18n::FluentValue::from((y0).to_string())),
+                    ("x1", vb_session::i18n::FluentValue::from((x1).to_string())),
+                    ("y1", vb_session::i18n::FluentValue::from((y1).to_string())),
+                    ("tw", vb_session::i18n::FluentValue::from((tw).to_string())),
+                    ("th", vb_session::i18n::FluentValue::from((th).to_string())),
+                ],
             ));
         }
         Ok(image::imageops::crop_imm(&full, x0, y0, x1 - x0, y1 - y0).to_image())
@@ -201,8 +214,15 @@ impl VellumApp {
     /// 画布出图(门禁 --canvas-shot):读回 + 裁剪 + 落盘 + manifest。
     fn capture_shot(&self, cfg: &CanvasShotCfg, frame: &eframe::Frame) -> Result<(), String> {
         // 目标画板与当前相机 → 纹理空间裁剪矩形(与 stage_camera 同一变换)
-        let (ab_id, ab_name, g) = find_artboard(&self.doc, &cfg.artboard)
-            .ok_or_else(|| format!("找不到画板 `{}`", cfg.artboard))?;
+        let (ab_id, ab_name, g) = find_artboard(&self.doc, &cfg.artboard).ok_or_else(|| {
+            vb_session::i18n::t_args(
+                "ui-canvas-shot-008",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from((cfg.artboard).to_string()),
+                )],
+            )
+        })?;
         let [ax, ay, aw, ah] = g;
         let (z, pan_x, pan_y) = self.camera_shot_transform(ax, ay, aw, ah);
         let crop = [pan_x + ax * z, pan_y + ay * z, aw * z, ah * z];
@@ -219,11 +239,19 @@ impl VellumApp {
         let cropped = image::imageops::crop(&mut img.clone(), x0, y0, x1 - x0, y1 - y0).to_image();
 
         if let Some(parent) = cfg.out_png.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("建目录失败:{e}"))?;
+            std::fs::create_dir_all(parent).map_err(|e| {
+                vb_session::i18n::t_args(
+                    "ui-canvas-shot-009",
+                    &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                )
+            })?;
         }
-        cropped
-            .save(&cfg.out_png)
-            .map_err(|e| format!("PNG 落盘失败:{e}"))?;
+        cropped.save(&cfg.out_png).map_err(|e| {
+            vb_session::i18n::t_args(
+                "ui-canvas-shot-010",
+                &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+            )
+        })?;
 
         write_manifest(
             cfg,
@@ -243,7 +271,7 @@ impl VellumApp {
                 texture_h: th as u32,
                 crop: [x0 as f64, y0 as f64, (x1 - x0) as f64, (y1 - y0) as f64],
                 fully_visible,
-                layers: "vello(形状/图像;egui 文字叠加层不在读回纹理内)",
+                layers: vb_session::i18n::t("ui-canvas-shot-011"),
                 canvas_rect_points: self
                     .canvas_rect
                     .map(|r| [r.left(), r.top(), r.right(), r.bottom()]),
@@ -327,7 +355,7 @@ struct ShotManifest {
     texture_h: u32,
     crop: [f64; 4],
     fully_visible: bool,
-    layers: &'static str,
+    layers: String,
     canvas_rect_points: Option<[f32; 4]>,
 }
 

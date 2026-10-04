@@ -61,10 +61,10 @@ impl TrackProp {
 
     pub fn label(self) -> &'static str {
         match self {
-            TrackProp::Position => "位置",
-            TrackProp::Scale => "缩放",
-            TrackProp::Opacity => "不透明度",
-            TrackProp::Rotate => "旋转",
+            TrackProp::Position => "位置", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            TrackProp::Scale => "缩放", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            TrackProp::Opacity => "不透明度", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
+            TrackProp::Rotate => "旋转", // vb-literal-ok: const/static 表的 &str 值,fn 化留后续(en 缺失记录台账)
         }
     }
 }
@@ -134,7 +134,7 @@ impl Easing {
 
     pub fn label(&self) -> String {
         match self {
-            Easing::Linear => "线性".into(),
+            Easing::Linear => vb_session::i18n::t("ui-common-linear"),
             Easing::Ease => "ease".into(),
             Easing::EaseIn => "ease-in".into(),
             Easing::EaseOut => "ease-out".into(),
@@ -577,18 +577,18 @@ impl VellumApp {
     pub(crate) fn anim_play_toggle(&mut self) {
         if self.anim_playing {
             self.anim_playing = false;
-            self.say(format!("暂停 @ {:.2}s", self.anim_time));
+            self.say(format!("暂停 @ {:.2}s", self.anim_time)); // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
         } else {
             let total = self.anim_total_duration();
             if total <= 0.0 {
-                self.toast_warn("文档没有可播放的动画(先在时间轴加关键帧)");
+                self.toast_warn(vb_session::i18n::t("ui-app-timeline-002"));
                 return;
             }
             if self.anim_time >= total {
                 self.anim_time = 0.0;
             }
             self.anim_playing = true;
-            self.say("播放动画预览(与导出同一求值路径)");
+            self.say(vb_session::i18n::t("ui-app-timeline-003"));
         }
     }
 
@@ -596,16 +596,16 @@ impl VellumApp {
     pub(crate) fn anim_stop(&mut self) {
         self.anim_playing = false;
         self.anim_time = 0.0;
-        self.say("预览已停止(播放头回 0,画布恢复静态)");
+        self.say(vb_session::i18n::t("ui-app-timeline-004"));
     }
 
     /// `anim.loop_toggle`:循环开关(播放到尾回绕 / 停在末帧)。
     pub(crate) fn anim_loop_toggle(&mut self) {
         self.anim_loop = !self.anim_loop;
         self.say(if self.anim_loop {
-            "循环播放:开"
+            vb_session::i18n::t("ui-app-timeline-005")
         } else {
-            "循环播放:关(到尾暂停)"
+            vb_session::i18n::t("ui-app-timeline-006")
         });
     }
 
@@ -614,11 +614,11 @@ impl VellumApp {
     /// SetNodeAnimation 走命令层可撤销)。
     pub(crate) fn anim_keyframe_add(&mut self) {
         let Some((sid, src)) = self.anim_source_of_selection() else {
-            self.toast_warn("加关键帧:请先选中一个对象");
+            self.toast_warn(vb_session::i18n::t("ui-app-timeline-007"));
             return;
         };
         let AnimSource::Timeline(mut m) = src else {
-            self.toast_warn("该对象的动画非时间轴命名,不能在此加帧");
+            self.toast_warn(vb_session::i18n::t("ui-app-timeline-008"));
             return;
         };
         let t = self.anim_time.clamp(0.0, m.duration_ms / 1000.0);
@@ -657,12 +657,12 @@ impl VellumApp {
             added += 1;
         }
         if added == 0 {
-            self.say("播放头处各轨道已有关键帧");
+            self.say(vb_session::i18n::t("ui-app-timeline-009"));
             return;
         }
         self.anim_write_model(&sid, &m);
         self.say(format!(
-            "已在播放头 {:.2}s 加 {added} 个关键帧(Ctrl+Z 撤销)",
+            "已在播放头 {:.2}s 加 {added} 个关键帧(Ctrl+Z 撤销)", // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
             self.anim_time
         ));
     }
@@ -670,7 +670,7 @@ impl VellumApp {
     /// `anim.keyframe_delete`:删除时间轴选中的关键帧。
     pub(crate) fn anim_keyframe_delete(&mut self) {
         let Some((track, kf)) = self.anim_sel else {
-            self.toast_warn("删除关键帧:先在时间轴上点选一个关键帧");
+            self.toast_warn(vb_session::i18n::t("ui-app-timeline-011"));
             return;
         };
         let Some((sid, src)) = self.anim_source_of_selection() else {
@@ -692,20 +692,24 @@ impl VellumApp {
         }
         self.anim_sel = None;
         self.anim_write_model(&sid, &m);
-        self.say("已删除关键帧(Ctrl+Z 撤销)");
+        self.say(vb_session::i18n::t("ui-app-timeline-012"));
     }
 
     /// `anim.clear`:清除对象全部关键帧(= 移除对应 CSS,05-9-4)。
     pub(crate) fn anim_clear(&mut self) {
         let Some((sid, src)) = self.anim_source_of_selection() else {
-            self.toast_warn("清除动画:请先选中一个对象");
+            self.toast_warn(vb_session::i18n::t("ui-app-timeline-013"));
             return;
         };
         match src {
-            AnimSource::None => self.say("该对象没有动画"),
+            AnimSource::None => self.say(vb_session::i18n::t("ui-app-timeline-014")),
             AnimSource::Foreign(name) => {
-                self.toast_warn(format!(
-                    "动画「{name}」来自外部命名关键帧,请手工编辑 CSS 或改名后处理"
+                self.toast_warn(vb_session::i18n::t_args(
+                    "ui-app-timeline-015",
+                    &[(
+                        "name",
+                        vb_session::i18n::FluentValue::from((name).to_string()),
+                    )],
                 ));
             }
             AnimSource::Timeline(_) => {
@@ -720,7 +724,7 @@ impl VellumApp {
                     },
                 );
                 self.anim_sel = None;
-                self.say("已清除对象动画(@keyframes 与 animation 声明一并移除;Ctrl+Z 撤销)");
+                self.say(vb_session::i18n::t("ui-app-timeline-016"));
             }
         }
     }
@@ -741,20 +745,23 @@ impl VellumApp {
             ui.horizontal(|ui| {
                 ui.add_space(vb_ui::theme::space::S2);
                 ui.label(vb_ui::icons::rich(vb_ui::icons::Name::Play, 18.0).color(t.text_3));
-                ui.label("未选中对象 —— 选中一个对象后可为它编排关键帧动画。");
+                ui.label(vb_session::i18n::t("ui-app-timeline-017"));
             });
             ui.add_space(vb_ui::theme::space::S2);
             ui.horizontal_wrapped(|ui| {
                 if vb_ui::components::icon_button(
                     ui,
                     vb_ui::icons::Name::ToolSelect,
-                    "选择工具(V):点选要动画的对象",
+                    &vb_session::i18n::t("ui-app-timeline-018"),
                 )
                 .clicked()
                 {
                     self.run_command("tool.select", false, false);
                 }
-                if ui.button("播放文档动画").clicked() {
+                if ui
+                    .button(vb_session::i18n::t("ui-app-timeline-019"))
+                    .clicked()
+                {
                     self.run_command("anim.play_toggle", false, false);
                 }
             });
@@ -765,14 +772,20 @@ impl VellumApp {
                 AnimSource::Foreign(name) => {
                     ui.label(caption(
                         ui,
-                        &format!("该对象的动画引用外部关键帧「{name}」。\n时间轴只编辑 vb-anim-<id> 命名的动画(防吞导入内容);可用「对象 → 动画 → 清除动画」移除后重排。"),
+                        &format!("该对象的动画引用外部关键帧「{name}」。\n时间轴只编辑 vb-anim-<id> 命名的动画(防吞导入内容);可用「对象 → 动画 → 清除动画」移除后重排。"), // vb-literal-ok: 含换行控制字符,单行 ftl 放不下
                     ));
-                    if ui.button("清除动画").clicked() {
+                    if ui
+                        .button(vb_session::i18n::t("ui-common-clear-animation"))
+                        .clicked()
+                    {
                         self.anim_clear();
                     }
                 }
                 _ => {
-                    ui.label(caption(ui, "对象已不存在。"));
+                    ui.label(caption(
+                        ui,
+                        &vb_session::i18n::t("ui-app-gradient-panel-006"),
+                    ));
                 }
             }
             return;
@@ -788,25 +801,20 @@ impl VellumApp {
             } else {
                 Name::Play
             };
-            if icon_button(
-                ui,
-                play_icon,
-                if self.anim_playing {
-                    "暂停"
-                } else {
-                    "播放"
-                },
-            )
-            .clicked()
-            {
+            let anim_lbl = if self.anim_playing {
+                vb_session::i18n::t("ui-common-pause")
+            } else {
+                vb_session::i18n::t("ui-common-play")
+            };
+            if icon_button(ui, play_icon, &anim_lbl).clicked() {
                 self.anim_play_toggle();
             }
-            if icon_button(ui, Name::Close, "停止并回零").clicked() {
+            if icon_button(ui, Name::Close, &vb_session::i18n::t("ui-app-timeline-020")).clicked() {
                 self.anim_stop();
             }
             if ui
-                .selectable_label(self.anim_loop, "循环")
-                .on_hover_text("循环播放(关 = 到尾暂停)")
+                .selectable_label(self.anim_loop, vb_session::i18n::t("ui-common-loop"))
+                .on_hover_text(vb_session::i18n::t("ui-app-timeline-021"))
                 .clicked()
             {
                 self.anim_loop_toggle();
@@ -826,7 +834,7 @@ impl VellumApp {
         // ── 时序参数(时长 / 延迟 / 次数;窄坞两行排布)──
         ui.horizontal(|ui| {
             let mut dur = model.duration_ms;
-            let r = NumField::new("时长", &mut dur)
+            let r = NumField::new(&vb_session::i18n::t("ui-common-duration"), &mut dur)
                 .unit("ms")
                 .speed(10.0)
                 .step(100.0)
@@ -838,7 +846,7 @@ impl VellumApp {
                 dirty = true;
             }
             let mut delay = model.delay_ms;
-            let r = NumField::new("延迟", &mut delay)
+            let r = NumField::new(&vb_session::i18n::t("ui-common-delay"), &mut delay)
                 .unit("ms")
                 .speed(10.0)
                 .step(100.0)
@@ -856,7 +864,7 @@ impl VellumApp {
             } else {
                 model.iterations
             };
-            let r = NumField::new("次数", &mut iters)
+            let r = NumField::new(&vb_session::i18n::t("ui-app-timeline-022"), &mut iters)
                 .speed(0.2)
                 .step(1.0)
                 .range(1.0, 50.0)
@@ -867,8 +875,8 @@ impl VellumApp {
                 dirty = true;
             }
             if ui
-                .button("清除动画")
-                .on_hover_text("移除全部关键帧(= 删除对应 CSS)")
+                .button(vb_session::i18n::t("ui-common-clear-animation"))
+                .on_hover_text(vb_session::i18n::t("ui-app-timeline-023"))
                 .clicked()
             {
                 self.anim_clear();
@@ -1089,10 +1097,7 @@ impl VellumApp {
             self.anim_drag_open = false;
             self.undo.end_session();
         }
-        ui.label(caption(
-            ui,
-            "双击轨道加关键帧 · 点选后拖动改时刻 · Alt+点击删帧 · 拖顶部刻度 scrub",
-        ));
+        ui.label(caption(ui, &vb_session::i18n::t("ui-app-timeline-024")));
         dirty
     }
 
@@ -1105,7 +1110,7 @@ impl VellumApp {
         dirty: &mut bool,
     ) {
         let Some((track, kfi)) = self.anim_sel else {
-            ui.label(caption(ui, "选中轨道上的关键帧后可改值与缓动。"));
+            ui.label(caption(ui, &vb_session::i18n::t("ui-app-timeline-025")));
             return;
         };
         let Some((prop, kfs)) = model
@@ -1122,8 +1127,27 @@ impl VellumApp {
         }
         let prop_label = prop.label();
         ui.horizontal(|ui| {
-            ui.label(format!("关键帧 {kfi}/{} · {prop_label}", kfs.len()));
-            if ui.button("删除此帧").clicked() {
+            ui.label(vb_session::i18n::t_args(
+                "ui-app-timeline-026",
+                &[
+                    (
+                        "kfi",
+                        vb_session::i18n::FluentValue::from((kfi).to_string()),
+                    ),
+                    (
+                        "a1",
+                        vb_session::i18n::FluentValue::from((kfs.len()).to_string()),
+                    ),
+                    (
+                        "prop_label",
+                        vb_session::i18n::FluentValue::from((prop_label).to_string()),
+                    ),
+                ],
+            ));
+            if ui
+                .button(vb_session::i18n::t("ui-app-timeline-027"))
+                .clicked()
+            {
                 kfs.remove(kfi);
                 self.anim_sel = None;
                 *dirty = true;
@@ -1151,7 +1175,7 @@ impl VellumApp {
                 });
             }
             KeyValue::Factor(s) => {
-                let r = NumField::new("因子", s)
+                let r = NumField::new(&vb_session::i18n::t("ui-common-factor"), s)
                     .speed(0.02)
                     .step(0.1)
                     .range(0.01, 20.0)
@@ -1160,7 +1184,7 @@ impl VellumApp {
                 *dirty |= r.changed;
             }
             KeyValue::Alpha(a) => {
-                let r = NumField::new("不透明度", a)
+                let r = NumField::new(&vb_session::i18n::t("ui-common-opacity"), a)
                     .speed(0.01)
                     .step(0.05)
                     .range(0.0, 1.0)
@@ -1169,7 +1193,7 @@ impl VellumApp {
                 *dirty |= r.changed;
             }
             KeyValue::Angle(d) => {
-                let r = NumField::new("角度", d)
+                let r = NumField::new(&vb_session::i18n::t("ui-common-angle"), d)
                     .unit("deg")
                     .speed(1.0)
                     .step(5.0)
@@ -1181,7 +1205,7 @@ impl VellumApp {
         }
         // 缓动:封闭枚举 + 自定义
         ui.horizontal(|ui| {
-            ui.label("缓动");
+            ui.label(vb_session::i18n::t("ui-common-easing"));
             for e in Easing::PRESETS {
                 if ui
                     .selectable_label(kf.easing == e, e.label())
@@ -1193,7 +1217,10 @@ impl VellumApp {
                 }
             }
             let custom = matches!(kf.easing, Easing::Bezier(..));
-            if ui.selectable_label(custom, "自定义").clicked() {
+            if ui
+                .selectable_label(custom, vb_session::i18n::t("ui-common-custom"))
+                .clicked()
+            {
                 if !custom {
                     kf.easing = Easing::Bezier(0.42, 0.0, 0.58, 1.0);
                 }
@@ -1241,10 +1268,7 @@ impl VellumApp {
                 *dirty = true;
             }
             bezier_curve_preview(ui, bx1, by1, bx2, by2);
-            ui.label(caption(
-                ui,
-                "cubic-bezier 曲线预览(与预览/导出同一求解;拖柄编辑留后续)",
-            ));
+            ui.label(caption(ui, &vb_session::i18n::t("ui-app-timeline-028")));
         }
     }
 }

@@ -100,7 +100,7 @@ impl VellumApp {
         let Some(p) = self.appearance_projection() else {
             ui.label(caption(
                 ui,
-                "未选中对象 —— 选中后在此管理填充/描边/效果条目。",
+                &vb_session::i18n::t("ui-app-appearance-ui-001"),
             ));
             return;
         };
@@ -108,19 +108,25 @@ impl VellumApp {
         if t == AppearanceTarget::Frozen {
             ui.label(caption(
                 ui,
-                "冻结块:内部不可编辑(原样保留的 HTML 片段);可移动/缩放/删除。",
+                &vb_session::i18n::t("ui-app-appearance-ui-002"),
             ));
             return;
         }
         let target_name = match t {
-            AppearanceTarget::Box => "盒对象",
-            AppearanceTarget::Text => "文字",
-            AppearanceTarget::Vector => "矢量路径",
-            AppearanceTarget::Frozen => "冻结块",
+            AppearanceTarget::Box => vb_session::i18n::t("ui-app-appearance-ui-003"),
+            AppearanceTarget::Text => vb_session::i18n::t("ui-menu-title-3"),
+            AppearanceTarget::Vector => vb_session::i18n::t("ui-app-appearance-ui-004"),
+            AppearanceTarget::Frozen => vb_session::i18n::t("ui-common-freeze-block"),
         };
         ui.label(caption(
             ui,
-            &format!("{target_name} · 条目顺序 = CSS 叠加顺序(首条最上)"),
+            &vb_session::i18n::t_args(
+                "ui-app-appearance-ui-005",
+                &[(
+                    "target_name",
+                    vb_session::i18n::FluentValue::from((target_name).to_string()),
+                )],
+            ),
         ));
         ui.separator();
 
@@ -135,7 +141,12 @@ impl VellumApp {
                 icons::Name::Hidden
             };
             ui.horizontal(|ui| {
-                if icon_button(ui, eye, if enabled { "临时禁用" } else { "启用" }).clicked() {
+                let lbl = if enabled {
+                    vb_session::i18n::t("ui-app-appearance-ui-006")
+                } else {
+                    vb_session::i18n::t("ui-common-enable")
+                };
+                if icon_button(ui, eye, &lbl).clicked() {
                     let sid = p.sid.clone();
                     self.exec_appearance(toggle_item_cmd(&self.doc, &sid, i, !enabled));
                 }
@@ -146,20 +157,43 @@ impl VellumApp {
                     self.appearance_sel = Some(i);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if icon_button(ui, icons::Name::Delete, "删除条目").clicked() {
+                    if icon_button(
+                        ui,
+                        icons::Name::Delete,
+                        &vb_session::i18n::t("ui-app-appearance-ui-007"),
+                    )
+                    .clicked()
+                    {
                         let sid = p.sid.clone();
                         self.exec_appearance(remove_item_cmd(&self.doc, &sid, i));
                     }
-                    if icon_button(ui, icons::Name::Copy, "复制条目").clicked() {
+                    if icon_button(
+                        ui,
+                        icons::Name::Copy,
+                        &vb_session::i18n::t("ui-app-appearance-ui-008"),
+                    )
+                    .clicked()
+                    {
                         let sid = p.sid.clone();
                         self.exec_appearance(duplicate_item_cmd(&self.doc, &sid, i));
                     }
-                    if icon_button(ui, icons::Name::MoveDown, "下移(CSS 中更靠底)").clicked()
+                    if icon_button(
+                        ui,
+                        icons::Name::MoveDown,
+                        &vb_session::i18n::t("ui-app-appearance-ui-009"),
+                    )
+                    .clicked()
                     {
                         let sid = p.sid.clone();
                         self.exec_appearance(move_item_cmd(&self.doc, &sid, i, 1));
                     }
-                    if icon_button(ui, icons::Name::MoveUp, "上移(CSS 中更靠顶)").clicked() {
+                    if icon_button(
+                        ui,
+                        icons::Name::MoveUp,
+                        &vb_session::i18n::t("ui-app-appearance-ui-010"),
+                    )
+                    .clicked()
+                    {
                         let sid = p.sid.clone();
                         self.exec_appearance(move_item_cmd(&self.doc, &sid, i, -1));
                     }
@@ -168,13 +202,19 @@ impl VellumApp {
             });
         }
         if count == 0 {
-            ui.label(caption(ui, "暂无条目 —— 从下方添加填充/描边/效果。"));
+            ui.label(caption(
+                ui,
+                &vb_session::i18n::t("ui-app-appearance-ui-011"),
+            ));
         }
 
         // ── 添加按钮(05-1-2) ──
         ui.separator();
         ui.horizontal(|ui| {
-            if ui.button("+ 填充").clicked() {
+            if ui
+                .button(vb_session::i18n::t("ui-app-appearance-ui-012"))
+                .clicked()
+            {
                 let sid = p.sid.clone();
                 self.exec_appearance(add_fill_cmd(
                     &self.doc,
@@ -186,7 +226,10 @@ impl VellumApp {
                 ));
                 self.appearance_sel = Some(0);
             }
-            if ui.button("+ 描边").clicked() {
+            if ui
+                .button(vb_session::i18n::t("ui-app-appearance-ui-013"))
+                .clicked()
+            {
                 let sid = p.sid.clone();
                 self.exec_appearance(add_stroke_cmd(&self.doc, &sid));
                 self.appearance_sel = Some(0);
@@ -206,7 +249,10 @@ impl VellumApp {
 
         // ── 不支持的能力(弱化可点,点击给提示;05-6-2) ──
         ui.separator();
-        ui.label(caption(ui, "不支持的能力(点击查看说明):"));
+        ui.label(caption(
+            ui,
+            &vb_session::i18n::t("ui-app-appearance-ui-014"),
+        ));
         ui.horizontal_wrapped(|ui| {
             for f in UNSUPPORTED {
                 if ui
@@ -254,41 +300,65 @@ impl VellumApp {
     /// 「+ 效果」菜单:六种映射 + 羽化 + SVG 滤镜冻结说明 + 不支持项弱化可点。
     fn effect_add_menu(&mut self, ui: &mut egui::Ui, p: &AppearanceProj) {
         egui::ComboBox::from_id_salt("vb_fx_add")
-            .selected_text("+ 效果")
+            .selected_text(vb_session::i18n::t("ui-app-appearance-ui-015"))
             .width(84.0)
             .show_ui(ui, |ui| {
                 let mut pick: Option<Effect> = None;
-                if ui.selectable_label(false, "投影").clicked() {
+                if ui
+                    .selectable_label(false, vb_session::i18n::t("ui-common-drop-shadow"))
+                    .clicked()
+                {
                     pick = Some(default_drop_shadow());
                 }
-                if ui.selectable_label(false, "内阴影").clicked() {
+                if ui
+                    .selectable_label(false, vb_session::i18n::t("ui-common-inner-shadow"))
+                    .clicked()
+                {
                     pick = Some(default_inner_shadow());
                 }
-                if ui.selectable_label(false, "外发光").clicked() {
+                if ui
+                    .selectable_label(false, vb_session::i18n::t("ui-common-outer-glow"))
+                    .clicked()
+                {
                     pick = Some(default_glow());
                 }
-                if ui.selectable_label(false, "内发光").clicked() {
+                if ui
+                    .selectable_label(false, vb_session::i18n::t("ui-common-inner-glow"))
+                    .clicked()
+                {
                     pick = Some(Effect::InnerGlow {
                         blur: 12.0,
                         color: "#2e86ff80".into(), // vb-token-ok: 发光默认色(文档内容,非 UI 皮肤)
                     });
                 }
-                if ui.selectable_label(false, "高斯模糊").clicked() {
+                if ui
+                    .selectable_label(false, vb_session::i18n::t("ui-app-appearance-model-016"))
+                    .clicked()
+                {
                     pick = Some(Effect::GaussianBlur { radius: 4.0 });
                 }
-                if ui.selectable_label(false, "圆角").clicked() {
+                if ui
+                    .selectable_label(false, vb_session::i18n::t("ui-common-corner"))
+                    .clicked()
+                {
                     pick = Some(Effect::RoundCorners { radius: 8.0 });
                 }
-                if ui.selectable_label(false, "羽化").clicked() {
+                if ui
+                    .selectable_label(false, vb_session::i18n::t("ui-common-feather"))
+                    .clicked()
+                {
                     pick = Some(Effect::Feather { radius: 12.0 });
                 }
                 ui.separator();
                 if ui
-                    .selectable_label(false, egui::RichText::new("SVG 滤镜(冻结)").weak())
-                    .on_hover_text("SVG 滤镜原样保留(冻结);v1 不提供编辑器")
+                    .selectable_label(
+                        false,
+                        egui::RichText::new(vb_session::i18n::t("ui-app-appearance-ui-016")).weak(),
+                    )
+                    .on_hover_text(vb_session::i18n::t("ui-app-appearance-ui-017"))
                     .clicked()
                 {
-                    self.toast_warn("SVG 滤镜效果原样保留(冻结);v1 不提供编辑器");
+                    self.toast_warn(vb_session::i18n::t("ui-app-appearance-ui-018"));
                 }
                 for f in UNSUPPORTED {
                     if ui
@@ -301,7 +371,7 @@ impl VellumApp {
                 }
                 if let Some(e) = pick {
                     let sid = p.sid.clone();
-                    // 记住"上一个效果",供「效果 → 应用上一个效果」复用(阶段 5)
+                    // 记住vb_session::i18n::t("ui-app-appearance-ui-019"),供「效果 → 应用上一个效果」复用(阶段 5)
                     self.last_effect = Some(e.clone());
                     self.exec_appearance(add_effect_cmd(&self.doc, &sid, e));
                     self.appearance_sel = Some(0);
@@ -319,7 +389,9 @@ impl VellumApp {
                         .map(|c| egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a))
                         .unwrap_or(egui::Color32::WHITE);
                     let tokens = self.doc.tokens.clone();
-                    let r = ColorField::new("颜色", &mut col).doc_tokens(&tokens).ui(ui);
+                    let r = ColorField::new(&vb_session::i18n::t("ui-common-color"), &mut col)
+                        .doc_tokens(&tokens)
+                        .ui(ui);
                     if let Some(nm) = r.var_picked {
                         self.exec_appearance(set_fill_body_cmd(
                             &self.doc,
@@ -343,15 +415,39 @@ impl VellumApp {
                     }
                 }
                 FillBody::Gradient { value } => {
-                    ui.label(caption(ui, &format!("渐变:{value}")));
-                    ui.label(caption(ui, "色标编辑 → 渐变面板(Ctrl+F9);此处保真往返。"));
+                    ui.label(caption(
+                        ui,
+                        &vb_session::i18n::t_args(
+                            "ui-app-appearance-ui-020",
+                            &[(
+                                "value",
+                                vb_session::i18n::FluentValue::from((value).to_string()),
+                            )],
+                        ),
+                    ));
+                    ui.label(caption(
+                        ui,
+                        &vb_session::i18n::t("ui-app-appearance-ui-021"),
+                    ));
                 }
                 FillBody::Raw { value } => {
-                    ui.label(caption(ui, &format!("原样保真:{value}")));
+                    ui.label(caption(
+                        ui,
+                        &vb_session::i18n::t_args(
+                            "ui-app-appearance-ui-022",
+                            &[(
+                                "value",
+                                vb_session::i18n::FluentValue::from((value).to_string()),
+                            )],
+                        ),
+                    ));
                 }
             },
             AppearanceItem::Stroke(s) => {
-                ui.label(caption(ui, "快调颜色/粗细;全字段 → 描边面板(Ctrl+F10)"));
+                ui.label(caption(
+                    ui,
+                    &vb_session::i18n::t("ui-app-appearance-ui-023"),
+                ));
                 let mut spec = s.spec;
                 let mut col = spec
                     .color
@@ -360,7 +456,9 @@ impl VellumApp {
                     .map(|c| egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a))
                     .unwrap_or(egui::Color32::BLACK);
                 let tokens = self.doc.tokens.clone();
-                let r = ColorField::new("颜色", &mut col).doc_tokens(&tokens).ui(ui);
+                let r = ColorField::new(&vb_session::i18n::t("ui-common-color"), &mut col)
+                    .doc_tokens(&tokens)
+                    .ui(ui);
                 if let Some(nm) = r.var_picked {
                     spec.color = Some(format!("var(--{nm})"));
                     self.exec_appearance(set_stroke_spec_cmd(&self.doc, &sid, i, spec));
@@ -373,7 +471,7 @@ impl VellumApp {
                     Some(s) => s.width,
                     None => return,
                 };
-                let r = NumField::new("粗细", &mut w)
+                let r = NumField::new(&vb_session::i18n::t("ui-common-weight"), &mut w)
                     .speed(0.5)
                     .step(1.0)
                     .range(0.0, 200.0)
@@ -426,8 +524,13 @@ impl VellumApp {
                     };
                     let r1 = num(ui, "X", x, 1.0);
                     let r2 = num(ui, "Y", y, 1.0);
-                    let r3 = num(ui, "模糊", blur, 1.0);
-                    let r4 = num(ui, "扩展", spread, 1.0);
+                    let r3 = num(ui, &vb_session::i18n::t("ui-common-blur"), blur, 1.0);
+                    let r4 = num(
+                        ui,
+                        &vb_session::i18n::t("ui-app-appearance-ui-024"),
+                        spread,
+                        1.0,
+                    );
                     for r in [r1, r2, r3, r4] {
                         resp.changed |= r.changed;
                         resp.scrub_started |= r.scrub_started;
@@ -440,7 +543,7 @@ impl VellumApp {
                     self.effect_color_field(ui, &mut resp, color);
                 }
                 Effect::OuterGlow { blur, color } | Effect::InnerGlow { blur, color } => {
-                    let r1 = num(ui, "模糊", blur, 1.0);
+                    let r1 = num(ui, &vb_session::i18n::t("ui-common-blur"), blur, 1.0);
                     resp.changed |= r1.changed;
                     resp.scrub_started |= r1.scrub_started;
                     resp.scrub_ended |= r1.scrub_ended;
@@ -451,13 +554,33 @@ impl VellumApp {
                     self.effect_color_field(ui, &mut resp, color);
                 }
                 Effect::GaussianBlur { radius } | Effect::RoundCorners { radius } => {
-                    resp = num(ui, "半径", radius, 0.5);
+                    resp = num(
+                        ui,
+                        &vb_session::i18n::t("ui-app-appearance-ui-025"),
+                        radius,
+                        0.5,
+                    );
                 }
                 Effect::Feather { radius } => {
-                    resp = num(ui, "羽化", radius, 1.0);
+                    resp = num(ui, &vb_session::i18n::t("ui-common-feather"), radius, 1.0);
                 }
                 Effect::Other { prop, value } => {
-                    ui.label(caption(ui, &format!("原样保真:{prop}: {value}")));
+                    ui.label(caption(
+                        ui,
+                        &vb_session::i18n::t_args(
+                            "ui-app-appearance-ui-026",
+                            &[
+                                (
+                                    "prop",
+                                    vb_session::i18n::FluentValue::from((prop).to_string()),
+                                ),
+                                (
+                                    "value",
+                                    vb_session::i18n::FluentValue::from((value).to_string()),
+                                ),
+                            ],
+                        ),
+                    ));
                 }
             }
         }
@@ -478,7 +601,9 @@ impl VellumApp {
             .map(|c| egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a))
             .unwrap_or(egui::Color32::BLACK);
         let tokens = self.doc.tokens.clone();
-        let cr = ColorField::new("颜色", &mut col).doc_tokens(&tokens).ui(ui);
+        let cr = ColorField::new(&vb_session::i18n::t("ui-common-color"), &mut col)
+            .doc_tokens(&tokens)
+            .ui(ui);
         if let Some(nm) = cr.var_picked {
             *color = format!("var(--{nm})");
             resp.changed = true;

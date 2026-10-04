@@ -8,7 +8,7 @@
 //! 纪律(与 `recent.rs` / `dock_layout.rs` 同款):
 //! - **原子写**:先写 `<名>.tmp` 再改名,防半截 JSON;
 //! - **滚动快照**:保留最近 [`MAX_SNAPSHOTS`] 份(`doc.json` 最新,
-//!   `doc.1.json` / `doc.2.json` 渐旧)—— 防"快照本身写坏";
+//!   `doc.1.json` / `doc.2.json` 渐旧)—— 防vb_session::i18n::t("ui-autosave-001");
 //! - **损坏回退**:读最新份解析失败 → 逐份回退更旧的,损坏份记日志不静默;
 //! - **可见性**:目录里放 `README.txt` 说明(可安全删除 + git 忽略建议)。
 //!
@@ -110,7 +110,12 @@ pub fn write_snapshot_keep(
 ) -> Result<i64, String> {
     let keep = keep.clamp(1, MAX_SNAPSHOTS);
     let dir = autosave_dir(project);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("创建快照目录失败:{e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        vb_session::i18n::t_args(
+            "ui-autosave-002",
+            &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+        )
+    })?;
     ensure_readme(&dir);
     let saved_at = crate::recent::now_secs();
     let res = vb_doc::export::render_project(doc);
@@ -119,7 +124,12 @@ pub fn write_snapshot_keep(
         saved_at_unix: saved_at,
         files: res.files.into_iter().collect(),
     };
-    let text = serde_json::to_string(&snap).map_err(|e| format!("序列化快照失败:{e}"))?;
+    let text = serde_json::to_string(&snap).map_err(|e| {
+        vb_session::i18n::t_args(
+            "ui-autosave-003",
+            &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+        )
+    })?;
 
     // 滚动:最旧出列,其余后移一位(Windows 下 rename 不覆盖,先删目标)。
     // 槽位表仍按 MAX_SNAPSHOTS 布置;实际滚动只在前 `keep` 个槽内进行,
@@ -132,15 +142,30 @@ pub fn write_snapshot_keep(
         let to = dir.join(slot_name(i));
         if from.exists() {
             let _ = std::fs::remove_file(&to);
-            std::fs::rename(&from, &to).map_err(|e| format!("滚动快照失败:{e}"))?;
+            std::fs::rename(&from, &to).map_err(|e| {
+                vb_session::i18n::t_args(
+                    "ui-autosave-004",
+                    &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                )
+            })?;
         }
     }
     // 原子写:tmp → rename
     let final_path = dir.join(slot_name(0));
     let tmp = dir.join(format!("{BASE}.json.tmp"));
-    std::fs::write(&tmp, text).map_err(|e| format!("写快照失败:{e}"))?;
+    std::fs::write(&tmp, text).map_err(|e| {
+        vb_session::i18n::t_args(
+            "ui-autosave-005",
+            &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+        )
+    })?;
     let _ = std::fs::remove_file(&final_path);
-    std::fs::rename(&tmp, &final_path).map_err(|e| format!("提交快照失败:{e}"))?;
+    std::fs::rename(&tmp, &final_path).map_err(|e| {
+        vb_session::i18n::t_args(
+            "ui-autosave-006",
+            &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+        )
+    })?;
     Ok(saved_at)
 }
 
@@ -160,7 +185,7 @@ fn ensure_readme(dir: &Path) {
                 \n\
                 \x20   .vb-autosave/\n\
                 \n\
-                (Vellum Bench 阶段 7 · 数据安全)\n";
+                (Vellum Bench 阶段 7 · 数据安全)\n"; // vb-literal-ok: 写盘 README 文本,非界面渲染文案
     let _ = std::fs::write(&p, text);
 }
 
@@ -168,13 +193,31 @@ fn ensure_readme(dir: &Path) {
 
 /// 读指定快照文件(损坏 → 中文原因;供单测与回退循环共用)。
 pub fn read_file(path: &Path) -> Result<Snapshot, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("读快照失败:{e}"))?;
-    let snap: Snapshot =
-        serde_json::from_str(&text).map_err(|e| format!("快照解析失败(疑似写坏):{e}"))?;
+    let text = std::fs::read_to_string(path).map_err(|e| {
+        vb_session::i18n::t_args(
+            "ui-autosave-007",
+            &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+        )
+    })?;
+    let snap: Snapshot = serde_json::from_str(&text).map_err(|e| {
+        vb_session::i18n::t_args(
+            "ui-autosave-008",
+            &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+        )
+    })?;
     if snap.schema_version != SCHEMA_VERSION {
-        return Err(format!(
-            "快照版本 {} 与当前 {SCHEMA_VERSION} 不符",
-            snap.schema_version
+        return Err(vb_session::i18n::t_args(
+            "ui-autosave-009",
+            &[
+                (
+                    "a1",
+                    vb_session::i18n::FluentValue::from((snap.schema_version).to_string()),
+                ),
+                (
+                    "SCHEMA_VERSION",
+                    vb_session::i18n::FluentValue::from((SCHEMA_VERSION).to_string()),
+                ),
+            ],
         ));
     }
     Ok(snap)
@@ -210,7 +253,12 @@ pub fn clear(project: &Path) {
 /// 把快照文件表落到中转目录(恢复用;import 需要目录形态)。
 fn materialize(project: &Path, snap: &Snapshot) -> Result<PathBuf, String> {
     let dir = autosave_dir(project).join(RESTORE_DIR);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("创建恢复中转目录失败:{e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        vb_session::i18n::t_args(
+            "ui-autosave-010",
+            &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+        )
+    })?;
     for (rel, content) in &snap.files {
         // 路径消毒:快照 JSON 可能被篡改或将来 schema 变化引入 `..`/
         // 绝对路径 —— 直接 join 会写到项目目录之外
@@ -220,13 +268,35 @@ fn materialize(project: &Path, snap: &Snapshot) -> Result<PathBuf, String> {
                 .components()
                 .any(|c| matches!(c, std::path::Component::ParentDir))
         {
-            return Err(format!("快照文件路径非法(越出项目目录): {rel}"));
+            return Err(vb_session::i18n::t_args(
+                "ui-autosave-011",
+                &[(
+                    "rel",
+                    vb_session::i18n::FluentValue::from((rel).to_string()),
+                )],
+            ));
         }
         let p = dir.join(rel_path);
         if let Some(parent) = p.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("创建快照子目录失败:{e}"))?;
+            std::fs::create_dir_all(parent).map_err(|e| {
+                vb_session::i18n::t_args(
+                    "ui-autosave-012",
+                    &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                )
+            })?;
         }
-        std::fs::write(&p, content).map_err(|e| format!("写快照文件 {rel} 失败:{e}"))?;
+        std::fs::write(&p, content).map_err(|e| {
+            vb_session::i18n::t_args(
+                "ui-autosave-013",
+                &[
+                    (
+                        "rel",
+                        vb_session::i18n::FluentValue::from((rel).to_string()),
+                    ),
+                    ("e", vb_session::i18n::FluentValue::from((e).to_string())),
+                ],
+            )
+        })?;
     }
     Ok(dir)
 }
@@ -322,7 +392,19 @@ fn mid_diff(ma: &[&str], mb: &[&str]) -> Vec<DiffRow> {
         if ma.len() + mb.len() > 0 {
             out.push(DiffRow {
                 kind: DiffKind::Same,
-                text: format!("…(中段 {}+{} 行过长,整块省略)…", ma.len(), mb.len()),
+                text: vb_session::i18n::t_args(
+                    "ui-autosave-014",
+                    &[
+                        (
+                            "a1",
+                            vb_session::i18n::FluentValue::from((ma.len()).to_string()),
+                        ),
+                        (
+                            "a2",
+                            vb_session::i18n::FluentValue::from((mb.len()).to_string()),
+                        ),
+                    ],
+                ),
             });
         }
         for l in ma {

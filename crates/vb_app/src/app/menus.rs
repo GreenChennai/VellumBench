@@ -5,7 +5,7 @@
 //!    [`shortcuts::MENUS`],本文件只按注册表渲染,不另立第二份清单;
 //! 2. **键位文本一律查注册表**(`shortcuts::key_text_for`),禁止在 label 里手写;
 //! 3. **未落地项置灰 + 悬停提示**(`shortcuts::planned_reason`),
-//!    绝不出现"点了没反应"的项(`design/06 §七`)。
+//!    绝不出现vb_session::i18n::t("ui-app-control-panel-render-001")的项(`design/06 §七`)。
 
 use crate::shortcuts;
 
@@ -17,7 +17,7 @@ impl VellumApp {
             egui::MenuBar::new().ui(ui, |ui| {
                 // 点击的菜单项先收集,菜单全部渲染完再派发(避免借用冲突)。
                 let mut fired: Option<&'static str> = None;
-                // 动态动作 = 自定义工作区切换("preset:<名>";X-7)
+                // 动态动作 = 自定义工作区切换(vb_session::i18n::t("ui-app-menus-001");X-7)
                 let mut dyn_fired: Option<String> = None;
 
                 for (idx, title) in shortcuts::MENU_TITLES.iter().enumerate() {
@@ -73,7 +73,7 @@ impl VellumApp {
             return;
         };
         for item in *items {
-            // ── 编辑:撤销/重做显示"会撤销什么",并按可撤销性置灰 ──
+            // ── 编辑:撤销/重做显示vb_session::i18n::t("ui-app-menus-004"),并按可撤销性置灰 ──
             if item.id == "edit.undo" || item.id == "edit.redo" {
                 let (label, enabled) = match item.id {
                     "edit.undo" => (
@@ -142,7 +142,7 @@ impl VellumApp {
 
 /// 菜单项按钮:标签 + 键位文本(调用方传入 —— 查**有效键位集**,用户
 /// 方案覆盖优先,05-4-A2);`extra` 为附在标签后的补充文本
-/// (如"撤销"后面的会撤销什么)。禁用时若该项有计划说明,悬停给出原因。
+/// (如vb_session::i18n::t("ui-menu-edit-undo")后面的会撤销什么)。禁用时若该项有计划说明,悬停给出原因。
 fn menu_item_button_with(
     ui: &mut egui::Ui,
     item: &shortcuts::MenuItem,

@@ -18,21 +18,36 @@ impl VellumApp {
 
     pub(crate) fn stroke_panel_body(&mut self, ui: &mut egui::Ui) {
         let Some(p) = self.appearance_projection() else {
-            ui.label(caption(ui, "未选中对象 —— 选中任意元素后可设描边。"));
+            ui.label(caption(
+                ui,
+                &vb_session::i18n::t("ui-app-appearance-stroke-001"),
+            ));
             return;
         };
         let t = super::target_of(&p.kind);
         if t == AppearanceTarget::Frozen {
-            ui.label(caption(ui, "冻结块:内部不可编辑;描边请编辑其源 HTML。"));
+            ui.label(caption(
+                ui,
+                &vb_session::i18n::t("ui-app-appearance-stroke-002"),
+            ));
             return;
         }
         let target_name = match t {
-            AppearanceTarget::Box => "盒对象(border/outline)",
-            AppearanceTarget::Text => "文字(-webkit-text-stroke)",
-            AppearanceTarget::Vector => "矢量路径(stroke 系)",
-            AppearanceTarget::Frozen => "冻结块",
+            AppearanceTarget::Box => vb_session::i18n::t("ui-app-appearance-stroke-003"),
+            AppearanceTarget::Text => vb_session::i18n::t("ui-app-appearance-stroke-004"),
+            AppearanceTarget::Vector => vb_session::i18n::t("ui-app-appearance-stroke-005"),
+            AppearanceTarget::Frozen => vb_session::i18n::t("ui-common-freeze-block"),
         };
-        ui.label(caption(ui, &format!("通用描边入口 · 落点:{target_name}")));
+        ui.label(caption(
+            ui,
+            &vb_session::i18n::t_args(
+                "ui-app-appearance-stroke-006",
+                &[(
+                    "target_name",
+                    vb_session::i18n::FluentValue::from((target_name).to_string()),
+                )],
+            ),
+        ));
         ui.separator();
         let Some(idx) = p
             .model
@@ -40,8 +55,14 @@ impl VellumApp {
             .iter()
             .position(|i| matches!(i, AppearanceItem::Stroke(_)))
         else {
-            ui.label(caption(ui, "该对象暂无描边条目。"));
-            if ui.button("+ 为该对象添加描边").clicked() {
+            ui.label(caption(
+                ui,
+                &vb_session::i18n::t("ui-app-appearance-stroke-007"),
+            ));
+            if ui
+                .button(vb_session::i18n::t("ui-app-appearance-stroke-008"))
+                .clicked()
+            {
                 let sid = p.sid.clone();
                 self.exec_appearance(add_stroke_cmd(&self.doc, &sid));
             }
@@ -63,7 +84,9 @@ impl VellumApp {
             .map(|c| egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a))
             .unwrap_or(egui::Color32::BLACK);
         let tokens = self.doc.tokens.clone();
-        let r = ColorField::new("颜色", &mut col).doc_tokens(&tokens).ui(ui);
+        let r = ColorField::new(&vb_session::i18n::t("ui-common-color"), &mut col)
+            .doc_tokens(&tokens)
+            .ui(ui);
         if let Some(nm) = r.var_picked {
             spec.color = Some(format!("var(--{nm})"));
             self.exec_appearance(set_stroke_spec_cmd(&self.doc, &sid, idx, spec.clone()));
@@ -72,7 +95,7 @@ impl VellumApp {
             spec.color = Some(vb_common::Rgba::new(cr, cg, cb, ca).to_shortest_hex());
             self.exec_appearance(set_stroke_spec_cmd(&self.doc, &sid, idx, spec.clone()));
         }
-        let r = NumField::new("粗细", &mut spec.width)
+        let r = NumField::new(&vb_session::i18n::t("ui-common-weight"), &mut spec.width)
             .speed(0.5)
             .step(1.0)
             .range(0.0, 200.0)
@@ -88,7 +111,13 @@ impl VellumApp {
         // 端点(05-3-1;仅矢量有 CSS/SVG 落点,其余置灰 + 悬停说明)
         let mut cap = spec.cap;
         egui::ComboBox::from_id_salt("vb_stroke_cap")
-            .selected_text(format!("端点 {}", cap.label()))
+            .selected_text(vb_session::i18n::t_args(
+                "ui-app-appearance-stroke-009",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from((cap.label()).to_string()),
+                )],
+            ))
             .show_ui(ui, |ui| {
                 for c in [StrokeCap::Butt, StrokeCap::Round, StrokeCap::Square] {
                     let resp = if is_vector {
@@ -100,9 +129,7 @@ impl VellumApp {
                         )
                     };
                     if !is_vector {
-                        resp.on_hover_text(
-                            "端点仅矢量路径有落点(stroke-linecap);盒对象边框/文字描边无端点语义",
-                        );
+                        resp.on_hover_text(vb_session::i18n::t("ui-app-appearance-stroke-010"));
                     }
                 }
             });
@@ -114,7 +141,13 @@ impl VellumApp {
         // 边角(仅矢量;盒对象的边角由圆角决定)
         let mut join = spec.join;
         egui::ComboBox::from_id_salt("vb_stroke_join")
-            .selected_text(format!("边角 {}", join.label()))
+            .selected_text(vb_session::i18n::t_args(
+                "ui-app-appearance-stroke-011",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from((join.label()).to_string()),
+                )],
+            ))
             .show_ui(ui, |ui| {
                 for j in [StrokeJoin::Miter, StrokeJoin::Round, StrokeJoin::Bevel] {
                     let resp = if is_vector {
@@ -126,9 +159,7 @@ impl VellumApp {
                         )
                     };
                     if !is_vector {
-                        resp.on_hover_text(
-                            "边角仅矢量路径有落点(stroke-linejoin);盒对象的边角由圆角(border-radius)决定",
-                        );
+                        resp.on_hover_text(vb_session::i18n::t("ui-app-appearance-stroke-012"));
                     }
                 }
             });
@@ -139,13 +170,16 @@ impl VellumApp {
 
         // 斜接限制(仅矢量 + 斜接;05-3-1)
         if is_vector {
-            let r = NumField::new("斜接限", &mut spec.miter_limit)
-                .speed(0.1)
-                .step(1.0)
-                .range(1.0, 100.0)
-                .label_width(44.0)
-                .width(56.0)
-                .ui(ui);
+            let r = NumField::new(
+                &vb_session::i18n::t("ui-app-appearance-stroke-013"),
+                &mut spec.miter_limit,
+            )
+            .speed(0.1)
+            .step(1.0)
+            .range(1.0, 100.0)
+            .label_width(44.0)
+            .width(56.0)
+            .ui(ui);
             if r.changed {
                 let res = set_stroke_spec_cmd(&self.doc, &sid, idx, spec.clone());
                 self.appearance_num_apply(r, res);
@@ -155,23 +189,26 @@ impl VellumApp {
         // 虚线(05-3-2;值/间隙最多 3 对 = 6 组;仅矢量可自定义,
         // 盒对象按「有虚线 → dashed」近似落盘)
         ui.horizontal(|ui| {
-            ui.label("虚线");
+            ui.label(vb_session::i18n::t("ui-app-appearance-stroke-014"));
             let pairs = spec.dash.len().div_ceil(2);
             for pi in 0..pairs {
                 let mut on = spec.dash[pi * 2];
                 let mut off = spec.dash.get(pi * 2 + 1).copied().unwrap_or(0.0);
-                let r1 = NumField::new("值", &mut on)
+                let r1 = NumField::new(&vb_session::i18n::t("ui-common-value"), &mut on)
                     .speed(0.5)
                     .range(0.0, 200.0)
                     .width(44.0)
                     .label_width(16.0)
                     .ui(ui);
-                let r2 = NumField::new("隙", &mut off)
-                    .speed(0.5)
-                    .range(0.0, 200.0)
-                    .width(44.0)
-                    .label_width(16.0)
-                    .ui(ui);
+                let r2 = NumField::new(
+                    &vb_session::i18n::t("ui-app-appearance-stroke-015"),
+                    &mut off,
+                )
+                .speed(0.5)
+                .range(0.0, 200.0)
+                .width(44.0)
+                .label_width(16.0)
+                .ui(ui);
                 if r1.changed || r2.changed {
                     spec.dash[pi * 2] = on;
                     if spec.dash.len() > pi * 2 + 1 {
@@ -183,13 +220,26 @@ impl VellumApp {
                     self.appearance_num_apply(if r2.changed { r2 } else { r1 }, res);
                 }
             }
-            if pairs < 3 && icon_button(ui, icons::Name::AddChild, "加一组值/间隙").clicked()
+            if pairs < 3
+                && icon_button(
+                    ui,
+                    icons::Name::AddChild,
+                    &vb_session::i18n::t("ui-app-appearance-stroke-016"),
+                )
+                .clicked()
             {
                 spec.dash.push(6.0);
                 spec.dash.push(3.0);
                 self.exec_appearance(set_stroke_spec_cmd(&self.doc, &sid, idx, spec.clone()));
             }
-            if pairs > 0 && icon_button(ui, icons::Name::Delete, "删末组").clicked() {
+            if pairs > 0
+                && icon_button(
+                    ui,
+                    icons::Name::Delete,
+                    &vb_session::i18n::t("ui-app-appearance-stroke-017"),
+                )
+                .clicked()
+            {
                 spec.dash.truncate((pairs - 1) * 2);
                 self.exec_appearance(set_stroke_spec_cmd(&self.doc, &sid, idx, spec.clone()));
             }
@@ -197,14 +247,20 @@ impl VellumApp {
         if !is_vector {
             ui.label(caption(
                 ui,
-                "盒对象:CSS 无自定义虚线,按「有虚线 → dashed」近似;文字描边无虚线",
+                &vb_session::i18n::t("ui-app-appearance-stroke-018"),
             ));
         }
 
         // 对齐(05-3-2):盒 = border(内侧)/outline(外侧)/居中降级;矢量恒居中
         let mut align = spec.align;
         egui::ComboBox::from_id_salt("vb_stroke_align")
-            .selected_text(format!("对齐 {}", align.label()))
+            .selected_text(vb_session::i18n::t_args(
+                "ui-app-appearance-stroke-019",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from((align.label()).to_string()),
+                )],
+            ))
             .show_ui(ui, |ui| {
                 for a in [
                     StrokeAlign::Center,
@@ -220,9 +276,7 @@ impl VellumApp {
                         )
                     };
                     if !is_box {
-                        resp.on_hover_text(
-                            "矢量路径的 SVG 描边恒居中(stroke-align 为 SVG2 草案);文字描边无对齐",
-                        );
+                        resp.on_hover_text(vb_session::i18n::t("ui-app-appearance-stroke-020"));
                     }
                 }
             });
@@ -233,7 +287,7 @@ impl VellumApp {
         if is_box && spec.align == StrokeAlign::Center {
             ui.label(caption(
                 ui,
-                "居中描边:CSS border 恒内侧,已按内侧落盘(与 AI 观感差半线宽;外侧走 outline)",
+                &vb_session::i18n::t("ui-app-appearance-stroke-021"),
             ));
         }
 
@@ -242,7 +296,13 @@ impl VellumApp {
             let mut a0 = spec.arrow_start;
             let mut a1 = spec.arrow_end;
             egui::ComboBox::from_id_salt("vb_arrow_start")
-                .selected_text(format!("起箭头 {}", a0.label()))
+                .selected_text(vb_session::i18n::t_args(
+                    "ui-app-appearance-stroke-022",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from((a0.label()).to_string()),
+                    )],
+                ))
                 .show_ui(ui, |ui| {
                     for a in [
                         Arrowhead::None,
@@ -254,7 +314,13 @@ impl VellumApp {
                     }
                 });
             egui::ComboBox::from_id_salt("vb_arrow_end")
-                .selected_text(format!("止箭头 {}", a1.label()))
+                .selected_text(vb_session::i18n::t_args(
+                    "ui-app-appearance-stroke-023",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from((a1.label()).to_string()),
+                    )],
+                ))
                 .show_ui(ui, |ui| {
                     for a in [
                         Arrowhead::None,
@@ -267,9 +333,9 @@ impl VellumApp {
                 });
             let changed = a0 != spec.arrow_start || a1 != spec.arrow_end;
             if changed && !is_vector {
-                self.toast_warn("箭头仅矢量路径可登记(盒/文字无端点)");
+                self.toast_warn(vb_session::i18n::t("ui-app-appearance-stroke-024"));
             } else if changed {
-                self.toast_warn("箭头为冻结登记:模型保留但不落盘(CSS/SVG marker 未建模,计划 v2)");
+                self.toast_warn(vb_session::i18n::t("ui-app-appearance-stroke-025"));
                 spec.arrow_start = a0;
                 spec.arrow_end = a1;
                 self.exec_appearance(set_stroke_spec_cmd(&self.doc, &sid, idx, spec.clone()));

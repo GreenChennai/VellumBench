@@ -57,7 +57,7 @@ impl VellumApp {
             .filter(|sid| self.is_artboard_sid(sid))
             .count();
         if artboards_in_selection >= self.doc.artboards.len() && artboards_in_selection > 0 {
-            self.status = "至少保留一块画板".into();
+            self.status = vb_session::i18n::t("ui-app-commands-001");
             return;
         }
         let sids = std::mem::take(&mut self.selection);
@@ -67,7 +67,7 @@ impl VellumApp {
                 captured: None,
             });
         }
-        self.status = "已删除(Ctrl+Z 撤销)".into();
+        self.status = vb_session::i18n::t("ui-app-commands-002");
     }
 
     /// 多选拖动(B4):除主对象外的其余选中对象及其起始几何。
@@ -92,19 +92,25 @@ impl VellumApp {
 
     pub(crate) fn group_selection(&mut self) {
         if self.selection.len() < 2 {
-            self.status = "编组需要至少 2 个对象".into();
+            self.status = vb_session::i18n::t("ui-app-commands-003");
             return;
         }
         let group_sid = self.doc.alloc_sid();
         let members = self.selection.clone();
         self.exec(Command::Group {
             member_sids: members,
-            name: format!("编组 {}", group_sid.as_str()),
+            name: vb_session::i18n::t_args(
+                "ui-app-commands-004",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from((group_sid.as_str()).to_string()),
+                )],
+            ),
             group_sid: group_sid.as_str().to_string(),
             old_slots: None,
         });
         self.selection = vec![group_sid.as_str().to_string()].into();
-        self.status = "已编组(Ctrl+G)".into();
+        self.status = vb_session::i18n::t("ui-app-commands-005");
     }
 
     pub(crate) fn ungroup_selection(&mut self) {
@@ -121,7 +127,7 @@ impl VellumApp {
             .cloned()
             .collect();
         if groups.is_empty() {
-            self.status = "取消编组:选中对象里没有编组".into();
+            self.status = vb_session::i18n::t("ui-app-commands-006");
             return;
         }
         let mut members: Vec<String> = Vec::new();
@@ -139,13 +145,13 @@ impl VellumApp {
             });
         }
         self.selection = members.into();
-        self.status = "已取消编组(Ctrl+Shift+G)".into();
+        self.status = vb_session::i18n::t("ui-app-commands-007");
     }
 
     /// 剪贴板:复制所选子树(非破坏;NodeTree::from_document 只克隆)。
     pub(crate) fn clipboard_copy(&mut self) {
         if self.selection.is_empty() {
-            self.status = "剪贴板:未选中对象".into();
+            self.status = vb_session::i18n::t("ui-app-commands-008");
             return;
         }
         let mut buf = Vec::new();
@@ -165,13 +171,19 @@ impl VellumApp {
         }
         self.clipboard = buf;
         self.paste_offset = 0;
-        self.status = format!("已复制 {} 个对象", self.clipboard.len());
+        self.status = vb_session::i18n::t_args(
+            "ui-app-commands-009",
+            &[(
+                "a1",
+                vb_session::i18n::FluentValue::from((self.clipboard.len()).to_string()),
+            )],
+        );
     }
 
     /// 剪贴板:粘贴。`in_place` = 原坐标(AI 的贴在前面);否则按 16px 递增偏移。
     pub(crate) fn clipboard_paste(&mut self, in_place: bool) {
         if self.clipboard.is_empty() {
-            self.status = "剪贴板为空".into();
+            self.status = vb_session::i18n::t("ui-app-commands-010");
             return;
         }
         let offset = if in_place { 0 } else { self.paste_offset };
@@ -202,10 +214,25 @@ impl VellumApp {
         }
         self.exec(Command::Compound { cmds });
         self.selection = pasted_sids.into();
-        self.status = format!(
-            "已粘贴 {} 个对象{}",
-            self.clipboard.len(),
-            if in_place { "(就地)" } else { "" }
+        self.status = vb_session::i18n::t_args(
+            "ui-app-commands-011",
+            &[
+                (
+                    "a1",
+                    vb_session::i18n::FluentValue::from((self.clipboard.len()).to_string()),
+                ),
+                (
+                    "a2",
+                    vb_session::i18n::FluentValue::from(
+                        (if in_place {
+                            vb_session::i18n::t("ui-app-commands-012")
+                        } else {
+                            String::new()
+                        })
+                        .to_string(),
+                    ),
+                ),
+            ],
         );
     }
 
@@ -221,7 +248,7 @@ impl VellumApp {
             }
         }
         if items.len() < 3 {
-            self.status = "分布需要至少 3 个对象".into();
+            self.status = vb_session::i18n::t("ui-app-commands-013");
             return;
         }
         // 按前缘排序(左→右或上→下):游标按前缘推进,排序也必须按前缘,
@@ -270,10 +297,15 @@ impl VellumApp {
             });
         }
         let count = cmds.len();
-        let axis = if horizontal { "水平" } else { "垂直" };
+        let axis = if horizontal {
+            vb_session::i18n::t("ui-common-horizontal")
+        } else {
+            vb_session::i18n::t("ui-common-vertical")
+        };
         if count > 0 {
             self.exec(Command::Compound { cmds });
             self.status = format!("已{}分布 {count} 个对象(间距 {gap:.0}px)", axis);
+            // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
         }
     }
 
@@ -320,7 +352,13 @@ impl VellumApp {
         let sid = self.doc.alloc_sid();
         let mut n = vb_doc::model::Node::new(
             NodeKind::Vector { path: path.clone() },
-            format!("路径 {}", sid.as_str()),
+            vb_session::i18n::t_args(
+                "ui-app-commands-015",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from((sid.as_str()).to_string()),
+                )],
+            ),
             sid.clone(),
         );
         n.tag = "svg".into();
@@ -480,7 +518,7 @@ impl VellumApp {
     /// AI/Adobe 语义:联集/交集/差集与顺序无关;减法族见下方 z 序映射注释。
     pub(crate) fn path_boolean(&mut self, op: vb_tools::boolean::BooleanOp) {
         if self.selection.len() != 2 {
-            self.status = "路径查找器:需要恰好选中 2 个对象".into();
+            self.status = vb_session::i18n::t("ui-app-commands-016");
             return;
         }
         let (sid_a, sid_b) = (self.selection[0].clone(), self.selection[1].clone());
@@ -493,7 +531,7 @@ impl VellumApp {
                 self.doc.nodes.get(id).map(|n| &n.kind),
                 Some(NodeKind::Vector { .. })
             ) {
-                self.status = "路径查找器:只支持矢量路径(钢笔创建的形状)".into();
+                self.status = vb_session::i18n::t("ui-app-commands-017");
                 return;
             }
         }
@@ -528,7 +566,10 @@ impl VellumApp {
             match vb_tools::boolean::path_boolean_nodes(&self.doc, op, lhs_id, rhs_id) {
                 Ok(v) => v,
                 Err(e) => {
-                    self.status = format!("路径查找器:{e}");
+                    self.status = vb_session::i18n::t_args(
+                        "ui-app-commands-018",
+                        &[("e", vb_session::i18n::FluentValue::from((e).to_string()))],
+                    );
                     return;
                 }
             };
@@ -541,7 +582,13 @@ impl VellumApp {
             captured: None,
         });
         self.selection = vec![lhs].into();
-        self.status = format!("路径查找器:{}", op.as_str());
+        self.status = vb_session::i18n::t_args(
+            "ui-app-commands-019",
+            &[(
+                "a1",
+                vb_session::i18n::FluentValue::from((op.as_str()).to_string()),
+            )],
+        );
     }
 
     /// 路径查找器多结果运算(05-3 / X-1:分割 / 修边 / 轮廓)。
@@ -567,17 +614,25 @@ impl VellumApp {
         } = plan;
         self.exec(command);
         self.selection = result_sids.into();
-        self.status = format!(
-            "路径查找器:{}:产出 {} 个对象",
-            op.zh(),
-            self.selection.len()
+        self.status = vb_session::i18n::t_args(
+            "ui-app-commands-020",
+            &[
+                (
+                    "a1",
+                    vb_session::i18n::FluentValue::from((op.zh()).to_string()),
+                ),
+                (
+                    "a2",
+                    vb_session::i18n::FluentValue::from((self.selection.len()).to_string()),
+                ),
+            ],
         );
     }
 
     pub(crate) fn align_selection(&mut self, mode: &str) {
         use vb_tools::align::AbsBox;
         if self.selection.is_empty() {
-            self.status = "对齐:未选中对象".into();
+            self.status = vb_session::i18n::t("ui-app-commands-021");
             return;
         }
         // (sid, 当前几何, 绝对 bbox)
@@ -598,11 +653,17 @@ impl VellumApp {
         // 选区(多选=公共包围盒;单选回退画板)/ 关键对象(最后选中者)/ 画板。
         let Some(target) = super::align_panel::align_target_box(&self.doc, &items, self.align_to)
         else {
-            self.status = "对齐:找不到目标框".into();
+            self.status = vb_session::i18n::t("ui-app-commands-022");
             return;
         };
         let Some(m) = vb_tools::align::AlignMode::parse(mode) else {
-            self.status = format!("对齐:未知模式 {mode}");
+            self.status = vb_session::i18n::t_args(
+                "ui-app-commands-023",
+                &[(
+                    "mode",
+                    vb_session::i18n::FluentValue::from((mode).to_string()),
+                )],
+            );
             return;
         };
 
@@ -626,12 +687,21 @@ impl VellumApp {
             });
         }
         if cmds.is_empty() {
-            self.status = "对齐:无需移动".into();
+            self.status = vb_session::i18n::t("ui-app-commands-024");
             return;
         }
         let n = cmds.len();
         self.exec(Command::Compound { cmds });
-        self.status = format!("已对齐 {n} 个对象({mode})");
+        self.status = vb_session::i18n::t_args(
+            "ui-app-commands-025",
+            &[
+                ("n", vb_session::i18n::FluentValue::from((n).to_string())),
+                (
+                    "mode",
+                    vb_session::i18n::FluentValue::from((mode).to_string()),
+                ),
+            ],
+        );
     }
 
     /// 层序调整:delta=+1 前移一层(z 序升),-1 后移;front/back 用 ±10000
@@ -681,11 +751,11 @@ impl VellumApp {
     /// 旋转落到 `transform` 声明(与旋转手柄同一条命令)。
     pub(crate) fn transform_again(&mut self) {
         let Some(d) = self.last_transform else {
-            self.status = "没有可再次的变换(先移动/缩放/旋转一次)".into();
+            self.status = vb_session::i18n::t("ui-app-commands-026");
             return;
         };
         if self.selection.is_empty() {
-            self.status = "再次变换:先选中对象".into();
+            self.status = vb_session::i18n::t("ui-app-commands-027");
             return;
         }
         let rp = self.transform_ref;
@@ -719,7 +789,7 @@ impl VellumApp {
             n += 1;
         }
         self.status = format!(
-            "再次变换(Ctrl+D):{} 个对象(位移 {:.0},{:.0} · 缩放 ×{:.2}/×{:.2} · 旋转 {:.1}°)",
+            "再次变换(Ctrl+D):{} 个对象(位移 {:.0},{:.0} · 缩放 ×{:.2}/×{:.2} · 旋转 {:.1}°)", // vb-literal-ok: format 精度/Debug 规格,Fluent 占位符表达不了,留手动
             n, d.dx, d.dy, d.kx, d.ky, d.d_angle
         );
     }
@@ -734,7 +804,11 @@ impl VellumApp {
             g.h = 2.0;
         }
         let sid = self.doc.alloc_sid();
-        let name = if is_line { "直线" } else { "矩形" };
+        let name = if is_line {
+            vb_session::i18n::t("ui-common-line-tool")
+        } else {
+            vb_session::i18n::t("ui-common-rect")
+        };
         let mut n = vb_doc::model::Node::new(
             NodeKind::Box,
             format!("{} {}", name, sid.as_str()),
@@ -782,7 +856,7 @@ impl VellumApp {
             tree,
         });
         self.selection = vec![sid.as_str().to_string()].into();
-        self.status = "已创建对象".into();
+        self.status = vb_session::i18n::t("ui-app-commands-029");
     }
 
     /// 文字工具:点文本(area=None)/ 区域文本(拖框)。
@@ -814,11 +888,17 @@ impl VellumApp {
         };
         let mut n = vb_doc::model::Node::new(
             NodeKind::Text {
-                text: "双击编辑文本".into(),
+                text: vb_session::i18n::t("ui-app-commands-030"),
                 mode,
                 segments: Vec::new(),
             },
-            format!("文本 {}", sid.as_str()),
+            vb_session::i18n::t_args(
+                "ui-app-commands-031",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from((sid.as_str()).to_string()),
+                )],
+            ),
             sid.clone(),
         );
         n.tag = "p".into();
@@ -890,9 +970,9 @@ impl VellumApp {
         self.selection = vec![sid.as_str().to_string()].into();
         self.editing_text = Some(sid.as_str().to_string());
         self.status = if area.is_some() {
-            "已创建区域文本(拖框宽度即换行宽度)".into()
+            vb_session::i18n::t("ui-app-commands-032")
         } else {
-            "已创建点文本(输入内容,Ctrl+Enter 提交)".into()
+            vb_session::i18n::t("ui-app-commands-033")
         };
     }
 
@@ -902,7 +982,13 @@ impl VellumApp {
     pub(crate) fn create_slice(&mut self, mut g: Geom) {
         let count = self.slice_count() + 1;
         let sid = self.doc.alloc_sid();
-        let name = format!("切片 {count}");
+        let name = vb_session::i18n::t_args(
+            "ui-app-commands-034",
+            &[(
+                "count",
+                vb_session::i18n::FluentValue::from((count).to_string()),
+            )],
+        );
         let mut n = vb_doc::model::Node::new(NodeKind::Slice, name.clone(), sid.clone());
         n.geom = g;
         n.attrs.insert("data-vb-slice".into(), name.clone());
@@ -923,9 +1009,22 @@ impl VellumApp {
             tree,
         });
         self.selection = vec![sid.as_str().to_string()].into();
-        self.status = format!(
-            "已建立切片「{name}」({}×{},Shift+K 拖框可再建;vellum-cli export --slice 按名出图)",
-            g.w as i64, g.h as i64
+        self.status = vb_session::i18n::t_args(
+            "ui-app-commands-035",
+            &[
+                (
+                    "name",
+                    vb_session::i18n::FluentValue::from((name).to_string()),
+                ),
+                (
+                    "a1",
+                    vb_session::i18n::FluentValue::from((g.w as i64).to_string()),
+                ),
+                (
+                    "a2",
+                    vb_session::i18n::FluentValue::from((g.h as i64).to_string()),
+                ),
+            ],
         );
     }
 
@@ -946,7 +1045,7 @@ impl VellumApp {
             });
         }
         let Some(r) = acc else {
-            self.status = "切片:未选中对象".into();
+            self.status = vb_session::i18n::t("ui-app-commands-036");
             return;
         };
         self.create_slice(Geom {
@@ -972,7 +1071,13 @@ impl VellumApp {
         let sid = self.doc.alloc_sid();
         let mut n = vb_doc::model::Node::new(
             NodeKind::Artboard,
-            format!("画板 {}", count + 1),
+            vb_session::i18n::t_args(
+                "ui-app-commands-037",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from((count + 1).to_string()),
+                )],
+            ),
             sid.clone(),
         );
         n.geom = g;
@@ -994,14 +1099,36 @@ impl VellumApp {
             tree,
         });
         self.selection = vec![sid.as_str().to_string()].into();
-        self.status = format!("已新建画板 {}({}×{})", count + 1, g.w as i64, g.h as i64);
+        self.status = vb_session::i18n::t_args(
+            "ui-app-commands-038",
+            &[
+                (
+                    "a1",
+                    vb_session::i18n::FluentValue::from((count + 1).to_string()),
+                ),
+                (
+                    "a2",
+                    vb_session::i18n::FluentValue::from((g.w as i64).to_string()),
+                ),
+                (
+                    "a3",
+                    vb_session::i18n::FluentValue::from((g.h as i64).to_string()),
+                ),
+            ],
+        );
     }
 
     /// 新建默认画板(S1-c 控制面板「+画板」与画板面板「+ 新建」共用;
     /// 纵向堆到现有画板最下方,经 Insert 命令入 undo 栈)。
     /// 默认尺寸 = 首选项「画板」页的新画板预设(05-4-A2;默认 Web 1440×900)。
     pub(crate) fn add_default_artboard(&mut self) {
-        let name = format!("画板 {}", self.doc.artboards.len() + 1);
+        let name = vb_session::i18n::t_args(
+            "ui-app-commands-037",
+            &[(
+                "a1",
+                vb_session::i18n::FluentValue::from((self.doc.artboards.len() + 1).to_string()),
+            )],
+        );
         let sid = self.doc.alloc_sid();
         let mut n = vb_doc::model::Node::new(NodeKind::Artboard, name.clone(), sid.clone());
         let (pw, ph) = super::panels::artboards::AB_PRESETS
@@ -1039,7 +1166,13 @@ impl VellumApp {
             index: usize::MAX,
             tree,
         });
-        self.say(format!("已新建 {name}(Shift+O 画板工具)"));
+        self.say(vb_session::i18n::t_args(
+            "ui-app-commands-039",
+            &[(
+                "name",
+                vb_session::i18n::FluentValue::from((name).to_string()),
+            )],
+        ));
     }
 
     /// 直接选择锚点改位(数值框 / 画布拖拽共用的命令构造):
@@ -1081,7 +1214,7 @@ impl VellumApp {
     pub(crate) fn eyedropper_pick(&mut self, alt: bool) {
         let (wx, wy) = self.cursor_world;
         let Some(nid) = self.pick_at_world(wx, wy) else {
-            self.status = "吸管:未命中对象".into();
+            self.status = vb_session::i18n::t("ui-app-commands-040");
             return;
         };
         let src = self.doc.nodes.get(nid).unwrap();
@@ -1089,12 +1222,18 @@ impl VellumApp {
             // 全部样式:整份替换(目标无声明才允许空)
             let style = src.style.clone();
             if style.is_empty() {
-                self.status = "吸管:目标没有样式可吸取".into();
+                self.status = vb_session::i18n::t("ui-app-commands-041");
                 return;
             }
             let targets = self.selection.clone();
             if targets.is_empty() {
-                self.status = format!("已吸取 {} 条样式(先选中对象再点应用)", style.len());
+                self.status = vb_session::i18n::t_args(
+                    "ui-app-commands-042",
+                    &[(
+                        "a1",
+                        vb_session::i18n::FluentValue::from((style.len()).to_string()),
+                    )],
+                );
                 return;
             }
             for sid in targets {
@@ -1104,16 +1243,28 @@ impl VellumApp {
                     old: None,
                 });
             }
-            self.status = format!("已应用全部样式({} 条声明)", style.len());
+            self.status = vb_session::i18n::t_args(
+                "ui-app-commands-043",
+                &[(
+                    "a1",
+                    vb_session::i18n::FluentValue::from((style.len()).to_string()),
+                )],
+            );
         } else {
             let Some(color) = src.fill_color() else {
-                self.status = "吸管:目标没有填充色(Alt 可吸全部样式)".into();
+                self.status = vb_session::i18n::t("ui-app-commands-044");
                 return;
             };
             let hex = color.to_shortest_hex();
             let targets = self.selection.clone();
             if targets.is_empty() {
-                self.status = format!("已取色 {hex}(先选中对象再点应用)");
+                self.status = vb_session::i18n::t_args(
+                    "ui-app-commands-045",
+                    &[(
+                        "hex",
+                        vb_session::i18n::FluentValue::from((hex).to_string()),
+                    )],
+                );
                 return;
             }
             for sid in targets {
@@ -1136,7 +1287,13 @@ impl VellumApp {
                     old: None,
                 });
             }
-            self.status = format!("已应用填充 {hex}");
+            self.status = vb_session::i18n::t_args(
+                "ui-app-commands-046",
+                &[(
+                    "hex",
+                    vb_session::i18n::FluentValue::from((hex).to_string()),
+                )],
+            );
         }
     }
 
@@ -1182,7 +1339,7 @@ impl VellumApp {
     pub(crate) fn scissors_cut(&mut self, wx: f64, wy: f64, tol: f64) {
         use vb_common::geom::PathEl;
         let Some((sid, idx)) = self.find_vector_vertex(wx, wy, tol) else {
-            self.status = "剪刀:请在矢量路径的锚点上单击".into();
+            self.status = vb_session::i18n::t("ui-app-commands-047");
             return;
         };
         let Some(nid) = self.doc.find_by_sid(&sid) else {
@@ -1223,11 +1380,11 @@ impl VellumApp {
                 new: np,
                 old: None,
             });
-            self.status = "剪刀:已剪开(路径开放,填充按隐式闭合渲染)".into();
+            self.status = vb_session::i18n::t("ui-app-commands-048");
         } else {
             // 开路分段:[0..=idx] 与 [idx..end];端点处无需剪
             if idx == 0 || idx >= els.len() - 1 {
-                self.status = "剪刀:锚点已在路径端点,无需剪".into();
+                self.status = vb_session::i18n::t("ui-app-commands-049");
                 return;
             }
             let split_pt = local_end(&els[idx]);
@@ -1271,7 +1428,7 @@ impl VellumApp {
                 ],
             });
             self.selection = vec![sid, new_sid].into();
-            self.status = "剪刀:已剪开为两段(两段均已选中)".into();
+            self.status = vb_session::i18n::t("ui-app-commands-050");
         }
     }
 }

@@ -214,7 +214,7 @@ impl super::VellumApp {
     pub(crate) fn cycle_breakpoint(&mut self) {
         let list = available(&self.doc);
         if list.is_empty() {
-            self.say("文档没有断点:可在「文件 → 文档设置」添加(vb-breakpoints)");
+            self.say(vb_session::i18n::t("ui-app-breakpoints-001"));
             return;
         }
         self.active_breakpoint = match self.active_breakpoint {
@@ -222,10 +222,11 @@ impl super::VellumApp {
             Some(cur) => list.iter().find(|&&w| w > cur).copied(),
         };
         match self.active_breakpoint {
-            Some(w) => self.say(format!(
-                "断点预览:画布宽度 → {w}px(覆盖样式以浏览器校对为准)"
+            Some(w) => self.say(vb_session::i18n::t_args(
+                "ui-app-breakpoints-002",
+                &[("w", vb_session::i18n::FluentValue::from((w).to_string()))],
             )),
-            None => self.say("断点预览:回到默认画布"),
+            None => self.say(vb_session::i18n::t("ui-app-breakpoints-003")),
         }
     }
 
@@ -234,8 +235,8 @@ impl super::VellumApp {
     pub(crate) fn toggle_style_state(&mut self) {
         self.style_state = 1 - self.style_state;
         self.say(match self.style_state {
-            1 => "属性面板:hover 态编辑(落 selector:hover 规则)",
-            _ => "属性面板:正常态编辑",
+            1 => vb_session::i18n::t("ui-app-breakpoints-004"),
+            _ => vb_session::i18n::t("ui-app-breakpoints-005"),
         });
     }
 
@@ -318,13 +319,21 @@ impl super::VellumApp {
         }
         // 显隐(display: none)
         ui.horizontal(|ui| {
-            ui.label("显示");
+            ui.label(vb_session::i18n::t("ui-common-show"));
             let hidden = get_s("display") == "none";
-            if ui.selectable_label(!hidden, "显示").clicked() && hidden {
+            if ui
+                .selectable_label(!hidden, vb_session::i18n::t("ui-common-show"))
+                .clicked()
+                && hidden
+            {
                 let cmd = media_style_cmd(&self.doc, sid, bp, "display", None);
                 self.exec(cmd);
             }
-            if ui.selectable_label(hidden, "隐藏").clicked() && !hidden {
+            if ui
+                .selectable_label(hidden, vb_session::i18n::t("ui-common-hide"))
+                .clicked()
+                && !hidden
+            {
                 let cmd = media_style_cmd(&self.doc, sid, bp, "display", Some("none"));
                 self.exec(cmd);
             }
@@ -332,14 +341,17 @@ impl super::VellumApp {
         // 字号(仅文本对象)
         if is_text {
             let mut fs = get_f("font-size", 24.0);
-            let r = vb_ui::components::NumField::new("字号", &mut fs)
-                .speed(1.0)
-                .step(1.0)
-                .range(1.0, 500.0)
-                .unit("px")
-                .label_width(44.0)
-                .width(56.0)
-                .ui(ui);
+            let r = vb_ui::components::NumField::new(
+                &vb_session::i18n::t("ui-common-font-size"),
+                &mut fs,
+            )
+            .speed(1.0)
+            .step(1.0)
+            .range(1.0, 500.0)
+            .unit("px")
+            .label_width(44.0)
+            .width(56.0)
+            .ui(ui);
             if r.changed {
                 let v = format!("{}px", vb_common::units::fmt_num(fs));
                 let cmd = media_style_cmd(&self.doc, sid, bp, "font-size", Some(&v));
@@ -356,11 +368,14 @@ impl super::VellumApp {
             .unwrap_or_default();
         if !existing.is_empty() {
             ui.add_space(4.0);
-            ui.label("已覆盖:");
+            ui.label(vb_session::i18n::t("ui-app-breakpoints-006"));
             for (prop, value) in &existing {
                 ui.horizontal(|ui| {
                     ui.label(format!("{prop}: {value};"));
-                    if ui.small_button("清除").clicked() {
+                    if ui
+                        .small_button(vb_session::i18n::t("ui-app-breakpoints-007"))
+                        .clicked()
+                    {
                         let cmd = media_style_cmd(&self.doc, sid, bp, prop, None);
                         self.exec(cmd);
                     }
@@ -410,7 +425,9 @@ impl super::VellumApp {
         let mut col = cur
             .map(|c| egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a))
             .unwrap_or(egui::Color32::WHITE);
-        let r = vb_ui::components::ColorField::new("填充", &mut col).ui(ui);
+        let r =
+            vb_ui::components::ColorField::new(&vb_session::i18n::t("ui-common-fill"), &mut col)
+                .ui(ui);
         if r.changed {
             let [cr, cg, cb, ca] = col.to_srgba_unmultiplied();
             let hex = vb_common::Rgba::new(cr, cg, cb, ca).to_shortest_hex();
@@ -419,13 +436,16 @@ impl super::VellumApp {
         }
         // 不透明度
         let mut op = get_f("opacity", 1.0);
-        let r = vb_ui::components::NumField::new("不透明", &mut op)
-            .speed(0.01)
-            .step(0.01)
-            .range(0.0, 1.0)
-            .label_width(44.0)
-            .width(56.0)
-            .ui(ui);
+        let r = vb_ui::components::NumField::new(
+            &vb_session::i18n::t("ui-common-opacity-short"),
+            &mut op,
+        )
+        .speed(0.01)
+        .step(0.01)
+        .range(0.0, 1.0)
+        .label_width(44.0)
+        .width(56.0)
+        .ui(ui);
         if r.changed {
             let v = format!("{op:.2}");
             let cmd = pseudo_style_cmd(&self.doc, sid, "opacity", Some(&v));
@@ -434,14 +454,17 @@ impl super::VellumApp {
         // 文本对象:字号 / 字色
         if is_text {
             let mut fs = get_f("font-size", 24.0);
-            let r = vb_ui::components::NumField::new("字号", &mut fs)
-                .speed(1.0)
-                .step(1.0)
-                .range(1.0, 500.0)
-                .unit("px")
-                .label_width(44.0)
-                .width(56.0)
-                .ui(ui);
+            let r = vb_ui::components::NumField::new(
+                &vb_session::i18n::t("ui-common-font-size"),
+                &mut fs,
+            )
+            .speed(1.0)
+            .step(1.0)
+            .range(1.0, 500.0)
+            .unit("px")
+            .label_width(44.0)
+            .width(56.0)
+            .ui(ui);
             if r.changed {
                 let v = format!("{}px", vb_common::units::fmt_num(fs));
                 let cmd = pseudo_style_cmd(&self.doc, sid, "font-size", Some(&v));
@@ -454,7 +477,11 @@ impl super::VellumApp {
             let mut tc = cur_c
                 .map(|c| egui::Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a))
                 .unwrap_or(egui::Color32::BLACK);
-            let r = vb_ui::components::ColorField::new("字色", &mut tc).ui(ui);
+            let r = vb_ui::components::ColorField::new(
+                &vb_session::i18n::t("ui-common-text-color"),
+                &mut tc,
+            )
+            .ui(ui);
             if r.changed {
                 let [cr, cg, cb, ca] = tc.to_srgba_unmultiplied();
                 let hex = vb_common::Rgba::new(cr, cg, cb, ca).to_shortest_hex();
@@ -469,11 +496,14 @@ impl super::VellumApp {
             .collect();
         if !existing.is_empty() {
             ui.add_space(4.0);
-            ui.label("已覆盖:");
+            ui.label(vb_session::i18n::t("ui-app-breakpoints-006"));
             for (prop, value) in &existing {
                 ui.horizontal(|ui| {
                     ui.label(format!("{prop}: {value};"));
-                    if ui.small_button("清除").clicked() {
+                    if ui
+                        .small_button(vb_session::i18n::t("ui-app-breakpoints-007"))
+                        .clicked()
+                    {
                         let cmd = pseudo_style_cmd(&self.doc, sid, prop, None);
                         self.exec(cmd);
                     }

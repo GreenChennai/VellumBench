@@ -258,8 +258,7 @@ pub fn menu_label_t(item: &MenuItem) -> String {
 
 /// 「已登记未落地」说明取词(None = 非计划项)。
 pub fn planned_reason_t(id: &str) -> Option<String> {
-    planned_reason(id)
-        .map(|_| crate::i18n::t(&format!("ui-planned-{}", id_key(id))))
+    planned_reason(id).map(|_| crate::i18n::t(&format!("ui-planned-{}", id_key(id))))
 }
 
 /// 路径查找器输出语义提示取词(None = 非路径查找器命令)。
@@ -274,13 +273,13 @@ pub fn menu_title_t(idx: usize) -> String {
 
 /// 命令所属菜单的标题(键位编辑器分组用);不在任何菜单里的命令
 /// (工具/主页/命令面板等)返回「其他」。
-pub fn menu_group_of(id: &str) -> &'static str {
+pub fn menu_group_of(id: &str) -> String {
     for (i, menu) in MENUS.iter().enumerate() {
         if menu.iter().any(|item| item.id == id) {
-            return MENU_TITLES[i];
+            return crate::i18n::t(&format!("ui-menu-title-{i}"));
         }
     }
-    "其他"
+    crate::i18n::t("ui-common-other")
 }
 
 /// 输入上下文栈顶判定的**纯函数**(B1 派发层回归的测试面;
