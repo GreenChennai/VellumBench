@@ -1706,16 +1706,17 @@ pub fn switch(ui: &mut Ui, on: &mut bool) -> Response {
 // ──────────────────────── 12. Card / 13. Separator / 14. Badge ────────────────────────
 
 /// 卡片(§8.6 #12):L2 凸起材质 + lg 圆角 + S4 内边距(阴影 L2)。
-pub fn card<R>(ui: &mut Ui, body: impl FnOnce(&mut Ui) -> R) -> R {
+/// 返回 `(卡片 Response, body 产出)` —— 整卡命中区可直接挂点击。
+pub fn card<R>(ui: &mut Ui, body: impl FnOnce(&mut Ui) -> R) -> (Response, R) {
     let t = theme::tokens(ui.ctx());
-    egui::Frame::new()
+    let ir = egui::Frame::new()
         .fill(t.bg_raised)
         .stroke(Stroke::new(theme::stroke::HAIRLINE, t.border))
         .corner_radius(theme::radius::lg())
         .shadow(theme::elevation::shadow_l2(t.dark))
         .inner_margin(egui::Margin::same(theme::space::S4 as i8))
-        .show(ui, |ui| body(ui))
-        .inner
+        .show(ui, |ui| body(ui));
+    (ir.response, ir.inner)
 }
 
 /// 分隔线(§8.6 #13):hairline,颜色 = 分隔强档(`border_strong`,

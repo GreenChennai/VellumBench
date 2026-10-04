@@ -713,71 +713,60 @@ impl VellumApp {
         if std::env::var("VB_NO_OVERLAY").is_ok() {
             return;
         }
-        // 数值浮层(P3.7,14 篇 §4.4):移动 / 缩放 / 旋转时跟随光标显示实时数值
-        let drag_label: Option<String> = match &self.drag {
+        // 数值浮层(§8.6 #18 ⭐ ValueOverlay;P3.7 的组件化重制):
+        // 移动 / 缩放 / 旋转拖拽会话中跟随光标,L4 材质 + 圆角 6 +
+        // caption 等宽,显示 `X Y ΔX ΔY W H ∠` 中有值的行。
+        let mut vo = vb_ui::ValueOverlay::default();
+        match &self.drag {
             Drag::MoveObj {
                 sid, start_geom, ..
             } => {
-                let n = self
+                if let Some(n) = self
                     .doc
                     .find_by_sid(sid)
-                    .and_then(|id| self.doc.nodes.get(id));
-                n.map(|n| {
-                    format!(
-                        "X {}\nY {}\nΔX +{}\nΔY +{}",
-                        vb_common::units::fmt_num(n.geom.x),
-                        vb_common::units::fmt_num(n.geom.y),
-                        vb_common::units::fmt_num(n.geom.x - start_geom.x),
-                        vb_common::units::fmt_num(n.geom.y - start_geom.y),
-                    )
-                })
+                    .and_then(|id| self.doc.nodes.get(id))
+                {
+                    vo.x = Some(n.geom.x);
+                    vo.y = Some(n.geom.y);
+                    vo.dx = Some(n.geom.x - start_geom.x);
+                    vo.dy = Some(n.geom.y - start_geom.y);
+                    vo.w = Some(n.geom.w);
+                    vo.h = Some(n.geom.h);
+                }
             }
-            Drag::Resize { sid, .. } => self.doc.find_by_sid(sid).and_then(|id| {
-                self.doc.nodes.get(id).map(|n| {
-                    format!(
-                        "W {}\nH {}",
-                        vb_common::units::fmt_num(n.geom.w),
-                        vb_common::units::fmt_num(n.geom.h)
-                    )
-                })
-            }),
-            Drag::Rotate { sid, .. } => self.doc.find_by_sid(sid).and_then(|id| {
-                self.doc
-                    .nodes
-                    .get(id)
-                    .and_then(|n| n.style_get("transform"))
-                    .and_then(vb_render::encode::parse_rotate_deg)
-                    .map(|d| format!("旋转 {}°", vb_common::units::fmt_num(d)))
-            }),
+            Drag::Resize { sid, .. } => {
+                if let Some(n) = self
+                    .doc
+                    .find_by_sid(sid)
+                    .and_then(|id| self.doc.nodes.get(id))
+                {
+                    vo.w = Some(n.geom.w);
+                    vo.h = Some(n.geom.h);
+                }
+            }
+            Drag::Rotate { sid, .. } => {
+                if let Some(n) = self
+                    .doc
+                    .find_by_sid(sid)
+                    .and_then(|id| self.doc.nodes.get(id))
+                {
+                    vo.angle = n
+                        .style_get("transform")
+                        .and_then(vb_render::encode::parse_rotate_deg);
+                }
+            }
             // 创建/缩放区域:拖拽中实时显示目标尺寸(P3.7)
             Drag::Create { start, cur } | Drag::ZoomRegion { start, cur } => {
-                let w = ((cur.x - start.x).abs() as f64 / self.camera.zoom).round();
-                let h = ((cur.y - start.y).abs() as f64 / self.camera.zoom).round();
-                Some(format!("{} × {}", w, h))
+                vo.w = Some(((cur.x - start.x).abs() as f64 / self.camera.zoom).round());
+                vo.h = Some(((cur.y - start.y).abs() as f64 / self.camera.zoom).round());
             }
-            _ => None,
-        };
-        if let Some(label) = drag_label {
+            _ => {}
+        }
+        if !vo.is_empty() {
             let (cx, cy) = self.cursor_world;
             let (sx, sy) = self.camera.world_to_screen(cx, cy);
-            let pos = pos2(sx as f32 + origin.x + 16.0, sy as f32 + origin.y + 16.0);
-            let bg = t.bg_raised;
-            let fg = t.text;
-            painter.rect_filled(
-                Rect::from_min_size(
-                    pos,
-                    egui::vec2(96.0, 16.0 * label.lines().count() as f32 + 10.0),
-                ),
-                4.0,
-                bg,
-            );
-            painter.text(
-                pos2(pos.x + 8.0, pos.y + 5.0),
-                Align2::LEFT_TOP,
-                label,
-                FontId::monospace(11.0),
-                fg,
-            );
+            let pos = pos2(sx as f32 + origin.x, sy as f32 + origin.y);
+            vo.show(painter.ctx(), pos);
         }
         // 文本近似绘制 + 冻结块占位(ADR-0017)
         let mut ids = Vec::new();
