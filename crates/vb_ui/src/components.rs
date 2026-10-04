@@ -1868,9 +1868,7 @@ pub fn badge(ui: &mut Ui, text: &str, kind: BadgeKind) -> Response {
         fg,
     );
     // S5 清单 ③:进度 pill 非交互(Sense::hover),读屏登记文本语义。
-    resp.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::ProgressIndicator, true, &text)
-    });
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ProgressIndicator, true, text));
     resp.on_hover_text(text.to_owned())
 }
 
