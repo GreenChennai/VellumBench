@@ -88,6 +88,18 @@ pub fn artboard_of(doc: &Document, id: NodeId) -> Option<NodeId> {
     None
 }
 
+/// 给定节点集合的最低底边(各节点 `geom.y + geom.h` 的最大值;空集/全
+/// 悬挂 → 0.0)。
+///
+/// COUP-04(2026-10-05):「新画板纵向堆叠」等布局策略的几何原语单源 ——
+/// 此前 vb_agent patch 的 `new_artboard` 内联同一份 fold 计算,几何实现
+/// 与事务编排同层;现在编译 op 只经本公共 API,几何只在 vb_tools 一份。
+pub fn max_bottom(doc: &Document, ids: &[NodeId]) -> f64 {
+    ids.iter()
+        .filter_map(|&a| doc.nodes.get(a).map(|n| n.geom.y + n.geom.h))
+        .fold(0.0f64, f64::max)
+}
+
 /// 节点的**世界坐标** bbox(画板原点 + abs_bbox;画板自身 geom 即世界坐标)。
 /// 拾取/框选/叠加层绘制与相机(世界系)交互时必须用这一口径。
 pub fn abs_bbox_world(doc: &Document, id: NodeId) -> Option<Rect> {
@@ -259,6 +271,37 @@ mod tests {
         doc.nodes.get_mut(id).unwrap().parent = Some(parent);
         doc.nodes.get_mut(parent).unwrap().children.push(id);
         id
+    }
+
+    /// COUP-04:max_bottom 几何原语 —— 与 patch new_artboard 曾内联的
+    /// fold 计算逐位等价(空集 0.0、取最大底边、忽略悬挂 id)。
+    #[test]
+    fn max_bottom_matches_inline_fold() {
+        let mut doc = Document::new_default();
+        let ab = doc.artboards()[0];
+        let a = add_box(&mut doc, ab, 0.0, 100.0, 50.0, 40.0); // 底 140
+        let b = add_box(&mut doc, ab, 0.0, 500.0, 50.0, 20.0); // 底 520
+        doc.nodes.get_mut(b).unwrap().geom.y = 300.0; // 底 320
+        let inline = doc
+            .artboards()
+            .iter()
+            .filter_map(|&x| doc.nodes.get(x).map(|n| n.geom.y + n.geom.h))
+            .fold(0.0f64, f64::max);
+        assert_eq!(max_bottom(&doc, doc.artboards()), inline);
+        // 画板底(900)大于子盒底(340)→ 取画板
+        assert_eq!(max_bottom(&doc, doc.artboards()), 900.0);
+        // 子集合:只看给定 id
+        assert_eq!(max_bottom(&doc, &[a]), 140.0);
+        // 空集 / 悬挂 id → 0.0
+        assert_eq!(max_bottom(&doc, &[]), 0.0);
+        let dangling = {
+            let sid = doc.alloc_sid();
+            let n = Node::new(NodeKind::Box, "临时", sid);
+            let k = doc.nodes.insert(n);
+            doc.nodes.remove(k);
+            k
+        };
+        assert_eq!(max_bottom(&doc, &[dangling]), 0.0);
     }
 
     #[test]

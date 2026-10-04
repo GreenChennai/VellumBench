@@ -27,19 +27,19 @@ const MAX_DEPTH: usize = 24;
 pub fn build(doc: &Document) -> Value {
     let mut counts = Counts::default();
     let artboards: Vec<Value> = doc
-        .artboards
+        .artboards()
         .iter()
         .map(|&a| {
             // 画板自身计入 counts
-            if let Some(n) = doc.nodes.get(a) {
+            if let Some(n) = doc.nodes().get(a) {
                 counts.bump(n);
             }
             node_json(doc, a, MAX_DEPTH, &mut counts)
         })
         .collect();
     json!({
-        "rev": doc.rev,
-        "artboardCount": doc.artboards.len(),
+        "rev": doc.rev(),
+        "artboardCount": doc.artboards().len(),
         "counts": counts.to_json(),
         "artboards": artboards,
     })
@@ -51,7 +51,7 @@ pub fn counts_of(projection: &Value) -> Value {
 }
 
 fn node_json(doc: &Document, id: NodeId, depth: usize, counts: &mut Counts) -> Value {
-    let Some(n) = doc.nodes.get(id) else {
+    let Some(n) = doc.nodes().get(id) else {
         // 容忍悬挂 id(MCP 同款防御):不 panic,回 null
         return Value::Null;
     };
@@ -59,7 +59,7 @@ fn node_json(doc: &Document, id: NodeId, depth: usize, counts: &mut Counts) -> V
         n.children
             .iter()
             .map(|&c| {
-                if let Some(cn) = doc.nodes.get(c) {
+                if let Some(cn) = doc.nodes().get(c) {
                     counts.bump(cn);
                 }
                 node_json(doc, c, depth - 1, counts)
@@ -140,10 +140,10 @@ mod tests {
         let sid = |s: &str| vb_common::StableId::parse(s).unwrap();
         // 建一个画板 + 文本 + 图片 + 编组(内含文本)
         let ab = doc
-            .nodes
+            .nodes_mut()
             .insert(Node::new(NodeKind::Artboard, "首页", sid("ab1")));
-        doc.artboards.push(ab);
-        let txt = doc.nodes.insert(Node::new(
+        doc.artboards_mut().push(ab);
+        let txt = doc.nodes_mut().insert(Node::new(
             NodeKind::Text {
                 text: "你好".into(),
                 segments: Vec::new(),
@@ -152,7 +152,7 @@ mod tests {
             "标题",
             sid("t1x"),
         ));
-        let img = doc.nodes.insert(Node::new(
+        let img = doc.nodes_mut().insert(Node::new(
             NodeKind::Image {
                 src: "a.png".into(),
             },
@@ -160,9 +160,9 @@ mod tests {
             sid("i1x"),
         ));
         let grp = doc
-            .nodes
+            .nodes_mut()
             .insert(Node::new(NodeKind::Group, "组", sid("g1x")));
-        let txt2 = doc.nodes.insert(Node::new(
+        let txt2 = doc.nodes_mut().insert(Node::new(
             NodeKind::Text {
                 text: "子文本".into(),
                 segments: Vec::new(),
@@ -171,14 +171,16 @@ mod tests {
             "子标题",
             sid("t2x"),
         ));
-        doc.nodes[txt].parent = Some(ab);
-        doc.nodes[img].parent = Some(ab);
-        doc.nodes[grp].parent = Some(ab);
-        doc.nodes[txt2].parent = Some(grp);
-        doc.nodes[ab].children = vec![txt, img, grp];
-        doc.nodes[grp].children = vec![txt2];
+        doc.nodes_mut()[txt].parent = Some(ab);
+        doc.nodes_mut()[img].parent = Some(ab);
+        doc.nodes_mut()[grp].parent = Some(ab);
+        doc.nodes_mut()[txt2].parent = Some(grp);
+        doc.nodes_mut()[ab].children = vec![txt, img, grp];
+        doc.nodes_mut()[grp].children = vec![txt2];
 
-        doc.rev = 7;
+        for _ in 0..7 {
+            doc.bump_rev();
+        }
         let p = build(&doc);
         assert_eq!(p["rev"], 7);
         assert_eq!(p["artboardCount"], 1);

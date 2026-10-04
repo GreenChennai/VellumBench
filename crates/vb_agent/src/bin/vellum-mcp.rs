@@ -43,7 +43,7 @@ fn rebuild_session_after_panic() {
     let dir = s.dir.clone();
     match import_project(&dir) {
         Ok(r) => {
-            let had_rev = r.doc.rev;
+            let had_rev = r.doc.rev();
             *guard = Some(Session {
                 doc: r.doc,
                 undo: UndoStack::new(),
@@ -70,7 +70,7 @@ fn outline_json(doc: &Document, depth: usize) -> Value {
     fn node_json(doc: &Document, id: vb_doc::model::NodeId, depth: usize) -> Value {
         // 容忍悬挂 id(防御:命令层已同步画板注册表,此处兜底不 panic——
         // MCP 进程无 catch_unwind,unwrap = 整个 server 崩溃)
-        let Some(n) = doc.nodes.get(id) else {
+        let Some(n) = doc.nodes().get(id) else {
             return Value::Null;
         };
         let children: Vec<Value> = if depth > 1 {
@@ -89,8 +89,8 @@ fn outline_json(doc: &Document, depth: usize) -> Value {
         })
     }
     json!({
-        "rev": doc.rev,
-        "artboards": doc.artboards.iter().map(|&a| node_json(doc, a, depth)).collect::<Vec<_>>(),
+        "rev": doc.rev(),
+        "artboards": doc.artboards().iter().map(|&a| node_json(doc, a, depth)).collect::<Vec<_>>(),
     })
 }
 
@@ -100,9 +100,9 @@ fn tool_open(args: &Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .ok_or("缺少 path")?;
     let r = import_project(Path::new(path)).map_err(|e| format!("导入失败:{e}"))?;
-    let n = r.doc.artboards.len();
-    let title = r.doc.meta.title.clone();
-    let rev = r.doc.rev;
+    let n = r.doc.artboards().len();
+    let title = r.doc.meta().title.clone();
+    let rev = r.doc.rev();
     *session_lock() = Some(Session {
         doc: r.doc,
         undo: UndoStack::new(),
@@ -117,11 +117,11 @@ fn need_artboard(doc: &Document, key: Option<&str>) -> Result<vb_doc::model::Nod
             if let Some(id) = doc.find_by_sid(k) {
                 return Ok(id);
             }
-            doc.artboards
+            doc.artboards()
                 .iter()
                 .copied()
                 .find(|&a| {
-                    doc.nodes
+                    doc.nodes()
                         .get(a)
                         .map(|n| {
                             n.name.eq_ignore_ascii_case(k)
@@ -132,7 +132,7 @@ fn need_artboard(doc: &Document, key: Option<&str>) -> Result<vb_doc::model::Nod
                 .ok_or_else(|| format!("画板 {k} 不存在"))
         }
         None => doc
-            .artboards
+            .artboards()
             .first()
             .copied()
             .ok_or_else(|| "无画板".into()),
@@ -152,12 +152,12 @@ fn tool_find(args: &Value) -> Result<Value, String> {
         let text = args.get("text").and_then(|v| v.as_str());
         let tag = args.get("tag").and_then(|v| v.as_str());
         let mut ids = Vec::new();
-        for &ab in &s.doc.artboards {
+        for &ab in s.doc.artboards() {
             s.doc.subtree(ab, &mut ids);
         }
         let hits: Vec<Value> = ids
             .iter()
-            .filter_map(|&id| s.doc.nodes.get(id))
+            .filter_map(|&id| s.doc.nodes().get(id))
             .filter(|n| {
                 name.map(|q| n.name.contains(q)).unwrap_or(true)
                     && text
@@ -180,7 +180,7 @@ fn tool_get_element(args: &Value) -> Result<Value, String> {
             .ok_or_else(|| format!("sid {id} 不存在"))?;
         let n = s
             .doc
-            .nodes
+            .nodes()
             .get(nid)
             .ok_or_else(|| format!("sid {id} 的内部节点缺失(悬挂 id)"))?;
         Ok(json!({
@@ -305,10 +305,10 @@ fn tool_diff_since(args: &Value) -> Result<Value, String> {
     with_session(|s: &mut Session| {
         let since = args.get("rev").and_then(|v| v.as_u64()).unwrap_or(0);
         Ok(json!({
-            "current_rev": s.doc.rev,
+            "current_rev": s.doc.rev(),
             "since": since,
             "note": "v0.1 返回粗粒度摘要;精确 op 级 diff 在 v0.2+",
-            "changed": s.doc.rev > since,
+            "changed": s.doc.rev() > since,
         }))
     })
 }
@@ -316,8 +316,8 @@ fn tool_diff_since(args: &Value) -> Result<Value, String> {
 fn tool_save(_args: &Value) -> Result<Value, String> {
     with_session(|s: &mut Session| {
         vb_doc::export::write_project(&s.doc, &s.dir).map_err(|e| e.to_string())?;
-        s.doc.rev += 1;
-        Ok(json!({"ok": true, "rev": s.doc.rev}))
+        s.doc.bump_rev();
+        Ok(json!({"ok": true, "rev": s.doc.rev()}))
     })
 }
 

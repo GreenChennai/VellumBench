@@ -12,8 +12,8 @@ fn req(ops: Vec<PatchOp>) -> PatchRequest {
 }
 
 fn ab0_sid(doc: &Document) -> String {
-    doc.nodes
-        .get(doc.artboards[0])
+    doc.nodes()
+        .get(doc.artboards()[0])
         .unwrap()
         .sid
         .as_str()
@@ -84,23 +84,23 @@ fn duplicate_copies_subtree() {
     assert_ne!(dup_sid, group_sid);
     let dup_id = doc.find_by_sid(&dup_sid).unwrap();
     assert_eq!(
-        doc.nodes.get(dup_id).unwrap().children.len(),
+        doc.nodes().get(dup_id).unwrap().children.len(),
         1,
         "副本必须带子级"
     );
-    let dup_child = doc.nodes.get(dup_id).unwrap().children[0];
+    let dup_child = doc.nodes().get(dup_id).unwrap().children[0];
     assert!(matches!(
-        doc.nodes.get(dup_child).unwrap().kind,
+        doc.nodes().get(dup_child).unwrap().kind,
         NodeKind::Text { .. }
     ));
     // 副本子级的 sid 必须是新分配的
     assert_ne!(
-        doc.nodes.get(dup_child).unwrap().sid.as_str(),
+        doc.nodes().get(dup_child).unwrap().sid.as_str(),
         child_sid,
         "副本子级 sid 必须重分配(身份全新)"
     );
     // 原组未受影响
-    assert_eq!(doc.nodes.get(group_id).unwrap().children.len(), 1);
+    assert_eq!(doc.nodes().get(group_id).unwrap().children.len(), 1);
     // 撤销后副本整棵消失
     undo.undo(&mut doc).expect("撤销失败");
     assert!(doc.find_by_sid(&dup_sid).is_none());
@@ -144,7 +144,7 @@ fn created_ids_populated() {
         "new_artboard + insert 都应上报 created_ids"
     );
     assert_eq!(
-        doc.artboards.len(),
+        doc.artboards().len(),
         2,
         "new_artboard 经 Insert 命令也要注册画板"
     );
@@ -387,11 +387,11 @@ fn align_groups_by_artboard() {
         "落单成员应产生 warning:{:?}",
         out_align.warnings
     );
-    let g1 = doc.nodes.get(doc.find_by_sid(&a1).unwrap()).unwrap().geom;
-    let g2 = doc.nodes.get(doc.find_by_sid(&a2).unwrap()).unwrap().geom;
+    let g1 = doc.nodes().get(doc.find_by_sid(&a1).unwrap()).unwrap().geom;
+    let g2 = doc.nodes().get(doc.find_by_sid(&a2).unwrap()).unwrap().geom;
     assert_eq!(g1.x, g2.x, "同画板成员对齐后左缘一致");
     assert_eq!(g1.x, 100.0, "对齐到集合最小 x=100");
-    let g3 = doc.nodes.get(doc.find_by_sid(&b1).unwrap()).unwrap().geom;
+    let g3 = doc.nodes().get(doc.find_by_sid(&b1).unwrap()).unwrap().geom;
     assert_eq!(g3.x, 10.0, "跨画板成员不得被拖进另一画板的坐标");
 }
 
@@ -400,7 +400,12 @@ fn align_groups_by_artboard() {
 // ---------------------------------------------------------------------------
 
 fn root_sid(doc: &Document) -> String {
-    doc.nodes.get(doc.root).unwrap().sid.as_str().to_string()
+    doc.nodes()
+        .get(doc.root())
+        .unwrap()
+        .sid
+        .as_str()
+        .to_string()
 }
 
 /// P0-1:order 作用于 root sid 必须返回结构化错误,而不是 panic。
@@ -475,17 +480,17 @@ fn group_align_root_member_handled() {
     )
     .expect("插对象失败");
     let obj = doc
-        .nodes
+        .nodes()
         .get(doc.find_by_sid(&ab).unwrap())
         .unwrap()
         .children
         .iter()
         .find_map(|&c| {
-            let n = doc.nodes.get(c).unwrap();
+            let n = doc.nodes().get(c).unwrap();
             (!matches!(n.kind, NodeKind::Artboard)).then(|| n.sid.as_str().to_string())
         })
         .expect("应有刚插入的对象");
-    let root_geom = doc.nodes.get(doc.root).unwrap().geom;
+    let root_geom = doc.nodes().get(doc.root()).unwrap().geom;
 
     let err = apply_patch(
         &mut doc,
@@ -514,7 +519,7 @@ fn group_align_root_member_handled() {
         out.warnings
     );
     assert_eq!(
-        doc.nodes.get(doc.root).unwrap().geom,
+        doc.nodes().get(doc.root()).unwrap().geom,
         root_geom,
         "root geom 不得被 align 改动"
     );
@@ -529,7 +534,7 @@ fn delete_last_artboard_rejected() {
     let err = apply_patch(&mut doc, &mut undo, &req(vec![PatchOp::Delete { id: ab }]))
         .expect_err("删除最后一块画板应被拒绝");
     assert!(err.to_string().contains("画板"), "错误信息:{err}");
-    assert_eq!(doc.artboards.len(), 1, "画板数量不变");
+    assert_eq!(doc.artboards().len(), 1, "画板数量不变");
 }
 
 /// G1(agent 侧):相邻两次 patch 目标集合相同也不得合并成一条 undo
@@ -562,13 +567,13 @@ fn consecutive_patches_stay_separate_undo_entries() {
     )
     .expect("插入失败");
     let sid = doc
-        .nodes
-        .get(doc.artboards[0])
+        .nodes()
+        .get(doc.artboards()[0])
         .unwrap()
         .children
         .iter()
         .find_map(|&c| {
-            let n = doc.nodes.get(c).unwrap();
+            let n = doc.nodes().get(c).unwrap();
             (!matches!(n.kind, NodeKind::Artboard)).then(|| n.sid.as_str().to_string())
         })
         .expect("应有对象");
@@ -589,7 +594,7 @@ fn consecutive_patches_stay_separate_undo_entries() {
     }
     // 第一次 undo 只回退第二次 patch(蓝→红);若合并则直接回到无色
     undo.undo(&mut doc).expect("撤销失败");
-    let n = doc.nodes.get(doc.find_by_sid(&sid).unwrap()).unwrap();
+    let n = doc.nodes().get(doc.find_by_sid(&sid).unwrap()).unwrap();
     let has_red = n
         .style
         .iter()
@@ -634,9 +639,9 @@ fn boolean_patch_op_union() {
             h: 200.0,
         };
         let pid = doc.find_by_sid(&ab).unwrap();
-        let id = doc.nodes.insert(n);
-        doc.nodes.get_mut(id).unwrap().parent = Some(pid);
-        doc.nodes.get_mut(pid).unwrap().children.push(id);
+        let id = doc.nodes_mut().insert(n);
+        doc.nodes_mut().get_mut(id).unwrap().parent = Some(pid);
+        doc.nodes_mut().get_mut(pid).unwrap().children.push(id);
         sid.as_str().to_string()
     };
     let rhs_id = {
@@ -655,9 +660,9 @@ fn boolean_patch_op_union() {
             h: 100.0,
         };
         let pid = doc.find_by_sid(&ab).unwrap();
-        let id = doc.nodes.insert(n);
-        doc.nodes.get_mut(id).unwrap().parent = Some(pid);
-        doc.nodes.get_mut(pid).unwrap().children.push(id);
+        let id = doc.nodes_mut().insert(n);
+        doc.nodes_mut().get_mut(id).unwrap().parent = Some(pid);
+        doc.nodes_mut().get_mut(pid).unwrap().children.push(id);
         sid.as_str().to_string()
     };
 
@@ -673,7 +678,7 @@ fn boolean_patch_op_union() {
     .expect("布尔联集应成功");
     assert!(out.changed_ids.contains(&rhs_id), "rhs 应在变更表(已删除)");
     assert!(!doc.find_by_sid(&rhs_id).is_some(), "rhs 应已删除");
-    let lhs_n = doc.nodes.get(doc.find_by_sid(&lhs_id).unwrap()).unwrap();
+    let lhs_n = doc.nodes().get(doc.find_by_sid(&lhs_id).unwrap()).unwrap();
     assert!(
         matches!(lhs_n.kind, vb_doc::model::NodeKind::Vector { .. }),
         "lhs 应仍是矢量"
@@ -683,7 +688,7 @@ fn boolean_patch_op_union() {
     // undo:rhs 回来,lhs 还原
     undo.undo(&mut doc).expect("撤销失败");
     assert!(doc.find_by_sid(&rhs_id).is_some(), "撤销后 rhs 应恢复");
-    let lhs_n = doc.nodes.get(doc.find_by_sid(&lhs_id).unwrap()).unwrap();
+    let lhs_n = doc.nodes().get(doc.find_by_sid(&lhs_id).unwrap()).unwrap();
     assert_eq!(lhs_n.geom.w, 200.0, "lhs 几何应还原");
 }
 
@@ -721,7 +726,7 @@ fn failed_transaction_does_not_leak_sids() {
     // 实验组:先跑一条注定失败的事务(insert 先分配,再引用不存在的 sid)
     let mut doc = Document::new_default();
     let mut undo = UndoStack::new();
-    let (rev_before, nodes_before) = (doc.rev, doc.nodes.len());
+    let (rev_before, nodes_before) = (doc.rev(), doc.nodes().len());
     let failed = apply_patch(
         &mut doc,
         &mut undo,
@@ -734,8 +739,8 @@ fn failed_transaction_does_not_leak_sids() {
         ]),
     );
     assert!(failed.is_err(), "事务必须失败");
-    assert_eq!(doc.rev, rev_before, "失败事务不得推进 rev");
-    assert_eq!(doc.nodes.len(), nodes_before, "失败事务不得改写树");
+    assert_eq!(doc.rev(), rev_before, "失败事务不得推进 rev");
+    assert_eq!(doc.nodes().len(), nodes_before, "失败事务不得改写树");
 
     // 失败后再插入:(sid 必须与对照组一致 —— 零泄漏)
     let out = apply_patch(&mut doc, &mut undo, &req(vec![insert_div(&ab_sid)]))
