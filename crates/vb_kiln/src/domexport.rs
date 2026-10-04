@@ -150,11 +150,18 @@ pub fn export_dom_with_cancel(
     // 视口宽对齐内容:重设一次视口为内容宽,让 fixed 元素矩形与内容同帧
     let mut warnings = cap.warnings.clone();
 
-    // @font-face 注册(family 名与采集一致,写入器才能 CID 嵌入)
-    vb_render::text::clear_font_registry();
+    // @font-face 注册(family 名与采集一致,写入器才能 CID 嵌入)。
+    // COUP-06:实例作用域——注册进本任务私有实例并进入线程作用域,
+    // 实例随导出任务生灭,跨项目零残留;并行分段 worker 各持实例,
+    // 不再互踩进程级注册表(旧 clear_font_registry 全局副作用已除)。
+    // DOC-10:读盘失败不再静默,失败清单如实并入导出告警。
+    let fonts = std::sync::Arc::new(vb_render::text::FontRegistry::new());
     for (family, weight, path) in collect_font_faces(&html_path, &mount_dir) {
-        vb_render::text::register_font_file(&family, weight, path);
+        if let Err(e) = fonts.register_font_file(&family, weight, path) {
+            warnings.push(e);
+        }
     }
+    let _font_scope = vb_render::text::enter_font_scope(fonts);
 
     if std::env::var("KILN_DUMP_PAINTLIST").is_ok() {
         // 调试转储落系统临时目录(K4:不写源工程目录)
@@ -592,10 +599,14 @@ fn export_dom_pdf_bytes(
     page.close();
     drop(proc);
     let mut warnings = cap.warnings.clone();
-    vb_render::text::clear_font_registry();
+    // COUP-06/DOC-10:同 export_dom——实例作用域注册 + 失败清单告警
+    let fonts = std::sync::Arc::new(vb_render::text::FontRegistry::new());
     for (family, weight, path) in collect_font_faces(&html_path, &mount_dir) {
-        vb_render::text::register_font_file(&family, weight, path);
+        if let Err(e) = fonts.register_font_file(&family, weight, path) {
+            warnings.push(e);
+        }
     }
+    let _font_scope = vb_render::text::enter_font_scope(fonts);
     let dom = paintlist_to_document(
         &cap.list,
         &mount_dir,

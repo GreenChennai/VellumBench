@@ -48,13 +48,17 @@ fn layout_manifest_library_deps_exclude_vb_render() {
     let manifest =
         std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
             .expect("读 Cargo.toml");
-    // 只查 [dependencies] 段(dev-dependencies 允许跨层几何回归,见文件头)
+    // 只查 [dependencies] 段的**依赖行**(dev-dependencies 允许跨层几何回归,
+    // 见文件头;注释里的「vb_render」字样不算依赖)
     let deps = manifest
         .split("[dev-dependencies]")
         .next()
-        .expect("manifest 非空");
+        .expect("manifest 非空")
+        .lines()
+        .filter(|l| l.trim().starts_with("vb_") && l.contains('='));
+    let offender: Vec<&str> = deps.filter(|l| l.contains("vb_render")).collect();
     assert!(
-        !deps.contains("vb_render"),
-        "COUP-01:[dependencies] 不得含 vb_render(布局不依赖渲染)"
+        offender.is_empty(),
+        "COUP-01:[dependencies] 不得含 vb_render(布局不依赖渲染): {offender:?}"
     );
 }
