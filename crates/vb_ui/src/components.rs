@@ -47,6 +47,25 @@ fn blend(a: Color32, b: Color32, t: f32) -> Color32 {
     )
 }
 
+/// 键盘焦点环(G-UI-D):accent 1.5px 外描边 + 内侧隔离环
+/// (`Tokens::focus_ring*`,§8.3.3)。egui 0.35 对一切 `Sense::click`
+/// 控件(含自绘)自动维护 Tab 序与 Space/Enter 激活,但**焦点环要
+/// 自绘** —— 自绘控件在 `resp.has_focus()` 时调它。
+fn paint_focus_ring(ui: &Ui, rect: egui::Rect, t: &theme::Tokens) {
+    ui.painter().rect_stroke(
+        rect.expand(1.0),
+        theme::radius::sm(),
+        Stroke::new(theme::stroke::HAIRLINE, t.focus_ring_inner),
+        egui::StrokeKind::Outside,
+    );
+    ui.painter().rect_stroke(
+        rect.expand(theme::space::S2),
+        theme::radius::sm(),
+        Stroke::new(theme::stroke::FOCUS, t.focus_ring),
+        egui::StrokeKind::Outside,
+    );
+}
+
 /// 在 `rect` 内画 45° 斜纹(§8.6 #3:NumField 混合态的视觉语言)。
 ///
 /// 条纹间距 = 间距刻度 S3;颜色由调用方给(组件传弱文字色 —— 斜纹是
@@ -309,6 +328,10 @@ impl<'a> ToolButton<'a> {
                 egui::StrokeKind::Inside,
             );
         }
+        // G-UI-D:键盘焦点环(Tab 可达由 egui 自动;环要自绘)
+        if resp.has_focus() {
+            paint_focus_ring(ui, rect, &t);
+        }
 
         let fg = if !self.enabled {
             t.text_3
@@ -538,6 +561,10 @@ impl<'a> NumField<'a> {
             fonts::font(12.0, fonts::Weight::Medium),
             blend(t.text_2, t.text, hover_t),
         );
+        // G-UI-D:标签区(Sense::drag = FOCUSABLE)的键盘焦点环
+        if lresp.has_focus() {
+            paint_focus_ring(ui, lrect, &t);
+        }
         if lresp.hovered() {
             // §8.6 #3:标签拖改值光标 = col-resize(列宽调整语义,egui
             // 映射为水平双箭头列光标,与"拖动改值"的空间隐喻一致)
@@ -1439,6 +1466,10 @@ pub fn icon_button(ui: &mut Ui, icon: icons::Name, tooltip: &str) -> Response {
         icons::font(14.0),
         blend(t.text_2, t.text, hover_t),
     );
+    // G-UI-D:键盘焦点环
+    if resp.has_focus() {
+        paint_focus_ring(ui, rect, &t);
+    }
     resp.on_hover_text(tooltip)
 }
 
@@ -1515,19 +1546,7 @@ impl<'a> TextField<'a> {
         let resp = ui.add_sized(Vec2::new(self.width, h), edit);
         // 焦点环:egui TextEdit 自带弱聚焦提示,这里补规格的 accent 环
         if resp.has_focus() {
-            let t = theme::tokens(ui.ctx());
-            ui.painter().rect_stroke(
-                resp.rect.expand(2.0),
-                theme::radius::sm(),
-                Stroke::new(theme::stroke::HAIRLINE, t.focus_ring_inner),
-                egui::StrokeKind::Outside,
-            );
-            ui.painter().rect_stroke(
-                resp.rect.expand(theme::space::S2),
-                theme::radius::sm(),
-                Stroke::new(theme::stroke::FOCUS, t.focus_ring),
-                egui::StrokeKind::Outside,
-            );
+            paint_focus_ring(ui, resp.rect, &theme::tokens(ui.ctx()));
         }
         resp
     }
@@ -1641,6 +1660,9 @@ pub fn checkbox(ui: &mut Ui, text: &str, checked: &mut bool) -> Response {
     if resp.clicked() {
         *checked = !*checked;
     }
+    if resp.has_focus() {
+        paint_focus_ring(ui, box_rect, &t);
+    }
     resp.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *checked, text)
     });
@@ -1671,6 +1693,9 @@ pub fn radio(ui: &mut Ui, text: &str, selected: bool) -> Response {
             t.text,
         );
     }
+    if resp.has_focus() {
+        paint_focus_ring(ui, rect, &t);
+    }
     resp.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, selected, text)
     });
@@ -1698,6 +1723,9 @@ pub fn switch(ui: &mut Ui, on: &mut bool) -> Response {
         .circle_filled(pos2(x, rect.center().y), knob * 0.5, knob_c);
     if resp.clicked() {
         *on = !*on;
+    }
+    if resp.has_focus() {
+        paint_focus_ring(ui, rect, &t);
     }
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *on, ""));
     resp
