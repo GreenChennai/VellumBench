@@ -115,6 +115,11 @@ impl eframe::App for VellumApp {
             }
         }
         self.canvas(ui, frame);
+        // §8.7 ⭐:底部浮动工具条(Figma UI3 标志设计)。工具箱停靠在
+        // 底部时不画(同一排工具不重复);Tab 隐藏面板时一起隐藏。
+        if !self.panels_hidden && self.toolbar_dock != dock_layout::DockSide::Bottom {
+            self.floating_toolbar(ui);
+        }
         // U-4:工具长按同族弹层(独立 Area,最上层;无弹层时零开销)
         self.family_popup_ui(ui);
         // 04-5-1:打开/新建项目后自动「适合窗口」。fit 依赖画布矩形,

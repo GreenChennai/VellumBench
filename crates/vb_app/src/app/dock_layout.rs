@@ -89,7 +89,11 @@ impl DockSide {
 pub fn toolbar_size(side: DockSide, columns: u8) -> (f32, f32) {
     let cols = columns.clamp(1, 2) as f32;
     match side {
-        DockSide::Left | DockSide::Right => (60.0 + (cols - 1.0) * 28.0, 0.0),
+        // §8.7:工具箱单列 44(图标钮 32 + 两侧余量);双列 +32
+        DockSide::Left | DockSide::Right => (
+            vb_ui::theme::space::TOOLBOX_WIDTH + (cols - 1.0) * 32.0,
+            0.0,
+        ),
         DockSide::Top | DockSide::Bottom => (0.0, vb_ui::theme::space::CONTROL_BAR_HEIGHT),
     }
 }
@@ -572,8 +576,8 @@ mod tests {
 
     #[test]
     fn toolbar_sizes_follow_side_and_columns() {
-        assert_eq!(toolbar_size(DockSide::Left, 1).0, 60.0);
-        assert_eq!(toolbar_size(DockSide::Right, 2).0, 88.0);
+        assert_eq!(toolbar_size(DockSide::Left, 1).0, 44.0, "§8.7 单列 44");
+        assert_eq!(toolbar_size(DockSide::Right, 2).0, 76.0);
         assert!(toolbar_size(DockSide::Top, 2).1 > 0.0);
         assert_eq!(
             toolbar_size(DockSide::Bottom, 1).1,

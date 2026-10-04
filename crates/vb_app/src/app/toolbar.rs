@@ -296,8 +296,8 @@ impl VellumApp {
         };
         let current = self.tool;
         let mut fired: Option<&'static str> = None;
-        // U-4:长按 400ms 展开同族 —— 状态在闭包里收集,循环外统一落到
-        // `family_popup`(借用分离:闭包不碰 self)。
+        // U-4/§8.6 #1:长按 200ms 展开同族 —— 状态在闭包里收集,循环外
+        // 统一落到 `family_popup`(借用分离:闭包不碰 self)。
         let mut longpress: Option<(Tool, egui::Pos2)> = None;
         let mut place = |ui: &mut egui::Ui, row: &[(Tool, Name, &'static str, &'static str)]| {
             for (tool, icon, label, key) in row {
@@ -320,7 +320,7 @@ impl VellumApp {
                     if let (true, Some((t0, fired))) = (down, next.as_mut()) {
                         if !*fired
                             && fam_len > 1
-                            && t0.elapsed() >= std::time::Duration::from_millis(400)
+                            && t0.elapsed() >= std::time::Duration::from_millis(200)
                         {
                             *fired = true;
                             fired_now = true;
@@ -405,7 +405,7 @@ impl VellumApp {
         }
     }
 
-    /// U-4:长按 400ms 展开的同族工具弹层(帧级渲染;frame.rs 调用)。
+    /// U-4:长按展开的同族工具弹层(帧级渲染;frame.rs 调用)。
     ///
     /// 交互:点条目 = 切换工具并收起;点弹层外 = 收起;长按松手的同一次
     /// click 由 `family_popup_arm_release` 吞掉(否则弹层刚开就被松手
@@ -492,6 +492,82 @@ impl VellumApp {
             if resp.clicked() {
                 self.toast_warn((*tip).to_string());
             }
+        }
+    }
+
+    /// 底部浮动工具条(§8.7 ⭐ "Figma UI3 标志设计"):画布底部居中的
+    /// 浮层 Area —— 高 40、圆角 12、**L4 材质**(中性阶按下标 7 档 +
+    /// 表面 96%/92% 不透明 + L4 阴影)、图标 20,当前工具 accent。
+    /// 工具箱停靠在底部时自动隐藏(同一排工具不画两遍);
+    /// `Tab` 隐藏面板时一起隐藏(frame.rs 装配)。
+    pub(crate) fn floating_toolbar(&mut self, ui: &mut egui::Ui) {
+        let t = Tokens::get(self.theme_dark);
+        // 常用八件:选择族 + 形状 + 文字 + 钢笔 + 抓手(§8.7 示意的
+        // "➤ ▭ ◯ T P ╲ ✋");完整 22 工具仍在工具箱。
+        const FLOAT_TOOLS: &[(Tool, Name, &str, &str)] = &[
+            (Tool::Select, Name::ToolSelect, "选择", "V"),
+            (Tool::Rect, Name::ToolRect, "矩形", "M"),
+            (Tool::Ellipse, Name::ToolEllipse, "椭圆", "L"),
+            (Tool::Line, Name::Crosshair, "直线", "\\"),
+            (Tool::Text, Name::ToolText, "文字", "T"),
+            (Tool::Pen, Name::KindVector, "钢笔", "P"),
+            (Tool::Hand, Name::ToolHand, "抓手", "H"),
+        ];
+        let current = self.tool;
+        let zoom_pct = (self.camera.zoom * 100.0).round() as i64;
+        let mut fired: Option<&'static str> = None;
+        let mut fit_clicked = false;
+        egui::Area::new(egui::Id::new("vb-floating-toolbar"))
+            .order(egui::Order::Foreground)
+            .anchor(
+                egui::Align2::CENTER_BOTTOM,
+                egui::vec2(0.0, -(theme::space::STATUS_BAR_HEIGHT + theme::space::S6)),
+            )
+            .show(ui.ctx(), |ui| {
+                // L4 材质:底色取中性阶(深 N7/浅 N1)+ 表面不透明度
+                let base = theme::elevation::base(theme::elevation::L4, &t);
+                let [r, g, b, _] = base.to_srgba_unmultiplied();
+                let alpha = (theme::elevation::surface_alpha_l4(t.dark) * 255.0).round() as u8;
+                egui::Frame::new()
+                    .fill(egui::Color32::from_rgba_unmultiplied(r, g, b, alpha))
+                    .stroke(Stroke::new(theme::stroke::HAIRLINE, t.border))
+                    .corner_radius(theme::radius::xl())
+                    .shadow(theme::elevation::shadow_l4(t.dark))
+                    .inner_margin(egui::Margin::symmetric(
+                        theme::space::S2 as i8,
+                        theme::space::S1 as i8,
+                    ))
+                    .show(ui, |ui| {
+                        ui.set_min_height(theme::space::FLOATING_TOOLBAR_HEIGHT - theme::space::S4);
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = theme::space::S1;
+                            for (tool, icon, label, key) in FLOAT_TOOLS {
+                                let resp = tool_button(ui, *tool, *icon, label, key, current);
+                                if resp.clicked() {
+                                    fired = Some(command_of(*tool));
+                                }
+                            }
+                            ui.separator();
+                            // 缩放 chip:显示当前 %,点击 = 适合窗口(与
+                            // 状态栏缩放项同路)
+                            let chip = ui
+                                .add(egui::Button::new(
+                                    egui::RichText::new(format!("{zoom_pct}%")).font(
+                                        vb_ui::fonts::font(12.0, vb_ui::fonts::Weight::Medium),
+                                    ),
+                                ))
+                                .on_hover_text("适合窗口(Ctrl+0)");
+                            if chip.clicked() {
+                                fit_clicked = true;
+                            }
+                        });
+                    });
+            });
+        if let Some(id) = fired {
+            self.run_command(id, false, false);
+        }
+        if fit_clicked {
+            self.run_command("view.fit", false, false);
         }
     }
 
@@ -785,13 +861,13 @@ fn tool_button(
     key: &str,
     current: Tool,
 ) -> egui::Response {
-    // 04-6-2 尺寸统一:工具箱统一用 with_label 的图标+文字堆叠尺寸
-    // (FLOATING_TOOLBAR_HEIGHT − S2 = 36pt)。**不**改用派生行高(28pt)
-    // —— 堆叠模式下 28pt 装不下「图标 + 标签」两层,会互相压叠;
-    // pt 值随 pixels_per_point 缩放,DPI/界面缩放自动跟随。
+    // §8.7 工具箱重制:图标钮 = 32 方钮(S9 刻度,ToolButton 24/32 两档
+    // 的大档)+ 浮动档 20px 图标(§8.5 图标三档上限);「图标+文字」堆叠
+    // 退场 —— 名称与键位全在 tooltip(零成本学习模式不变),单列 44 里
+    // 呼吸感回来了。
     ToolButton::new(icon, label)
         .shortcut(key)
-        .with_label()
+        .size(theme::space::S9)
         .active(current == tool)
         .ui(ui)
 }
