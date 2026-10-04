@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 
 use egui::{Align2, Color32, Key, ScrollArea};
-use vb_platform::Clipboard as _;
+use vb_platform::{Clipboard as _, FileDialog as _};
 use vb_ui::theme::Tokens;
 
 use crate::capabilities::{CapStatus, CAPABILITIES};
@@ -237,10 +237,10 @@ impl LauncherUi {
             "home.new_project" => self.dialog = Some(NewProjectDialog::new()),
             "home.new_from_template" => self.dialog = Some(NewProjectDialog::new_template()),
             "home.open_project" => {
-                if let Some(dir) = rfd::FileDialog::new()
-                    .set_title("打开项目目录(含 index.html)")
-                    .pick_folder()
-                {
+                // PLG-09:文件对话框经 vb_platform trait(seam 收口,
+                // 启动器不再直呼 rfd;与项目窗口同一平台出口)
+                let mut dialog = vb_platform::egui_backend::RfdDialog::new();
+                if let Some(dir) = dialog.pick_folder() {
                     let _ = tx.send(ShellRequest::OpenProject(dir));
                 }
             }
@@ -441,7 +441,10 @@ impl LauncherUi {
                 ui.close();
             }
             if ui.button("复制路径").clicked() {
-                ui.ctx().copy_text(item.path.clone());
+                // PLG-09:剪贴板统一走 vb_platform Clipboard trait(与卡片
+                // 悬浮按钮同一条 egui 命令通道,不再直呼 ctx.copy_text)
+                let mut clip = vb_platform::egui_backend::EguiClipboard::new(ui.ctx().clone());
+                let _ = clip.set_text(&item.path);
                 ui.close();
             }
             if ui

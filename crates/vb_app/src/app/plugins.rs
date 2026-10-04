@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 use vb_plugin::host::{HostServices, PluginInfo, PluginState, Widget, LOG_CAP};
+// PLG-09:文件对话框经 vb_platform trait(方法解析需要 trait 在作用域)
+use vb_platform::FileDialog as _;
 
 use super::panel_dock;
 use super::VellumApp;
@@ -22,6 +24,10 @@ use super::VellumApp;
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PluginAuthState {
     pub plugin_id: String,
+    /// PLG-01:用户已阅读「原生进程」告知并显式勾选(未勾选 = 启用按钮
+    /// 不可点;勾选凭证经 `NativeProcessConsent` 传给 vb_plugin 既有告知
+    /// 合同 `authorize_with_consent`,None/未勾选在宿主侧二次拒绝)。
+    pub consent_checked: bool,
 }
 
 // ─────────────────────────── HostServices 端口 ───────────────────────────
@@ -45,8 +51,16 @@ impl HostServices for PluginServices<'_> {
     }
 
     /// 文档只读投影(结构摘要;**只读,不发写捷径**)。
+    ///
+    /// PLG-05 起为降级路径;常规路径经 [`Self::doc_snapshot`] + 后台线程。
     fn doc_projection(&self) -> Result<Value, String> {
         Ok(vb_plugin::projection::build(&self.0.doc))
+    }
+
+    /// PLG-05:UI 线程只付 arena 克隆(独立快照,不与 UI 状态共享可变
+    /// 内部);投影 JSON 构建由 vb_plugin 投影线程完成,结果下一帧 poll 收。
+    fn doc_snapshot(&self) -> Option<vb_doc::model::Document> {
+        Some(self.0.doc.clone())
     }
 
     /// 导出动作(05-10-4 ④):宿主执行,输出只落**用户选择的目录**。
@@ -162,13 +176,22 @@ impl VellumApp {
             .show(ui.ctx(), |ui| {
                 ui.horizontal(|ui| {
                     ui.label("插件 = 外部进程(stdio JSON-RPC);默认零权限,首次启用需授权。");
+                    ui.weak(
+                        "注意:插件以你的用户权限原生运行,启用前会展示完整权限告知并要求显式确认。",
+                    );
                 });
                 ui.horizontal(|ui| {
                     if ui.button("安装…(选择 plugin.json)").clicked() {
-                        if let Some(file) = rfd::FileDialog::new()
-                            .add_filter("VellumBench 插件清单", &["json"])
-                            .pick_file()
-                        {
+                        // PLG-09:文件对话框经 vb_platform trait(面板不再
+                        // 各自 import rfd;与 launcher 同一 seam)
+                        let mut dialog = vb_platform::egui_backend::RfdDialog::new();
+                        if let Some(file) = dialog.pick_file(
+                            "选择插件清单 plugin.json",
+                            &[vb_platform::FileFilter {
+                                name: "VellumBench 插件清单",
+                                extensions: &["json"],
+                            }],
+                        ) {
                             let dir = file
                                 .parent()
                                 .map(Path::to_path_buf)
@@ -243,7 +266,10 @@ impl VellumApp {
                         }
                     } else {
                         // 首次启用授权弹窗(05-10-3:拒绝 = 不启用)
-                        self.plugin_auth = Some(PluginAuthState { plugin_id: id });
+                        self.plugin_auth = Some(PluginAuthState {
+                            plugin_id: id,
+                            consent_checked: false,
+                        });
                     }
                 } else if !check && enabled {
                     self.plugin_host.stop(&id);
@@ -330,7 +356,7 @@ impl VellumApp {
     /// 首次启用授权弹窗:列出 manifest 声明的**全部**权限;
     /// 确认 → 授权持久化 + 启动;取消 → 不启用(状态保持未授权)。
     pub(crate) fn show_plugin_auth_window(&mut self, ui: &mut egui::Ui) {
-        let Some(auth) = self.plugin_auth.clone() else {
+        let Some(mut auth) = self.plugin_auth.clone() else {
             return;
         };
         let Some(info) = self
@@ -342,6 +368,8 @@ impl VellumApp {
             self.plugin_auth = None;
             return;
         };
+        // 状态/告警色一律走主题令牌(theme.rs 是全仓唯一颜色字面量文件)
+        let c_error = vb_ui::theme::Tokens::get(self.theme_dark).danger;
         let mut open = true;
         egui::Window::new(format!("启用插件「{}」前请授权", info.name))
             .open(&mut open)
@@ -374,14 +402,37 @@ impl VellumApp {
                     ));
                 }
                 ui.separator();
+                // PLG-01(P0):原生进程权限告知 —— 插件是普通用户权限进程,
+                // 白名单只约束诚实插件;安装/首次启用必须让用户知情并显式接受。
+                ui.colored_label(c_error, "⚠ 权限告知(必读)");
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(vb_plugin::NATIVE_PROCESS_DISCLOSURE).strong(),
+                    )
+                    .wrap(),
+                );
+                ui.separator();
                 ui.weak("授权后插件只能调用上列命令;越权调用会被拒绝并记录。");
                 ui.weak("插件是独立进程:崩溃 / 超时只影响它自己,宿主可一键重启。");
                 ui.weak("插件没有直改文档文件的通道,修改文档只能经宿主命令(可撤销)。");
                 ui.separator();
+                // 强制勾选:未勾选时「启用(授权)」不可点(凭证在此产生)
+                let mut consent = auth.consent_checked;
+                ui.checkbox(
+                    &mut consent,
+                    "我已阅读并理解:此插件是以我本人权限运行的原生进程",
+                );
+                auth.consent_checked = consent;
+                let consent_ok =
+                    vb_plugin::NativeProcessConsent::from_dialog_checkbox(auth.consent_checked);
                 ui.horizontal(|ui| {
-                    if ui.button("启用(授权)").clicked() {
+                    let enable =
+                        ui.add_enabled(consent_ok.is_some(), egui::Button::new("启用(授权)"));
+                    if enable.clicked() {
                         let id = info.id.clone();
-                        match self.plugin_host.authorize(&id) {
+                        // 勾选凭证进入 vb_plugin 既有告知合同(未勾选在
+                        // 宿主侧同样拒绝 —— 双重闸门,防 UI 侧漏检)
+                        match self.plugin_host.authorize_with_consent(&id, consent_ok) {
                             Ok(()) => match self.plugin_host.start(&id) {
                                 Ok(()) => {
                                     self.say(format!("插件 {id}:已授权并启动"));
@@ -393,7 +444,7 @@ impl VellumApp {
                                 }
                                 Err(e) => self.toast_error(format!("已授权但启动失败:{e}")),
                             },
-                            Err(e) => self.toast_error(format!("授权持久化失败:{e}")),
+                            Err(e) => self.toast_error(format!("授权失败:{e}")),
                         }
                         self.plugin_auth = None;
                     }
@@ -405,6 +456,10 @@ impl VellumApp {
                     }
                 });
             });
+        // PLG-01:勾选态回写(auth 是本帧克隆;闭包借用已随 show 结束)
+        if let Some(pa) = &mut self.plugin_auth {
+            pa.consent_checked = auth.consent_checked;
+        }
         // 点窗体外/× 关闭 = 取消(拒绝;按钮路径已清 plugin_auth,不会重入)
         if !open && self.plugin_auth.is_some() {
             self.plugin_host.deny(&auth.plugin_id);
@@ -449,7 +504,9 @@ impl VellumApp {
             for e in &info.manifest.exports {
                 ui.horizontal(|ui| {
                     if ui.button(format!("导出:{}…", e.title)).clicked() {
-                        if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                        // PLG-09:目录选择同样经 vb_platform trait
+                        let mut dialog = vb_platform::egui_backend::RfdDialog::new();
+                        if let Some(dir) = dialog.pick_folder() {
                             let res = self.with_host_services(|host, services| {
                                 host.run_export(services, &id, &e.id, Some(&dir))
                             });
@@ -631,6 +688,7 @@ impl VellumApp {
             if !pid.is_empty() && self.plugin_host.list().iter().any(|p| p.id == pid) {
                 self.plugin_auth = Some(PluginAuthState {
                     plugin_id: pid.to_string(),
+                    consent_checked: false,
                 });
                 self.plugins_mgr_open = true;
             }

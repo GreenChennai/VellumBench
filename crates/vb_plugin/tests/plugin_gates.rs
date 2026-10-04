@@ -51,6 +51,8 @@ fn make_plugin_dir(tag: &str) -> PathBuf {
 struct MockServices {
     executed: Arc<Mutex<Vec<String>>>,
     has_doc: bool,
+    /// PLG-05:提供快照 → host 走后台线程路径;None → 旧同步路径。
+    snapshot: Option<vb_doc::model::Document>,
 }
 
 impl MockServices {
@@ -60,6 +62,7 @@ impl MockServices {
             Self {
                 executed: executed.clone(),
                 has_doc,
+                snapshot: None,
             },
             executed,
         )
@@ -99,6 +102,10 @@ impl HostServices for MockServices {
             "ok": true, "plugin": plugin, "export": export_id, "format": format,
             "dir": dir.display().to_string(),
         }))
+    }
+
+    fn doc_snapshot(&self) -> Option<vb_doc::model::Document> {
+        self.snapshot.clone()
     }
 }
 
@@ -451,4 +458,51 @@ fn gate9_inbound_queue_overflow_disconnects() {
         "断连原因要点名入站队列上限:{reason}"
     );
     proc.kill();
+}
+
+/// PLG-05(PLG-05 后台化验收):宿主提供 doc_snapshot → 投影经后台线程
+/// 构建,UI 线程 poll 只收结果;面板读数必须来自**快照文档**(默认文档
+/// 节点数 1),而不是同步 mock 的固定 5 —— 证明走的是线程路径。
+#[test]
+fn gate_plg05_projection_via_worker_thread_snapshot() {
+    let dir = make_plugin_dir("plg05");
+    let mut host = PluginHost::new(None);
+    let id = host
+        .install_dir(&dir, &|c| c == "edit.select_all")
+        .expect("安装必须成功");
+    host.authorize(&id).unwrap();
+    host.start(&id).expect("启动成功");
+    let (mut services, _executed) = MockServices::new(false);
+    services.snapshot = Some(vb_doc::model::Document::new_default());
+    let st = wait_state(
+        &mut host,
+        &mut services,
+        &id,
+        PluginState::Running,
+        Duration::from_secs(10),
+    );
+    assert_eq!(st, PluginState::Running, "握手必须完成:{:?}", host.list());
+    // 轮询到面板出现;读数必须是快照文档的计数(默认文档 = 1 画板 1 节点)
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut matched = false;
+    while Instant::now() < deadline {
+        host.poll(&mut services);
+        if let Some(ui) = host.panel_ui(&id, "stats") {
+            let has_metric = ui.widgets.iter().any(|w| {
+                matches!(w, vb_plugin::host::Widget::Metric { label, value }
+                    if label == "节点总数" && value == "1")
+            });
+            if has_metric {
+                matched = true;
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        matched,
+        "面板读数必须来自后台线程构建的快照投影(节点总数 = 1)"
+    );
+    host.stop(&id);
+    let _ = std::fs::remove_dir_all(&dir);
 }
