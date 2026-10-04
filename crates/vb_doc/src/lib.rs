@@ -36,6 +36,11 @@ pub enum VbError {
     Conflict(String),
     #[error("不支持: {0}")]
     Unsupported(String),
+    /// 嵌套深度超限(DOC-01/RB-02,上限 [`vb_common::MAX_TREE_DEPTH`]):
+    /// HTML 解析/建树/calc 等入口对异常深输入的**结构化**出口 —— 必须让
+    /// 用户可见,不许静默截断或崩溃。
+    #[error("嵌套深度超过上限 {limit}:{0}", limit = vb_common::MAX_TREE_DEPTH)]
+    DepthExceeded(String),
 }
 
 pub type Result<T> = std::result::Result<T, VbError>;

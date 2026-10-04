@@ -3,6 +3,7 @@
 //! 输出保证:属性顺序固定、CSS 声明按 PROP_ORDER、数值 ≤4 位小数、LF 结尾
 //! —— diff 最小、L1 幂等。导出经 `vb_html` 的 canonical 序列化器完成。
 
+use std::fmt::Write as _;
 use std::path::Path;
 
 use vb_common::units::fmt_num;
@@ -111,7 +112,7 @@ fn finalize_classes(doc: &mut Document) {
 /// 落盘到项目目录(断电安全 · 原子写 v0.2,已落地)。
 ///
 /// 纪律(与 `vb_app::autosave` 快照提交同口径的临时文件方案,但覆盖更强):
-/// - **原子覆盖**:每个文件先写**同目录**临时文件 `.tmp-<原文件名>-<pid>`
+/// - **原子覆盖**:每个文件先写**同目录**临时文件 `.tmp-<原文件名>-<pid>-<线程id>`
 ///   (同目录保证与目标同盘,`rename` 才是原子的),再 `std::fs::rename`
 ///   覆盖目标 —— Windows 的 `fs::rename` 带 REPLACE_EXISTING 语义,可直接
 ///   覆盖已存在文件。任何时刻断电/崩溃,目标要么是完整旧文件、要么是完整
@@ -137,7 +138,25 @@ pub fn write_project(doc: &Document, dir: &Path) -> Result<Vec<std::path::PathBu
     Ok(written)
 }
 
-/// 单文件原子写:同目录临时文件 `.tmp-<名>-<pid>` → `rename` 原子覆盖目标。
+/// 临时文件名后缀用的线程 id(DOC-08):pid 只隔离进程,同进程多线程
+/// 并发导出同一文件时会共用同一临时名互相覆盖,削弱原子性。
+///
+/// 稳定写法:`ThreadId::as_u64()` 是 unstable API,且标准库不暴露数值;
+/// `ThreadId` 的 `Debug`/`Hash` 均派生自其进程内唯一编号 —— 这里对
+/// Debug 文本做 FNV-1a(确定性、跨次运行一致,不用随机种子的
+/// DefaultHasher),同进程内不同线程 → 不同哈希,足够唯一(输入空间
+/// 只有本进程线程数,64 位碰撞概率可忽略)。
+fn current_thread_id_u64() -> u64 {
+    let repr = format!("{:?}", std::thread::current().id());
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a 64-bit offset basis
+    for b in repr.as_bytes() {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3); // FNV prime
+    }
+    h
+}
+
+/// 单文件原子写:同目录临时文件 `.tmp-<名>-<pid>-<线程id>` → `rename` 原子覆盖目标。
 fn atomic_write(target: &Path, content: &str) -> Result<()> {
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
@@ -151,8 +170,13 @@ fn atomic_write(target: &Path, content: &str) -> Result<()> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    // 临时文件与目标同目录(同盘 → rename 原子);带 pid,并发进程互不踩踏。
-    let tmp = target.with_file_name(format!(".tmp-{file_name}-{}", std::process::id()));
+    // 临时文件与目标同目录(同盘 → rename 原子);带 pid + 线程 id,
+    // 并发进程/并发线程互不踩踏(DOC-08)。
+    let tmp = target.with_file_name(format!(
+        ".tmp-{file_name}-{}-{:x}",
+        std::process::id(),
+        current_thread_id_u64()
+    ));
     let result = std::fs::write(&tmp, content).and_then(|()| std::fs::rename(&tmp, target));
     if let Err(e) = result {
         // 失败清理:不留 .tmp 残留(清理本身失败不掩盖原始错误)。
@@ -263,6 +287,8 @@ fn render_html(doc: &mut Document, css: &str) -> String {
         doctype: Some("html".into()),
         leading_comments: vec![],
         root: html_el,
+        // 内存构造的导出树,来源是导入期已限深的文档 —— 不存在超限输入
+        depth_exceeded: false,
     };
     dom.serialize()
 }
@@ -365,8 +391,30 @@ fn render_node(doc: &mut Document, id: NodeId, node: &Node) -> Vec<HtmlNode> {
 }
 
 /// 富文本 → HTML 片段:无样式区段 → 文本;样式区段 → `<span style>`;`\n` → `<br>`。
+///
+/// DOC-03:段区间来自命令路径校验(`commands::validate_segs`),但导出侧
+/// **不复信** —— 区间按字节切片,非字符边界/越界即 panic。这里先做
+/// char-boundary 复验,任一区间非法 → 显式告警 + 整段降级为纯文本
+/// (样式丢弃可恢复,panic 丢整个导出不可接受)。
 fn text_fragment(text: &str, segments: &[TextSeg]) -> Vec<HtmlNode> {
     let mut out: Vec<HtmlNode> = Vec::new();
+    let segs_ok = segments.iter().all(|seg| {
+        seg.start <= seg.end
+            && seg.end <= text.len()
+            && text.is_char_boundary(seg.start)
+            && text.is_char_boundary(seg.end)
+    });
+    if !segs_ok {
+        log::warn!(
+            "富文本段区间越界/未对齐字符边界(段数 {}),整段降级为纯文本导出",
+            segments.len()
+        );
+        push_text_with_breaks(text, &mut out);
+        if out.is_empty() {
+            out.push(HtmlNode::text(String::new()));
+        }
+        return out;
+    }
     let mut pos = 0usize;
     for seg in segments {
         let (s, e) = (seg.start.min(text.len()), seg.end.min(text.len()));
@@ -531,7 +579,7 @@ fn render_css(doc: &Document) -> String {
     if !doc.tokens.is_empty() {
         out.push_str(":root {\n");
         for (k, v) in &doc.tokens {
-            out.push_str(&format!("  --{k}: {v};\n"));
+            let _ = writeln!(out, "  --{k}: {v};");
         }
         out.push_str("}\n\n");
     }
@@ -590,9 +638,12 @@ fn render_css(doc: &Document) -> String {
         }
         // 选择器 = 首类(finalize_classes 保证唯一)
         let selector = format!(".{}", node.classes[0]);
-        out.push_str(&format!("{selector} {{\n"));
+        let _ = writeln!(out, "{selector} {{");
         for d in &decls {
-            out.push_str(&format!("  {};\n", d.to_css()));
+            // PERF-08:声明直写缓冲,免逐条中间 String
+            out.push_str("  ");
+            d.push_css(&mut out);
+            out.push_str(";\n");
         }
         out.push_str("}\n\n");
     }
@@ -606,14 +657,16 @@ fn render_css(doc: &Document) -> String {
         widths.sort_unstable();
         widths.dedup();
         for w in widths.into_iter().rev() {
-            out.push_str(&format!("@media (max-width: {w}px) {{\n"));
+            let _ = writeln!(out, "@media (max-width: {w}px) {{");
             for r in doc.media_rules.iter().filter(|r| r.max_width == w) {
                 let Some((selector, decls)) = media_rule_target(doc, r) else {
                     continue;
                 };
-                out.push_str(&format!("  {selector} {{\n"));
+                let _ = writeln!(out, "  {selector} {{");
                 for d in &decls {
-                    out.push_str(&format!("    {};\n", d.to_css()));
+                    out.push_str("    ");
+                    d.push_css(&mut out);
+                    out.push_str(";\n");
                 }
                 out.push_str("  }\n");
             }
@@ -626,9 +679,11 @@ fn render_css(doc: &Document) -> String {
         let Some((selector, decls)) = pseudo_rule_target(doc, pr) else {
             continue;
         };
-        out.push_str(&format!("{selector} {{\n"));
+        let _ = writeln!(out, "{selector} {{");
         for d in &decls {
-            out.push_str(&format!("  {};\n", d.to_css()));
+            out.push_str("  ");
+            d.push_css(&mut out);
+            out.push_str(";\n");
         }
         out.push_str("}\n\n");
     }
@@ -761,11 +816,14 @@ mod tests {
         write_project(&old, &dir).unwrap();
         let old_index = std::fs::read_to_string(dir.join("index.html")).unwrap();
 
-        // 临时名形如 .tmp-<原名>-<pid>,含本测试进程的 pid,可确定性预言;
+        // 临时名形如 .tmp-<原名>-<pid>-<线程id>,含本测试进程 pid 与当前
+        // 线程 id(write_project 在本线程执行),可确定性预言;
         // 把 styles/main.css 的临时路径预占成目录 → 写临时文件必败。
-        let obstacle = dir
-            .join("styles")
-            .join(format!(".tmp-main.css-{}", std::process::id()));
+        let obstacle = dir.join("styles").join(format!(
+            ".tmp-main.css-{}-{:x}",
+            std::process::id(),
+            current_thread_id_u64()
+        ));
         std::fs::create_dir_all(&obstacle).unwrap();
 
         let new = doc_with_title("新版未落盘文档");
@@ -811,6 +869,80 @@ mod tests {
         assert_eq!(on_disk, old_index, "rename 失败后 index.html 必须原封不动");
         assert!(tmp_files(&dir).is_empty(), "rename 失败必须清理 .tmp");
         drop(lock);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// DOC-03(验收):段区间不在字符边界(中文字符的中间)时,导出
+    /// 必须**不 panic** 且整段降级为纯文本(全文保留,无样式 span)。
+    #[test]
+    fn seg_off_char_boundary_degrades_to_plain_text() {
+        let mut doc = Document::new_default();
+        let ab = doc.artboards[0];
+        let sid = doc.alloc_sid();
+        let mut n = Node::new(
+            NodeKind::Text {
+                // "中文ab":每个汉字 3 字节;seg.start=1 落在「中」的中间
+                text: "中文ab".to_string(),
+                mode: crate::model::TextMode::Point,
+                segments: vec![TextSeg {
+                    start: 1,
+                    end: 4,
+                    style: SegStyle {
+                        bold: Some(true),
+                        ..Default::default()
+                    },
+                }],
+            },
+            "越界段",
+            sid,
+        );
+        n.geom = crate::model::Geom {
+            x: 10.0,
+            y: 10.0,
+            w: 200.0,
+            h: 40.0,
+        };
+        let id = doc.nodes.insert(n);
+        doc.nodes.get_mut(ab).unwrap().children.push(id);
+        doc.nodes.get_mut(id).unwrap().parent = Some(ab);
+
+        let res = render_project(&doc);
+        let html = &res.files[0].1;
+        // 全文保留(降级为整段纯文本,不因切片 panic / 不丢字符)
+        assert!(html.contains("中文ab"), "降级导出必须保留全文:{html}");
+        // 降级 = 无样式 span(区间被整段放弃)
+        assert!(!html.contains("<span"), "降级后不得残留样式 span:{html}");
+    }
+
+    /// DOC-08(验收):并发线程各自 write_project 同一目录,临时文件名
+    /// 必须互不相同(pid 相同 → 线程 id 必须区分),产物完整。
+    #[test]
+    fn concurrent_threads_use_distinct_tmp_names() {
+        let dir = tmp_project("threads");
+        let doc = doc_with_title("并发导出");
+        let mut names = std::collections::HashSet::new();
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            let dir = dir.clone();
+            let doc = doc.clone();
+            handles.push(std::thread::spawn(move || {
+                let res = write_project(&doc, &dir).unwrap();
+                res.last().unwrap().clone()
+            }));
+        }
+        for h in handles {
+            let _ = h.join().unwrap();
+        }
+        // 每个线程的临时名(pid 相同、线程 id 不同)必然互不相同:
+        // 直接构造四个线程的临时名抽样验证
+        for _ in 0..4 {
+            let t = std::thread::spawn(current_thread_id_u64).join().unwrap();
+            names.insert(format!(".tmp-index.html-{}-{t:x}", std::process::id()));
+        }
+        assert_eq!(names.len(), 4, "线程 id 必须区分临时名:{names:?}");
+        let on_disk = std::fs::read_to_string(dir.join("index.html")).unwrap();
+        assert!(on_disk.contains("并发导出"));
+        assert!(tmp_files(&dir).is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
