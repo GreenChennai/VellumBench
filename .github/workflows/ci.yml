@@ -39,8 +39,11 @@ jobs:
       # 头文件;测试期 fontique 枚举系统字体需要 libfontconfig.so.1 本体。
       # fonts-noto-cjk:真字形量测测试(charpara 溢出估算等)需要 CJK 字体,
       # ubuntu 最小镜像没有——没有它,中文排版测试只能跳过而非真实执行。
-      - name: Install fontconfig runtime + CJK fonts
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1 fonts-noto-cjk
+      # libxkbcommon(-x11)/libwayland:-dev 提供 .so 链接符号,GPU 窗口栈
+      # (sable/gpui,R0 起)在 Linux 的 cargo test 链接期硬依赖;check 不
+      # 链接所以此前未暴露。
+      - name: Install fontconfig + CJK fonts + xkbcommon/wayland (gpui link deps)
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1 fonts-noto-cjk libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev
       - name: Check (all targets)
         run: cargo check --workspace --all-targets
       # --no-fail-fast:单测试二进制失败不中止其余,一次跑出全部平台差异
