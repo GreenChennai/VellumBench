@@ -266,6 +266,8 @@ impl<'a> ToolButton<'a> {
         let icon_scale = 1.0 - 0.08 * press_t;
 
         // 底色：激活 > 悬停 > 透明
+        // (§8.3.3 状态层:悬停不再换灰阶常量 t.bg_hover,改状态 overlay
+        //  半透明叠加 —— 动画曲线不变(行为等价),色值升级。)
         let base = if self.active {
             t.accent_dim
         } else {
@@ -274,7 +276,7 @@ impl<'a> ToolButton<'a> {
         let hovered = if self.active {
             blend(t.accent_dim, t.accent, hover_t * 0.25)
         } else {
-            blend(Color32::TRANSPARENT, t.bg_hover, hover_t)
+            theme::state::fade(t.state_hover, hover_t)
         };
         let fill = if hover_t > 0.0 { hovered } else { base };
 
@@ -491,10 +493,12 @@ impl<'a> NumField<'a> {
             lresp.hovered() || lresp.dragged(),
             theme::anim_time(ui.ctx(), theme::motion::HOVER),
         );
+        // 标签悬停底(§8.3.3 状态层:0.6 系数保留 —— 标签区的悬停反馈
+        // 刻意比输入框轻半档;色值从灰阶常量升级为状态 overlay)
         ui.painter().rect_filled(
             lrect,
             theme::radius::sm(),
-            blend(Color32::TRANSPARENT, t.bg_hover, hover_t * 0.6),
+            theme::state::fade(t.state_hover, hover_t * 0.6),
         );
         ui.painter().text(
             pos2(lrect.right() - 2.0, lrect.center().y),
@@ -518,11 +522,13 @@ impl<'a> NumField<'a> {
         } else {
             format_num(*self.value)
         };
+        // 数值一律走 vb-mono 等宽族(§8.4 tabular-nums 的落点:egui 无
+        // OpenType 特性接口,数字对齐经等宽字体达成,小数点上下对齐)
         let edit = ui.add_sized(
             Vec2::new(self.width, row_h),
             egui::TextEdit::singleline(&mut buf)
                 .id(field_id)
-                .font(fonts::font(12.0, fonts::Weight::Regular))
+                .font(theme::typography::mono_font_id(1.0))
                 .hint_text(format_num(*self.value)),
         );
         if !self.unit.is_empty() {
@@ -606,7 +612,8 @@ impl<'a> NumField<'a> {
             let text = format!("{}{}", format_num(*self.value), self.unit);
             let galley = ui.painter().layout(
                 text.clone(),
-                fonts::font(11.0, fonts::Weight::Regular),
+                // 拖动浮层里的数值同样走 mono 档(§8.4;tabular-nums)
+                theme::typography::mono_font_id(1.0),
                 t.text,
                 120.0,
             );
@@ -720,10 +727,22 @@ impl<'a> ColorField<'a> {
             );
             ui.painter()
                 .rect_filled(rect, theme::radius::sm(), *self.value);
+            // 悬停(§8.3.3 状态层):状态 overlay 叠在用户色上(不替换色块),
+            // 描边从 border 过渡到 border_strong(不再跳到全文字色)
+            if hover_t > 0.0 {
+                ui.painter().rect_filled(
+                    rect,
+                    theme::radius::sm(),
+                    theme::state::fade(t.state_hover, hover_t),
+                );
+            }
             ui.painter().rect_stroke(
                 rect,
                 theme::radius::sm(),
-                Stroke::new(theme::stroke::HAIRLINE, blend(t.border, t.text, hover_t)),
+                Stroke::new(
+                    theme::stroke::HAIRLINE,
+                    blend(t.border, t.border_strong, hover_t),
+                ),
                 egui::StrokeKind::Inside,
             );
             if resp.clicked() {
