@@ -545,26 +545,61 @@ impl LauncherUi {
     // ---------- 空态 / 对话框 / 确认 / 台账 ----------
 
     fn empty_state(&mut self, ui: &mut egui::Ui, tx: &Sender<ShellRequest>, view: &[&RecentItem]) {
-        // U-1:空态插图式引导 —— 大图标 + 标题 + 一句引导 + 动作按钮
+        // U-1 + §8.9 首启:空态插图式引导 + **「新建/打开/模板」三卡**
+        // (整卡可点,图标 + 标题 + 一句说明;卡 = L2 材质/lg 圆角)。
+        // 三卡代替三个小按钮:首启的第一屏给出明确的"三条路"。
         ui.vertical_centered(|ui| {
-            ui.add_space(56.0);
+            ui.add_space(48.0);
             ui.label(vb_ui::icons::rich(vb_ui::icons::Name::KindArtboard, 48.0).color(t_faint(ui)));
-            ui.add_space(10.0);
+            ui.add_space(8.0);
             ui.label(egui::RichText::new("还没有项目").heading().strong());
-            ui.add_space(6.0);
-            ui.weak(
-                "点「新建项目」开始,或打开一个含 index.html 的项目目录;也可以把目录拖进本窗口。",
-            );
+            ui.add_space(4.0);
+            ui.weak("从下面开始,或打开一个含 index.html 的项目目录;也可以把目录拖进本窗口。");
             ui.add_space(16.0);
             ui.horizontal(|ui| {
-                if ui.button("新建项目").clicked() {
-                    self.run_home_command("home.new_project", tx, view);
-                }
-                if ui.button("打开项目…").clicked() {
-                    self.run_home_command("home.open_project", tx, view);
-                }
-                if ui.button("从模板新建").clicked() {
-                    self.run_home_command("home.new_from_template", tx, view);
+                for (icon, title, desc, cmd) in [
+                    (
+                        vb_ui::icons::Name::AddLayer,
+                        "新建项目",
+                        "空白画板,从零开始",
+                        "home.new_project",
+                    ),
+                    (
+                        vb_ui::icons::Name::Expanded,
+                        "打开项目…",
+                        "选择含 index.html 的目录",
+                        "home.open_project",
+                    ),
+                    (
+                        vb_ui::icons::Name::PanelTokens,
+                        "从模板新建",
+                        "内置 landing 等起手模板",
+                        "home.new_from_template",
+                    ),
+                ] {
+                    let (picked, _) = vb_ui::components::card(ui, |ui| {
+                        ui.set_min_size(egui::vec2(160.0, 96.0));
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(4.0);
+                            ui.label(vb_ui::icons::rich(icon, 28.0).color(t_accent(ui)));
+                            ui.add_space(4.0);
+                            ui.label(vb_ui::components::strong(title));
+                            ui.label(vb_ui::components::caption(ui, desc));
+                        });
+                    });
+                    let resp = ui
+                        .interact(
+                            picked.rect,
+                            egui::Id::new("vb-home-card").with(title),
+                            egui::Sense::click(),
+                        )
+                        .on_hover_text(desc);
+                    if resp.hovered() {
+                        ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+                    }
+                    if resp.clicked() {
+                        self.run_home_command(cmd, tx, view);
+                    }
                 }
             });
         });
@@ -772,6 +807,11 @@ fn blend(a: Color32, b: Color32, t: f32) -> Color32 {
 /// `vb_ui::theme`,本文件只引用令牌)。
 fn t_faint(ui: &egui::Ui) -> Color32 {
     Tokens::get(ui.ctx().theme() == egui::Theme::Dark).text_3
+}
+
+/// 首启三卡的图标色(accent;单一功能色只用于"可交互强调",§8.2)。
+fn t_accent(ui: &egui::Ui) -> Color32 {
+    Tokens::get(ui.ctx().theme() == egui::Theme::Dark).accent
 }
 
 #[cfg(test)]

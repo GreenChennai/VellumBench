@@ -805,6 +805,20 @@ impl VellumApp {
                 "选中后按 变换/外观/布局/文本/交互/无障碍/导出 分组编辑;数值框支持拖标签改值与表达式(如 320/2、50%)。",
             );
             ui.add_space(vb_ui::theme::space::S3);
+            // §8.9 空态:无选区先给**画板属性**(不许白板)—— 名称与
+            // 尺寸是空态下唯一可"编辑对象"的属性代理;改它去画板 Tab。
+            if let Some(ab) = self.active_artboard() {
+                if let Some(n) = self.doc.nodes.get(ab) {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.strong("画板");
+                        ui.label(caption(
+                            ui,
+                            &format!("{} · {} × {} px", n.name, n.geom.w as i64, n.geom.h as i64),
+                        ));
+                    });
+                }
+            }
+            ui.add_space(vb_ui::theme::space::S2);
             ui.label(caption(ui, "常用"));
             ui.horizontal_wrapped(|ui| {
                 for (id, icon, tip) in [

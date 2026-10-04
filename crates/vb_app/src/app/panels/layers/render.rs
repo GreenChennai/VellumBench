@@ -54,7 +54,6 @@ impl VellumApp {
     }
 
     pub(crate) fn layers_tab(&mut self, ui: &mut egui::Ui) {
-        let t = theme::tokens(ui.ctx());
         ui.heading("图层");
         ui.separator();
 
@@ -78,16 +77,17 @@ impl VellumApp {
             }
             if rows.is_empty() {
                 if query.trim().is_empty() {
-                    // U-5:图层空态 = 统一「图标 + 一句短话 + 动作按钮」
-                    ui.add_space(theme::space::S3);
-                    ui.horizontal(|ui| {
-                        ui.add_space(theme::space::S2);
-                        ui.label(icons::rich(Name::KindLayer, 18.0).color(t.text_3));
-                        ui.label(caption(
-                            ui,
-                            "画板下还没有对象 —— 用工具创建,或双击下方空白新建图层。",
-                        ));
-                    });
+                    // U-5 + §8.6 #16:图层空态 = 统一 EmptyState 组件
+                    // (图标 + display 标题 + body 引导 + 主行动按钮)。
+                    // 主行动 = 新建图层(走 Insert 命令路径,可撤销);
+                    // 快捷工具行保留在按钮下方(矩形/文字一键切换工具)。
+                    let r = vb_ui::EmptyState::new(Name::KindLayer, "还没有对象")
+                        .body("用左侧工具创建,或双击下方空白新建图层")
+                        .action("新建图层")
+                        .ui(ui);
+                    if r.action_clicked {
+                        self.layers_new_layer_in_active_artboard();
+                    }
                     ui.add_space(theme::space::S2);
                     ui.horizontal_wrapped(|ui| {
                         for (id, icon, tip) in [
@@ -209,8 +209,9 @@ impl VellumApp {
         let selected = self.selection.last().is_some_and(|s| *s == r.sid);
         let editing = self.editing_layer.as_deref() == Some(r.sid.as_str());
         let indent = theme::space::S2 + r.depth as f32 * theme::space::S6;
+        // 行高走密度档(§8.3.5:compact 24 / comfortable 28)
         let (rect, resp) = ui.allocate_exact_size(
-            egui::Vec2::new(ui.available_width(), theme::space::ROW_HEIGHT),
+            egui::Vec2::new(ui.available_width(), theme::density::row_height(ui.ctx())),
             Sense::click_and_drag(),
         );
         zones.push(DropZone {
