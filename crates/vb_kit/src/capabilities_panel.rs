@@ -157,7 +157,7 @@ fn capability_row(cap: &'static Capability, c: &ColorTokens) -> sable::gpui::Any
 
     let mut row = v_flex()
         .px(px(space::S2))
-        .py(px(space::S2))  // UI-06:3 非 4 基数,归 S2=4
+        .py(px(space::S2)) // UI-06:3 非 4 基数,归 S2=4
         .rounded(px(radius::SM))
         .hover(|s| s.bg(c.surface_3))
         .child(
@@ -172,7 +172,7 @@ fn capability_row(cap: &'static Capability, c: &ColorTokens) -> sable::gpui::Any
                 )
                 .child(
                     div()
-                        .w(px(32.0))  // UI-06:34→32(4 基数)
+                        .w(px(32.0)) // UI-06:34→32(4 基数)
                         .flex_shrink_0()
                         .text_size(px(font_size::CAPTION))
                         .text_color(c.text_secondary)
