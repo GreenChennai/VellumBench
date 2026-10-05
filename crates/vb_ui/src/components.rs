@@ -413,6 +413,11 @@ pub fn scrub_step(dx: f32, speed: f64, shift: bool, alt: bool) -> f64 {
 }
 
 /// 数值格式化(输入框回显):整数不带小数点,小数最多 2 位去尾零。
+///
+/// PERF-09 裁定:审查点"每帧 Id 拼接"已随组件重构消解(现存 Id 均为
+/// 静态串);本函数每帧的 String 分配(每屏 ~10-20 个小分配)经评估
+/// 低于 egui 自身每帧分配量级,不做缓存/Cow——避免为不可测量收益引入
+/// 生命周期复杂度。若未来 dev stats 显示此处进入火焰图,再行缓存。
 pub fn format_num(v: f64) -> String {
     if v.is_finite() && v.fract() == 0.0 && v.abs() < 1e15 {
         format!("{}", v as i64)
