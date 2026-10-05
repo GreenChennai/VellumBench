@@ -64,9 +64,11 @@ pub mod hex {
     pub const DARK_ACCENT_HOVER: u32 = 0x3AAEFFFF;
     /// rgba(13,153,255,0.16) → α = round(0.16 × 255) = 41 = 0x29
     pub const DARK_ACCENT_DIM: u32 = 0x0D99FF29;
-    pub const DARK_DANGER: u32 = 0xF24822FF;
+    /// S5 对比度收口:#F24822→#FF8470(panel 5.83/raised 4.75,≥4.5 AA)
+    pub const DARK_DANGER: u32 = 0xFF8470FF;
     pub const DARK_WARN: u32 = 0xFFC700FF;
-    pub const DARK_SUCCESS: u32 = 0x14AE5CFF;
+    /// S5 对比度收口:#14AE5C→#33C272(raised 4.92,≥4.5 AA)
+    pub const DARK_SUCCESS: u32 = 0x33C272FF;
 
     // ── color.light(16;JSON 浅色未定义 accent-hover)──
     pub const LIGHT_BG_CANVAS: u32 = 0xF5F5F5FF;
