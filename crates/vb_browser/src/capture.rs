@@ -277,8 +277,15 @@ pub fn capture_png(
     // 要素 1:load + networkidle + 200ms(调用方已 navigate 亦可,这里由 caller 控制时序)
     let (mut sw, sh) = page.content_size()?;
     sw = sw.max(opts.width);
-    let mut warnings = page.collect_resource_warnings();
+    // 顺序要紧:**先 settle 再收资源告警**(UP-1)。
+    // `collect_resource_warnings` 判据是 `img.complete && naturalWidth===0`,
+    // 在 settle 之前调用等于「拿还没加载完的瞬间当结论」:慢一点的网络/大图
+    // 必然被判成断图,而 settle 又把它等来了 —— 产物里图是好的、报告却说坏了。
+    // 下游实测过这个假阳性:同一页 Playwright 直出与本车道产物逐像素一致,
+    // 报告却带一条「外部资源加载失败」。假阳性比漏报更有害:它训练人忽略
+    // warnings,于是真断图(BUG 2 的字体静默降级)也一起被忽略。
     let settled = settle(page)?;
+    let mut warnings = page.collect_resource_warnings();
     let infinite = settled.infinite_animations;
     warnings.extend(settled.warnings);
     if infinite > 0 {

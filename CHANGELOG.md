@@ -1,5 +1,77 @@
 # Changelog
 
+## 0.14.3(2026-10-09)
+
+主题:下游 artboard 生产机报的 7 条 BUG 逐条核实。**结论与报单相反**:相对路径
+**本来就是好的**,被拦的是**绝对 `file:///` URI** —— 而两者解析后是同一个 URL
+字符串,诊断混报导致排查者把锅甩反了方向。本轮把这个陷阱封掉,并补上真正缺失的
+字体检测(此前 `@font-face` 失败是**零告警**)。
+
+### Fixed · 资源告警的三个真缺陷
+
+1. **告警采集早于 settle(顺序错位)**
+   `capture_png` / `print_dom` 都是「先 `collect_resource_warnings()`、后
+   `settle(page)`」。而告警判据是 `img.complete && naturalWidth===0` —— 在 settle
+   之前调用等于**拿"还没加载完"的瞬间当结论**,慢机/大图必然被判成断图,而 settle
+   又把它等来了。产物里图是好的、报告却说坏了。
+   假阳性比漏报更有害:它训练人忽略 `warnings`,于是真断图一起被忽略。
+   已把采集移到 settle 之后(两处同改)。
+   *诚实说明*:本地 `file://` 与静态服务器都是毫秒级,**没能复现出输出差异**;
+   但 `QUIESCENCE_JS`(settle 的判据)确实在等 `!i.complete || naturalWidth===0`
+   与 `document.fonts.status==='loading'`,所以改前在原理上就是竞态。按"构造上
+   成立"保留,并在此说明未观测到实测差异。
+
+2. **`@font-face` 失败完全不进检测(真·零告警)**
+   `RESOURCE_WARNINGS_JS` 只扫 `img/video/audio/source/link/script/iframe`,**一个
+   字体都不查**。`@font-face` 掉了不会让任何元素的 `naturalWidth` 变 0,只会让
+   `document.fonts` 里那条 status 变 `error` —— 于是自定义字体静默降级成系统字体,
+   报告里**一条告警都没有**。这是最隐蔽的一类损坏:版面看着差不多,只有逐字对比
+   才发现字重/字距全错。
+   现按 `document.fonts` 的 status 报,并点名 family/style/weight。
+
+3. **1×1 追踪像素被当成断图**
+   装饰性追踪像素常是 1×1,报它只会淹没真问题。加了渲染尺寸下限(<2px 跳过),
+   与 artboard 侧 `check_overflow.py` 的 E 类门禁同口径。
+
+### Improved · 诊断不再把人导向错误方向
+
+告警消息现在区分**绝对 `file:///` URI** 与**相对路径**:
+
+```
+外部资源加载失败: [绝对 file:// URI,Chromium 必拦,改相对路径] file:///E:/.../only.png
+```
+
+**这是本轮最值钱的一条**。下游报单说"相对路径 404 → 图片断图 + 字体降级",
+并据此改用 Playwright 绕行。实测:
+
+| 引用方式 | 报单结论 | 实测 |
+|---|---|---|
+| 相对路径 `img/x.png` | ✗ 断图 | **✓ 正常**(绿图 400×400 精确渲染,`warnings:0`) |
+| 绝对 `file:///` URI | ✗ 断图 | **✗ 被拦**(Chromium 禁止 file:// 页面加载 file:// 绝对 URI) |
+| base64 | ✓ | ✓ |
+
+两者解析后是**同一个 URL 字符串**,`currentSrc` 一律给绝对化后的值,所以旧诊断
+报出来无法区分,报单作者据此归因反了。**报单里"只有内联 base64 能走通"也是错的**
+—— 相对路径一直通。
+
+补充留档:曾试过补 `--allow-file-access-from-files`,**实测无效** —— 加与不加,
+同一页导出**逐像素完全相同、`bytes` 一字不差**。故不加,免得平白放宽安全面。
+(Kiln 静态车道用 `Page.navigate` 打开 `file:///<abs>/index.html`,Chromium 对
+**同目录** file:// 子资源本就放行。)
+
+### Changed
+
+- 静态车道与动画车道的资源告警口径统一(此前动画车道走 `staticsrv` 的 404 追踪,
+  静态车道走 `collect_resource_warnings`,两套判据不同,同一页在不同车道可能
+  报出不同数量的告警)。
+
+### 测试
+
+- `cargo test -p vb_kiln` 全绿(12 组)。本轮以**外部实测**为主:合成
+  200×200 纯色图 + 洋红底,分别对 `img/only.png`(相对)与
+  `file:///…/img/only.png`(绝对)各导一次,读中心像素判加载 —— 比断言字符串
+  可靠,因为它直接测产物而不是测报告。
+
 ## 0.14.2(2026-10-08)
 
 主题:**Kiln 修掉 artboard 上游台账登记的两条缺陷(UP-3 / UP-4)**。两条都不是"调参"级问题,

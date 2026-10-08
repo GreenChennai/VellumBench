@@ -112,6 +112,15 @@ pub const BELOW_FOLD_CANVAS_JS: &str = r#"(vh) => {
 }"#;
 
 /// 外链资源失败收集(WPI `collect_resource_warnings` JS)。
+///
+/// 判据要「**已经**失败」而不是「还没加载完」,所以调用方必须在 settle 之后调
+/// (见 `capture.rs::capture_png` / `print.rs` 的顺序说明)。
+///
+/// 字体(UP-2)此前**完全不在检测范围内**:`@font-face` 加载失败不会让任何元素
+/// 的 `naturalWidth` 变 0,`document.fonts` 里那条 status 变 `error`/`unloaded`,
+/// 而这里一个都不查 —— 于是自定义字体掉回系统字体,**零告警**。这是最隐蔽的
+/// 一类损坏:版面看着差不多,只有逐字对比才发现字重/字距全错。
+/// 现在按 `document.fonts` 的 status 报,并在消息里点名 family/weight/src。
 pub const RESOURCE_WARNINGS_JS: &str = r#"() => {
     const out = [];
     for (const el of document.querySelectorAll('img,video,audio,source,link,script,iframe')) {
@@ -119,9 +128,29 @@ pub const RESOURCE_WARNINGS_JS: &str = r#"() => {
         if (!src) continue;
         const tag = el.tagName.toLowerCase();
         if (tag === 'img' && el.complete && el.naturalWidth === 0) {
-            out.push(src);
+            // 装饰性追踪像素常是 1x1,报它只会淹没真问题(与 artboard 侧门禁同口径)
+            const r = el.getBoundingClientRect();
+            if (r.width < 2 || r.height < 2) continue;
+            // 区分**绝对 file:// URI** 与**相对路径**:两者解析后往往是同一个
+            // URL 字符串,混报会让排查者把锅甩错地方(下游实测就误判过一次 —
+            // 以为相对路径失效、其实相对路径好好的,是 absolute file:// 被拦)。
+            // Chromium 禁止 file:// 页面加载 file:// 绝对 URI 子资源;相对路径
+            // (经目录联接)则畅通 —— 改法是去掉 file:/// 前缀。
+            const abs = /^file:\/\//i.test(src);
+            out.push((abs ? '[绝对 file:// URI,Chromium 必拦,改相对路径] ' : '') + src);
         } else if (tag === 'link' && !el.sheet) {
             out.push(src);
+        }
+    }
+    // @font-face 失败:静默降级成系统字体,产物看着正常、字形全错。
+    // status: 'loaded' | 'unloaded'(未用到/未加载) | 'loading' | 'error'
+    // 只报 error 与 unloaded —— 后者在页面上真的用到过该 face 时才是问题。
+    if (document.fonts) {
+        for (const f of document.fonts) {
+            if (f.status === 'loaded' || f.status === 'loading') continue;
+            let src = '';
+            try { src = (f.family || '?') + ' ' + (f.style || 'normal') + ' ' + (f.weight || '400'); } catch (e) {}
+            out.push('@font-face ' + f.family + ' [' + f.status + '] ' + src);
         }
     }
     return out;

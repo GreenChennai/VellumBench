@@ -241,6 +241,13 @@ fn launch_args(
         // Playwright 同款:禁 LCD 次像素文本 AA,省一遍文本光栅滤波
         // (文本密集页可感知),也与无障碍/截图口径对齐
         "--disable-lcd-text".into(),
+        // 曾试过补 `--allow-file-access-from-files`(怀疑 file:// 页面读不到
+        // 同级文件)。**实测无效**:加与不加,同一页导出逐像素完全相同、`bytes`
+        // 一字不差 —— Chromium 对同目录 file:// 子资源本就放行。所以不加,
+        // 免得平白放宽安全面却换不到任何东西。
+        //
+        // 下游报的「相对路径 404 → 断图/字体降级」经此证伪:真因是告警**采集
+        // 时机**早于 settle(见 capture.rs / print.rs 的顺序注释),图其实加载了。
     ]);
     if gpu {
         // GPU 光栅化:headless 必须显式走 ANGLE→D3D11,否则仍是软件光栅。

@@ -36,8 +36,10 @@ pub fn print_pdf(
         page.sleep(120);
     }
     page.emulate_media_screen()?;
-    let mut warnings = page.collect_resource_warnings();
+    // 顺序同 capture.rs:先 settle 再收资源告警(UP-1)—— settle 之前的
+    // `naturalWidth===0` 只是「还没加载完」,不是断图。
     let settled = capture::settle(page)?;
+    let mut warnings = page.collect_resource_warnings();
     let infinite = settled.infinite_animations;
     warnings.extend(settled.warnings);
     if infinite > 0 {
