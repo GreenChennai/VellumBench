@@ -128,8 +128,17 @@ pub struct ExportRequest {
     pub duration_s: f32,
     /// GIF 循环次数(0 = 无限,默认)。
     pub gif_loops: u16,
-    /// MP4 码率 kbps(默认 8000;ffmpeg 桥)。
+    /// MP4 码率 kbps(默认 8000;ffmpeg 桥)。等价于 CLI `--bitrate`。
     pub mp4_bitrate_kbps: u32,
+    /// GOP 长度(UP-4b)。`None` = 不下发,落编码器默认(libx264 ≈250 帧)。
+    /// 给值会同时下发 `-g` + `-forced-idr`,保证各编码器语义一致。
+    pub mp4_gop: Option<u32>,
+    /// B 帧数(UP-4b)。`Some(0)` = 关 B 帧(规避部分播放器首帧黑)。
+    pub mp4_b_frames: Option<u32>,
+    /// 是否写 bt709 色彩标签(UP-4b)。默认 true;关掉只保留色程压缩。
+    pub mp4_color_tags: bool,
+    /// Pixel format for MP4 (UP-4b). `None` = yuv420p (the only verified tier).
+    pub mp4_pix_fmt: Option<String>,
 }
 
 impl Default for ExportRequest {
@@ -143,6 +152,10 @@ impl Default for ExportRequest {
             duration_s: 2.0,
             gif_loops: 0,
             mp4_bitrate_kbps: 8000,
+            mp4_gop: None,
+            mp4_b_frames: None,
+            mp4_color_tags: true,
+            mp4_pix_fmt: None,
         }
     }
 }

@@ -46,6 +46,15 @@ pub struct ExportContext {
     pub duration_s: f32,
     pub gif_loops: u16,
     pub mp4_bitrate_kbps: u32,
+    /// GOP 长度(UP-4b)。`None` = 不下发,落编码器默认。
+    /// 浏览器动画车道走 `AnimPipeOpts` 的同名字段,两处语义一致。
+    pub mp4_gop: Option<u32>,
+    /// B 帧数(UP-4b)。`Some(0)` = 关 B 帧(规避部分播放器首帧黑)。
+    pub mp4_b_frames: Option<u32>,
+    /// 是否写 bt709 色彩_tags(UP-4b)。默认 true。
+    pub mp4_color_tags: bool,
+    /// Pixel format for MP4 (UP-4b). `None` = yuv420p.
+    pub mp4_pix_fmt: Option<String>,
     pub jpeg_quality: u8,
     /// 构建期收集的告警(scale 钳制、不支持的绘制原语等)。
     pub build_warnings: Vec<KilnWarning>,
@@ -217,6 +226,10 @@ impl ExportContext {
             duration_s: req.duration_s,
             gif_loops: req.gif_loops,
             mp4_bitrate_kbps: req.mp4_bitrate_kbps,
+            mp4_gop: req.mp4_gop,
+            mp4_b_frames: req.mp4_b_frames,
+            mp4_color_tags: req.mp4_color_tags,
+            mp4_pix_fmt: req.mp4_pix_fmt.clone(),
             jpeg_quality: req.jpeg_quality.clamp(1, 100),
             build_warnings,
             anim_coverage,

@@ -88,6 +88,20 @@ pub enum KilnWarning {
     FontSubsetFallback { count: usize },
     /// 字形未入子集重映射表(EXP-01 防御):按原 GID 直发,可能缺字。
     GlyphRemapMiss { count: usize },
+    /// GIF 调色板实际走了哪条编码路径(UP-4)。
+    ///
+    /// 此前**无处声明**:两条路径质量不同(ffmpeg `palettegen=stats_mode=diff` +
+    /// `paletteuse=dither=sierra2_4a` 两 pass vs 纯 Rust 感知量化 LZW 单 pass),
+    /// 而门控只是 `if ffmpeg_available()`,报告里看不出来 —— 下游无法判断
+    /// 「这台机器没 ffmpeg」还是「ffmpeg 桥失败已回退」。`via_ffmpeg=false`
+    /// 时**色阶与体积都会劣化**,应当让调用方显式知道。
+    ///
+    /// 非降级:两条路径都产出合法 GIF89a,内容一致,只是质量档位不同。
+    GifPalettePath {
+        via_ffmpeg: bool,
+        /// ffmpeg 路径失败而回退时的原始原因(纯 Rust 路径为 None)。
+        ffmpeg_error: Option<String>,
+    },
 }
 
 impl KilnWarning {
@@ -110,6 +124,7 @@ impl KilnWarning {
             KilnWarning::ImportObjectSkipped { .. } => "import_object_skipped",
             KilnWarning::FontSubsetFallback { .. } => "font_subset_fallback",
             KilnWarning::GlyphRemapMiss { .. } => "glyph_remap_miss",
+            KilnWarning::GifPalettePath { .. } => "gif_palette_path",
         }
     }
 
@@ -168,6 +183,23 @@ impl KilnWarning {
             KilnWarning::GlyphRemapMiss { count } => {
                 format!("{count} 个字形未入子集重映射表,按原 GID 直发(可能缺字,请检查字体文件)")
             }
+            KilnWarning::GifPalettePath {
+                via_ffmpeg, ffmpeg_error,
+            } => match (via_ffmpeg, ffmpeg_error) {
+                (true, None) => {
+                    "GIF 调色板:ffmpeg palettegen(diff)+ paletteuse(sierra2_4a)两 pass".into()
+                }
+                (false, None) => "GIF 调色板:纯 Rust 感知量化 LZW 单 pass(未装 ffmpeg;色阶与体积劣于两 pass,装 ffmpeg 可升档)".into(),
+                (false, Some(e)) => {
+                    format!("GIF 调色板:ffmpeg 两 pass 失败已回退纯 Rust 单 pass({e});装 ffmpeg 可升档")
+                }
+                // 不变量:`via_ffmpeg=true` 只在 ffmpeg 桥成功时置位,此时不可能
+                // 带错误原因。保留兜底分支而不是 unreachable!(),免得将来有人
+                // 改了置位逻辑后 panic 在错误处理路径上。
+                (true, Some(e)) => format!(
+                    "GIF 调色板:ffmpeg 两 pass({e})"
+                ),
+            },
         }
     }
 }

@@ -108,6 +108,22 @@ enum Cmd {
         /// MP4 码率 kbps
         #[arg(long, default_value_t = 8000)]
         bitrate: u32,
+        /// MP4 GOP 长度(关键帧间隔帧数)。不给 = 落编码器默认(libx264≈250)。
+        /// 给值会同时下发 -g 与 -forced-idr,各编码器语义一致。
+        /// 需要 seek 精度、或多段 -c copy 拼接时建议显式给
+        #[arg(long)]
+        gop: Option<u32>,
+        /// MP4 B 帧数。不给 = 落编码器默认(libx264=3)。--bf 0 = 关 B 帧,
+        /// 规避部分播放器/硬件解码器「首帧黑(音频先响、画面不动)」
+        #[arg(long)]
+        bf: Option<u32>,
+        /// MP4 像素格式(默认 yuv420p,唯一被实机验证的档位)。
+        /// yuv444p/yuv422p 体积显著更大且部分播放器不支持
+        #[arg(long)]
+        pix_fmt: Option<String>,
+        /// 不写 bt709 色彩标签(部分播放器二次改色时可试;色彩空间信息会丢失)
+        #[arg(long, default_value_t = false)]
+        no_color_tags: bool,
         /// MP4 并行分段数(0=默认 1;1=串行;2..16=显式并发)。确定性寻址下
         /// 各段独立渲染后 concat 拼接,结果与串行一致。注意:两轮下游实测
         /// 多实例都是负收益,默认 1 是唯一安全档
@@ -331,6 +347,10 @@ fn main() {
             duration,
             r#loop,
             bitrate,
+            gop,
+            bf,
+            pix_fmt,
+            no_color_tags,
             workers,
             gpu,
             img,
@@ -357,6 +377,10 @@ fn main() {
             duration,
             r#loop,
             bitrate,
+            gop,
+            bf,
+            pix_fmt,
+            no_color_tags,
             workers,
             gpu,
             img,
@@ -440,6 +464,10 @@ fn run_export(
     duration: f32,
     r#loop: u16,
     bitrate: u32,
+    gop: Option<u32>,
+    bf: Option<u32>,
+    pix_fmt: Option<String>,
+    no_color_tags: bool,
     workers: u32,
     gpu: bool,
     img: String,
@@ -663,6 +691,10 @@ fn run_export(
             seek_fn: seek_norm.clone(),
             gif_fallback_loops: r#loop,
             cancel: Some(cancel.child()),
+            gop: gop,
+            b_frames: bf,
+            pix_fmt: pix_fmt.clone(),
+            color_tags: !no_color_tags,
         };
         // WebCodecs 车道(0.13):canvas+SEEK 页全 GPU —— 页内硬编 +
         // AnnexB 上传 + ffmpeg -c copy 封装。auto 探针/编码失败自动回退
@@ -948,6 +980,10 @@ fn run_export(
         duration_s: duration,
         gif_loops: r#loop,
         mp4_bitrate_kbps: bitrate,
+        mp4_gop: gop,
+        mp4_b_frames: bf,
+        mp4_color_tags: !no_color_tags,
+        mp4_pix_fmt: pix_fmt.clone(),
     };
     let (bytes, report) = match vb_kiln::export_artboard_with_cancel(
         &imported.doc,

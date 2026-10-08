@@ -41,6 +41,7 @@ use std::time::Duration;
 
 use crate::cancel::{guard_lane, lane_cancelled, CancelToken};
 use crate::context::{ExportContext, Frame};
+use crate::error::KilnWarning;
 use crate::report::{summarize_intervals, FrameIntervalStats, InstanceStats};
 use crate::writer::Format;
 use vb_render::encode::DrawList;
@@ -92,6 +93,23 @@ pub struct AnimPipeOpts {
     /// 车道每帧边界;WebCodecs 车道每批(60 帧)边界。命中即停止并
     /// 清扫临时/分段文件,返回「导出已取消」标记错误。
     pub cancel: Option<CancelToken>,
+    /// GOP 长度(关键帧间隔帧数,UP-4b)。`None` = 不下发,落编码器默认
+    /// (libx264 ≈250、nvenc/amf/qsv 各不相同)。给值会同时下发 `-g` 与
+    /// `-forced-idr`,保证"每 N 帧一个关键帧"在各编码器上语义一致。
+    /// 影响:seek 精度、多段 `-c copy` 拼接的兼容性(段间 GOP 不一致会
+    /// 出拼接/解码问题,故多段车道应显式给值)。
+    pub gop: Option<u32>,
+    /// B 帧数(UP-4b)。`None` = 不下发,落编码器默认(libx264 = 3)。
+    /// B 帧会让流开头的 DTS 变负,部分播放器/硬件解码器**首帧黑**(音频先响、
+    /// 画面不动)。要规避首帧黑就显式给 `Some(0)`。
+    pub b_frames: Option<u32>,
+    /// 像素格式(UP-4b)。`None` = `yuv420p`(唯一被实机验证的档位)。
+    /// 填 `yuv444p`/`yuv422p` 会显著增大体积且部分播放器不支持。
+    pub pix_fmt: Option<String>,
+    /// 是否写 bt709 色彩标签(`-colorspace`/`-color_primaries`/`-color_trc`/
+    /// `-color_range` + `h264_metadata` BSF)。默认 true。关掉可避免
+    /// 部分播放器二次改色,但色彩空间信息就丢了。
+    pub color_tags: bool,
 }
 
 impl Default for AnimPipeOpts {
@@ -115,6 +133,10 @@ impl Default for AnimPipeOpts {
             wall_clock: false,
             seek_fn: None,
             cancel: None,
+            gop: None,
+            b_frames: None,
+            pix_fmt: None,
+            color_tags: true,
         }
     }
 }
@@ -159,10 +181,18 @@ fn detect_driver(page: &mut vb_browser::page::PageSession, seek_fn: &Option<Stri
 /// seek 后等一次 repaint(双 rAF,250ms 兜底)再返回 —— SEEK 只改状态
 /// 而绘制发生在下一渲染帧的页面(异步字体/位图/rAF 绘制)也能截到
 /// 正确画面;同步绘制的页面只多花一次 rAF 往返。
-fn drive_frame(page: &mut vb_browser::page::PageSession, driver: &Driver, frame: usize, fps: u32) {
+fn drive_frame(
+    page: &mut vb_browser::page::PageSession,
+    driver: &Driver,
+    frame: usize,
+    fps: u32,
+    n_frames: usize,
+    duration_s: f32,
+    need_repaint: bool,
+) {
     let timing = std::env::var("VB_ANIM_TIMING").is_ok();
     let t0 = std::time::Instant::now();
-    let t_ms = (frame as f64 * 1_000.0 / fps as f64).round() as u64;
+    let t_ms = frame_time_ms(frame, fps, n_frames, duration_s);
     match driver {
         Driver::JsSeek(name) => {
             // 与 Playwright 侧同一约定:`t => window.SEEK(t)`(SEEK 是纯函数)
@@ -177,15 +207,106 @@ fn drive_frame(page: &mut vb_browser::page::PageSession, driver: &Driver, frame:
         }
         Driver::WallFallback => return,
     }
-    // 等 repaint(仅 captureScreenshot 路径需要:确保状态已提交到一帧;
-    // beginFrame 路径由 CDP 显式产帧,本身就是"等一次 repaint",
-    // 再跑 rAF 是纯开销)。页面无 rAF 流时 setTimeout 兜底不挂死。
-    if std::env::var("VB_NO_BEGINFRAME").is_ok() {
+    // 等一次 repaint —— **captureScreenshot 路径必须等**。
+    //
+    // UP-3 的第三处根因:这个等待原先挂在 `VB_NO_BEGINFRAME` 环境变量上,
+    // 于是「不启用 beginFrame」时**恰好不执行** —— 而不启用 beginFrame 正是
+    // 现代 Chromium(Edge 154 等已移除 `HeadlessExperimental.beginFrame`)的
+    // **唯一**可行路径。结果:状态(`currentTime`)改完了,截图却发生在浏览器
+    // 把它提交成新表面之前 → 每帧都拿到上一帧 → GIF 40 帧全停在 from 色,
+    // 而 MP4 车道因为历史上恰好带 beginFrame 反而正确 —— 差异不在车道,
+    // 在这个等待是否被触发。
+    //
+    // beginFrame 路径不需要:它本身就是"CDP 显式产一帧",已含提交。
+    // 页面无 rAF 流时 setTimeout(250) 兜底,不挂死。
+    if need_repaint {
         let wait_js = "() => new Promise(res => { let n = 0;                     const tick = () => { if (++n >= 2) return res(true); requestAnimationFrame(tick); };                     requestAnimationFrame(tick);                     setTimeout(() => res(false), 250); })";
         let _ = page.evaluate(wait_js, true);
     }
     if timing {
         eprintln!("[timing] frame {frame}: drive+repaint {:?}", t0.elapsed());
+    }
+}
+
+/// 帧 `i` 的采样时刻(ms)。
+///
+/// **UP-3 的第二处根因**:网格 `i/fps` 的最大值是 `(n-1)/fps`,**恒小于片长**。
+/// 于是「动画时长 == 片长」的 `forwards` 动画 —— 也就是卡点硬切最常见的写法
+/// (`animation: jump 2s steps(1,end) forwards` 配 `--duration 2`) —— 终值态
+/// **一次都采不到**,`steps()` 下就是全片停在 from 色。
+///
+/// 末帧单独落到片长终点,中间帧仍按均匀网格:不动既有时序,只补上缺失的终点。
+/// 注意时长会有**一帧**的重量(末帧多停留 `1/fps`),对 GIF/MP4 的总时长影响
+/// 在 1 帧以内(末帧 delay 本来就是 1/fps),可接受。
+pub fn frame_time_ms(frame: usize, fps: u32, n_frames: usize, duration_s: f32) -> u64 {
+    if n_frames > 0 && frame + 1 == n_frames {
+        return (duration_s.max(0.0) * 1000.0).round() as u64;
+    }
+    (frame as f64 * 1_000.0 / fps as f64).round() as u64
+}
+
+/// 逐帧产帧(UP-3 修复的核心)。
+///
+/// 此前 **GIF 车道恒走 `Page.captureScreenshot`**,而浏览器**无条件**带
+/// `--enable-begin-frame-control`(`browser.rs:244`):合成器被 BeginFrame 门控,
+/// 不发 BeginFrame 就不会产生新表面,`captureScreenshot` 拿到的永远是
+/// 「最后一次已提交表面」—— 首帧。这正是 `steps()` 硬跳变 40 帧全停在
+/// from 色的原因:**时刻算对了**(frame 20 恰好 2000ms = 动画终点),
+/// 但画面根本没更新。MP4 车道一直是对的,因为它走
+/// `HeadlessExperimental.beginFrame` 显式产帧。
+///
+/// 这里把 GIF 车道对齐到**同一条已被实证正确的路径**:beginFrame 优先,
+/// 不可用时回退 captureScreenshot 并**显式等一次 repaint**(状态改完到
+/// 绘制提交之间隔着一个渲染帧,不等就会截到上一帧 —— 这正是 beginFrame
+/// 替我们做掉的事)。`bf_broken` 缓存"beginFrame 不可用"这一结论,
+/// 此前每帧重试一次必然失败的调用再退回,等于每帧多付一次死往返。
+/// 逐帧截屏(**MP4 分段车道与 GIF 内存车道共用的唯一实现**)。
+///
+/// UP-3 修复过程中的一条教训:最初给 GIF 车道**另写**了一份截屏逻辑
+/// (多一个 rAF 等待、多一个 `--disable-features=CalculateNativeWinOcclusion`
+/// 启动 flag、没用 `screenshot_fast_png`),结果 MP4 车道正常而 GIF 车道
+/// **帧 0 就 `Page.captureScreenshot 等待响应超时`**。根因不是 beginFrame,
+/// 而是那份实现里回退路径上的**额外 rAF 等待**把 CDP 等待拖死
+/// (`page.evaluate(js, true)` 等 promise,在被 BeginFrame 门控的渲染器上
+/// 迟迟不返回)。所以这里把 MP4 车道**已验证**的序列原样提取成共享函数,
+/// 两条车道都走它 —— 一份实现、不会分叉,GIF 自动继承 MP4 实测正确的细节:
+///
+/// 1. `beginFrame` 显式产帧(CDP 主动出帧,空闲页面不再等合成器调度);
+///    不带 `clip`(clip 会强制重光栅化裁剪区,实测每帧 +150ms 以上)。
+/// 2. beginFrame 失败 → **缓存结论**(`bf_broken`)。此前每帧都重试一次必然
+///    失败的调用再退回,等于每帧多付一次死往返。
+/// 3. PNG 走 `screenshot_fast_png()`(`optimizeForSpeed`,Chrome 125+),
+///    无 JPEG 的 4:2:0 色度损失 —— 文字密集页交付的正解;失败再退普通截图。
+///
+/// `bf_broken` 由调用方持有并在同一实例的各帧间共享(不是每帧重置)。
+fn capture_anim_frame_png(
+    page: &mut vb_browser::page::PageSession,
+    bf_broken: &std::cell::Cell<bool>,
+    shot_format: &str,
+    shot_quality: Option<u8>,
+    frame_idx: usize,
+    warnings: &mut Vec<String>,
+) -> Result<Vec<u8>, String> {
+    let err_ctx = |e: String| format!("逐帧截屏失败(帧 {frame_idx}):{e}");
+    if !bf_broken.get() {
+        match page.begin_frame_screenshot(shot_format, shot_quality) {
+            Ok(b) => return Ok(b),
+            Err(e) => {
+                bf_broken.set(true);
+                // 每实例只报一次,否则会刷出 N 条同因告警
+                if warnings.is_empty() {
+                    warnings.push(format!("beginFrame 不可用,退回 captureScreenshot: {e}"));
+                }
+            }
+        }
+    }
+    if shot_format == "png" {
+        page.screenshot_fast_png()
+            .or_else(|_| page.screenshot(shot_format, shot_quality, None, false, false))
+            .map_err(err_ctx)
+    } else {
+        page.screenshot(shot_format, shot_quality, None, false, false)
+            .map_err(err_ctx)
     }
 }
 
@@ -313,10 +434,20 @@ pub fn usable_encoder_chain() -> Vec<EncChoice> {
 /// bt709 标记 —— 此前输出 yuvj420p + color_range=pc + transfer/primaries
 /// unknown,与电视范围素材(典型 YMIN/YMAX≈16/235)拼接或进 NLE 会
 /// 电平不匹配。
-pub(crate) fn push_color_args(cmd: &mut Command) {
+/// 输出色彩口径:`enabled=false` 时不下发任何色彩标签(UP-4b:`--no-color-tags`)。
+///
+/// 拆出 `enabled` 是为了**一条命令同时覆盖两种情况** —— 关掉不是"写 unknown"
+/// 而是"不写":显式给 `-colorspace unknown` 会让部分播放器按未标记处理,与不写
+/// 不等价。只保留 `scale` 的色程压缩(那是像素级必需,与标签无关)。
+pub(crate) fn push_color_args_with(cmd: &mut Command, enabled: bool) {
+    // 色程压缩始终要:源是 RGB 全程 0-255,不压到 limited 会与电视范围素材
+    // 拼接时电平不匹配(与标签无关,是像素值本身)。
     cmd.arg("-vf")
-        .arg("scale=in_range=full:out_range=mpeg:out_color_matrix=bt709")
-        .arg("-color_range")
+        .arg("scale=in_range=full:out_range=mpeg:out_color_matrix=bt709");
+    if !enabled {
+        return;
+    }
+    cmd.arg("-color_range")
         .arg("tv")
         .arg("-colorspace")
         .arg("bt709")
@@ -329,6 +460,43 @@ pub(crate) fn push_color_args(cmd: &mut Command) {
     // 改写 H.264 SPS 的 VUI,与编码器无关。1 = BT.709(数值见 ITU-T H.264 表 E-1)
     cmd.arg("-bsf:v")
         .arg("h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1");
+}
+
+/// GOP / B 帧 / 像素格式(UP-4b)。三个都只在 `Some` 时下发 —— 不下发才是
+/// 「落编码器默认」的诚实表达;硬塞默认值会改变现有成片的字节流。
+///
+/// `-g` 是「到下一个 IDR 的最大间隔」,但场景切换检测仍可能提前插 IDR。要把
+/// 关键帧**钉死**在网格上(让"每 N 帧一个关键帧"成为承诺而非上限)需要额外的
+/// forced-idr —— 注意它只能用 `-x264-params forced-idr=1` 下发:
+///
+/// - 裸 `-forced-idr`:**会把整条 ffmpeg 命令搞崩**。ffmpeg 解析器不认它是
+///   布尔标志,于是把紧随其后的 token 当成新输出文件名 —— 实测
+///   `-g 30 -forced-idr -pix_fmt yuv420p out.mp4` 报
+///   `Unable to choose an output format for 'yuv420p'`(而不是「未知选项」)。
+/// - `-forced-idr=1`:ffmpeg 直接 `Unrecognized option 'forced-idr=1'`。
+/// - `-x264-params forced-idr=1`:可用(实测)。且它是 **x264 专有**,
+///   硬件编码器(nvenc/amf/qsv)不认,故只在 x264 链上下发。
+pub(crate) fn push_gop_args(
+    cmd: &mut Command,
+    gop: Option<u32>,
+    b_frames: Option<u32>,
+    pix_fmt: Option<&str>,
+    codec: Option<&str>,
+) {
+    let x264 = codec.is_some_and(|c| c == "libx264");
+    if let Some(g) = gop.filter(|g| *g > 0) {
+        cmd.arg("-g").arg(g.to_string());
+        if x264 {
+            cmd.arg("-x264-params").arg("forced-idr=1");
+        }
+    }
+    if let Some(bf) = b_frames {
+        // 0 也必须下发:「关 B 帧」正是要显式表达的意思
+        cmd.arg("-bf").arg(bf.to_string());
+    }
+    if let Some(p) = pix_fmt.filter(|p| !p.is_empty()) {
+        cmd.arg("-pix_fmt").arg(p);
+    }
 }
 
 /// 给 ffmpeg 命令挂编码器参数(与 render_segment 同一份口径)。
@@ -575,7 +743,7 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
                 .unwrap_or(false);
             handles.push(scope.spawn(move || {
                 render_segment(
-                    &exe, srv_ref, &url, &seg_path, a, b, fps, vw, vh, dsf, opts, &enc_cands, wi,
+                    &exe, srv_ref, &url, &seg_path, a, b, n, fps, vw, vh, dsf, opts, &enc_cands, wi,
                     ready_tx, is_edge,
                 )
             }));
@@ -744,6 +912,10 @@ fn render_segment(
     seg_path: &Path,
     a: usize,
     b: usize,
+    // UP-3:全片总帧数。末帧按它判「是不是最后一帧」才能落到片长终点。
+    // 分段车道必须传**全片**帧数而非段内帧数,否则每段末帧都被当成全片末帧
+    // —— 多段并行时会把段间中间帧全钉到片长终点。
+    n_total: usize,
     fps: u32,
     vw: u32,
     vh: u32,
@@ -786,7 +958,14 @@ fn render_segment(
     ));
     let proc = match vb_browser::browser::BrowserProcess::launch_with(
         exe,
-        vb_browser::browser::LaunchOptions { gpu: opts.gpu },
+        vb_browser::browser::LaunchOptions {
+            gpu: opts.gpu,
+            // Edge(以及任何已移除 HeadlessExperimental.beginFrame 的现代
+            // Chromium)必须**关掉** begin-frame-control:flag 一开,合成器就只
+            // 在收到 BeginFrame 时产新表面,而该方法已不存在 → 没人能发起 →
+            // `Page.captureScreenshot` 永久阻塞。详见 LaunchOptions 字段文档。
+            begin_frame_control: !is_edge,
+        },
     ) {
         Ok(p) => p,
         Err(e) => {
@@ -846,7 +1025,7 @@ fn render_segment(
     for (ci, &enc) in enc_cands.iter().enumerate() {
         let bf_broken = std::cell::Cell::new(is_edge);
         match capture_and_encode(
-            &mut page, seg_path, a, b, fps, vw, vh, dsf, opts, enc, &driver, &bf_broken, wi,
+            &mut page, seg_path, a, b, n_total, fps, vw, vh, dsf, opts, enc, &driver, &bf_broken, wi,
         ) {
             Ok((ws, stats)) => {
                 warnings.extend(ws);
@@ -895,6 +1074,7 @@ fn capture_and_encode(
     seg_path: &Path,
     a: usize,
     b: usize,
+    n_total: usize,
     fps: u32,
     vw: u32,
     vh: u32,
@@ -970,12 +1150,20 @@ fn capture_and_encode(
         "-",
         "-c:v",
         enc.codec_name(),
-        "-pix_fmt",
-        "yuv420p",
         "-b:v",
         &format!("{}k", opts.bitrate_kbps),
     ]);
-    push_color_args(&mut cmd);
+    // GOP/B 帧/像素格式(UP-4b):只在显式给值时下发,默认逐位保持旧行为。
+    // 注意 `-pix_fmt` 放在 push_gop_args 里而非上面的定长 args 里 ——
+    // 后者按 `&str` 定长数组收,塞不进运行时决定的字符串。
+    crate::animlane::push_gop_args(
+        &mut cmd,
+        opts.gop,
+        opts.b_frames,
+        Some(opts.pix_fmt.as_deref().unwrap_or("yuv420p")),
+        Some(enc.codec_name()),
+    );
+    push_color_args_with(&mut cmd, opts.color_tags);
     match enc {
         EncChoice::X264 => {
             // 分段并行时按份额限制 x264 线程,避免 W 段互相超订 CPU
@@ -1039,7 +1227,7 @@ fn capture_and_encode(
         }
         prev_t = Some(frame_t);
         if *driver != Driver::WallFallback {
-            drive_frame(page, driver, i, fps);
+            drive_frame(page, driver, i, fps, n_total, opts.duration_s, bf_broken.get());
         }
         let ts = std::time::Instant::now();
         // 逐帧截屏走 beginFrame(CDP 显式产帧,空闲页面不再等 ~530ms
@@ -1051,8 +1239,7 @@ fn capture_and_encode(
         // beginFrame 失败(Edge 无 HeadlessExperimental 域,下游实测)后
         // **缓存结论**:此前每帧都重试一次必然失败的调用再退回,等于每帧
         // 多付一次死往返。
-        let no_bf = std::env::var("VB_NO_BEGINFRAME").is_ok();
-        let png = if no_bf || bf_broken.get() {
+        let png = if bf_broken.get() {
             // PNG 快档:optimizeForSpeed(Chrome 125+)轻压缩换快编码,
             // 无 JPEG 的 4:2:0 色度损失 —— 文字密集页交付的正解
             if shot_format == "png" {
@@ -1168,9 +1355,26 @@ pub fn export_anim_inmemory(
     };
     let exe = vb_browser::discover_browser(None)
         .ok_or("未发现系统浏览器(Edge/Chrome);动画浏览器路线不可用")?;
+    // UP-3 修复的关键判断:**现代 Chromium(含 Edge 154、`--headless=new`)已移除
+    // `HeadlessExperimental.beginFrame`**,调用返回 `-32601 wasn't found`。
+    // 若仍下发 `--enable-begin-frame-control`,合成器就只在收到 BeginFrame 时
+    // 产新表面 —— 而没人能发起 → `Page.captureScreenshot` 永久阻塞。
+    // 实测(Edg/154.0.4258.62,2026-10-08):不关这个 flag 时 GIF 车道帧 0 就
+    // `captureScreenshot 等待响应超时`,静态车道同样全挂(单次 encode_ms 813143)。
+    //
+    // 故:Edge 一律关 flag、直接走 captureScreenshot(它自己会驱动合成);
+    // 确有该域的浏览器(chrome-headless-shell 等)才开,逐帧能压到毫秒级。
+    let is_edge = exe
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.to_ascii_lowercase().contains("msedge"))
+        .unwrap_or(false);
     let proc = vb_browser::browser::BrowserProcess::launch_with(
         &exe,
-        vb_browser::browser::LaunchOptions { gpu: opts.gpu },
+        vb_browser::browser::LaunchOptions {
+            gpu: opts.gpu,
+            begin_frame_control: !is_edge,
+        },
     )?;
     let browser = proc.version();
     let mut page = vb_browser::page::PageSession::attach(&proc)?;
@@ -1207,6 +1411,17 @@ pub fn export_anim_inmemory(
     let mut prev_t: Option<std::time::Instant> = None;
     let mut intervals_ms: Vec<f64> = Vec::with_capacity(n.saturating_sub(1));
     let stats_t0 = std::time::Instant::now();
+    // UP-3:beginFrame 只在**确有该域**时可用。Edge 上已在 LaunchOptions
+    // 关掉 flag(否则 captureScreenshot 永久阻塞),这里同步跳过 beginFrame
+    // 调用本身 —— 「flag 关 + 仍去调 beginFrame」是自相矛盾的两半。
+    let bf_broken = std::cell::Cell::new(is_edge);
+    let mut capture_warnings: Vec<String> = Vec::new();
+    if is_edge {
+        capture_warnings.push(
+            "Edge 无 HeadlessExperimental 域,逐帧走 captureScreenshot(beginFrame 通道不可用)"
+                .into(),
+        );
+    }
     for i in 0..n {
         // 协作取消(硬骨头 #6,GIF 内存车道每帧边界检查):无临时帧
         // 文件,直接停采;浏览器实例随 Drop 整树收割,产物不落盘
@@ -1222,22 +1437,21 @@ pub fn export_anim_inmemory(
                 std::thread::sleep(Duration::from_secs_f64(interval));
             }
         } else {
-            drive_frame(&mut page, &driver, i, fps);
+            drive_frame(&mut page, &driver, i, fps, n, opts.duration_s, bf_broken.get());
         }
         let frame_t = std::time::Instant::now();
         if let Some(prev) = prev_t {
             intervals_ms.push(frame_t.duration_since(prev).as_secs_f64() * 1000.0);
         }
         prev_t = Some(frame_t);
-        let png = page
-            .screenshot(
-                "png",
-                None,
-                Some((0.0, 0.0, vw as f64, vh as f64)),
-                false,
-                false,
-            )
-            .map_err(|e| format!("逐帧截屏失败(帧 {i}):{e}"))?;
+        let png = capture_anim_frame_png(
+            &mut page,
+            &bf_broken,
+            "png",
+            None,
+            i,
+            &mut capture_warnings,
+        )?;
         let mut img = image::load_from_memory(&png)
             .map_err(|e| format!("帧解码失败(帧 {i}):{e}"))?
             .to_rgba8();
@@ -1275,6 +1489,8 @@ pub fn export_anim_inmemory(
     // 尺寸一致性守卫(ffmpeg 要求恒定帧尺寸;异常帧裁到首帧尺寸)
     let (fw, fh) = (captures[0].width, captures[0].height);
     let mut warnings: Vec<String> = Vec::new();
+    // UP-3:beginFrame 不可用时的回退告警要进结果(否则调用方以为走了快路径)
+    warnings.extend(capture_warnings.drain(..));
     for f in captures.iter_mut() {
         if f.width != fw || f.height != fh {
             warnings.push(format!(
@@ -1316,16 +1532,31 @@ pub fn export_anim_inmemory(
         duration_s: opts.duration_s,
         gif_loops,
         mp4_bitrate_kbps: opts.bitrate_kbps,
+        mp4_gop: opts.gop,
+        mp4_b_frames: opts.b_frames,
+        mp4_color_tags: opts.color_tags,
+        mp4_pix_fmt: opts.pix_fmt.clone(),
         jpeg_quality: 92,
         build_warnings: Vec::new(),
         anim_coverage: None,
         project_dir: None,
         cancel: opts.cancel.clone(),
     };
-    let bytes = match format {
-        Format::Mp4 => crate::frames::encode_mp4(&ctx).map_err(|e| e.to_string())?,
-        _ => crate::frames::encode_gif(&ctx).map_err(|e| e.to_string())?,
+    // UP-4:回传实际调色板路径,并把「走了哪条」写进 encoder_used ——
+    // 此前 GIF 车道恒为 None,CLI 打印成 "encoder":"unknown",下游无从判断
+    // 「这台机器没 ffmpeg」还是「ffmpeg 桥失败已回退」。
+    let (bytes, palette_path, extra_warnings) = match format {
+        Format::Mp4 => {
+            let (b, w) = crate::frames::encode_mp4_reporting(&ctx).map_err(|e| e.to_string())?;
+            (b, None, w.into_iter().collect::<Vec<_>>())
+        }
+        _ => {
+            let o = crate::frames::encode_gif_reporting(&ctx).map_err(|e| e.to_string())?;
+            let w = o.warning();
+            (o.bytes, Some(o.path), vec![w])
+        }
     };
+    warnings.extend(extra_warnings.iter().map(|w: &KilnWarning| w.message()));
     warnings.extend(
         srv.take_not_found()
             .iter()
@@ -1348,9 +1579,118 @@ pub fn export_anim_inmemory(
         bytes,
         frames: n,
         browser,
-        encoder_used: None,
+        encoder_used: palette_path.map(|p| p.as_str().to_string()),
         warnings,
         anim_coverage,
         instances,
     })
+}
+
+/// 逐帧截屏(**MP4 分段车道与 GIF 内存车道共用的唯一实现**)。
+///
+/// UP-3 修复过程中的一条教训:最初给 GIF 车道**另写**了一份截屏逻辑
+/// (多一个 rAF 等待、多一个 `--disable-features=CalculateNativeWinOcclusion`
+/// 启动 flag、没用 `screenshot_fast_png`),结果 MP4 车道正常而 GIF 车道
+/// **帧 0 就 `Page.captureScreenshot 等待响应超时`**。根因不是 beginFrame,
+/// 而是自己那份实现里的额外 rAF 等待把 CDP 等待拖死。
+///
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args_of(cmd: &Command) -> Vec<String> {
+        cmd.get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// UP-4b:GOP / B 帧 / 像素格式的**下发口径**。
+    /// 只测参数拼装(不开 ffmpeg、不跑编码)—— 纯函数,可靠且快。
+    #[test]
+    fn gop_and_bframes_are_configurable() {
+        // 1. 全 None:不出现 -g / -bf,但像素格式仍落 yuv420p
+        let mut cmd = Command::new("ffmpeg");
+        push_gop_args(&mut cmd, None, None, Some("yuv420p"), Some("libx264"));
+        let args = args_of(&cmd);
+        assert!(!args.iter().any(|a| a == "-g"), "GOP 为 None 时不应下发 -g");
+        assert!(
+            !args.iter().any(|a| a == "-bf"),
+            "B 帧为 None 时不应下发 -bf"
+        );
+        assert!(args.iter().any(|a| a == "yuv420p"), "应下发 yuv420p");
+
+        // 2. 给了值就下发,且 x264 链上 -g 必须成对带 forced-idr
+        let mut cmd = Command::new("ffmpeg");
+        push_gop_args(&mut cmd, Some(30), Some(0), Some("yuv422p"), Some("libx264"));
+        let args = args_of(&cmd);
+        assert!(args.iter().any(|a| a == "-g"), "给了 GOP 就该下发 -g");
+        assert!(args.iter().any(|a| a == "30"), "GOP 值应下发");
+        assert!(
+            args.iter().any(|a| a == "forced-idr=1"),
+            "x264 链上 -g 必须成对钉死关键帧,否则只是上限而非承诺"
+        );
+        // 绝不能出现裸 -forced-idr:ffmpeg 解析器不认它是布尔标志,会把后一个
+        // token 当成输出文件名(实测整条命令崩)
+        assert!(
+            !args.iter().any(|a| a == "-forced-idr"),
+            "不得下发裸 -forced-idr(会让 ffmpeg 把下一个 token 当输出名)"
+        );
+        // b_frames = Some(0) 也必须下发 —— 「关 B 帧」正是要显式表达的意思
+        assert!(
+            args.iter().any(|a| a == "-bf"),
+            "Some(0) 也必须下发 -bf(关 B 帧是显式意图,不是缺省)"
+        );
+        assert!(args.iter().any(|a| a == "0"), "B 帧值 0 应下发");
+        assert!(args.iter().any(|a| a == "yuv422p"), "像素格式应可配");
+
+        // 3. 硬件编码器不认 x264-params,故不下发 forced-idr(但 -g 仍要下发)
+        let mut cmd = Command::new("ffmpeg");
+        push_gop_args(&mut cmd, Some(30), None, None, Some("h264_nvenc"));
+        let args = args_of(&cmd);
+        assert!(args.iter().any(|a| a == "-g"), "硬件链也要能配 GOP");
+        assert!(
+            !args.iter().any(|a| a == "forced-idr=1"),
+            "nvenc/amf/qsv 不认 x264-params,不得下发"
+        );
+
+        // 4. gop=Some(0) 是无意义输入,必须被过滤掉(否则 -g 0 会被 ffmpeg 拒)
+        let mut cmd = Command::new("ffmpeg");
+        push_gop_args(&mut cmd, Some(0), None, None, Some("libx264"));
+        let args = args_of(&cmd);
+        assert!(
+            !args.iter().any(|a| a == "-g"),
+            "GOP=0 应被过滤(无意义,且 ffmpeg 会拒)"
+        );
+    }
+
+    /// UP-4b:关色彩标签不是"写 unknown",而是完全不写;色程压缩必须保留。
+    #[test]
+    fn color_tags_toggle_keeps_range_compression() {
+        let mut on = Command::new("ffmpeg");
+        push_color_args_with(&mut on, true);
+        let args = args_of(&on);
+        assert!(args.iter().any(|a| a == "bt709"), "开标签应下发 bt709");
+        // BSF 是**带值**单参(`-bsf:v h264_metadata=...`),不是裸串
+        assert!(
+            args.iter().any(|a| a.starts_with("h264_metadata=")),
+            "开标签应下发 VUI 兜底 BSF,实际 args={args:?}"
+        );
+
+        let mut off = Command::new("ffmpeg");
+        push_color_args_with(&mut off, false);
+        let args = args_of(&off);
+        assert!(
+            !args.iter().any(|a| a == "-colorspace"),
+            "关标签时不应下发 -colorspace"
+        );
+        assert!(
+            !args.iter().any(|a| a.starts_with("h264_metadata=")),
+            "关标签时不应下发 h264_metadata BSF"
+        );
+        // 色程压缩是像素级必需(源是 RGB 全 0-255),与标签无关,必须保留
+        assert!(
+            args.iter().any(|a| a.contains("out_range=mpeg")),
+            "色程压缩必须保留(与标签无关,是像素值本身)"
+        );
+    }
 }

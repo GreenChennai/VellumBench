@@ -8835,7 +8835,7 @@ dependencies = [
 
 [[package]]
 name = "vb_agent"
-version = "0.14.1"
+version = "0.14.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -8857,7 +8857,7 @@ dependencies = [
 
 [[package]]
 name = "vb_app"
-version = "0.14.1"
+version = "0.14.2"
 dependencies = [
  "anyhow",
  "eframe",
@@ -8889,7 +8889,7 @@ dependencies = [
 
 [[package]]
 name = "vb_browser"
-version = "0.14.1"
+version = "0.14.2"
 dependencies = [
  "image",
  "serde_json",
@@ -8898,7 +8898,7 @@ dependencies = [
 
 [[package]]
 name = "vb_common"
-version = "0.14.1"
+version = "0.14.2"
 dependencies = [
  "fluent",
  "fluent-syntax",
@@ -8910,7 +8910,7 @@ dependencies = [
 
 [[package]]
 name = "vb_css"
-version = "0.14.1"
+version = "0.14.2"
 dependencies = [
  "vb_common",
  "vb_doc",
@@ -8918,7 +8918,7 @@ dependencies = [
 
 [[package]]
 name = "vb_doc"
-version = "0.14.1"
+version = "0.14.2"
 dependencies = [
  "kurbo 0.13.1",
  "log",
@@ -8933,7 +8933,7 @@ dependencies = [
 
 [[package]]
 name = "vb_export"
-version = "0.14.1"
+version = "0.14.2"
 dependencies = [
  "base64 0.23.1",
  "image",
@@ -8948,7 +8948,7 @@ dependencies = [
 
 [[package]]
 name = "vb_html"
-version = "0.14.1"
+version = "0.14.2"
 dependencies = [
  "html5ever 0.35.0",
  "markup5ever_rcdom 0.35.0+unofficial",
@@ -8957,7 +8957,7 @@ dependencies = [
 
 [[package]]
 name = "vb_kiln"
-version = "0.14.1"
+version = "0.14.2"
 dependencies = [
  "clap",
  "flate2",
@@ -8982,7 +8982,7 @@ dependencies = [
 
 [[package]]
 name = "vb_kit"
-version = "0.14.1"
+version = "0.14.2"
 dependencies = [
  "sable",
  "serde_json",
@@ -8991,7 +8991,7 @@ dependencies = [
 
 [[package]]
 name = "vb_layout"
-version = "0.14.1"
+version = "0.14.2"
 dependencies = [
  "image",
  "taffy 0.14.0",
@@ -9004,7 +9004,7 @@ dependencies = [
 
 [[package]]
 name = "vb_platform"
-version = "0.14.1"
+version = "0.14.2"
 dependencies = [
  "arboard",
  "egui",
@@ -9015,7 +9015,7 @@ dependencies = [
 
 [[package]]
 name = "vb_plugin"
-version = "0.14.1"
+version = "0.14.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -9026,7 +9026,7 @@ dependencies = [
 
 [[package]]
 name = "vb_render"
-version = "0.14.1"
+version = "0.14.2"
 dependencies = [
  "image",
  "tiny-skia 0.12.0",
@@ -9039,7 +9039,7 @@ dependencies = [
 
 [[package]]
 name = "vb_session"
-version = "0.14.1"
+version = "0.14.2"
 dependencies = [
  "fluent",
  "serde",
@@ -9051,7 +9051,7 @@ dependencies = [
 
 [[package]]
 name = "vb_shell"
-version = "0.14.1"
+version = "0.14.2"
 dependencies = [
  "image",
  "pollster 0.4.0",
@@ -9065,7 +9065,7 @@ dependencies = [
 
 [[package]]
 name = "vb_textmeasure"
-version = "0.14.1"
+version = "0.14.2"
 dependencies = [
  "fontique",
  "swash",
@@ -9075,7 +9075,7 @@ dependencies = [
 
 [[package]]
 name = "vb_tools"
-version = "0.14.1"
+version = "0.14.2"
 dependencies = [
  "flo_curves",
  "vb_common",
@@ -9085,7 +9085,7 @@ dependencies = [
 
 [[package]]
 name = "vb_ui"
-version = "0.14.1"
+version = "0.14.2"
 dependencies = [
  "egui",
  "iconflow",
@@ -9096,7 +9096,7 @@ dependencies = [
 
 [[package]]
 name = "vb_web"
-version = "0.14.1"
+version = "0.14.2"
 dependencies = [
  "serde_json",
  "vb_common",

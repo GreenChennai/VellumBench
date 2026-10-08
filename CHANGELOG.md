@@ -1,5 +1,77 @@
 # Changelog
 
+## 0.14.2(2026-10-08)
+
+主题:**Kiln 修掉 artboard 上游台账登记的两条缺陷(UP-3 / UP-4)**。两条都不是"调参"级问题,
+而是**静默产出错东西**——所以本轮以"能不能在产物里看出来"为验收标准,每条都配了像素级/字节级回归。
+
+### Fixed · UP-3 GIF 车道 `steps()` 输出错帧(下游 artboard 实证复现)
+
+下游报「同页同参数,MP4 车道正确、GIF 车道 40 帧全停在 `from` 色」。复现后定位到**三处独立缺陷**,
+它们叠在一起才产生这个现象 —— 单修任何一处都只是把症状挪个位置:
+
+1. **`--run-all-compositor-stages-before-draw` 让合成器停摆(最隐蔽,影响远超 GIF)**
+   该 flag 让 headless 合成器**只**在收到 BeginFrame 时才提交新表面,于是
+   `Page.captureScreenshot` 永远等不到帧。实测**静态车道与三条动画车道全部**
+   `captureScreenshot 等待响应超时`,单次静态导出 `encode_ms` 达 **813978(13.6 分钟)**,
+   静态车道直接退化到自研引擎。该 flag 原本是配 `--enable-begin-frame-control` 用的,
+   而那条通道在现代 Chromium 已不存在。已移除(留档说明何时可开)。
+2. **`--enable-begin-frame-control` 无条件下发**(同上,现代 Chromium 已移除
+   `HeadlessExperimental.beginFrame`,实测 `-32601 wasn't found`)。flag 与"是否真调
+   beginFrame"必须**成对选择**,否则合成器被门控而没人能发起 BeginFrame。
+   新增 `LaunchOptions::begin_frame_control`,由调用方按浏览器能力决定;三处调用点
+   按 `!is_edge` 下发。
+3. **repaint 等待挂错了条件**:`drive_frame` 里那个"等一次 rAF"原先挂在
+   `VB_NO_BEGINFRAME` 环境变量上 —— 于是"不启用 beginFrame"时**恰好不执行**,
+   而那正是现代 Chromium 的唯一可行路径。状态改完了、浏览器还没提交成新表面,
+   截图就发生 → 每帧都拿到上一帧。改为由实际通道(`bf_broken`)决定。
+4. **末帧不触达片长**:`frame_time_ms` 的网格 `i/fps` 最大值是 `(n-1)/fps`,**恒小于片长**。
+   「动画时长 == 片长」的 `forwards` 动画(卡点硬切最常见写法)终值态一次都采不到。
+   现末帧取 `t == duration`,中间帧不动(时刻序列仍单调)。
+
+修完的实测(复现页 `steps(1,end)` 2s 硬切,40 帧 @10fps,200×400):
+首帧 `(255,0,0)` → **第 20 帧 `(0,0,255)`** → 末帧 `(0,0,255)`,首个蓝帧索引正好 20。
+
+### Fixed · UP-4 GIF 调色板路径不可观测 + MP4 的 GOP/B 帧/色彩标签不可配
+
+- **调色板路径声明**:`encode_gif` 原先把 ffmpeg 桥失败 `let _ = e;` **静默吞掉**,报告里
+  也不声明走了哪条路 —— 下游分不清「没装 ffmpeg」与「桥失败已回退」。现回传
+  `GifEncodeOutcome`(路径 + 失败原因),由 native GIF 写出器、MP4→GIF 降级、
+  浏览器动画车道三处出口各自 push 进自己的 report(`ExportContext` 在写出器签名里是
+  `&`,不能内部改写,故不回传字段而回传声明)。
+  另纠正一处登记错误:「无 ffmpeg 环境走单 pass 量化」**不准确** —— 两 pass
+  (`palettegen=stats_mode=diff` + `paletteuse=dither=sierra2_4a`) 自 v0.9.0 就在,
+  只是 `if ffmpeg_available()` 门控;真实缺陷是「质量取决于本机有没有 ffmpeg 且不声明」。
+- **`stats_mode=diff` → `full`**:实测发现 `diff` 只把「相邻帧之间变化过的像素」纳入调色板,
+  而 Kiln 自己的动效指导推荐**硬切**(`steps()` 卡点),恰是「大片纯色整体切换」——
+  从不变化的部分对调色板零贡献,某些颜色进不了调色板被**静默映射到最接近的已有色**。
+  合成帧实测(40 帧 0-19 红 / 20-39 蓝):`diff` → 40 帧全解码为红(蓝色整段丢失),
+  2269B;`full` → 第 20 帧起正确为蓝,2737B。与 dither 无关。
+  代价是调色板略大,换来的是不交付错色。
+- **MP4 新增 `--gop` / `--bf` / `--pix-fmt` / `--no-color-tags`**(此前**全仓没有**
+  `-g` / `-bf`,落编码器默认)。默认不下发 = 逐位保持旧行为(已用 `ffprobe` 核对
+  默认仍含 B 帧)。`forced-idr` 只能经 `-x264-params forced-idr=1` 下发:
+  裸 `-forced-idr` 会让 ffmpeg 解析器把后一个 token 当输出文件名(**整条命令崩**,
+  报 `Unable to choose an output format for 'yuv420p'`),`-forced-idr=1` 报
+  `Unrecognized option`;且它是 x264 专有,硬件链(nvenc/amf/qsv)不下发。
+
+### Changed
+
+- MP4 分段车道与 GIF 内存车道的逐帧截屏**共用同一份实现**(`capture_anim_frame_png`)。
+  此前两边各写一份,GIF 那份多了一个 rAF 等待与一个 `--disable-features=
+  CalculateNativeWinOcclusion` 启动 flag,导致 MP4 正常而 GIF 帧 0 就超时 ——
+  "另写一份"本身就是缺陷来源。
+- WebCodecs 车道的帧时刻同样改为末帧触达片长。
+
+### 测试
+
+- 新增 `tests/anim_steps_timeline.rs`:末帧触达片长 / 「时长==动画长度」命中终态 /
+  时刻单调,三个纯函数断言 + 一条真跑浏览器的像素断言(缺浏览器则跳过)。
+- 新增 `tests/gif_palette_and_mp4_args.rs`:调色板声明必带且与实际路径一致、
+  声明**不进 `is_degrading()`**(两条路径都产出合法 GIF89a,只是质量档位不同)、
+  回退时必须带失败原因、native 写出器与 MP4→GIF 降级两个出口都带声明。
+- `cargo test -p vb_kiln` 全绿(12 组);全仓 `cargo build` 无 error 无 warning。
+
 ## 0.14.1(2026-10-05)
 
 主题:iteration-review 全量执行(2026-10-04 审查文档)后的 **Kiln 发行版**——取消、超时、保真、性能四线收口。GUI 侧同批变更(令牌系统/20 组件/i18n 全量/无障碍)见仓库完整 CHANGELOG 与 `docs/design/ui-baseline-review.md`。

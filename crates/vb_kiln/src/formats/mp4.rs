@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use crate::context::ExportContext;
 use crate::error::{KilnResult, KilnWarning};
-use crate::frames::encode_mp4;
+use crate::frames::encode_mp4_reporting;
 use crate::report::KilnReport;
 use crate::writer::{common_warnings, Format, FormatWriter};
 
@@ -18,11 +18,14 @@ impl FormatWriter for Mp4Writer {
     fn write(&self, ctx: &ExportContext, out: &mut Vec<u8>) -> KilnResult<KilnReport> {
         let t = Instant::now();
         let mut warnings = common_warnings(ctx, Format::Mp4);
-        let bytes = encode_mp4(ctx)?;
+        // UP-4:reporting 版在**降级成 GIF 流**时回传调色板路径声明 ——
+        // 产物是 GIF 写进 .mp4,调色板质量同源,同样不能默默用单 pass。
+        let (bytes, gif_palette) = encode_mp4_reporting(ctx)?;
         let degraded = !crate::frames::ffmpeg_available();
         if degraded {
             warnings.push(KilnWarning::Mp4DowngradedToGif);
         }
+        warnings.extend(gif_palette);
         out.extend_from_slice(&bytes);
         let mut r = crate::writer::report_with(warnings, t, bytes.len());
         r.frame_count = ctx.frames.len();

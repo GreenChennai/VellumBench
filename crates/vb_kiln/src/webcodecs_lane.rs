@@ -188,13 +188,27 @@ pub fn export_anim_webcodecs(source: &Path, opts: &AnimPipeOpts) -> Result<AnimL
 
     let fps = opts.fps.clamp(1, 60);
     let n = ((fps as f32 * opts.duration_s.max(0.1)).ceil().max(1.0)) as usize;
+    // UP-3:末帧 seek 到片长终点(而非 (n-1)/fps),否则「动画时长 == 片长」的
+    // forwards 动画终值态一次都采不到。中间帧仍按 i/fps 均匀网格。
+    let n_total = n;
+    let duration_s = opts.duration_s.max(0.1) as f64;
     let vw = if opts.width > 0 { opts.width } else { 1080 };
     let vh = if opts.height > 0 { opts.height } else { vw };
     let dsf = opts.scale.clamp(1, 8);
 
+    let is_edge = exe
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.to_ascii_lowercase().contains("msedge"))
+        .unwrap_or(false);
     let proc = vb_browser::browser::BrowserProcess::launch_with(
         &exe,
-        vb_browser::browser::LaunchOptions { gpu: opts.gpu },
+        vb_browser::browser::LaunchOptions {
+            gpu: opts.gpu,
+            // 同 animlane:Edge/现代 Chromium 无 `HeadlessExperimental.beginFrame`,
+            // 下发 flag 会让 captureScreenshot 永久阻塞(详见 LaunchOptions 文档)。
+            begin_frame_control: !is_edge,
+        },
     )?;
     let browser = proc.version();
     let mut page = vb_browser::page::PageSession::attach(&proc)?;
@@ -281,7 +295,12 @@ pub fn export_anim_webcodecs(source: &Path, opts: &AnimPipeOpts) -> Result<AnimL
   const a = performance.now();
   const fn = {seek};
   for (let i = {start}; i < {end}; i++) {{
-    fn(i / {fps});
+    // UP-3:末帧触达片长。网格 i/fps 的最大值是 (n-1)/fps,恒小于片长 ——
+    // 「动画时长 == 片长」的 forwards 动画(卡点硬切最常见写法)终值态一次都
+    // 采不到,steps() 下就是全片停在 from 色。中间帧仍按均匀网格。
+    // timestamp 保持网格(必须单调递增),只把 seek 的 t 落到片长终点。
+    const isLast = (i === {n_total} - 1);
+    fn(isLast ? {duration_s} : i / {fps});
     if (window.__vbFlush) window.__vbFlush();
     const frame = new VideoFrame(st.canvas, {{
       timestamp: Math.round(i * 1e6 / {fps}),
@@ -303,6 +322,8 @@ pub fn export_anim_webcodecs(source: &Path, opts: &AnimPipeOpts) -> Result<AnimL
             fps = fps,
             bitrate = bitrate,
             kf = keyframe_interval,
+            n_total = n_total,
+            duration_s = duration_s,
         );
         let v = page.evaluate(&js, true)?;
         let parsed: serde_json::Value =

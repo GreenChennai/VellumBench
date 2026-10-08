@@ -26,6 +26,25 @@ pub struct LaunchOptions {
     /// (ADR-0022 口径);打开时光栅/合成落在显卡,MV 级长片提速明显,
     /// 代价是与软件光栅存在固定 AA 微差(MAD ≈ 1/255,肉眼无别)。
     pub gpu: bool,
+    /// 是否下发 `--enable-begin-frame-control`(逐帧显式产帧通道)。
+    ///
+    /// **默认必须关**,且必须与「是否真的要调 `HeadlessExperimental.beginFrame`」
+    /// 成对选择 —— 两者不配套会直接死锁:
+    ///
+    /// - 该 flag 让合成器**只**在收到 BeginFrame 时才产新表面;
+    /// - 而现代 Chromium(含 Edge 154、`--headless=new`)的
+    ///   `HeadlessExperimental.beginFrame` **已被移除**,调用返回
+    ///   `-32601 wasn't found` —— 也就是说**没有人能再发起 BeginFrame**;
+    /// - 于是 `Page.captureScreenshot` 永远等不到新表面,直接阻塞到超时。
+    ///
+    /// 实测(本机 Edg/154.0.4258.62,2026-10-08):静态车道与动画车道**全部**
+    /// `Page.captureScreenshot 等待响应超时`,静态导出退化到自研引擎、单次
+    /// `encode_ms` 达 813143(13 分钟)。此前该 flag 无条件下发,只是因为
+    /// 「先试 beginFrame、失败再回退」的逻辑把症状掩盖成"逐帧慢"而不是"全挂"。
+    ///
+    /// 打开它只在**确实有该域**的环境有意义(旧 headless / chrome-headless-shell);
+    /// 那时逐帧能压到毫秒级。调用方按浏览器能力决定,不要无条件下发。
+    pub begin_frame_control: bool,
 }
 
 /// GPU 开关判定:显式参数 > 环境变量(1/true/on)> 默认关。
@@ -192,7 +211,13 @@ fn is_headless_shell(exe: &Path) -> bool {
 }
 
 /// 与 playwright headless 对齐的渲染相关默认参数。
-fn launch_args(user_data_dir: &Path, debug_port: u16, gpu: bool, shell: bool) -> Vec<String> {
+fn launch_args(
+    user_data_dir: &Path,
+    debug_port: u16,
+    gpu: bool,
+    shell: bool,
+    begin_frame_control: bool,
+) -> Vec<String> {
     let mut v = vec![
         format!("--remote-debugging-port={debug_port}"),
         format!("--user-data-dir={}", user_data_dir.display()),
@@ -236,21 +261,34 @@ fn launch_args(user_data_dir: &Path, debug_port: u16, gpu: bool, shell: bool) ->
         v.push("--disable-gpu".into());
     }
     v.extend([
-        // 逐帧截屏的生命线:headless=new 对"空闲页面"(无 CSS 动画、无 rAF,
-        // 典型如 SEEK 驱动的确定性渲染页)上,Page.captureScreenshot 等合成器
-        // 调度产下一帧,实测固定 ~530ms/帧且 --gpu 无改善。begin-frame-control
-        // 让 CDP 显式发起 BeginFrame(HeadlessExperimental.beginFrame 产帧 +
-        // 截图一步完成),配 frame-rate-limit/vsync 解除把每帧等待压到毫秒级。
-        "--enable-begin-frame-control".into(),
         "--disable-frame-rate-limit".into(),
         "--disable-gpu-vsync".into(),
-        "--run-all-compositor-stages-before-draw".into(),
+        // 2026-10-08 实测:`--run-all-compositor-stages-before-draw` 会让
+        // headless=new 的合成器**停在中途不提交新表面**,于是
+        // `Page.captureScreenshot` 永远等不到帧(实测单次阻塞 13 分钟,
+        // 静态/动画两条车道全挂),而同一页面用 Playwright 截图完全正常
+        // (Playwright 默认参数集不含此 flag)。它原本是配
+        // `--enable-begin-frame-control` 用的,那条通道在现代 Chromium 已不存在,
+        // 这个 flag 也就没了用武之地。不带它时逐帧仍是"慢"(空闲页约
+        // 530ms/帧)而不是"挂",可接受。确有需要时连同 `begin_frame_control`
+        // 一起按环境开。
+        // "--run-all-compositor-stages-before-draw".into(),
         "--hide-scrollbars".into(),
         "--mute-audio".into(),
         "--password-store=basic".into(),
         "--use-mock-keychain".into(),
         "--no-service-autorun".into(),
     ]);
+    // 逐帧截屏的「快速通道」:**仅在确实有 `HeadlessExperimental.beginFrame`
+    // 的浏览器上下发**(见 `LaunchOptions::begin_frame_control` 的说明)。
+    //
+    // 无条件下发会造成死锁:flag 让合成器只在收到 BeginFrame 时才产新表面,
+    // 而现代 Chromium 已移除该方法 → 没人能发起 → captureScreenshot 永久阻塞。
+    // 不带这个 flag 时合成器按自身节奏调度,`Page.captureScreenshot` 能正常
+    // 拿到新表面(代价:空闲页面实测 ~530ms/帧,那是"慢"而不是"挂")。
+    if begin_frame_control {
+        v.push("--enable-begin-frame-control".into());
+    }
     v
 }
 
@@ -371,7 +409,13 @@ impl BrowserProcess {
         let user_data_dir = std::env::temp_dir().join(limits::temp_name("browser", ""));
         std::fs::create_dir_all(&user_data_dir).map_err(|e| e.to_string())?;
         let shell = is_headless_shell(exe);
-        let args = launch_args(&user_data_dir, port, opts.gpu, shell);
+        let args = launch_args(
+        &user_data_dir,
+        port,
+        opts.gpu,
+        shell,
+        opts.begin_frame_control,
+    );
         let mut child = Command::new(exe)
             .args(&args)
             .stdout(Stdio::null())
