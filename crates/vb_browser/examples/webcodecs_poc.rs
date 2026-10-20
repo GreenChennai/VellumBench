@@ -49,7 +49,11 @@ fn main() {
     let exe = vb_browser::discover_browser(None).expect("无浏览器");
     let proc = vb_browser::browser::BrowserProcess::launch_with(
         &exe,
-        vb_browser::browser::LaunchOptions { gpu },
+        vb_browser::browser::LaunchOptions {
+            gpu,
+            webgpu: false,
+            ..Default::default()
+        },
     )
     .expect("启动失败");
     let mut page = vb_browser::page::PageSession::attach(&proc).expect("attach 失败");

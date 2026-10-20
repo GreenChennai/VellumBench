@@ -8,7 +8,11 @@ fn main() {
     let exe = vb_browser::discover_browser(None).unwrap();
     let proc = vb_browser::browser::BrowserProcess::launch_with(
         &exe,
-        vb_browser::browser::LaunchOptions { gpu: true },
+        vb_browser::browser::LaunchOptions {
+            gpu: true,
+            webgpu: false,
+            ..Default::default()
+        },
     )
     .unwrap();
     let mut page = vb_browser::page::PageSession::attach(&proc).unwrap();

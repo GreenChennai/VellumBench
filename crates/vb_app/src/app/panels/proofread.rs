@@ -141,6 +141,7 @@ impl VellumApp {
                     transparent: false,
                     artboard: true,
                     artboard_index: index,
+                    webgpu: false,
                 };
                 let outcome = vb_browser::export_source(&dir, &req)?;
                 image::load_from_memory(&outcome.bytes)
