@@ -110,13 +110,9 @@ html,body{margin:0;padding:0;background:#fff}
         ..Default::default()
     };
 
-    let out = vb_kiln::animlane::export_anim_inmemory(
-        &html,
-        vb_kiln::writer::Format::Gif,
-        0,
-        &opts,
-    )
-    .expect("GIF 车道应成功");
+    let out =
+        vb_kiln::animlane::export_anim_inmemory(&html, vb_kiln::writer::Format::Gif, 0, &opts)
+            .expect("GIF 车道应成功");
 
     // 断言「走了哪条调色板路径」不再是 unknown(UP-4)
     assert!(
@@ -144,17 +140,14 @@ html,body{margin:0;padding:0;background:#fff}
     assert!(frames.len() >= 30, "应至少采到 30 帧,实际 {}", frames.len());
 
     let first = frames[0];
-    assert_eq!(
-        first,
-        (255, 0, 0),
-        "首帧应是 from 色 #f00,实际 {first:?}"
-    );
+    assert_eq!(first, (255, 0, 0), "首帧应是 from 色 #f00,实际 {first:?}");
 
     // UP-3 的核心断言:第 20 帧(2000ms = 动画终点)之后必须是 to 色 #00f。
     // 旧实现下这里全停在 (255,0,0)。
     let last = frames[frames.len() - 1];
     assert_eq!(
-        last, (0, 0, 255),
+        last,
+        (0, 0, 255),
         "UP-3 未修复:末帧应已跳到 to 色 #00f,实际 {last:?} —— \
          GIF 车道拿到的仍是首帧(begin-frame-control 下 captureScreenshot 产不出新表面)"
     );

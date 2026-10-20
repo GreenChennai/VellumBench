@@ -314,6 +314,7 @@ fn precancelled_static_browser_lane_stops_before_launch() {
         transparent: false,
         artboard: false,
         artboard_index: 0,
+        webgpu: false,
     };
     let err =
         vb_browser::export_source_cancellable(std::path::Path::new("no-such.html"), &req, probe)

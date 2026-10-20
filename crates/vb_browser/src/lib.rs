@@ -69,6 +69,8 @@ pub struct LaneRequest {
     pub artboard: bool,
     /// 取第几个画板(0 起;03-4 浏览器校对面板选画板用,默认 0)。
     pub artboard_index: usize,
+    /// 显式开启 WebGPU 浏览器上下文;默认软件路径保持像素确定性。
+    pub webgpu: bool,
 }
 
 /// 采集视口(P0-3):显式宽 > 0 用之,否则历史兜底 1080(limits 模块,
@@ -159,7 +161,13 @@ fn run_static_lane(
         _srv = Some(srv);
         u
     };
-    let proc = browser::BrowserProcess::launch(&exe)?;
+    let proc = browser::BrowserProcess::launch_with(
+        &exe,
+        browser::LaunchOptions {
+            webgpu: req.webgpu,
+            ..browser::LaunchOptions::default()
+        },
+    )?;
     let engine_hint = proc.version();
     let mut outcome = export_with_url(&proc, &url, req, &engine_hint, probe.as_ref(), max_wait)?;
     // VB-1:静态资源 404 不许静默(浏览器会静默回退系统字体等)——
@@ -212,6 +220,14 @@ fn export_with_url(
     page.set_device_metrics(init_w, init_h, req.scale.clamp(1, 8))?;
     page.navigate(url)?;
     page.wait_network_idle(page.cap_to_deadline(limits::NETWORK_IDLE_CAP));
+    if req.webgpu && !page.webgpu_adapter_available()? {
+        return Err(
+            "WebGPU 已请求,但当前 headless 浏览器没有可用 adapter (检查 WebGPU/GPU 驱动)".into(),
+        );
+    }
+    if req.webgpu {
+        page.wait_webgpu_content_ready()?;
+    }
     page.sleep(200); // networkidle(500ms 静默)后的末次布局窗(经验值)
 
     match req.format {

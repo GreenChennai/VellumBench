@@ -26,6 +26,9 @@ pub struct LaunchOptions {
     /// (ADR-0022 口径);打开时光栅/合成落在显卡,MV 级长片提速明显,
     /// 代价是与软件光栅存在固定 AA 微差(MAD ≈ 1/255,肉眼无别)。
     pub gpu: bool,
+    /// 显式启用 WebGPU(Dawn)能力。该模式会强制打开 GPU、忽略 GPU blocklist,
+    /// 并传 `--enable-unsafe-webgpu`;默认关闭以保持旧的确定性软件渲染口径。
+    pub webgpu: bool,
     /// 是否下发 `--enable-begin-frame-control`(逐帧显式产帧通道)。
     ///
     /// **默认必须关**,且必须与「是否真的要调 `HeadlessExperimental.beginFrame`」
@@ -215,6 +218,7 @@ fn launch_args(
     user_data_dir: &Path,
     debug_port: u16,
     gpu: bool,
+    webgpu: bool,
     shell: bool,
     begin_frame_control: bool,
 ) -> Vec<String> {
@@ -249,11 +253,10 @@ fn launch_args(
         // 下游报的「相对路径 404 → 断图/字体降级」经此证伪:真因是告警**采集
         // 时机**早于 settle(见 capture.rs / print.rs 的顺序注释),图其实加载了。
     ]);
-    if gpu {
-        // GPU 光栅化:headless 必须显式走 ANGLE→D3D11,否则仍是软件光栅。
-        // 实测渲染器串形如 "ANGLE (AMD, AMD Radeon RX 9070 GRE … D3D11)",
-        // NVIDIA/AMD/Intel 均由各自驱动接手;CanvasOopRasterization 让
-        // canvas2d 位图光栅化也进 GPU 进程。
+    if gpu || webgpu {
+        // GPU 路径:headless 必须显式走 ANGLE→D3D11,否则仍是软件光栅。
+        // WebGPU 是显式 opt-in,与默认的软件确定性路径隔离;WebGPU 还需要
+        // 启用 Dawn 并忽略 Chromium 的 GPU blocklist 才能请求硬件 adapter。
         v.extend([
             "--use-gl=angle".into(),
             "--use-angle=d3d11".into(),
@@ -261,8 +264,13 @@ fn launch_args(
             "--ignore-gpu-blocklist".into(),
             "--enable-zero-copy".into(),
             "--disable-gpu-vsync".into(),
-            "--enable-features=CanvasOopRasterization".into(),
         ]);
+        let mut features = "CanvasOopRasterization".to_string();
+        if webgpu {
+            features.push_str(",WebGPU");
+            v.push("--enable-unsafe-webgpu".into());
+        }
+        v.push(format!("--enable-features={features}"));
     } else {
         // 软件光栅:规避本机 GPU 驱动差异与崩溃(R4),跨机结果可复现
         v.push("--disable-gpu".into());
@@ -417,12 +425,13 @@ impl BrowserProcess {
         std::fs::create_dir_all(&user_data_dir).map_err(|e| e.to_string())?;
         let shell = is_headless_shell(exe);
         let args = launch_args(
-        &user_data_dir,
-        port,
-        opts.gpu,
-        shell,
-        opts.begin_frame_control,
-    );
+            &user_data_dir,
+            port,
+            opts.gpu,
+            opts.webgpu,
+            shell,
+            opts.begin_frame_control,
+        );
         let mut child = Command::new(exe)
             .args(&args)
             .stdout(Stdio::null())
@@ -585,5 +594,32 @@ impl Drop for BrowserProcess {
     fn drop(&mut self) {
         self.kill_tree();
         let _ = std::fs::remove_dir_all(&self.user_data_dir);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::launch_args;
+    use std::path::Path;
+
+    #[test]
+    fn default_launch_keeps_software_raster_and_webgpu_off() {
+        let args = launch_args(Path::new("profile"), 0, false, false, false, false);
+        assert!(args.iter().any(|arg| arg == "--disable-gpu"));
+        assert!(!args.iter().any(|arg| arg == "--enable-unsafe-webgpu"));
+        assert!(!args
+            .iter()
+            .any(|arg| arg.starts_with("--enable-features=") && arg.contains("WebGPU")));
+    }
+
+    #[test]
+    fn webgpu_launch_enables_gpu_and_does_not_disable_it() {
+        let args = launch_args(Path::new("profile"), 0, false, true, false, false);
+        assert!(args.iter().any(|arg| arg == "--use-angle=d3d11"));
+        assert!(args.iter().any(|arg| arg == "--enable-unsafe-webgpu"));
+        assert!(args
+            .iter()
+            .any(|arg| arg == "--enable-features=CanvasOopRasterization,WebGPU"));
+        assert!(!args.iter().any(|arg| arg == "--disable-gpu"));
     }
 }

@@ -14,7 +14,7 @@ use vb_kiln::writer::Format;
 
 fn ctx_with_frames() -> ExportContext {
     // 4 帧 2x2 红,足以让两条路径都产出合法 GIF
-    let rgba_red = vec![255u8, 0, 0, 255].repeat(4);
+    let rgba_red = [255u8, 0, 0, 255].repeat(4);
     let frames = (0..4)
         .map(|_| vb_kiln::context::Frame {
             width: 2,
@@ -79,7 +79,7 @@ fn gif_encode_always_declares_palette_path() {
             assert!(*via_ffmpeg, "走了两 pass 就必须声明 via_ffmpeg=true")
         }
         (KilnWarning::GifPalettePath { via_ffmpeg, .. }, GifPalettePath::RustSinglePass) => {
-            assert!(*via_ffmpeg == false, "走了单 pass 就必须声明 via_ffmpeg=false")
+            assert!(!*via_ffmpeg, "走了单 pass 就必须声明 via_ffmpeg=false")
         }
         // 声明与路径来自同一个 outcome,不应出现第四种组合;真出现了要能看出来
         (other, path) => panic!("声明 {:?} 与路径 {:?} 不匹配", other, path),
@@ -142,7 +142,10 @@ fn mp4_writer_declares_palette_path_when_downgraded() {
     // 不断言成功/失败(取决于本机有没有 ffmpeg 与可用编码器),只断言:
     // 走到降级分支时,report 里必须出现 gif_palette_path
     if let Ok(report) = vb_kiln::formats::mp4::Mp4Writer.write(&ctx, &mut out) {
-        if report.warnings_by_kind().contains_key("mp4_downgraded_to_gif") {
+        if report
+            .warnings_by_kind()
+            .contains_key("mp4_downgraded_to_gif")
+        {
             assert!(
                 report.warnings_by_kind().contains_key("gif_palette_path"),
                 "降级成 GIF 流时必须同时声明调色板路径"

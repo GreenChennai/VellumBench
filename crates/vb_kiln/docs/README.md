@@ -1,4 +1,4 @@
-﻿# Kiln — VellumBench 下一代导出核心
+# Kiln — VellumBench 下一代导出核心
 
 Kiln(窑):Vellum(羔皮纸)入窑,烧出九种成品。原生 Rust 导出核心,
 **全面取代 WPI 浏览器导出路径**(WPI 保留为回退,`VB_EXPORT_ENGINE=wpi` 启用)。
@@ -29,6 +29,16 @@ let req = ExportRequest {
 };
 let (bytes, report) = export_artboard(&doc, artboard_id, &req, Some(project_dir))?;
 // report.summary() -> "3 KB / 202ms / 2条警告"
+```
+
+## 显式 WebGPU 浏览器导出
+
+默认导出仍走既有策略；只有显式传 `--webgpu` 才要求 WebGPU，并禁止静默降级。该选项当前只接受 PNG/GIF/MP4：PNG 要报告 `engine=browser`，GIF 要报告 `engine=browser-anim`，MP4 可报告 `browser-anim` 或 `browser-anim-webcodecs`。若浏览器没有可用 `navigator.gpu` adapter、首帧未就绪或引擎 lane 不匹配，CLI 返回错误而不是生成“成功”的软件渲染近似图。标记画布应尽早设置 `data-webgpu-status=ready|failed`；若画布会延迟创建，普通页面会先等待短暂 mount grace，较慢的异步页面必须在初始 `<html>` 或 `<body>` 上声明 `data-webgpu-required=true`，届时 CLI 最多等待 10 秒挂载标记画布并完成首帧。WebGPU 完成后回报 `webgpu: true`；未指定时 `webgpu` 为 false，保留旧调用行为。当前 Proofread/桌面导出 UI 不提供 WebGPU 开关，继续使用既有导出选择。
+
+```bash
+kiln-cli export --source project --output cover.png --webgpu
+kiln-cli export --source project --output motion.gif --webgpu --duration 5 --fps 24
+kiln-cli export --source project --output motion.mp4 --webgpu --duration 5 --fps 24
 ```
 
 ## 架构

@@ -30,6 +30,38 @@ pub const RAF_THROTTLE_JS: &str = r#"(() => {
     window.cancelAnimationFrame = (id) => clearTimeout(id);
 })();"#;
 
+/// Explicit WebGPU readiness contract. Static canvases are detected immediately;
+/// dynamic pages may declare intent on html/body before mounting the canvas.
+const WEBGPU_CONTENT_READY_JS: &str = r#"(async () => {
+    const selector = 'canvas[data-webgpu-required="true"]';
+    const started = Date.now();
+    let deadline = null;
+    const rootDeclaresWebGPU = () =>
+        document.documentElement?.dataset.webgpuRequired === 'true' ||
+        document.body?.dataset.webgpuRequired === 'true';
+    const check = (resolve) => {
+        const nodes = Array.from(document.querySelectorAll(selector));
+        const declared = rootDeclaresWebGPU();
+        if (deadline === null && (declared || nodes.length)) deadline = Date.now() + 10000;
+        if (nodes.length) {
+            const failed = nodes.find(node => node.dataset.webgpuStatus === 'failed');
+            if (failed) return resolve({required:true,ok:false,error:failed.dataset.webgpuError || 'WebGPU page component failed'});
+            if (nodes.every(node => node.dataset.webgpuStatus === 'ready')) return resolve({required:true,ok:true});
+        }
+        if (deadline !== null && Date.now() >= deadline) {
+            const error = nodes.length
+                ? 'Timed out waiting for WebGPU page components to render a frame'
+                : 'WebGPU page declared required content but mounted no required canvas';
+            return resolve({required:true,ok:false,error});
+        }
+        // Give short hydration/mount work a chance to add a marked canvas.
+        // Slower pages must declare data-webgpu-required=true on html/body up front.
+        if (deadline === null && Date.now() - started >= 250) return resolve({required:false});
+        setTimeout(() => check(resolve), 25);
+    };
+    return await new Promise(resolve => check(resolve));
+})()"#;
+
 /// 字体/图片资源等待(WPI `wait_assets` JS 移植):竞速上限参数化
 /// (EXP-11)—— settle 侧把 3s/5s 钳进剩余预算,调用方生成脚本。
 pub fn wait_assets_js(fonts_ms: u64, imgs_ms: u64) -> String {
@@ -486,6 +518,33 @@ impl PageSession {
             .unwrap_or(Value::Null))
     }
 
+    /// WebGPU 显式车道的能力门:请求一个硬件 adapter,未拿到时不把
+    /// --webgpu 静默降级成 WebGL/软件渲染。
+    pub fn webgpu_adapter_available(&mut self) -> Result<bool, String> {
+        let result = self.evaluate(
+            "(async () => { if (!navigator.gpu) return false; try { return !!(await navigator.gpu.requestAdapter({powerPreference:'high-performance'})); } catch (_) { return false; } })()",
+            true,
+        )?;
+        Ok(result.as_bool().unwrap_or(false))
+    }
+
+    /// Wait for page components that explicitly require a WebGPU first frame.
+    /// Ordinary pages are unaffected; Artboard's upstream shader host marks its canvases.
+    pub fn wait_webgpu_content_ready(&mut self) -> Result<(), String> {
+        let result = self.evaluate(WEBGPU_CONTENT_READY_JS, true)?;
+        if result.get("required").and_then(Value::as_bool) != Some(true) {
+            return Ok(());
+        }
+        if result.get("ok").and_then(Value::as_bool) == Some(true) {
+            return Ok(());
+        }
+        Err(result
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("WebGPU page content did not become ready")
+            .to_string())
+    }
+
     // ------------------------------------------------------------ 页面查询
     pub fn content_size(&mut self) -> Result<(u32, u32), String> {
         let v = self.evaluate(CONTENT_SIZE_JS, false)?;
@@ -683,5 +742,19 @@ impl PageSession {
 
     pub fn close(&mut self) {
         self.cdp.close();
+    }
+}
+
+#[cfg(test)]
+mod webgpu_readiness_contract_tests {
+    use super::WEBGPU_CONTENT_READY_JS;
+
+    #[test]
+    fn dynamic_webgpu_mount_requires_root_intent_or_short_grace() {
+        assert!(WEBGPU_CONTENT_READY_JS.contains("dataset.webgpuRequired === 'true'"));
+        assert!(WEBGPU_CONTENT_READY_JS.contains("Date.now() - started >= 250"));
+        assert!(WEBGPU_CONTENT_READY_JS.contains("Date.now() + 10000"));
+        assert!(WEBGPU_CONTENT_READY_JS.contains("mounted no required canvas"));
+        assert!(WEBGPU_CONTENT_READY_JS.contains("dataset.webgpuStatus === 'ready'"));
     }
 }

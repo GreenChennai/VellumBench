@@ -75,6 +75,8 @@ pub struct AnimPipeOpts {
     pub workers: u32,
     /// GPU 光栅化(`--gpu` / `VB_GPU=1`)。
     pub gpu: bool,
+    /// 显式启用 WebGPU/Dawn(仅可信本地网页,需要可用 GPU adapter)。
+    pub webgpu: bool,
     /// 中间帧格式:None = PNG(CDP 直出,无损管道);
     /// Some(q) = JPEG(q 为质量 1-100,预览提速档,4:2:0 色度损失)。
     pub jpeg_quality: Option<u8>,
@@ -130,6 +132,7 @@ impl Default for AnimPipeOpts {
             // 渲染器全压在 CPU 上。AA 微差 MAD ≈ 1/255(与 Playwright
             // 实测一致);要旧口径用 --no-gpu。
             gpu: true,
+            webgpu: false,
             wall_clock: false,
             seek_fn: None,
             cancel: None,
@@ -743,8 +746,8 @@ pub fn export_anim_pipe(source: &Path, opts: &AnimPipeOpts) -> Result<AnimLaneRe
                 .unwrap_or(false);
             handles.push(scope.spawn(move || {
                 render_segment(
-                    &exe, srv_ref, &url, &seg_path, a, b, n, fps, vw, vh, dsf, opts, &enc_cands, wi,
-                    ready_tx, is_edge,
+                    &exe, srv_ref, &url, &seg_path, a, b, n, fps, vw, vh, dsf, opts, &enc_cands,
+                    wi, ready_tx, is_edge,
                 )
             }));
         }
@@ -960,6 +963,7 @@ fn render_segment(
         exe,
         vb_browser::browser::LaunchOptions {
             gpu: opts.gpu,
+            webgpu: opts.webgpu,
             // Edge(以及任何已移除 HeadlessExperimental.beginFrame 的现代
             // Chromium)必须**关掉** begin-frame-control:flag 一开,合成器就只
             // 在收到 BeginFrame 时产新表面,而该方法已不存在 → 没人能发起 →
@@ -989,6 +993,25 @@ fn render_segment(
         return Err(e);
     }
     page.wait_network_idle(Duration::from_secs(3));
+    if opts.webgpu {
+        match page.webgpu_adapter_available() {
+            Ok(true) => {}
+            Ok(false) => {
+                signal_ready();
+                return Err(
+                    "WebGPU 已请求,但当前 headless 浏览器没有可用 adapter (检查 GPU 驱动)".into(),
+                );
+            }
+            Err(e) => {
+                signal_ready();
+                return Err(e);
+            }
+        }
+        if let Err(e) = page.wait_webgpu_content_ready() {
+            signal_ready();
+            return Err(e);
+        }
+    }
     vb_browser::capture::wait_assets(&mut page);
     page.sleep(250); // 首帧稳定(不冻结动画、不仿真 reduced-motion)
                      // 首帧门控:本实例页面就绪,放行下一个实例拉起(彻底串行化冷启动)
@@ -1025,7 +1048,8 @@ fn render_segment(
     for (ci, &enc) in enc_cands.iter().enumerate() {
         let bf_broken = std::cell::Cell::new(is_edge);
         match capture_and_encode(
-            &mut page, seg_path, a, b, n_total, fps, vw, vh, dsf, opts, enc, &driver, &bf_broken, wi,
+            &mut page, seg_path, a, b, n_total, fps, vw, vh, dsf, opts, enc, &driver, &bf_broken,
+            wi,
         ) {
             Ok((ws, stats)) => {
                 warnings.extend(ws);
@@ -1227,7 +1251,15 @@ fn capture_and_encode(
         }
         prev_t = Some(frame_t);
         if *driver != Driver::WallFallback {
-            drive_frame(page, driver, i, fps, n_total, opts.duration_s, bf_broken.get());
+            drive_frame(
+                page,
+                driver,
+                i,
+                fps,
+                n_total,
+                opts.duration_s,
+                bf_broken.get(),
+            );
         }
         let ts = std::time::Instant::now();
         // 逐帧截屏走 beginFrame(CDP 显式产帧,空闲页面不再等 ~530ms
@@ -1373,6 +1405,7 @@ pub fn export_anim_inmemory(
         &exe,
         vb_browser::browser::LaunchOptions {
             gpu: opts.gpu,
+            webgpu: opts.webgpu,
             begin_frame_control: !is_edge,
         },
     )?;
@@ -1388,6 +1421,12 @@ pub fn export_anim_inmemory(
     page.set_device_metrics(vw, vh, dsf)?;
     page.navigate(&url)?;
     page.wait_network_idle(Duration::from_secs(3));
+    if opts.webgpu && !page.webgpu_adapter_available()? {
+        return Err("WebGPU 已请求,但当前 headless 浏览器没有可用 adapter (检查 GPU 驱动)".into());
+    }
+    if opts.webgpu {
+        page.wait_webgpu_content_ready()?;
+    }
     vb_browser::capture::wait_assets(&mut page);
     page.sleep(250);
 
@@ -1437,21 +1476,23 @@ pub fn export_anim_inmemory(
                 std::thread::sleep(Duration::from_secs_f64(interval));
             }
         } else {
-            drive_frame(&mut page, &driver, i, fps, n, opts.duration_s, bf_broken.get());
+            drive_frame(
+                &mut page,
+                &driver,
+                i,
+                fps,
+                n,
+                opts.duration_s,
+                bf_broken.get(),
+            );
         }
         let frame_t = std::time::Instant::now();
         if let Some(prev) = prev_t {
             intervals_ms.push(frame_t.duration_since(prev).as_secs_f64() * 1000.0);
         }
         prev_t = Some(frame_t);
-        let png = capture_anim_frame_png(
-            &mut page,
-            &bf_broken,
-            "png",
-            None,
-            i,
-            &mut capture_warnings,
-        )?;
+        let png =
+            capture_anim_frame_png(&mut page, &bf_broken, "png", None, i, &mut capture_warnings)?;
         let mut img = image::load_from_memory(&png)
             .map_err(|e| format!("帧解码失败(帧 {i}):{e}"))?
             .to_rgba8();
@@ -1490,7 +1531,7 @@ pub fn export_anim_inmemory(
     let (fw, fh) = (captures[0].width, captures[0].height);
     let mut warnings: Vec<String> = Vec::new();
     // UP-3:beginFrame 不可用时的回退告警要进结果(否则调用方以为走了快路径)
-    warnings.extend(capture_warnings.drain(..));
+    warnings.append(&mut capture_warnings);
     for f in captures.iter_mut() {
         if f.width != fw || f.height != fh {
             warnings.push(format!(
@@ -1621,7 +1662,13 @@ mod tests {
 
         // 2. 给了值就下发,且 x264 链上 -g 必须成对带 forced-idr
         let mut cmd = Command::new("ffmpeg");
-        push_gop_args(&mut cmd, Some(30), Some(0), Some("yuv422p"), Some("libx264"));
+        push_gop_args(
+            &mut cmd,
+            Some(30),
+            Some(0),
+            Some("yuv422p"),
+            Some("libx264"),
+        );
         let args = args_of(&cmd);
         assert!(args.iter().any(|a| a == "-g"), "给了 GOP 就该下发 -g");
         assert!(args.iter().any(|a| a == "30"), "GOP 值应下发");

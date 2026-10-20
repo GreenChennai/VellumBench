@@ -205,6 +205,7 @@ pub fn export_anim_webcodecs(source: &Path, opts: &AnimPipeOpts) -> Result<AnimL
         &exe,
         vb_browser::browser::LaunchOptions {
             gpu: opts.gpu,
+            webgpu: opts.webgpu,
             // 同 animlane:Edge/现代 Chromium 无 `HeadlessExperimental.beginFrame`,
             // 下发 flag 会让 captureScreenshot 永久阻塞(详见 LaunchOptions 文档)。
             begin_frame_control: !is_edge,
@@ -215,6 +216,12 @@ pub fn export_anim_webcodecs(source: &Path, opts: &AnimPipeOpts) -> Result<AnimL
     page.set_device_metrics(vw, vh, dsf)?;
     page.navigate(&url)?;
     page.wait_network_idle(Duration::from_secs(5));
+    if opts.webgpu && !page.webgpu_adapter_available()? {
+        return Err("WebGPU 已请求,但当前 headless 浏览器没有可用 adapter (检查 GPU 驱动)".into());
+    }
+    if opts.webgpu {
+        page.wait_webgpu_content_ready()?;
+    }
     vb_browser::capture::wait_assets(&mut page);
     page.sleep(300);
 

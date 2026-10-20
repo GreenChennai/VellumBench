@@ -136,6 +136,9 @@ enum Cmd {
         /// 关闭 GPU 光栅化,回到软件光栅(跨机逐像素可复现口径)
         #[arg(long, default_value_t = false)]
         no_gpu: bool,
+        /// 浏览器车道显式启用 WebGPU/Dawn (PNG/GIF/MP4; 默认软件渲染不变)
+        #[arg(long, default_value_t = false)]
+        webgpu: bool,
         /// 中间帧格式:jpeg=默认(快 ~6×,q95 二次编码后损失通常不可见)|
         /// png=无损管道(画质敏感交付用;每帧截屏成本显著更高)
         #[arg(long, default_value = "jpeg")]
@@ -360,6 +363,7 @@ fn main() {
             seek_fn,
             seek_hook,
             no_gpu,
+            webgpu,
             render,
         } => run_export(
             sources,
@@ -389,6 +393,7 @@ fn main() {
             wall,
             seek_fn.or(seek_hook),
             no_gpu,
+            webgpu,
             render,
         ),
         Cmd::Import { source, output } => run_import(source, output),
@@ -420,6 +425,32 @@ struct LanePlan {
     /// `--engine browser` 但格式不被静态车道支持(PNG/PDF/AI 之外):
     /// 全部浏览器路线尝试后按参数错误退出(保持既有放行次序)。
     browser_static_mismatch: bool,
+}
+
+fn resolve_engine_mode(
+    engine: &str,
+    format: &str,
+    webgpu: bool,
+    no_gpu: bool,
+) -> Result<String, String> {
+    let requested = engine.trim().to_ascii_lowercase();
+    if !webgpu {
+        return Ok(requested);
+    }
+    if no_gpu {
+        return Err("--webgpu 与 --no-gpu 冲突".into());
+    }
+    if requested == "native" {
+        return Err("--webgpu 需要浏览器引擎,不能与 --engine native 同用".into());
+    }
+    if !matches!(requested.as_str(), "auto" | "browser") {
+        return Err("--webgpu 的 --engine 仅支持 auto|browser".into());
+    }
+    let format = format.to_ascii_uppercase();
+    if !matches!(format.as_str(), "PNG" | "GIF" | "MP4") {
+        return Err("--webgpu 当前仅支持 PNG/GIF/MP4 浏览器导出".into());
+    }
+    Ok("browser".into())
 }
 
 impl LanePlan {
@@ -476,6 +507,7 @@ fn run_export(
     wall: bool,
     seek_fn: Option<String>,
     no_gpu: bool,
+    webgpu: bool,
     render: String,
 ) -> i32 {
     let t0 = Instant::now();
@@ -530,12 +562,19 @@ fn run_export(
 
     // ---------------- 车道 B(浏览器车道,ADR-0020):PNG/PDF/AI 高保真导出 ----------------
     // auto=浏览器可用即用(保真优先);browser=强制;native=跳过本段
-    let engine_mode = engine.trim().to_ascii_lowercase();
     let vector_mode = vector.trim().to_ascii_lowercase();
     let render_mode = render.trim().to_ascii_lowercase();
+    let fmt_up = fmt_str.to_uppercase();
+    // 显式 WebGPU 是能力要求,auto 不得静默切回不支持原始上游 shader 的自研车道。
+    let engine_mode = match resolve_engine_mode(&engine, &fmt_up, webgpu, no_gpu) {
+        Ok(mode) => mode,
+        Err(message) => {
+            eprintln!("{{\"ok\":false,\"error\":\"{message}\"}}");
+            return 2;
+        }
+    };
     // EXP-13:车道决策单一权威点 —— 放行矩阵(dom/anim/webcodecs/static/
     // browser 白名单/错配告警)在此一次算定,run_export 只按计划执行。
-    let fmt_up = fmt_str.to_uppercase();
     let plan = match LanePlan::resolve(&fmt_up, &engine_mode, &vector_mode, &render_mode) {
         Ok(p) => p,
         Err(m) => {
@@ -622,7 +661,7 @@ fn run_export(
                     (out.width, out.height)
                 };
                 let json = format!(
-                    "{{'ok':true,'format':'{}','path':'{}','width':{:.0},'height':{:.0},'scale':{},'transparent':{},'warnings':{},'degraded':{},'warnings_by_kind':{},'frames':1,'degraded_artboard':{},'bytes':{},'encode_ms':{},'engine':'browser-dom','browser':'{}','vector':'dom','text_lines':{},'clip_demand':{},'raster_items':{}}}",
+                    "{{'ok':true,'format':'{}','path':'{}','width':{:.0},'height':{:.0},'scale':{},'transparent':{},'warnings':{},'degraded':{},'warnings_by_kind':{},'frames':1,'degraded_artboard':{},'bytes':{},'encode_ms':{},'engine':'browser-dom','browser':'{}','webgpu':false,'vector':'dom','text_lines':{},'clip_demand':{},'raster_items':{}}}",
                     fmt_str.to_uppercase(),
                     jesc(&output.display().to_string()),
                     ow,
@@ -661,14 +700,10 @@ fn run_export(
     // 浏览器里实时播放并按 1/fps 截屏;无浏览器/native 时降级 Lane K。
     if plan.try_anim {
         // 0.12.2 起动画车道默认 GPU 光栅;--no-gpu / VB_GPU=0 显式关闭
-        let out_gpu = !no_gpu
-            && if gpu {
-                true
-            } else {
-                !std::env::var("VB_GPU").ok().is_some_and(|v| {
-                    matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "off")
-                })
-            };
+        let gpu_disabled_by_env = std::env::var("VB_GPU")
+            .ok()
+            .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "off"));
+        let out_gpu = webgpu || (!no_gpu && (gpu || !gpu_disabled_by_env));
         // --render 合法性已在 LanePlan::resolve 判定(EXP-13)
         let seek_norm = seek_fn.map(|f| f.trim().trim_start_matches("window.").trim().to_string());
         let anim_opts = vb_kiln::animlane::AnimPipeOpts {
@@ -680,6 +715,7 @@ fn run_export(
             bitrate_kbps: bitrate,
             workers,
             gpu: out_gpu,
+            webgpu,
             jpeg_quality: if img.eq_ignore_ascii_case("jpeg") {
                 Some(jpeg_q.clamp(1, 100))
             } else {
@@ -691,7 +727,7 @@ fn run_export(
             seek_fn: seek_norm.clone(),
             gif_fallback_loops: r#loop,
             cancel: Some(cancel.child()),
-            gop: gop,
+            gop,
             b_frames: bf,
             pix_fmt: pix_fmt.clone(),
             color_tags: !no_color_tags,
@@ -722,7 +758,7 @@ fn run_export(
                         .unwrap_or_else(|| "null".into());
                     let instances_json = vb_kiln::report::InstanceStats::array_json(&out.instances);
                     let json = format!(
-                        "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':{},'degraded':false,'degraded_artboard':false,'anim_coverage':{},'instances':{},'bytes':{},'encode_ms':{},'engine':'browser-anim-webcodecs','browser':'{}','encoder':'{}','gpu':{}}}",
+                        "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':{},'degraded':false,'degraded_artboard':false,'anim_coverage':{},'instances':{},'bytes':{},'encode_ms':{},'engine':'browser-anim-webcodecs','browser':'{}','encoder':'{}','gpu':{},'webgpu':{}}}",
                         fmt_str.to_uppercase(),
                         jesc(&output.display().to_string()),
                         width,
@@ -738,6 +774,7 @@ fn run_export(
                         jesc(&out.browser),
                         jesc(out.encoder_used.as_deref().unwrap_or("h264")),
                         out_gpu,
+                        webgpu,
                     )
                     .replace('\'', "\"");
                     println!("{json}");
@@ -786,7 +823,8 @@ fn run_export(
                     .unwrap_or_else(|| "null".into());
                 let instances_json = vb_kiln::report::InstanceStats::array_json(&out.instances);
                 let json = format!(
-                    "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':{},'degraded':false,'degraded_artboard':false,'anim_coverage':{},'instances':{},'bytes':{},'encode_ms':{},'engine':'browser-anim','browser':'{}','encoder':'{}','gpu':{}}}",
+                    "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':{},'degraded':false,'degraded_artboard':false,'anim_coverage':{},'instances':{},'bytes':{},'encode_ms':{},'engine':'browser-anim','browser':'{}','encoder':'{}','gpu':{},'webgpu':{}}}",
+
                     fmt_str.to_uppercase(),
                     jesc(&output.display().to_string()),
                     width,
@@ -802,6 +840,7 @@ fn run_export(
                     jesc(&out.browser),
                     jesc(out.encoder_used.as_deref().unwrap_or("unknown")),
                     out_gpu,
+                    webgpu,
                 )
                 .replace('\'', "\"");
                 println!("{json}");
@@ -845,6 +884,7 @@ fn run_export(
             transparent,
             artboard: artboard_frame,
             artboard_index: 0,
+            webgpu,
         };
         // 硬骨头 #3 收口:单页 PNG/PDF/AI 截图车道接取消令牌——CDP 长等待
         // (截图 180s/printToPDF 300s)分片轮询,stdin 'c' 同通道生效;
@@ -871,7 +911,8 @@ fn run_export(
                     return 4;
                 }
                 let json = format!(
-                    "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':1,'degraded':false,'degraded_artboard':{},'bytes':{},'encode_ms':{},'engine':'browser','browser':'{}'}}",
+                    "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':1,'degraded':false,'degraded_artboard':{},'bytes':{},'encode_ms':{},'engine':'browser','browser':'{}','webgpu':{}}}",
+
                     fmt_str.to_uppercase(),
                     jesc(&output.display().to_string()),
                     outcome.width,
@@ -883,6 +924,7 @@ fn run_export(
                     outcome.bytes.len(),
                     t0.elapsed().as_millis(),
                     jesc(&outcome.engine_hint),
+                    webgpu,
                 )
                 .replace('\'', "\"");
                 println!("{json}");
@@ -1029,7 +1071,7 @@ fn run_export(
     let kinds = kinds_json(&report.warnings_by_kind());
 
     let json = format!(
-        "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':{},'degraded':{},'warnings_by_kind':{},'anim_coverage':{},'degraded_artboard':{},'bytes':{},'encode_ms':{},'engine':'kiln','engine_fallback':{}}}",
+        "{{'ok':true,'format':'{}','path':'{}','width':{},'height':{},'scale':{},'transparent':{},'warnings':{},'frames':{},'degraded':{},'warnings_by_kind':{},'anim_coverage':{},'degraded_artboard':{},'bytes':{},'encode_ms':{},'engine':'kiln','webgpu':false,'engine_fallback':{}}}",
         fmt_str.to_uppercase(),
         jesc(&output.display().to_string()),
         w,
@@ -1365,6 +1407,26 @@ fn run_selfcheck() -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn webgpu_request_forces_browser_and_is_scoped_to_browser_formats() {
+        assert_eq!(
+            resolve_engine_mode("auto", "PNG", true, false).as_deref(),
+            Ok("browser")
+        );
+        assert_eq!(
+            resolve_engine_mode("browser", "MP4", true, false).as_deref(),
+            Ok("browser")
+        );
+        assert_eq!(
+            resolve_engine_mode("auto", "MP4", false, false).as_deref(),
+            Ok("auto")
+        );
+        assert!(resolve_engine_mode("native", "PNG", true, false).is_err());
+        assert!(resolve_engine_mode("typo", "PNG", true, false).is_err());
+        assert!(resolve_engine_mode("auto", "PDF", true, false).is_err());
+        assert!(resolve_engine_mode("auto", "PNG", true, true).is_err());
+    }
 
     /// EXP-13:车道放行矩阵钉死(ADR-0021/0022 的执行口径)。
     #[test]

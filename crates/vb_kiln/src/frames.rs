@@ -330,10 +330,7 @@ pub fn encode_mp4_reporting(ctx: &ExportContext) -> KilnResult<(Vec<u8>, Option<
                 });
                 continue;
             }
-            return Ok((
-                std::fs::read(&mp4_path).map_err(KilnError::Io)?,
-                None,
-            ));
+            return Ok((std::fs::read(&mp4_path).map_err(KilnError::Io)?, None));
         }
         // 候选全败(含"无可用编码器"):降级 GIF 流,语义与"无 ffmpeg"一致
         if let Some(e) = last_err {
