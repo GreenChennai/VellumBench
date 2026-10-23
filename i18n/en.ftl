@@ -46,12 +46,85 @@ ui-cap-badge-done = Done
 ui-cap-badge-partial = Partial
 ui-cap-badge-planned = Planned
 ui-cap-badge-dropped = Dropped
-# Shell (vb_shell)
+# Shell and canvas preview (vb_shell / vb_kit)
 ui-shell-window-title = VellumBench · sable Preview Host
 ui-shell-panel-capabilities = Capability Ledger
-ui-shell-panel-canvas = Canvas (R1)
-ui-shell-canvas-placeholder = Canvas (R1) — takes over once the canvas presentation channel is ruled by ADR-0047
-ui-shell-canvas-subtitle = R0 preview host: window / theme / dock layout skeleton
+ui-shell-panel-layers = Layers
+ui-shell-panel-canvas = Canvas
+ui-shell-panel-inspector = Inspector
+ui-layer-hide-selected = Hide selected
+ui-layer-show-selected = Show selected
+ui-layer-lock-selected = Lock selected
+ui-layer-unlock-selected = Unlock selected
+ui-layer-group-selected = Group
+ui-layer-ungroup-selected = Ungroup
+ui-layer-select-all = Select all
+ui-inspector-empty = Select a layer to inspect its properties.
+ui-inspector-multi-selection = Multi-selection property editing is not available yet.
+ui-inspector-transform = Transform
+ui-inspector-alignment-target = Alignment target
+ui-inspector-alignment = Align
+ui-inspector-appearance = Appearance
+ui-inspector-name = Name
+ui-inspector-type = Type
+ui-inspector-x = X
+ui-inspector-y = Y
+ui-inspector-width = Width
+ui-inspector-height = Height
+ui-inspector-fill = Fill
+ui-inspector-text-color = Text color
+ui-inspector-fill-placeholder = CSS color, e.g. #f00
+ui-inspector-fill-apply = Apply color
+ui-inspector-fill-readonly = Complex fills are read-only.
+ui-inspector-content = Text
+ui-inspector-text-placeholder = Enter text, then press Enter or Tab to apply
+ui-inspector-text-apply = Apply text
+ui-inspector-name-placeholder = Layer name; press Enter or Tab to apply
+ui-inspector-name-apply = Apply name
+ui-inspector-rich-text-readonly = Rich-text or multiline content remains read-only to preserve formatting
+ui-inspector-locked = This layer is locked; geometry fields are disabled.
+ui-canvas-layers-empty = No layers on this artboard
+ui-canvas-preview-badge = Preview
+ui-canvas-zoom-out = Zoom out
+ui-canvas-zoom-fit = Fit
+ui-canvas-zoom-100 = 100%
+ui-canvas-zoom-in = Zoom in
+ui-canvas-grid = Grid
+ui-canvas-preview-warning = Approximate preview: {  } items have unsupported imagery, effects, or import warnings
+ui-canvas-load-failed = This project could not be opened. Check the project directory and index.html.
+
+ui-animation-create-preset = Create one-second horizontal motion preset
+ui-shell-panel-animation = Animation
+ui-animation-no-project = Animation timeline requires an open project.
+ui-animation-select-one = Select one unlocked object to edit animation.
+ui-animation-foreign-readonly = Named external CSS animations are read-only.
+ui-animation-no-timeline = No local animation; create a one-second horizontal preset.
+ui-animation-playhead = Animation playhead
+ui-animation-frame-rate = Frame rate
+ui-animation-snap-to-frames = Snap to frames
+ui-animation-drag-invalid-distance = Keyframe drag distance must be finite
+ui-animation-drag-out-of-range = Keyframe drag is outside the timeline
+ui-animation-track-position = Position
+ui-animation-track-scale = Scale
+ui-animation-track-opacity = Opacity
+ui-animation-track-rotation = Rotation
+ui-animation-command-applied = Animation command applied.
+ui-animation-play = Play
+ui-animation-pause = Pause
+ui-animation-easing = Easing
+ui-animation-ease-linear = Linear
+ui-animation-ease-ease = Ease
+ui-animation-ease-in = Ease In
+ui-animation-ease-out = Ease Out
+ui-animation-ease-in-out = Ease In Out
+ui-animation-ease-custom = Custom curve
+ui-animation-custom-bezier = Custom cubic Bezier
+ui-animation-bezier-x1 = X1
+ui-animation-bezier-y1 = Y1
+ui-animation-bezier-x2 = X2
+ui-animation-bezier-y2 = Y2
+ui-animation-apply-bezier = Apply curve
+ui-animation-bezier-invalid = Invalid Bezier control points
 
 # ── BEGIN cmd-catalog(由 tools/gen_cmd_ftl.py 生成;勿手改)──
 cmd-file-new = New Project… (dialog, opens in a new window)
@@ -263,6 +336,17 @@ cmd-edit-plugins = Plugin Manager… (install/authorize/enable/logs/restart; plu
 cmd-view-toggle-plugins-panel = Toggle Plugins Panel (panels registered by Running plugins, controlled UI)
 # ── END cmd-catalog ──
 
+# VellumBench shared animation preset UI labels
+ui-animation-presets = Named Animation Presets
+ui-animation-preset-name = Preset name
+ui-animation-save-preset = Save preset
+ui-animation-preset-apply = Apply
+ui-animation-preset-delete = Delete preset
+ui-animation-preset-saved = Animation preset saved
+ui-animation-preset-applied = Animation preset applied
+ui-animation-preset-deleted = Animation preset deleted
+ui-animation-presets-empty = No named animation presets
+
 # ── vb_shell(R0 launcher/CLI;manual section;single-line messages — gate parser is single-line)──
 ui-shell-usage = vellum-sable — VellumBench sable preview host (R0) | Usage: vellum-sable opens the launcher · --project <dir> goes straight to a project window (ADR-0033) · <project-dir> same as --project · --help | --version
 ui-shell-project-arg-required = vellum-sable: --project requires a project directory argument
@@ -272,7 +356,7 @@ ui-shell-launcher-title = VellumBench · Launcher
 ui-shell-launcher-search-placeholder = Search name or path…
 ui-shell-launcher-invalid-path = Path no longer exists
 ui-shell-launcher-empty = No projects yet
-ui-shell-launcher-empty-hint = Open your first project with vellum-sable --project <dir>; it will appear in recents
+ui-shell-launcher-empty-hint = Select "New project" and choose an empty folder, or "Open project" to choose an existing project folder. You can also launch with vellum-sable --project <directory>.
 ui-shell-launcher-no-match = No projects matching "{$query}"
 ui-shell-launcher-footer = ↑↓ select · Enter open · R remove · click row to open
 
@@ -1866,3 +1950,28 @@ ui-shell-021 = There are unsaved changes; quitting now loses them.
 ui-shell-022 = Save All and Quit
 ui-shell-023 = Quit without saving
 # ── END ui-extract ──
+ui-canvas-command-applied = Command executed.
+ui-canvas-export-title = Export canvas
+ui-canvas-export-unsupported-format = Export supports SVG and PNG only.
+ui-canvas-exported = Exported to { $path }
+ui-canvas-exported-with-warnings = Exported to { $path }; { $count } layer(s) contain approximations.
+ui-canvas-export-invalid-dimensions = Canvas dimensions are invalid or exceed the edge limit.
+ui-canvas-export-too-large = Canvas exceeds the export pixel budget.
+ui-canvas-export-render-failed = Export rendering failed: { $error }
+ui-canvas-export-write-failed = Could not write the export file: { $error }
+ui-canvas-no-project-session = No project session is open.
+
+ui-command-palette-parse-failed = Failed to parse commands.yaml: { $error }
+ui-command-palette-not-list = commands.yaml must contain a top-level command list
+ui-command-palette-missing-command = Command catalog is missing supported command { $id }
+ui-command-palette-missing-label = Command catalog is missing a label for { $id }
+
+ui-shell-new-project = New project
+ui-shell-open-project = Open project
+ui-shell-new-project-failed = New project failed: { $error }
+ui-canvas-image-added = Image added to project
+ui-canvas-place-image-title = Choose a raster image
+
+ui-animation-keyframe-drag-delta = Offset { $delta }‰
+ui-animation-keyframe-nudge-earlier = Move 1% earlier
+ui-animation-keyframe-nudge-later = Move 1% later

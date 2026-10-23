@@ -3,12 +3,56 @@
 > 撰写日:2026-10-04。基线:**v0.14.0**(2026-10-02,733 测试全绿/clippy 零警告)。
 > 前序:本篇**部分推翻** [14 篇](14-下一阶段迭代方案-UI重制与AI心智对齐.md) Q5 的"留在 egui"裁定(推翻理由与时点见 §0 Q2);与 sable-ui 仓库 `docs/upstream/00-总结与迁移路线.md`、`02-vellumbench-ui-analysis.md` 互为衔接。15/16/19/20/21 篇(Kiln 与 AI 可编辑性工作线)不在本篇范围,继续独立推进。
 > 配套设计令牌真相源不变:`docs/design/assets/vb-ui-tokens.json`。
+> **现状同步(2026-10-21)**:本文保留原始 v0.14.0 计划基线；当前 workspace 为 v0.15.0/21 crates、MSRV 1.88，Sable 4.0.0 固定到 `270fc6a566ce49959a93d2f6d701bf54afa21451`。R0/R1 基础链路已落地，R2 图层/检查器与显隐/锁定操作已落地；`ProjectSession → CanvasSnapshot → vb_kit`，Document 仍由会话私有持有。新宿主具备 Select/Hand/Rect/Ellipse/Text、多选移动预览、Undo/Redo/Save/Delete、图层显隐/锁定、几何检查器与单行纯文本编辑；Rect/Ellipse/Text 新建、移动/删除、检查器编辑均走可逆命令。定向证据：session project 23/23、vb_doc UndoStack savepoint 6/6、CanvasPanel 9/9、route_gpui 5/5、InspectorPanel 2/2、vb_kit shell purity 3/3、vb_session purity 2/2、token slots 13/13、artifact guard 7/7、ui_literals 8/8、应用 i18n 完整性 1/1；两 crate Clippy `-D warnings` 与 `cargo check -p vb_shell --bin vellum-sable` 通过。测试产物实测 9.28 GB / 10.00 GB(十进制)。`examples/poster` 原生烟测验证三栏和 10 项图层；标题单行点击 Hide 后消失且近似项 5→4，Show 恢复，Lock 后几何/文本不可编辑，Unlock 与 4 次 Undo 回到干净状态。Text 工具新建及单行文本 Apply/Undo 已验证；复制/粘贴、剪切/粘贴后撤销回到已保存状态且脏标记消失；原生烟测未保存样例。多对象拖拽、真实键盘注入仍未实机确认(Windows 前台锁限制)。当前 route-c 对旋转/透明/描边图像、富文本、裁剪、滤镜、部分渐变等仍为近似；静态图像资源加载已完成受限路径测试，原生呈现仍待复测；跨平台与 10k@60fps 目标尚未验收。以上是阶段证据，不代表完整产品验收；迭代只跑受影响范围，最终全量审查保留到收尾。
+> **R3 增量(2026-10-21)**:新宿主接入 Sable `CommandPalette`，命令项来自 `commands.yaml` 中 50 个已支持 ID(含 `file.new/open`、`file.place_image`、`view.toggle_grid`、`view.next_artboard`、`view.prev_artboard`)；按钮可打开，Ctrl+K 映射到 `app.command_palette`。定向证据：palette 2/2、快捷键目录 1/1、grid view-state 1/1、route_gpui 9/9(含网格/pan/preview/极值 zoom)、`ui_literals` 8/8、应用 i18n 1/1、Clippy `-D warnings`、shell `cargo check` 通过；测试产物 9.78 GB/10.00 GB。项目窗口 Ctrl+N/O 现映射到 `file.new/open` 的宿主 `RfdDialog` 回调，目录快捷键与 Palette 过滤测试通过；Launcher New/Open 已原生验证，但项目窗口 Palette 的文件选择尚未原生烟测。此为 R3 子项，不代表 R3 或产品完成。
+> **R3 CommandPalette 搜索闭环(2026-10-21；Sable `270fc6a`)**:Sable CommandPalette 已增加 TextFieldBuffer/IME 输入和查询/结果行停传；VellumBench 锁定本地 Sable commit `270fc6a566ce49959a93d2f6d701bf54afa21451`。原生输入 `grid` 与拼音 `wangge` 均筛到唯一 `view.toggle_grid`，点击后网格开/关、命令面板关闭、Inspector 选中数始终为 0，未点穿选中背景。定向 Sable command_palette 10/10、Vellum palette 2/2、Vellum Clippy/host check 通过；测试工件 6.56/10.00 GB，poster fixture 未改。此仅验收已支持命令的搜索/执行，不代表全部 Catalog 命令已实现或 R3/产品完成。
+> **R3 对齐 Inspector 增量(2026-10-21)**:Inspector 增加 Selection/KeyObject/Artboard 目标与六种几何对齐入口，复用 `vb_tools::align` 的 `AbsBox/aligned_delta`，不复制旧 egui 实现。定向证据：ProjectSession 对齐目标 3/3、绝对盒/单步撤销 1/1、InspectorPanel 对齐 3/3、CommandPalette 2/2、快捷键目录 1/1、`ui_literals` 8/8、应用 i18n 1/1；两 crate Clippy `-D warnings` 与 shell `cargo check` 通过。测试目录峰值 10.32 GB 后守卫清理增量产物 1.44 GB，回到 8.89/10.00 GB。`examples/poster` 原生烟测将“主标题”画板左对齐(X 60→0)，Undo 恢复 X=60 与 clean/save-disabled 状态；样例未保存且 diff 未变。CommandPalette 的 grid/wangge 搜索与点击执行已实机验证；面板快捷键原生注入、多对象拖拽、渲染保真、跨平台与 10k@60fps 仍未验收；本增量不代表 R3 或完整产品完成。
+
+> **R0 启动器与新建项目闭环(2026-10-21)**:无参数启动现有 Sable launcher，展示“新建项目/打开项目”；新建入口复用 `ProjectSession::new_project`，只接受空目录并生成默认 1440×900 文档的 `index.html`/`styles/main.css`，非空目录拒绝覆盖；Ctrl+N/O shortcut 有目录一致性测试，最近项目失效标识基于实际目录状态。定向证据：默认项目写入/重载 1/1、launcher shortcut/stale badge 2/2、`cargo check -p vb_shell --bin vellum-sable` 通过；原生烟测验证有效空目录不再误标失效、创建后打开一画板项目。打开入口原生文件夹选择 `examples/poster` 已验证三栏画布/检查器且样例未保存；临时目录与隔离 MRU 已清理，`examples/poster` 未改。测试产物 3.59 GB / 10.00 GB。此为启动路径增量，不代表文件管理或完整产品完成。
+
+> **R3 项目图像资源受限闭环(2026-10-22)**:`vb_common::project_asset::resolve_project_asset` 统一限域项目根、拒绝远程/绝对/越界/符号链接逃逸路径；`vb_render::assets::load_project_bitmap` 统一相对文件与 base64 data URL 解码，并要求扩展名/MIME 与实际文件格式一致。源文件/data URL ≤32 MiB、尺寸≤8192、≤16 MPix、解码≤128 MiB。`vb_session` DrawList 投影缓存 64 项/256 MiB，GPUI RenderImage 缓存 32 项/256 MiB；`vb_app`、`vb_layout`、`vb_kiln`、`vb_export`、CPU fallback 复用同一加载边界。定向测试：common path 2/2、render assets 3/3、session inline-image projection 1/1、layout root-cache 1/1、GPUI image cache 1/1、支持位图不误报近似 1/1；受影响 crates `cargo check` 与 Clippy 通过。测试工件 9.72/10.00 GB。原生图像烟测尚未进行；旋转/透明/描边图片、裁剪、滤镜和复杂效果仍以近似/只读提示，不代表完整渲染或产品验收。
+
+
+
+> **R3 图像置入工作流增量(2026-10-22)**:Canvas 工具栏与 Sable CommandPalette 的 `file.place_image` 入口复用宿主 `RfdDialog`；ProjectSession 在单一文档事务内校验图像、以 `create_new` 写入相对 `assets/vb-image-<sid>.<ext>`、按画板内等比居中插入，并支持 Undo/Redo/Save/Reopen。项目资源加载统一限制：源数据 ≤32 MiB、边长 ≤8192、≤16 MPix、解码分配 ≤128 MiB，拒绝越界路径、扩展名/MIME 与实际字节格式不匹配及覆盖。定向证据：session 置入/无效/错配 3/3、asset 不覆盖 1/1、session inline projection 1/1、palette 2/2、UI 文案 8/8、应用 i18n 1/1、host check/Clippy 通过；测试工件 9.72/10.00 GB。原生文件选择与呈现烟测因桌面接管限制未跑；非静态变换仍在近似范围。此为受影响范围证据，不代表 R3 或产品验收完成。
+
+> **R3 SVG/PNG 导出增量(2026-10-22)**:项目窗口 `file.export_dialog`/Ctrl+E 使用宿主 `RfdDialog::save_file`，只消费 `ProjectSession::active_canvas_snapshot().draw_list`，通过现有 SVG/CPU PNG renderer 写出 SVG/PNG；共享 atomic writer 防止半写，文件名与尺寸预算有校验，渲染近似/导入告警会显示。定向 `vb_common::atomic` 2/2、`vb_shell::export` 4/4、shell `cargo check` 与 `-D warnings` Clippy 通过；隔离测试产物 9.96/10.00 GB。因桌面接管限制，原生保存对话框与输出文件烟测未跑；这是文件导出基础通道，不代表 PDF/动画导出、完整保真或产品验收完成。
+
+> **R3 多画板导航增量(2026-10-22)**:ProjectSession 增加视图态 active artboard，复用 `view.next_artboard`/`view.prev_artboard` 与 Ctrl+PageDown/PageUp；导航清除旧选区但不改文档 revision、dirty 或 undo。Canvas/图层/新建形状/图片置入/导出共用活跃画板快照，标题栏显示当前序号并提供上一/下一画板按钮。定向 session 导航 1/1、CanvasPanel 目录快捷键 1/1、CommandPalette 2/2、受影响 Clippy 与 shell check 通过；测试工件 9.96/10.00 GB。原生双画板 smoke 尚未进行；本增量不代表 R3/完整产品完成。
+
+> **R3 画板创建与安全删除增量(2026-10-22)**:复用既有 `tool.artboard` Shift+O 与 `Document::new_artboard` 创建顶层 Artboard，并以可逆 Insert 事务插入；`object.delete` 可删除非最后画板，Undo/Redo 与 active index 归一化协同。定向创建保存/重载/Undo/Redo 与最后画板保护各 1/1，Shift+O 目录测试 1/1；格式/Clippy/shell check 通过，工件 9.96/10.00 GB。尚未原生双画板创删 smoke；本增量不代表 R3/完整产品完成。
+>
+> **R3 多选智能吸附增量(2026-10-22)**:选区拖动复用 `vb_session::snap::smart_snap_many` 的既有 `smart_snap` 几何内核；会话以多选根节点联合框计算偏移、排除所有移动成员、限制同父级/活动画板，并把 6 屏幕像素容差换算为文档单位。CanvasPanel 在 3 屏幕像素拖动门槛后仅预览吸附偏移与 token 参考线，抬起时一次 Compound/Undo 提交，Alt 临时绕过。定向 session 联合框/Alt/非变更测试 1/1、snap-many 过滤 1/1、GPUI 参考线 1/1、拖动门槛 1/1；相关 Clippy 与 shell check 通过，测试工件 8.40/10.00 GB。因桌面接管限制，原生多对象吸附拖动仍未验收；不代表 R3/完整产品完成。
+
+> **R4 动画核心抽取起步(2026-10-22)**:新增第 21 个 workspace crate `vb_animation` 承载 CSS 关键帧解析/求值与宿主无关的 Timeline model；`vb_kiln::anim` 保留 DrawList renderer adapter 与旧 API 兼容，旧 egui Timeline 共享纯模型。ProjectSession 动画快照/写入与 CSS keyframes/savepoint 已实现；定向 session 3/3、vb_animation 7/7、Kiln adapter 3/3、旧宿主 timeline 6/6、purity 2/2，Clippy 与 shell check 通过，工件 6.51/10.00 GB。该条记录核心抽取阶段；底部时间轴/播放预览见后续增量，关键帧 CRUD、缓动手柄/自定义曲线、命名动画组件仍待完成；不代表完整动画工作台或产品验收。
+
+> **R4 底部时间轴与播放预览增量(2026-10-22)**:ProjectAnimationPanel 作为 Sable 底部 Dock，提供受控 playhead Slider、轨道/关键帧百分比、创建/播放暂停/停止/循环/清除；16 ms 会话时钟只改 view-state，Canvas 通过 `active_canvas_snapshot_at` 复用 vb_render 动画求值，Document/Undo/dirty 不变。定向动画 session 5/5、活动画布帧 1/1、session purity 2/2、vb_animation 7/7、Kiln `anim_timeline` 3/3、旧宿主 timeline 6/6；受影响 Clippy 与 `cargo check -p vb_shell --bin vellum-sable` 通过，工件 7.27/10.00 GB。原生播放烟测因桌面接管限制未运行；当时关键帧 CRUD、缓动编辑、命名动画及完整 R4 仍待完成（后续进展见下条）。
+
+> **R4 关键帧标记与增删增量(2026-10-22)**:ProjectAnimationPanel 现将关键帧按时间比例定位，并以稳定 SID/Track/permille Sable Button 呈现，选择仅改 Session view-state；Add/Delete 通过 `ProjectSession::add_keyframes_at_playhead`/`delete_selected_keyframes` 与 `Command::SetNodeAnimation` 撤销/重做。定向 session keyframe 2/2、animation panel 3/3、Palette 3/3、`ui_literals` 8/8、purity 2/2，受影响 Clippy 与 shell check 通过；测试工件 9.47/10.00 GB。原生时间轴操作未烟测；Bezier 曲线拖柄、命名动画、多选拖动仍待完成，本增量不代表 R4 或完整产品验收。
+
+> **R4 缓动预设与自定义 Bezier 控制点增量(2026-10-22)**:ProjectAnimationPanel 对选中关键帧提供 Linear/Ease/Ease-in/Ease-out/Ease-in-out Sable Buttons，以及 x1/y1/x2/y2 数值编辑、48 点曲线预览与单次 Apply；预览复用 `vb_animation::core::Timing::eval`，不另造求值器。混合缓动不伪装单一选中态，锁定/外部动画/无关键帧时禁用；Session 对 CSS 同一 per-mille stop 冲突原子拒绝。定向 session easing 2/2、animation panel 6/6、`ui_literals` 8/8、应用 i18n 1/1，Clippy/host check 通过；工件 9.91/10.00 GB。Bezier 控制点支持拖动(本地草稿，Apply 单次提交)；原生 smoke 未运行，命名动画组件、多关键帧整组拖动及完整 R4/产品仍待验收。
+
+> **R4 多关键帧整组拖动增量(2026-10-22)**:`ProjectAnimationPanel` 支持 Shift/Ctrl 多选 marker；超过 3 屏幕像素阈值后仅更新局部预览，`ProjectSession::preview_selected_keyframe_move` 不写 Document，鼠标抬起由 `move_selected_keyframes_by` 用单个 `SetNodeAnimation` 提交，保持所选关键帧的相对间距、播放头与选择；越界或同轨碰撞在写入前原子拒绝。定向 Session 关键帧测试 4/4、nudge 1/1、animation panel 9/9、CommandPalette 3/3、UI literals 8/8、i18n 1/1，Clippy 与 shell check 通过；工件 9.52/10.00 GB。逐帧吸附、Alt+拖复制、右键菜单及位移提示已实现并通过代码级定向检查，但尚无原生拖动/右键 smoke；命名动画与完整 R4 仍待，不代表完整产品完成。
+>
+> **R4 共享命名动画后端增量(2026-10-23)**:`vb_animation::preset` 以版本化元数据 + 标准 `@keyframes vb-anim-preset-{id}` 保存 CSS-safe 预设；Document 通过可撤销 `SetAnimationPreset` 管理共享块，ProjectSession 支持本地 Timeline 保存为预设、应用到多对象、通过任一引用编辑并在单个事务内更新全部引用 shorthand，以及引用保护删除。定向 preset 序列化 3/3、Document 命令 3/3、Session 共享/Undo/Redo/保存往返 2/2，受影响 Clippy 与 shell check 通过；测试工件 8.79/10.00 GB。Timeline 预设列表/保存/应用/删除 UI 与原生 smoke 尚未完成；此增量不代表 R4 或完整产品验收。
+>
+> **R4 Timeline 命名预设管理面板增量(2026-10-23)**:`ProjectAnimationPanel` 已显示共享 `AnimationSnapshot.presets`，提供本地 Timeline 命名保存、选区 Apply 与引用保护 Delete；复用现有 Sable TextField/Button，未新增 Sable API或复制上游代码。Session preset 2/2、animation panel 9/9、`ui_literals` 8/8、应用 i18n 1/1、Clippy/host check 通过，工件仍在十进制 10 GB 上限内。该 UI 尚无专属行为测试或原生 smoke，不能据此宣布 R4/产品完成；Bezier named-preset edge cases 与 R5–R7 仍待闭环。
+>
+> **R4 命名动画预设管理面板增量(2026-10-23)**:`ProjectAnimationPanel` 提供本地 Timeline 命名保存、预设列表、跨对象应用与仅未引用删除，均复用 ProjectSession 的共享 preset API；不新增 Sable API、不复制上游源码。定向 session preset 2/2、`vb_animation::preset` 3/3、Document command 3/3、animation panel 9/9、`ui_literals` 8/8、应用 i18n 1/1，受影响 Clippy/host check 通过；测试工件保持十进制 10 GB 上限内。尚无原生预设面板 smoke；此增量不代表 R4/完整产品完成。
+
+> **R3 方向键微移增量(2026-10-22)**:`commands.yaml` 既有四向 1px `canvas.nudge_*` 映射至 GPUI `ArrowLeft/Right/Up/Down`；ProjectSession 通过可撤销几何事务移动选区，空选区不运行。定向 session 1/1、CanvasPanel 目录快捷键 1/1、CommandPalette 2/2、相关 Clippy/host check 通过，测试工件 8.47/10.00 GB。按住键自动重复与原生输入烟测尚未验收；该子项不代表 R3/产品完成。
+
+> **R2 图层编组与全选增量(2026-10-21)**:`ProjectSession` 复用 `vb_doc::Command::Group/Ungroup`，以稳定 SID 投影层级；同父节点/锁定/画板守卫，分组与解组为单步可逆事务；层面板提供 Select All 与 Group/Ungroup 入口。定向证据：group/ungroup session 3/3、Select All session 1/1、层面板目录/快捷键 1/1、UI 文案 8/8、两 crate Clippy `-D warnings`、`cargo check -p vb_shell --bin vellum-sable` 通过；测试产物 5.60/10.00 GB。原生 `examples/poster` 烟测验证全选后编组显示 Group 行且画布保持可视；电脑接管打断了原生 Undo 收尾，未保存样例，文件 fixture 未改。此为基础层级编辑入口，不代表 R2 或完整产品完成。
+
+> **R2 Inspector 名称编辑增量(2026-10-21)**:Inspector 现在用 Sable `TextField` 提供单选、未锁定对象的名称编辑；`ProjectSession::set_selected_name` 会 trim、拒绝空值/控制字符/超过 256 字符，并通过可逆 `Rename` 写回。显式“应用名称”按钮遵循 TextField 提交语义；撤销/重做、保存/重载保留名称。定向 `selected_name_*` 2/2、InspectorPanel 3/3、`ui_literals` 8/8、shell purity 3/3、session purity 2/2、应用 i18n 1/1、Clippy 与 shell check 通过；测试工件 8.56 GB / 10.00 GB。此次仅证明代码/定向测试，名称编辑尚未原生烟测；富文本、多行仍保持只读，样例未修改。本项不代表 R2 或完整产品完成。
+
+> **R2 Inspector 纯色填充增量(2026-10-21)**:Inspector 对 Box 的纯色 `background-color` 与 Text 的 `color` 提供解析/规范化/应用，`ProjectSession` 通过可逆 `SetStyle` 写回；复杂渐变、图片背景及不支持样式保持只读，多选/锁定仍拒绝编辑。定向 `inspector_*` session 7/7、InspectorPanel 3/3、`ui_literals` 8/8、shell purity 3/3、session purity 2/2，Clippy 与 shell check 通过；测试产物 8.57/10.00 GB。此次未做原生颜色编辑烟测，不代表 R2 或完整产品完成。
 
 ---
 
 ## TL;DR
 
-1. **换宿主**:UI 组件库整体切换到自有项目 **sable-ui v4.0.0**(GPUI 0.2.2 + Vello 0.10 + gpui-component 0.5.1,均 crates.io 锁定)。sable 已被 cutforge 桌面壳生产接入验证(`git rev 72d83c6`),"GPUI 生态不成熟"这个 14 篇 Q5 的否决前提已消失。
+1. **换宿主**:UI 组件库整体切换到自有项目 **sable-ui v4.0.0**(GPUI 0.2.2 + Vello 0.10 + gpui-component 0.5.1,均 crates.io 锁定)。sable 已被 CutForge 桌面壳生产接入验证(起始 rev 72d83c6);VellumBench 当前显式固定到 Sable `270fc6a`,"GPUI 生态不成熟"这个 14 篇 Q5 的否决前提已消失。
 2. **迁移方式是"双宿主并行",不是渐进嵌面板**:GPUI 自持 winit 事件循环,与 eframe 不能同进程共存——这是硬结论(§3.2)。新宿主 `vb_shell`+`vb_kit` 与旧宿主 `vb_app`(冻结)并行跑完整 CI,门禁全绿才切默认,R7 删旧宿主。
 3. **ACL-1.0 红线**:vb_kit 一律**按规格重写**(规格 = sable `docs/upstream/02` + `vb-ui-tokens.json` + 本篇),实现者不对照 vb_ui `.rs` 写码(§3.5)。
 4. **八轮迭代 R0–R7**,每轮可演示、可回滚、有门禁;总预估 4–6 个月(业余 10–15h/周),与 14 篇 Q7 的诚实口径一致。
@@ -200,8 +244,9 @@ Partial(6):09-H 符号/组件、09-K CRDT/协同/Web、07-L 图层富交互、X-
 |---|---|---|
 | gpui | 0.2.2(crates.io) | 0.3-pre 类型世界不兼容,不追 |
 | gpui-component | **0.5.1** | 最后绑 gpui ^0.2.2 的版本;升级须等 sable 统一走升级窗口 |
+| Rust MSRV | **1.88** | 与锁定 Sable 4.0.0 的 rust-version 对齐;Cargo 1.85 无法满足依赖声明 |
 | vello / wgpu | 0.10 / 29 | 与 vb_render 现状一致,画布通道 spike 的前提 |
-| sable | git rev 锁定(同 cutforge 模式) | 本仓升级 sable = 显式提交,带 diff 审查 |
+| sable | Git rev `270fc6a566ce49959a93d2f6d701bf54afa21451` | Rust 1.88；升级须显式锁定版本并审查依赖差异 |
 
 ### 3.7 vb_platform 实体化(硬骨头 #13,落 R0)
 
@@ -357,7 +402,7 @@ Partial(6):09-H 符号/组件、09-K CRDT/协同/Web、07-L 图层富交互、X-
 | 2 | i18n 全量 | ftl ~15 key,全仓中文硬编码 | R0(地基)+R7(收口) | 双语 600 key,CI 零裸文案,即切即生效 |
 | 3 | 导出真取消 | 对话框关=后台继续 | R0(核心)+R5(UI) | 任意阶段取消 <1s 生效,产物不留半截文件 |
 | 4 | 键盘焦点体系 | FOCUS 仅 active 描边,多控件不可 Tab | R3 | G-UI5 焦点走查 100% 可达 |
-| 5 | 贝塞尔缓动拖柄 | timeline.rs L1325 仅预览,"拖柄留后续" | R4 | 拖柄编辑+钳制+落盘幂等 |
+| 5 | 贝塞尔缓动拖柄 | timeline.rs L1325 仅预览,"数值/鼠标拖柄已实现，原生交互仍待验收" | R4 | 拖柄编辑+钳制+落盘幂等 |
 | 6 | Kiln 取消接口 | 无中途取消语义 | R0 | 任务句柄 + 分段边界检查,CLI 同步支持 |
 | 7 | 画布 4096 纹理上限 | canvas.rs L129 min(4096) | R1 | 高分屏缩放无糊,交互路径无整幅上限 |
 | 8 | 画布真文本 X-2 | egui 近似覆盖层+常驻提示 | R1 | parley+skrifa 真文本,parity 文本用例过,提示删除 |

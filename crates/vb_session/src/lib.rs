@@ -27,13 +27,15 @@
 //! - [`i18n`]:占位模块(i18n 地基在另一分支落 `vb_common`,合并后此处
 //!   re-export,本批不实现)。
 //!
-//! 纯度门禁:本 crate 源码不得出现任何 UI 栈的路径表达,依赖白名单
-//! (vb_common / vb_doc / vb_tools / serde 系)由 `tests/purity.rs` 锁定。
+//! 纯度门禁:本 crate 源码不得出现任何 UI 栈的路径表达。默认仍为纯会话态;
+//! `canvas-projection` feature 仅把 `vb_doc` 编码为 `vb_render::DrawList` 供画布
+//! 消费,不暴露 Document,也不引入 UI。依赖白名单由 `tests/purity.rs` 锁定。
 
 pub mod capabilities;
 pub mod command;
 pub mod i18n;
 pub mod mru;
+pub mod project;
 pub mod selection;
 pub mod snap;
 pub mod tools;

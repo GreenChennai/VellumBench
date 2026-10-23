@@ -42,6 +42,6 @@ VB_PLUGIN_SMOKE=1 vellumbench
 
 ## 门禁(05-10-7)
 
-`cargo test -p vb_plugin` 覆盖:install→enable→run→面板可见;越权调用被拒
+`python tools/test_artifact_guard.py run -- cargo test -p vb_plugin` 覆盖:install→enable→run→面板可见;越权调用被拒
 并记录;插件崩溃宿主存活且可重启;manifest schema 校验;JSON-RPC 编解码与
 握手超时杀。

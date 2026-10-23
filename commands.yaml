@@ -1,4 +1,4 @@
-﻿# Vellum Bench 命令表
+# Vellum Bench 命令表
 # 单一真相:菜单 / 快捷键 / 面板 / Agent CLI 共用。
 # 本文件由注册表(cmds.yaml 门禁测试)校验同步;ID/label/键位以
 # vb_app::shortcuts 为准,undoable / expose_to_agent 为人工策展列。
@@ -245,7 +245,7 @@
   expose_to_agent: false
 - id: tool.line
   label: 直线工具
-  keys: { win: "\" }
+  keys: { win: "\\" }
   undoable: false
   expose_to_agent: false
 - id: tool.pen
@@ -998,6 +998,11 @@
   keys: { win: "" }
   undoable: false
   expose_to_agent: true
+- id: anim.create
+  label: 创建 1 秒水平动画预设
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: true
 - id: anim.play_toggle
   label: 动画预览:播放 / 暂停
   keys: { win: "" }
@@ -1020,6 +1025,16 @@
   expose_to_agent: true
 - id: anim.keyframe_delete
   label: 删除选中的关键帧
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: true
+- id: anim.keyframe_nudge_earlier
+  label: 将选中关键帧向前移动 1%
+  keys: { win: "" }
+  undoable: true
+  expose_to_agent: true
+- id: anim.keyframe_nudge_later
+  label: 将选中关键帧向后移动 1%
   keys: { win: "" }
   undoable: true
   expose_to_agent: true

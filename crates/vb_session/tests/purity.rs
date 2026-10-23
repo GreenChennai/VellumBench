@@ -3,9 +3,9 @@
 //! vb_session 是换宿主的渐进载体,它必须**连 UI 库都不认识**:
 //! 1. 源码(含注释与文档)不得出现任何 UI 栈的路径表达 —— 机制照搬
 //!    `vb_kit/tests/shell_purity.rs` 的静态防线(字面量拆写防本文件自伤);
-//! 2. 依赖白名单:vb_* 仅 `vb_common` / `vb_doc` / `vb_tools`(吸附引擎
-//!    的依赖注记见 `src/snap.rs` 模块文档),外加 serde 系;任何新增依赖
-//!    必须先过本测试这道"申报关"。
+//! 2. 依赖白名单:vb_* 允许 `vb_animation` / `vb_common` / `vb_doc` / `vb_tools` 与可选
+//!    `vb_render`(仅 `canvas-projection` feature 将文档投影为 DrawList;不带 UI),
+//!    外加 serde 系;任何新增依赖必须先过本测试这道"申报关"。
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -63,7 +63,7 @@ fn no_ui_stack_paths_in_sources() {
     );
 }
 
-/// 纯度二:依赖白名单(vb_* 三件套 + serde 系;dev-dependencies 只许 serde_json)。
+/// 纯度二:依赖白名单(vb_* 纯模型/投影 crate + serde/fluent;dev 仅 serde_json)。
 #[test]
 fn dependencies_stay_in_allowlist() {
     let toml = fs::read_to_string(manifest_dir().join("Cargo.toml")).expect("读 Cargo.toml 失败");
@@ -98,12 +98,18 @@ fn dependencies_stay_in_allowlist() {
     other_deps.sort();
     assert_eq!(
         vb_deps,
-        ["vb_common", "vb_doc", "vb_tools"],
-        "vb_* 依赖偏离白名单(改动须经本测试申报;vb_doc/vb_tools 注记见 src/snap.rs)"
+        [
+            "vb_animation",
+            "vb_common",
+            "vb_doc",
+            "vb_render",
+            "vb_tools",
+        ],
+        "vb_* 依赖偏离白名单(改动须经本测试申报;vb_render 仅允许 canvas-projection 可选投影)"
     );
     assert_eq!(
         other_deps,
         ["fluent", "serde_json"],
-        "出现白名单外依赖(只许 serde / fluent[R0 i18n 再导出 FluentValue]/ serde_json[mru recent.json 运行时依赖,申报见 Cargo.toml]/dev serde_json):{other_deps:?}"
+        "出现白名单外依赖(运行时只许 fluent/serde_json;dev 仅保留 serde_json):{other_deps:?}"
     );
 }

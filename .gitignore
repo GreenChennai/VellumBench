@@ -1,4 +1,4 @@
-﻿# Generated
+# Generated
 /target/
 **/*.rs.bk
 Cargo.lock.orig
@@ -7,9 +7,10 @@ Cargo.lock.orig
 *.vbdoc.autosave/
 .vb-export-tmp*/
 
-# OS
+# OS / interpreter caches
 Thumbs.db
 .DS_Store
+__pycache__/
 
 # Kiln 导出副产物:任何情况下不入库(新版已改写系统临时目录,
 # 此条防御旧版二进制/手工操作把它们写进工作树)

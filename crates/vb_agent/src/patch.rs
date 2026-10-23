@@ -803,8 +803,10 @@ fn collect_affected(cmd: &Command, out: &mut PatchOutcome) {
                 collect_affected(c, out);
             }
         }
-        // 令牌 / 文档标题:非节点级变更,无受影响 sid
-        Command::SetToken { .. } | Command::SetMetaTitle { .. } => {}
+        // 令牌 / 文档标题 / 共享动画预设:非节点级变更,无受影响 sid
+        Command::SetToken { .. }
+        | Command::SetMetaTitle { .. }
+        | Command::SetAnimationPreset { .. } => {}
         // 替换图像引用(07-K):节点级变更,src 所在节点受影响
         Command::SetImageSrc { sid, .. } => {
             out.changed_ids.push(sid.clone());

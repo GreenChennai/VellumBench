@@ -51,13 +51,13 @@ $sw = [System.Diagnostics.Stopwatch]::StartNew()
 $Remedy = @{
     "1 格式"           = "cargo fmt --all"
     "2 Lint"           = "cargo clippy --workspace --all-targets -- -D warnings  # 按输出逐条修"
-    "3 测试"           = "cargo test --workspace  # 按首个失败用例定位;台账 Planned=0 属 capabilities.rs 门禁"
+    "3 测试"           = "python -X utf8 tools/test_artifact_guard.py run -- cargo test --workspace  # 测试产物隔离并限制为 10 GB"
     "4 Agent 自检"     = "cargo run -q -p vb_agent --bin vellum-cli -- selfcheck"
     "6 术语扫描"       = "python -X utf8 tools/check_terminology.py  # 按违例行改词"
     "7 输出校验"       = "vellum-cli --doc <示例目录> validate  # 按报告修文档(17 种 patch op)"
     "8 硬编码颜色"     = "tools/check_no_hardcoded_color.ps1  # 按清单改设计令牌(vb_ui/theme)"
     "9 示例体检"       = "python -X utf8 tools/check_examples.py  # 修示例或经评审后重建基线"
-    "10 三端一致性"    = "cargo test -p vb_export --test three_backend"
+    "10 三端一致性"    = "python -X utf8 tools/test_artifact_guard.py run -- cargo test -p vb_export --test three_backend"
     "11 画布导出一致性" = "tools/canvas_parity.ps1  # 画板几何不一致,查 app/canvas.rs 装配"
     "14 许可口径"      = "python -X utf8 tools/check_license.py  # 统一 ACL-1.0(ADR-0030)或加白名单注明理由"
 }
@@ -107,9 +107,10 @@ if (-not $SkipClippy) {
 }
 
 # ---- 门禁 3:测试(含语料、命令可逆性、门禁 9、Planned=0 收口门禁) ----
-Write-GateHeader "门禁 3 · 测试(含往返语料 + 命令可逆性 + 快捷键自检 + 台账 Planned=0)"
-cargo test --workspace
-Mark-Gate "3 测试" $LASTEXITCODE
+Write-GateHeader "门禁 3 · 测试(隔离 test target;10 GB 容量守卫)"
+python -X utf8 tools/test_artifact_guard.py run -- cargo test --workspace
+$testExit = $LASTEXITCODE
+Mark-Gate "3 测试" $testExit
 
 # ---- 门禁 4:Agent 自检(无头) ----
 Write-GateHeader "门禁 4 · Agent 自检(selfcheck)"
@@ -123,11 +124,40 @@ Mark-Gate "6 术语扫描" $LASTEXITCODE
 
 # ---- 门禁 7:输出校验(良构 + sid 唯一 + CSS 合法 + L1 幂等) ----
 Write-GateHeader "门禁 7 · 输出校验(validate:示例工程全检)"
-$cli = 'target/debug/vellum-cli.exe'
-if (-not (Test-Path $cli)) { $cli = 'target/release/vellum-cli.exe' }
-cargo build --bin vellum-cli 2>&1 | Out-Null
-& $cli --doc examples/landing/index.html validate
-Mark-Gate "7 输出校验" $LASTEXITCODE
+# Honor Cargo's resolved target directory (it may come from Cargo config or
+# CARGO_TARGET_DIR, not only the repository-local `target/` default). Always
+# invoke the debug binary built in this gate; never fall back to a stale release.
+$cliReady = $false
+$cargoMetadataJson = cargo metadata --no-deps --format-version 1
+$metadataExit = $LASTEXITCODE
+$cargoTarget = ""
+if ($metadataExit -eq 0) {
+    try {
+        $cargoMetadata = $cargoMetadataJson | ConvertFrom-Json -ErrorAction Stop
+        $cargoTarget = [string]$cargoMetadata.target_directory
+    } catch {
+        Write-Host ("  [FAIL] 解析 Cargo 元数据失败: " + $_.Exception.Message) -ForegroundColor Red
+    }
+}
+if ([string]::IsNullOrWhiteSpace($cargoTarget)) {
+    Write-Host "  [FAIL] 无法读取 Cargo target_directory" -ForegroundColor Red
+    Mark-Gate "7 输出校验" 1
+} else {
+    $cli = Join-Path (Join-Path $cargoTarget 'debug') 'vellum-cli.exe'
+    cargo build --bin vellum-cli --target-dir $cargoTarget 2>&1 | Out-Null
+    $buildExit = $LASTEXITCODE
+    if ($buildExit -ne 0) {
+        Mark-Gate "7 输出校验" $buildExit
+    } elseif (-not (Test-Path $cli)) {
+        Write-Host ("  [FAIL] cargo build 成功但缺少预期 CLI: " + $cli) -ForegroundColor Red
+        Mark-Gate "7 输出校验" 1
+    } else {
+        & $cli --doc examples/landing/index.html validate
+        $validateExit = $LASTEXITCODE
+        Mark-Gate "7 输出校验" $validateExit
+        $cliReady = ($validateExit -eq 0)
+    }
+}
 
 # ---- 门禁 8:硬编码颜色(棘轮) ----
 Write-GateHeader "门禁 8 · 硬编码颜色扫描"
@@ -136,15 +166,20 @@ Mark-Gate "8 硬编码颜色" $LASTEXITCODE
 
 # ---- 门禁 9:示例体检(W9,P0-④ 防复发) ----
 Write-GateHeader "门禁 9 · 示例体检(tree 可读 + 基线 + 覆叠 + 漂位)"
-python -X utf8 tools/check_examples.py --cli $cli
-Mark-Gate "9 示例体检" $LASTEXITCODE
+if ($cliReady) {
+    python -X utf8 tools/check_examples.py --cli $cli
+    Mark-Gate "9 示例体检" $LASTEXITCODE
+} else {
+    Write-Host "  [SKIP] 门禁 7 未产出可用 CLI;避免继续用过期二进制检查示例" -ForegroundColor Yellow
+}
 
 # ---- 门禁 10:三端一致性(15 号计划 B1) ----
 # 同一文档 → CPU 光栅 PNG vs SVG(resvg 参考栅格化)像素级容差比对;
 # 「所见即所得」的结构级偏差(渐变错位/缺失填充/双重缩放)在此变红。
-Write-GateHeader "门禁 10 · 三端一致性(CPU vs SVG 像素容差)"
-cargo test -q -p vb_export --test three_backend
-Mark-Gate "10 三端一致性" $LASTEXITCODE
+Write-GateHeader "门禁 10 · 三端一致性(CPU vs SVG 像素容差;隔离 test target)"
+python -X utf8 tools/test_artifact_guard.py run -- cargo test -q -p vb_export --test three_backend
+$threeBackendExit = $LASTEXITCODE
+Mark-Gate "10 三端一致性" $threeBackendExit
 
 # ---- 门禁 11:画布 ↔ 导出 一致性(W7,P0-③ 防复发;重门禁) ----
 # 真实画布 GPU 纹理读回 vs CPU 导出,画板矩形硬判据;像素分数只报告。

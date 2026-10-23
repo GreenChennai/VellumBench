@@ -7,6 +7,7 @@
 //! - `StableId`:落盘为 `data-vb-id` 的稳定短码,元素全生命周期不变
 //! - 颜色:解析/最短 hex 规范化
 
+pub mod atomic;
 pub mod color;
 pub mod geom;
 /// Fluent i18n 取词底座(R0 第 7 条;设计 22 §4):`i18n/zh.ftl` / `en.ftl`
@@ -15,6 +16,8 @@ pub mod i18n;
 pub mod id;
 /// 数值格式化单源(EXP-07):PDF/SVG 两车道共用坐标精度函数 `fnum`。
 pub mod numfmt;
+/// 项目内资源路径解析(拒绝远程地址与根目录外路径)。
+pub mod project_asset;
 /// 文本小工具(BOM 剥除、percent 解码;跨 crate 单源)。
 pub mod text;
 /// `transform` 平移分量解析(导入折算与导出补偿的**唯一口径**)。
@@ -26,6 +29,11 @@ pub mod units;
 /// 超限必须显式报错或告警,**不许静默截断**。512 对合法文档余量充足
 /// (浏览器同款嵌套上限量级),对线程栈亦安全(512 帧远小于栈空间)。
 pub const MAX_TREE_DEPTH: usize = 512;
+
+/// Shared canvas raster/export edge limit; prevents unbounded allocations in preview and export.
+pub const MAX_CANVAS_EDGE: u32 = 32_768;
+/// Shared canvas pixel budget (approximately 1 GiB of RGBA8 pixels).
+pub const MAX_CANVAS_PIXELS: u64 = 268_435_456;
 
 pub use color::Rgba;
 pub use id::{SidAllocator, StableId};

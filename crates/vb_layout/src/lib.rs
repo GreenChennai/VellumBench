@@ -396,11 +396,12 @@ pub fn clear_image_cache() {
 
 fn probe_image(src: &str) -> Option<(f64, f64)> {
     let dir = IMG_DIR.with(|d| d.borrow().clone())?;
+    let image_path = vb_common::project_asset::resolve_project_asset(&dir, src)?;
     let key = (dir.clone(), src.to_string());
     if let Some(v) = IMG_CACHE.with(|c| c.borrow().get(&key).copied()) {
         return Some(v);
     }
-    let (w0, h0) = image::image_dimensions(dir.join(src)).ok()?;
+    let (w0, h0) = image::image_dimensions(image_path).ok()?;
     let v = (w0 as f64, h0 as f64);
     IMG_CACHE.with(|c| c.borrow_mut().insert(key, v));
     Some(v)

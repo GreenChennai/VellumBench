@@ -8,6 +8,8 @@
 //!   门面——文本量测/整形实现已上收为布局与渲染共同依赖的底层 crate,
 //!   下游(`vb_kiln`/`vb_export`/`vb_web`/`vb_app`)调用路径零改动。
 
+pub mod animation;
+pub mod assets;
 pub mod cpu;
 pub mod encode;
 pub mod gpu;

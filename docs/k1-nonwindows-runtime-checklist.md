@@ -43,7 +43,7 @@
 
 ## 门禁补充(实机跑一次即可)
 
-- [ ] `cargo test --workspace` 全绿(CI 双 runner 已代跑;实机复核一次
+- [ ] `python tools/test_artifact_guard.py run -- cargo test --workspace` 全绿(CI 双 runner 已代跑;实机复核一次
       GPU 相关的 wgpu 枚举告警)。
 - [ ] `tools/ci.ps1` 的 Windows 专属门禁(硬编码颜色棘轮、UI 截图基线)
       不要求在 Linux/macOS 复跑 —— CI 已按平台拆分。

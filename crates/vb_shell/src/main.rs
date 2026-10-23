@@ -6,8 +6,8 @@
 //! - `--project <目录>`(或位置参数)→ **直达项目窗口**,不过启动器;
 //! - `--help` / `--version` 保留,脚本与 CI 用法不破坏。
 //!
-//! 打开项目动作(R0 口径):新开一个与骨架等价的项目窗口(能力台账 +
-//! 画布占位),窗口标题 = 项目名,并把所选路径打印到 stdout(冒烟断言用)。
+//! 打开项目动作(R1 口径):新开一个 Sable Dock 工作台(图层树 + 文档画布),
+//! 窗口标题 = 项目名,并把所选路径打印到 stdout(冒烟断言用)。
 //! 打开即记录 MRU(02-2-2:置顶 + 落盘;持久化格式见 `vb_session::mru`)。
 //!
 //! 启动器纯逻辑(过滤/排序/导航状态机)在 [`vb_shell::launcher`](lib),
@@ -18,6 +18,9 @@
 //! panic 不静默吞 —— 开窗失败 `expect` fail-fast,与 cutforge 同口径。
 
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+mod export;
 
 use sable::dock::{SablePanel, WorkspacePresets};
 use sable::gpui::{
@@ -30,15 +33,20 @@ use sable::gpui_component::dock::DockArea;
 use sable::gpui_component::input::{Input, InputEvent, InputState};
 use sable::gpui_component::theme::Theme;
 use sable::gpui_component::{Root, ThemeMode};
-use sable::widgets::prelude::{h_flex, v_flex};
+use sable::widgets::prelude::{h_flex, v_flex, Button, ButtonSize, ButtonVariant};
 use sable::widgets::theme::theme;
 use sable::widgets::tokens::FONT_SIZE_BODY;
-use vb_platform::DarkModeProbe as _;
+use vb_platform::gpui_backend::RfdDialog;
+use vb_platform::{DarkModeProbe as _, FileDialog as _, FileFilter};
 use vb_session::i18n::{t, t_args};
 
-use vb_kit::capabilities_panel::CapabilitiesPanel;
+use vb_kit::animation_panel::ProjectAnimationPanel;
+use vb_kit::canvas_panel::CanvasPanel;
+use vb_kit::inspector_panel::ProjectInspectorPanel;
+use vb_kit::layers_panel::ProjectLayersPanel;
 use vb_kit::tokens::inject_vb_theme;
-use vb_session::mru::{self, RecentStore};
+use vb_session::mru::{self, RecentItem, RecentStore};
+use vb_session::project::ProjectSession;
 use vb_shell::launcher::{view_indices, LauncherModel};
 
 /// 面板坞折叠规则(纯函数;ADR-0050 裁决二,规则表与单测在模块内)。
@@ -185,6 +193,11 @@ fn open_launcher_window(cx: &mut App) {
 /// 打开即记录 MRU(02-2-2)+ 落盘(失败如实上 stderr,不静默);所选路径
 /// 打印到 stdout(`opened project: <规范化路径>`,冒烟可断言)。
 fn open_project_window(dir: &Path, cx: &mut App) {
+    let project = ProjectSession::open(dir).map_err(|error| error.to_string());
+    if let Err(error) = &project {
+        eprintln!("项目导入失败: {error}");
+    }
+
     let (mut store, warn) = mru::load();
     if let Some(w) = warn {
         eprintln!("recent.json 告警:{w}");
@@ -198,14 +211,37 @@ fn open_project_window(dir: &Path, cx: &mut App) {
     println!("opened project: {}", mru::normalize_path(dir));
 
     let options = window_options(name, 1280., 800., cx);
-    cx.open_window(options, |window, cx| {
-        let shell = ShellApp::new(window, cx);
+    cx.open_window(options, move |window, cx| {
+        let shell = ShellApp::new(window, cx, project);
         cx.new(|cx| Root::new(shell, window, cx))
     })
     .expect("vellum-sable 项目窗口开窗失败:GPUI 平台层初始化异常(显卡驱动/显示服务)");
 }
 
 // ─────────────────────────── 启动器窗口视图 ───────────────────────────
+
+/// 启动器文件命令快捷键;键值由 `commands.yaml` 管理并由测试锁定。
+fn launcher_command_for_key(
+    key: &str,
+    platform: bool,
+    shift: bool,
+    alt: bool,
+) -> Option<&'static str> {
+    if !platform || shift || alt {
+        return None;
+    }
+    if key.eq_ignore_ascii_case("n") {
+        Some("file.new")
+    } else if key.eq_ignore_ascii_case("o") {
+        Some("file.open")
+    } else {
+        None
+    }
+}
+
+fn launcher_shows_stale_badge(item: &RecentItem) -> bool {
+    item.is_stale()
+}
 
 /// 启动器窗口(22 篇 §4 R0 交付 1:只读 MRU 列表)。
 ///
@@ -223,6 +259,8 @@ struct LauncherView {
     /// 搜索框聚焦时 ↑↓/R 不做导航/移除)。
     search_focus: FocusHandle,
     load_warning: Option<String>,
+    new_project_button: Option<Entity<Button>>,
+    open_project_button: Option<Entity<Button>>,
     _search_sub: Option<sable::gpui::Subscription>,
 }
 
@@ -243,10 +281,32 @@ impl LauncherView {
             focus,
             search_focus,
             load_warning,
+            new_project_button: None,
+            open_project_button: None,
             _search_sub: None,
         });
-        // 搜索词变更投影进状态机(选中回零);Enter 走键冒泡(见 render)
+        // 启动器本身提供新建/打开入口;项目真实路径仍由 rfd OS 对话框选取。
         launcher.update(cx, |this, cx| {
+            let new_project_click = cx.listener(|this, _event, _window, cx| {
+                this.choose_new_project(cx);
+            });
+            this.new_project_button = Some(cx.new(|_| {
+                Button::new("launcher-new-project", t("ui-shell-new-project"))
+                    .variant(ButtonVariant::Primary)
+                    .size(ButtonSize::Compact)
+                    .on_press(new_project_click)
+            }));
+            let open_project_click = cx.listener(|this, _event, _window, cx| {
+                this.choose_open_project(cx);
+            });
+            this.open_project_button = Some(cx.new(|_| {
+                Button::new("launcher-open-project", t("ui-shell-open-project"))
+                    .variant(ButtonVariant::Secondary)
+                    .size(ButtonSize::Compact)
+                    .on_press(open_project_click)
+            }));
+
+            // 搜索词变更投影进状态机(选中回零);Enter 走键冒泡(见 render)
             let sub = cx.subscribe(
                 &this.search_input,
                 |this, _: Entity<InputState>, event: &InputEvent, cx: &mut Context<Self>| {
@@ -268,19 +328,39 @@ impl LauncherView {
     fn handle_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let key = ev.keystroke.key.as_str();
         let editing = self.search_focus.is_focused(window);
-        let plain = !ev.keystroke.modifiers.modified();
+        let root_focused = self.focus.is_focused(window);
+        let modifiers = ev.keystroke.modifiers;
+        let plain = !modifiers.modified();
         let view = view_indices(&self.store, &self.model.search);
+
+        // 命令 ID/key 来源见 commands.yaml: file.new=Ctrl+N, file.open=Ctrl+O。
+        if !ev.is_held {
+            match launcher_command_for_key(key, modifiers.platform, modifiers.shift, modifiers.alt)
+            {
+                Some("file.new") => {
+                    self.choose_new_project(cx);
+                    return;
+                }
+                Some("file.open") => {
+                    self.choose_open_project(cx);
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        let launcher_focused = editing || root_focused;
         match key {
-            "down" if !editing => {
+            "down" if launcher_focused && !editing => {
                 self.model.select_next(view.len());
                 cx.notify();
             }
-            "up" if !editing => {
+            "up" if launcher_focused && !editing => {
                 self.model.select_prev();
                 cx.notify();
             }
-            "enter" if plain && !ev.is_held => self.open_selected(cx),
-            "r" if plain && !ev.is_held && !editing => self.remove_selected(cx),
+            "enter" if plain && !ev.is_held && launcher_focused => self.open_selected(cx),
+            "r" if plain && !ev.is_held && root_focused && !editing => self.remove_selected(cx),
             _ => {}
         }
     }
@@ -304,6 +384,31 @@ impl LauncherView {
         open_project_window(dir, cx);
     }
 
+    /// 新建项目:用户选择一个空目录,会话创建默认 HTML/CSS 文档并先安全落盘。
+    fn choose_new_project(&mut self, cx: &mut Context<Self>) {
+        let Some(dir) = RfdDialog::new().pick_folder() else {
+            return;
+        };
+        if let Err(error) = ProjectSession::new_project(&dir) {
+            let error = error.to_string();
+            self.load_warning = Some(t_args(
+                "ui-shell-new-project-failed",
+                &[("error", error.as_str().into())],
+            ));
+            cx.notify();
+            return;
+        }
+        self.open_project(&dir, cx);
+    }
+
+    /// 打开目录项目:选择目录后交给同一 HTML/CSS 导入器验证。
+    fn choose_open_project(&mut self, cx: &mut Context<Self>) {
+        let Some(dir) = RfdDialog::new().pick_folder() else {
+            return;
+        };
+        self.open_project(&dir, cx);
+    }
+
     /// R / 「移除记录」(02-2-3:只删记录,不动磁盘;不静默丢 —— 有落盘,
     /// 失败上 stderr)。
     fn remove_selected(&mut self, cx: &mut Context<Self>) {
@@ -324,7 +429,7 @@ impl LauncherView {
     /// 失效目录置灰仍列出(02-2-4:不静默丢),不可打开、可移除。
     fn row(&self, row: usize, idx: usize, cx: &mut Context<Self>) -> impl IntoElement {
         let item = &self.store.items[idx];
-        let stale = item.is_stale();
+        let stale = launcher_shows_stale_badge(item);
         let selected = row == self.model.selected;
         let name = if item.pinned {
             format!("★ {}", item.name)
@@ -400,12 +505,12 @@ impl LauncherView {
                                     .text_color(name_color)
                                     .child(name),
                             )
-                            .child(
+                            .children(stale.then(|| {
                                 div()
                                     .text_size(px(11.0))
                                     .text_color(colors.warning)
-                                    .child(t("ui-shell-launcher-invalid-path")),
-                            ),
+                                    .child(t("ui-shell-launcher-invalid-path"))
+                            })),
                     )
                     .child(
                         div()
@@ -510,7 +615,9 @@ impl Render for LauncherView {
                             .child(format!("v{}", env!("CARGO_PKG_VERSION"))),
                     )
                     .child(div().flex_1())
-                    .child(Input::new(&self.search_input).w(px(280.0))),
+                    .children(self.new_project_button.clone())
+                    .children(self.open_project_button.clone())
+                    .child(Input::new(&self.search_input).w(px(220.0))),
             )
             .child(list)
             // 底部:键位提示 + 读取告警(损坏回退等,如实展示不静默)
@@ -539,39 +646,112 @@ impl Render for LauncherView {
     }
 }
 
-// ─────────────────────────── 项目窗口(R0 骨架,原样保留) ───────────────────────────
+// ─────────────────────────── 项目窗口(R0/R1 工作台) ───────────────────────────
 
-/// 项目窗口根视图:全屏 dock 工作台(左坞 = 能力台账,中央 = 画布(R1) 占位)。
+/// 项目窗口根视图:全屏 dock 工作台(左坞 = 能力台账,中央 = 文档画布预览)。
 struct ShellApp {
     dock: Entity<DockArea>,
     focus: FocusHandle,
 }
 
 impl ShellApp {
-    fn new(window: &mut Window, cx: &mut App) -> Entity<Self> {
+    fn new(
+        window: &mut Window,
+        cx: &mut App,
+        project: Result<ProjectSession, String>,
+    ) -> Entity<Self> {
         let focus = cx.focus_handle();
+        let (session, error) = match project {
+            Ok(project) => (Some(cx.new(|_| project)), None),
+            Err(error) => (None, Some(error)),
+        };
+        let image_session = session.clone();
+        let place_image: vb_kit::canvas_panel::PlaceImageAction = Rc::new(move |_window, app| {
+            let Some(session) = image_session.as_ref() else {
+                return Err(t("ui-canvas-no-project-session"));
+            };
+            let filters = [FileFilter::new(
+                "Raster images",
+                &["png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff"],
+            )];
+            let mut dialog = RfdDialog::new();
+            let Some(path) = dialog.pick_file(&t("ui-canvas-place-image-title"), &filters) else {
+                return Ok(None);
+            };
+            session.update(app, |project, session_cx| {
+                let result = project
+                    .place_image_from_path(project.active_artboard_index(), &path)
+                    .map(Some)
+                    .map_err(|error| error.to_string());
+                session_cx.notify();
+                result
+            })
+        });
+        let project_export_session = session.clone();
+        let project_file: vb_kit::canvas_panel::ProjectFileAction =
+            Rc::new(move |command_id, window, app| {
+                if command_id == "file.export_dialog" {
+                    return export::export_project(project_export_session.as_ref(), window, app);
+                }
+                let Some(dir) = RfdDialog::new().pick_folder() else {
+                    return Ok(None);
+                };
+                match command_id {
+                    "file.new" => ProjectSession::new_project(&dir).map(|_| ()),
+                    "file.open" => ProjectSession::open(&dir).map(|_| ()),
+                    _ => return Err(format!("unsupported project command: {command_id}")),
+                }
+                .map_err(|error| error.to_string())?;
+                open_project_window(&dir, app);
+                Ok(Some(t("ui-canvas-command-applied")))
+            });
 
-        // 左坞:能力台账(「面板 = 纯投影」示范;数据在 vb_session)
-        let capabilities = SablePanel::create(
-            title("ui-shell-panel-capabilities"),
-            CapabilitiesPanel::new(cx).into(),
+        let layers = SablePanel::create(
+            title("ui-shell-panel-layers"),
+            ProjectLayersPanel::new(session.clone(), error.clone(), cx).into(),
             cx,
         );
-        // 中央:画布占位(R1 接管;R0 先立窗口骨架与 dock 布局)
         let canvas = SablePanel::create(
             title("ui-shell-panel-canvas"),
-            cx.new(|_| CanvasPlaceholder).into(),
+            CanvasPanel::new(
+                session.clone(),
+                error.clone(),
+                place_image,
+                project_file,
+                cx,
+            )
+            .into(),
+            cx,
+        );
+        let inspector = SablePanel::create(
+            title("ui-shell-panel-inspector"),
+            ProjectInspectorPanel::new(session.clone(), error.clone(), cx).into(),
+            cx,
+        );
+        let animation = SablePanel::create(
+            title("ui-shell-panel-animation"),
+            ProjectAnimationPanel::new(session, error, cx).into(),
             cx,
         );
 
         let dock = WorkspacePresets::build_workspace(
-            "vellum-sable",
-            vec![capabilities],
+            "vellum-sable-r2",
+            vec![layers],
             canvas,
-            vec![],
+            vec![inspector],
             window,
             cx,
         );
+        dock.update(cx, |area, dock_cx| {
+            let dock_area = dock_cx.entity().downgrade();
+            area.set_bottom_dock(
+                sable::dock::tab_group(vec![animation], &dock_area, window, dock_cx),
+                Some(px(220.0)),
+                true,
+                window,
+                dock_cx,
+            );
+        });
 
         cx.new(|_| Self { dock, focus })
     }
@@ -596,31 +776,69 @@ impl Render for ShellApp {
     }
 }
 
-/// 画布占位视图(R1 换血;R0 只证明窗口/主题/dock 通道可用)。
-struct CanvasPlaceholder;
+#[cfg(test)]
+mod launcher_shortcut_tests {
+    use super::{launcher_command_for_key, launcher_shows_stale_badge};
+    use vb_session::mru::RecentItem;
 
-impl Render for CanvasPlaceholder {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let colors = theme(cx).colors;
-        v_flex()
-            .size_full()
-            .items_center()
-            .justify_center()
-            .gap(px(8.0))
-            .bg(colors.surface_0)
-            .child(
-                h_flex().child(
-                    div()
-                        .text_size(px(FONT_SIZE_BODY))
-                        .text_color(colors.text_secondary)
-                        .child(t("ui-shell-canvas-placeholder")),
-                ),
-            )
-            .child(
-                div()
-                    .text_size(px(11.0))
-                    .text_color(colors.text_disabled)
-                    .child(t("ui-shell-canvas-subtitle")),
-            )
+    const COMMANDS: &str = include_str!("../../../commands.yaml");
+
+    fn catalog_entry(id: &str) -> &str {
+        let marker = format!("- id: {id}\n");
+        let start = COMMANDS
+            .find(&marker)
+            .unwrap_or_else(|| panic!("command catalog missing {id}"))
+            + marker.len();
+        let remaining = &COMMANDS[start..];
+        let end = remaining.find("\n- id: ").unwrap_or(remaining.len());
+        &remaining[..end]
+    }
+
+    #[test]
+    fn launcher_file_shortcuts_match_command_catalog() {
+        assert_eq!(
+            launcher_command_for_key("n", true, false, false),
+            Some("file.new")
+        );
+        assert_eq!(
+            launcher_command_for_key("O", true, false, false),
+            Some("file.open")
+        );
+        assert_eq!(launcher_command_for_key("n", false, false, false), None);
+        assert_eq!(launcher_command_for_key("n", true, true, false), None);
+        assert_eq!(launcher_command_for_key("o", true, false, true), None);
+        assert!(catalog_entry("file.new").contains("keys: { win: \"Ctrl+N\" }"));
+        assert!(catalog_entry("file.open").contains("keys: { win: \"Ctrl+O\" }"));
+    }
+
+    #[test]
+    fn stale_badge_tracks_real_directory_state() {
+        let current = std::env::current_dir().expect("working directory exists");
+        let existing = RecentItem {
+            path: current.to_string_lossy().into_owned(),
+            name: "existing".into(),
+            last_opened: 0,
+            pinned: false,
+            thumb: None,
+        };
+        assert!(!launcher_shows_stale_badge(&existing));
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        let missing_path = std::env::temp_dir().join(format!(
+            "vellumb-stale-badge-missing-{}-{nonce}",
+            std::process::id()
+        ));
+        assert!(!missing_path.is_dir());
+        let missing = RecentItem {
+            path: missing_path.to_string_lossy().into_owned(),
+            name: "missing".into(),
+            last_opened: 0,
+            pinned: false,
+            thumb: None,
+        };
+        assert!(launcher_shows_stale_badge(&missing));
     }
 }

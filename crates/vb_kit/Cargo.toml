@@ -4,12 +4,19 @@ version.workspace = true
 edition.workspace = true
 license-file.workspace = true
 repository.workspace = true
-description = "VellumBench sable 面板与控件(R0 骨架:VB 调色板注入 + 能力台账面板)"
+description = "VellumBench sable 面板与画布视图(令牌主题 + 会话投影)"
 
 [dependencies]
 # 面板底座(sable 门面:widgets/dock);rev 由 workspace 锁定(22 篇 §3.6)
 sable = { workspace = true }
-vb_session = { workspace = true }
+# 会话只在 UI 侧显式开启只读画布投影;默认 vb_session 仍不依赖渲染器。
+vb_session = { workspace = true, features = ["canvas-projection"] }
+# R4 panel projects the lightweight, host-independent animation model from session snapshots.
+vb_animation = { workspace = true }
+# 画布投影的 GPUI 原语渲染;文档模型仍只能经 vb_session 提供。
+vb_render = { workspace = true }
+# 命令面板只解析仓库根目录命令目录的轻量 YAML 投影。
+serde_yaml = "0.9"
 
 [dev-dependencies]
 # G-UI1 tokens_sync2:解析 vb-ui-tokens.json 与 Rust 侧逐值比对

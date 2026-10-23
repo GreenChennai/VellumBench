@@ -262,15 +262,20 @@ fn json_key_sets_are_fully_mirrored() {
 // 三、注入投影 ↔ JSON(vb_colors 的 15 槽位逐项)
 // ---------------------------------------------------------------------------
 
-/// 逐槽位断言:`tokens.surface_0 == Hsla(parse(json["color"][mode][名]))`。
-fn assert_slot(slot: &Hsla, json: &serde_json::Value, section: &str, name: &str, what: &str) {
+/// 逐槽位断言并保留 JSON Pointer 路径,兼容 `color.*` 与根级令牌表。
+fn assert_slot_at(slot: &Hsla, json: &serde_json::Value, pointer: &str, what: &str) {
     let expected: Hsla = rgba(parse_color(
-        json.pointer(&format!("/color/{section}/{name}/value"))
+        json.pointer(pointer)
             .and_then(serde_json::Value::as_str)
-            .unwrap_or_else(|| panic!("JSON 缺 color.{section}.{name}")),
+            .unwrap_or_else(|| panic!("JSON 缺 {pointer}")),
     ))
     .into();
-    assert_eq!(slot, &expected, "{what} 漂移(color.{section}.{name})");
+    assert_eq!(slot, &expected, "{what} 漂移({pointer})");
+}
+
+/// 逐槽位断言:`tokens.surface_0 == Hsla(parse(json["color"][mode][名]))`。
+fn assert_slot(slot: &Hsla, json: &serde_json::Value, section: &str, name: &str, what: &str) {
+    assert_slot_at(slot, json, &format!("/color/{section}/{name}/value"), what);
 }
 
 #[test]
@@ -290,14 +295,30 @@ fn injected_dark_tokens_match_json() {
         "border-strong",
         "border_strong",
     );
+    assert_slot(&t.text_strong, &j, "neutral/dark", "n12", "text_strong");
     assert_slot(&t.text_primary, &j, "dark", "text", "text_primary");
     assert_slot(&t.text_secondary, &j, "dark", "text-2", "text_secondary");
+    assert_slot(&t.text_tertiary, &j, "neutral/dark", "n10", "text_tertiary");
     assert_slot(&t.text_disabled, &j, "dark", "text-3", "text_disabled");
+    assert_slot_at(
+        &t.text_disabled,
+        &j,
+        "/state-layer/dark/disabled-fg/value",
+        "disabled_fg",
+    );
+    assert_slot(
+        &t.text_placeholder,
+        &j,
+        "dark",
+        "text-3",
+        "text_placeholder",
+    );
     assert_slot(&t.accent, &j, "dark", "accent", "accent");
     assert_slot(&t.accent_muted, &j, "dark", "accent-dim", "accent_muted");
     assert_slot(&t.danger, &j, "dark", "danger", "danger");
     assert_slot(&t.warning, &j, "dark", "warn", "warning");
     assert_slot(&t.success, &j, "dark", "success", "success");
+    assert_slot(&t.info, &j, "ext/dark", "info", "info");
 }
 
 #[test]
@@ -317,14 +338,36 @@ fn injected_light_tokens_match_json() {
         "border-strong",
         "border_strong",
     );
+    assert_slot(&t.text_strong, &j, "neutral/light", "n12", "text_strong");
     assert_slot(&t.text_primary, &j, "light", "text", "text_primary");
     assert_slot(&t.text_secondary, &j, "light", "text-2", "text_secondary");
+    assert_slot(
+        &t.text_tertiary,
+        &j,
+        "neutral/light",
+        "n10",
+        "text_tertiary",
+    );
     assert_slot(&t.text_disabled, &j, "light", "text-3", "text_disabled");
+    assert_slot_at(
+        &t.text_disabled,
+        &j,
+        "/state-layer/light/disabled-fg/value",
+        "disabled_fg",
+    );
+    assert_slot(
+        &t.text_placeholder,
+        &j,
+        "light",
+        "text-3",
+        "text_placeholder",
+    );
     assert_slot(&t.accent, &j, "light", "accent", "accent");
     assert_slot(&t.accent_muted, &j, "light", "accent-dim", "accent_muted");
     assert_slot(&t.danger, &j, "light", "danger", "danger");
     assert_slot(&t.warning, &j, "light", "warn", "warning");
     assert_slot(&t.success, &j, "light", "success", "success");
+    assert_slot(&t.info, &j, "ext/light", "info", "info");
 }
 
 // ---------------------------------------------------------------------------

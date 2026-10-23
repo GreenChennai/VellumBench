@@ -7,6 +7,7 @@ members = [
     "crates/vb_textmeasure",
     "crates/vb_html",
     "crates/vb_doc",
+    "crates/vb_animation",
     "crates/vb_layout",
     "crates/vb_render",
     "crates/vb_tools",
@@ -33,7 +34,7 @@ edition = "2021"
 # ACL-1.0 是自定义协议(非 SPDX 标准标识符),故用 license-file 指向根 LICENSE
 license-file = "LICENSE"
 repository = "https://github.com/GreenChennai/VellumBench"
-rust-version = "1.85"
+rust-version = "1.88"
 
 [profile.dev]
 # 磁盘减脂(2026-09-26):dev/test 的全量调试信息是 target/debug 膨胀主力
@@ -47,6 +48,7 @@ vb_common = { path = "crates/vb_common" }
 vb_css = { path = "crates/vb_css" }
 vb_html = { path = "crates/vb_html" }
 vb_doc = { path = "crates/vb_doc" }
+vb_animation = { path = "crates/vb_animation" }
 vb_tools = { path = "crates/vb_tools" }
 vb_layout = { path = "crates/vb_layout" }
 vb_plugin = { path = "crates/vb_plugin" }
@@ -57,9 +59,9 @@ vb_shell = { path = "crates/vb_shell" }
 vb_render = { path = "crates/vb_render" }
 vb_textmeasure = { path = "crates/vb_textmeasure" }
 
-# R0 换宿主(22 篇 §3.6 版本锁定):sable 门面,rev 与 cutforge 同锁;
-# 升级 = 显式提交带 diff 审查,勿随手改。
-sable = { git = "https://github.com/GreenChennai/sable-ui.git", rev = "72d83c65ae149334c362d5e4bf9f0c84057781c2" }
+# R0 换宿主(22 篇 §3.6 版本锁定):sable 门面,固定 Sable 4.0.0 Git commit;
+# 升级 = 显式提交带 diff 审查,勿随手追随 main。
+sable = { git = "https://github.com/GreenChennai/sable-ui.git", rev = "270fc6a566ce49959a93d2f6d701bf54afa21451" }
 
 kurbo = "0.13"
 slotmap = "1"

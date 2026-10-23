@@ -14,6 +14,7 @@ serde_json = { workspace = true }
 vb_common = { workspace = true }
 vb_css = { workspace = true }
 vb_doc = { workspace = true }
+vb_animation = { workspace = true }
 vb_layout = { workspace = true }
 vb_render = { path = "../vb_render" }
 vb_export = { path = "../vb_export" }

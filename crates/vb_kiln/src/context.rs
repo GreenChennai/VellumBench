@@ -178,7 +178,8 @@ impl ExportContext {
             for i in 0..n {
                 let t = i as f64 / fps as f64;
                 let mut f_list = list.clone();
-                crate::anim::apply_frame_state(&anims, &mut f_list, t);
+                crate::anim::try_apply_frame_state(&anims, &mut f_list, t)
+                    .map_err(|error| KilnError::BadAnimation(error.to_string()))?;
                 let rgba = crate::raster::rasterize_rgba(&f_list, scale as f64)?;
                 frames.push(Frame {
                     rgba,
@@ -346,24 +347,7 @@ fn collect_unsupported_css(
 /// 后缀。此前直接 join 落到文件系统,中文名资产一律「缺失」丢图(实测
 /// A4 海报 img/资源 1.png)。
 pub fn load_bitmap(dir: &Path, src: &str) -> Option<vb_render::encode::BitmapData> {
-    let cleaned = src.split(['?', '#']).next().unwrap_or(src);
-    let decoded = percent_decode(cleaned);
-    let mut candidates = vec![dir.join(&decoded)];
-    if decoded != cleaned {
-        candidates.push(dir.join(cleaned));
-    }
-    for path in candidates {
-        let Ok(img) = image::open(&path) else {
-            continue;
-        };
-        let rgba = img.to_rgba8();
-        return Some(vb_render::encode::BitmapData {
-            width: rgba.width(),
-            height: rgba.height(),
-            rgba: std::sync::Arc::new(rgba.into_raw()),
-        });
-    }
-    None
+    vb_render::assets::load_project_bitmap(dir, src)
 }
 
 /// URL 百分号转义 → 原始字节 → UTF-8 路径(仅处理合法序列,其余原样保留)。

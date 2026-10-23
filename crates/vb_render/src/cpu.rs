@@ -159,12 +159,19 @@ fn draw_item(
             }
             if !drew && !src.is_empty() {
                 if let Some(dir) = project_dir {
-                    let p = dir.join(&src);
-                    if p.is_file() {
-                        match draw_bitmap(pixmap, &p, x, y, iw, ih, scale, item.rot, item.opacity) {
-                            Ok(()) => drew = true,
-                            Err(e) => warnings.push(format!("图片解码失败 {src}: {e}")),
-                        }
+                    if let Some(bitmap) = crate::assets::load_project_bitmap(dir, &src) {
+                        draw_bitmap_rgba(
+                            pixmap,
+                            &bitmap,
+                            x,
+                            y,
+                            iw,
+                            ih,
+                            scale,
+                            item.rot,
+                            item.opacity,
+                        );
+                        drew = true;
                     }
                 }
             }
@@ -425,38 +432,6 @@ fn stroke_color(
         tf,
         None,
     );
-}
-
-#[allow(clippy::too_many_arguments)]
-fn draw_bitmap(
-    pixmap: &mut Pixmap,
-    path: &std::path::Path,
-    x: f64,
-    y: f64,
-    w: f64,
-    h: f64,
-    scale: f32,
-    rot_deg: f64,
-    opacity: f32,
-) -> Result<(), String> {
-    let img = image::open(path).map_err(|e| e.to_string())?;
-    let rgba = img.to_rgba8();
-    draw_bitmap_rgba(
-        pixmap,
-        &crate::encode::BitmapData {
-            width: rgba.width(),
-            height: rgba.height(),
-            rgba: std::sync::Arc::new(rgba.into_raw()),
-        },
-        x,
-        y,
-        w,
-        h,
-        scale,
-        rot_deg,
-        opacity,
-    );
-    Ok(())
 }
 
 /// 把 RGBA 位图绘制到设备坐标(B3 核心;文件路径与 GPU 挂载共用)。

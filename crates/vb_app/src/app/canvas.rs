@@ -225,13 +225,7 @@ impl VellumApp {
                     if let Some(bmp) = cache.get(src) {
                         return Some(bmp.clone());
                     }
-                    let img = image::open(dir.join(src)).ok()?;
-                    let rgba = img.to_rgba8();
-                    let bmp = vb_render::encode::BitmapData {
-                        width: rgba.width(),
-                        height: rgba.height(),
-                        rgba: std::sync::Arc::new(rgba.into_raw()),
-                    };
+                    let bmp = vb_render::assets::load_project_bitmap(&dir, src)?;
                     cache.insert(src.to_string(), bmp.clone());
                     Some(bmp)
                 });
@@ -290,13 +284,7 @@ impl VellumApp {
                                 if let Some(bmp) = cache.get(src) {
                                     return Some(bmp.clone());
                                 }
-                                let img = image::open(dir.join(src)).ok()?;
-                                let rgba = img.to_rgba8();
-                                let bmp = vb_render::encode::BitmapData {
-                                    width: rgba.width(),
-                                    height: rgba.height(),
-                                    rgba: std::sync::Arc::new(rgba.into_raw()),
-                                };
+                                let bmp = vb_render::assets::load_project_bitmap(&dir, src)?;
                                 cache.insert(src.to_string(), bmp.clone());
                                 Some(bmp)
                             });

@@ -12,6 +12,7 @@
 //! - `error`/`report`:全分类错误 + 可观测报告,异常输入不 panic
 
 pub mod abprobe;
+#[path = "anim_adapter.rs"]
 pub mod anim;
 pub mod animlane;
 pub mod cancel;
@@ -48,10 +49,8 @@ use vb_doc::model::{Document, NodeId};
 
 use crate::cancel::CancelToken;
 
-/// 画布单边上限(像素)。超过报 CanvasTooLarge,防 OOM。
-pub const MAX_CANVAS_EDGE: u32 = 32_768;
-/// 画布面积上限(约 1GB RGBA)。
-pub const MAX_CANVAS_PIXELS: u64 = 268_435_456;
+/// Shared canvas allocation limits used by preview and export.
+pub use vb_common::{MAX_CANVAS_EDGE, MAX_CANVAS_PIXELS};
 
 /// Kiln 统一导出入口:按格式分发写入器,返回(字节, 报告)。
 pub fn export_artboard(
@@ -84,19 +83,10 @@ pub fn export_artboard_with_cancel(
     Ok((out, report))
 }
 
-/// 原子落盘:同目录 `.tmp-<名>-<pid>` 写完 → rename 覆盖。导出产物可达
-/// 数百 MB,进程被杀/断电时直写会留半截文件被下游当真;同盘 rename 原子。
+/// Shared atomic write: a unique same-directory sibling is created and flushed,
+/// then renamed over the destination. Failed writes remove the temporary sibling.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let tmp = path.with_file_name(format!(
-        ".tmp-{}-{}",
-        path.file_name().and_then(|n| n.to_str()).unwrap_or("out"),
-        std::process::id()
-    ));
-    let result = std::fs::write(&tmp, bytes).and_then(|()| std::fs::rename(&tmp, path));
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    result
+    vb_common::atomic::write_atomic(path, bytes)
 }
 
 /// 便捷:导出并直接落盘。

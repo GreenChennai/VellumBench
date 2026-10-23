@@ -106,7 +106,7 @@ PatternType 2 均白屏),因此渐变一律按 CPU 栅格同款数学降采样�
 ## 测试
 
 ```bash
-cargo test -p vb_kiln --release
+python tools/test_artifact_guard.py run -- cargo test -p vb_kiln --release
 ```
 
 13 项:九格式 magic 冒烟、PPTX zip 结构、PDF OCG+文本、SVG 真文本、

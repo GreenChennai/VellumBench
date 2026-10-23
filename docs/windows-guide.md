@@ -9,7 +9,7 @@
 | 依赖 | 版本 | 用途 | 缺了会怎样 |
 |------|------|------|-----------|
 | Windows | 10 x64 及以上 | — | — |
-| Rust + Cargo | 1.85+(MSVC 工具链) | 构建 | 无法编译 |
+| Rust + Cargo | 1.88+(MSVC 工具链) | 构建 | 无法编译 |
 | VS Build Tools 2022 | 含 C++ 工具集 | 链接器 link.exe | 链接阶段报错 |
 | Edge 或 Chrome | 系统安装即可 | 浏览器导出车道/动画渲染 | `engine=auto` 降级自研引擎(矢量能力受限) |
 | ffmpeg | 可选(任意完整版) | MP4 编码、GIF 管道 | 动画导出自动降级 GIF 流;`--format gif` 照常 |
@@ -81,28 +81,28 @@ kiln-cli selfcheck
 
 ## 5. 开发与测试:磁盘/内存自救手册
 
-### 5.1 target/debug 为什么会膨胀,怎么治
+### 5.1 Cargo 测试产物 10 GB 容量上限
 
-`cargo test` 每轮都会在 `target\debug\deps\` 留下**旧哈希**的测试 exe/pdb(单个几百 MB),
-`incremental\` 缓存只增不减;Cargo.toml 已设 `profile.dev debug=1`(行级调试表)减缓增速,
-但**每测试一次清一次**才是治本:
+不要裸跑 `cargo test`：它默认把测试编译产物混入共享 `target/debug`。通过守卫入口运行：
 
 ```powershell
-# 推荐:测试 + 自动清理一步到位(测试无论成败都会清)
+# 推荐:本地测试入口(通过 Python 3.10+ 启动守卫;支持 python/python3/py -3)
 powershell -ExecutionPolicy Bypass -File tools/test.ps1
-# 快档(只测 git 已改的 crate):tools/test.ps1 -Fast
-
-# 已手动跑过 cargo test?补一刀:
-powershell -ExecutionPolicy Bypass -File tools/test.ps1 # 或单独:
-powershell -ExecutionPolicy Bypass -File tools/test-clean.ps1   # 只清理
-tools/test-clean.ps1 -Full                                       # 磁盘告急时整目录清(下次全量重编)
+# 快档只测 git 已改的 vb_* crate；无变更时不会静默回退到全仓
+powershell -ExecutionPolicy Bypass -File tools/test.ps1 -Fast
+# 其他平台/脚本可直接包裹 cargo test
+python tools/test_artifact_guard.py run -- cargo test -p vb_kiln
+# 手动检查/按需清理; -Full 只清本工作区专属的测试 target
+powershell -ExecutionPolicy Bypass -File tools/test-clean.ps1
+powershell -ExecutionPolicy Bypass -File tools/test-clean.ps1 -Full
 ```
 
-清理规则:删 `incremental`;deps/examples 里旧哈希 exe/pdb 按主干分组只留最新;
-清 `%TEMP%` 超 24h 的 `kiln-*` 残留;清完仍 >8GB 会提示 `-Full`。
+守卫通过 `cargo metadata` 读取实际 `target_directory`，在其中为该工作区建立隔离的测试 target，
+并设置 **10 GB(十进制，10,000,000,000 字节)**硬上限。每次运行前后测量：超限先删 `incremental`，
+仍超限则重置隔离目录；清理失败会报错，不会误删其他项目或普通 `target/debug`，测试失败也保留原退出码。
+CI 的 Windows、Linux、macOS 测试入口共用同一守卫。手工裸跑 Cargo 会绕过上限。
 
-Kiln 自身的中间产物(段 mp4、浏览器 user-data-dir 等)写 `%TEMP%\kiln-*`,
-程序内有 6h 兜底清扫;异常退出残留也可被上面第 3 条规则回收。
+每次测试退出后也会清理 `%TEMP%` 中超过 24 小时的顶层 `kiln-*` 临时目录；Kiln 自身另有 6 小时兜底清扫。
 
 ### 5.2 rustc 崩溃 0xc0000409 / "配额不足"(os error 1453)= 提交内存耗尽
 

@@ -1,9 +1,9 @@
 //! CSS 动画时间轴(M2):`@keyframes` 解析 + `animation` 求值 + 逐帧属性插值。
 //!
-//! 设计:关键帧在**导出期**从 `raw_css` 逐字块解析(不动场景图模型、
-//! 不影响 L1 幂等);节点上的 `animation` 声明(含 var()/calc() 时序)
-//! 解析为实例,帧时刻 t 求值出属性集(transform 平移/缩放/旋转、opacity、
-//! clip-path inset),由 context 逐帧应用到 DrawList 副本。
+//! 设计:关键帧从 `raw_css` 逐字块解析(不动场景图模型、不影响 L1 幂等);
+//! 节点上的 `animation` 声明(含 var()/calc() 时序)解析为实例,帧时刻 t
+//! 求值出纯属性状态(transform 平移/缩放/旋转、opacity、clip-path/filter)。
+//! 宿主/渲染后端将结果应用到视图副本,本 crate 不依赖 UI 或渲染器。
 //!
 //! 覆盖(Q10=B):L1 transform/opacity 全量;L2 clip-path 常用形;
 //! L3 filter blur/brightness/saturate(CPU 栅格路径);
@@ -993,43 +993,6 @@ pub fn parse_transform_funcs(s: &str) -> Vec<(String, Vec<f64>)> {
     out
 }
 
-/// 把 transform 文本应用到绘制项(平移 + 中心缩放 + 旋转累加)。
-pub fn apply_transform(item: &mut vb_render::encode::DrawItem, transform: &str) {
-    let mut tx = 0.0f64;
-    let mut ty = 0.0f64;
-    let mut sx = 1.0f64;
-    let mut sy = 1.0f64;
-    let mut rot = 0.0f64;
-    for (name, args) in parse_transform_funcs(transform) {
-        let v = args[0];
-        match name.as_str() {
-            "translatex" => tx += v,
-            "translatey" => ty += v,
-            "rotate" => rot += v,
-            "scale" => {
-                sx = v;
-                sy = args.get(1).copied().unwrap_or(v);
-            }
-            "scalex" => sx = v,
-            "scaley" => sy = v,
-            _ => {}
-        }
-    }
-    item.rect[0] += tx;
-    item.rect[1] += ty;
-    if (sx - 1.0).abs() > 1e-6 || (sy - 1.0).abs() > 1e-6 {
-        let cx = item.rect[0] + item.rect[2] / 2.0;
-        let cy = item.rect[1] + item.rect[3] / 2.0;
-        item.rect[2] *= sx;
-        item.rect[3] *= sy;
-        item.rect[0] = cx - item.rect[2] / 2.0;
-        item.rect[1] = cy - item.rect[3] / 2.0;
-    }
-    if rot.abs() > 1e-6 {
-        item.rot += rot;
-    }
-}
-
 fn fmt(v: f64) -> String {
     units::fmt_num(v)
 }
@@ -1075,41 +1038,6 @@ pub fn eval_node(node_anim: &NodeAnim, t: f64) -> FrameState {
         transform,
         clip_path,
         filter,
-    }
-}
-
-/// 把 t(秒)时刻的动画状态应用到 DrawList(**预览与导出唯一求值入口**)。
-///
-/// 05-9 / ADR-VB-L11:导出期 `ExportContext::build` 的逐帧光栅与画布
-/// 预览(vello 纹理前)都调本函数 —— 同一时刻 t 的属性状态由构造保证
-/// 一致,分叉在结构上不可能。调用方约定:
-/// - `anims` 由 [`parse_keyframes`] + [`resolve_node_anim`] 按 sid 建立
-///   (导出期只收目标画板子树;预览逐画板同法,对画板内节点结果一致);
-/// - `list` 是 [`vb_render::encode::DrawList`] 副本(导出期逐帧 clone /
-///   预览每帧重新编码),本函数就地改写副本。
-pub fn apply_frame_state(
-    anims: &HashMap<String, NodeAnim>,
-    list: &mut vb_render::encode::DrawList,
-    t: f64,
-) {
-    for item in &mut list.items {
-        let Some(na) = anims.get(&item.sid) else {
-            continue;
-        };
-        let st = eval_node(na, t);
-        if let Some(o) = st.opacity {
-            item.opacity *= o as f32;
-        }
-        if let Some(tr) = &st.transform {
-            apply_transform(item, tr);
-        }
-        let [_, _, iw, ih] = item.rect;
-        if let Some(cp) = &st.clip_path {
-            item.clip = vb_render::encode::parse_clip_path(cp, iw, ih);
-        }
-        if let Some(fl) = &st.filter {
-            item.filter = vb_render::encode::parse_filter(fl);
-        }
     }
 }
 

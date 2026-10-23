@@ -7005,7 +7005,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 [[package]]
 name = "sable"
 version = "4.0.0"
-source = "git+https://github.com/GreenChennai/sable-ui.git?rev=72d83c65ae149334c362d5e4bf9f0c84057781c2#72d83c65ae149334c362d5e4bf9f0c84057781c2"
+source = "git+https://github.com/GreenChennai/sable-ui.git?rev=270fc6a566ce49959a93d2f6d701bf54afa21451#270fc6a566ce49959a93d2f6d701bf54afa21451"
 dependencies = [
  "kurbo 0.13.1",
  "peniko",
@@ -7020,7 +7020,7 @@ dependencies = [
 [[package]]
 name = "sable-canvas"
 version = "4.0.0"
-source = "git+https://github.com/GreenChennai/sable-ui.git?rev=72d83c65ae149334c362d5e4bf9f0c84057781c2#72d83c65ae149334c362d5e4bf9f0c84057781c2"
+source = "git+https://github.com/GreenChennai/sable-ui.git?rev=270fc6a566ce49959a93d2f6d701bf54afa21451#270fc6a566ce49959a93d2f6d701bf54afa21451"
 dependencies = [
  "fontique",
  "gpui",
@@ -7040,7 +7040,7 @@ dependencies = [
 [[package]]
 name = "sable-dock"
 version = "4.0.0"
-source = "git+https://github.com/GreenChennai/sable-ui.git?rev=72d83c65ae149334c362d5e4bf9f0c84057781c2#72d83c65ae149334c362d5e4bf9f0c84057781c2"
+source = "git+https://github.com/GreenChennai/sable-ui.git?rev=270fc6a566ce49959a93d2f6d701bf54afa21451#270fc6a566ce49959a93d2f6d701bf54afa21451"
 dependencies = [
  "gpui",
  "gpui-component",
@@ -7056,19 +7056,20 @@ dependencies = [
 [[package]]
 name = "sable-foundation"
 version = "4.0.0"
-source = "git+https://github.com/GreenChennai/sable-ui.git?rev=72d83c65ae149334c362d5e4bf9f0c84057781c2#72d83c65ae149334c362d5e4bf9f0c84057781c2"
+source = "git+https://github.com/GreenChennai/sable-ui.git?rev=270fc6a566ce49959a93d2f6d701bf54afa21451#270fc6a566ce49959a93d2f6d701bf54afa21451"
 dependencies = [
  "kurbo 0.13.1",
  "rmp-serde",
  "serde",
  "slotmap",
  "thiserror 2.0.20",
+ "tracing",
 ]
 
 [[package]]
 name = "sable-paint"
 version = "4.0.0"
-source = "git+https://github.com/GreenChennai/sable-ui.git?rev=72d83c65ae149334c362d5e4bf9f0c84057781c2#72d83c65ae149334c362d5e4bf9f0c84057781c2"
+source = "git+https://github.com/GreenChennai/sable-ui.git?rev=270fc6a566ce49959a93d2f6d701bf54afa21451#270fc6a566ce49959a93d2f6d701bf54afa21451"
 dependencies = [
  "kurbo 0.13.1",
  "peniko",
@@ -7082,7 +7083,7 @@ dependencies = [
 [[package]]
 name = "sable-video"
 version = "4.0.0"
-source = "git+https://github.com/GreenChennai/sable-ui.git?rev=72d83c65ae149334c362d5e4bf9f0c84057781c2#72d83c65ae149334c362d5e4bf9f0c84057781c2"
+source = "git+https://github.com/GreenChennai/sable-ui.git?rev=270fc6a566ce49959a93d2f6d701bf54afa21451#270fc6a566ce49959a93d2f6d701bf54afa21451"
 dependencies = [
  "kurbo 0.13.1",
  "sable-foundation",
@@ -7094,10 +7095,9 @@ dependencies = [
 [[package]]
 name = "sable-widgets"
 version = "4.0.0"
-source = "git+https://github.com/GreenChennai/sable-ui.git?rev=72d83c65ae149334c362d5e4bf9f0c84057781c2#72d83c65ae149334c362d5e4bf9f0c84057781c2"
+source = "git+https://github.com/GreenChennai/sable-ui.git?rev=270fc6a566ce49959a93d2f6d701bf54afa21451#270fc6a566ce49959a93d2f6d701bf54afa21451"
 dependencies = [
  "gpui",
- "gpui-component",
  "kurbo 0.13.1",
  "peniko",
  "sable-canvas",
@@ -8856,6 +8856,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "vb_animation"
+version = "0.15.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vb_common",
+ "vb_css",
+ "vb_doc",
+]
+
+[[package]]
 name = "vb_app"
 version = "0.15.0"
 dependencies = [
@@ -8870,6 +8881,7 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
+ "vb_animation",
  "vb_browser",
  "vb_common",
  "vb_css",
@@ -8971,6 +8983,7 @@ dependencies = [
  "tiny-skia 0.11.4",
  "tiny-skia-path 0.11.4",
  "usvg 0.45.1",
+ "vb_animation",
  "vb_browser",
  "vb_common",
  "vb_css",
@@ -8986,6 +8999,9 @@ version = "0.15.0"
 dependencies = [
  "sable",
  "serde_json",
+ "serde_yaml",
+ "vb_animation",
+ "vb_render",
  "vb_session",
 ]
 
@@ -9028,8 +9044,10 @@ dependencies = [
 name = "vb_render"
 version = "0.15.0"
 dependencies = [
+ "base64 0.23.1",
  "image",
  "tiny-skia 0.12.0",
+ "vb_animation",
  "vb_common",
  "vb_css",
  "vb_doc",
@@ -9044,8 +9062,10 @@ dependencies = [
  "fluent",
  "serde",
  "serde_json",
+ "vb_animation",
  "vb_common",
  "vb_doc",
+ "vb_render",
  "vb_tools",
 ]
 
@@ -9056,6 +9076,8 @@ dependencies = [
  "image",
  "pollster 0.4.0",
  "sable",
+ "vb_common",
+ "vb_export",
  "vb_kit",
  "vb_platform",
  "vb_render",

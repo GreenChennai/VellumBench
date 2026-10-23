@@ -22,6 +22,13 @@ pub const MAX_UNDO_BYTES: usize = 200 * 1024 * 1024;
 pub struct UndoStack {
     undo: Vec<Command>,
     redo: Vec<Command>,
+    /// 每条 undo 命令之前的状态 token,与 `undo` 一一对应。
+    undo_before: Vec<u128>,
+    /// 每条 redo 命令之后的状态 token,与 `redo` 一一对应。
+    redo_after: Vec<u128>,
+    current_state: u128,
+    next_state: u128,
+    saved_state: u128,
     last_merge: Option<(crate::commands::CmdKind, String, Instant)>,
     /// 压栈时是否允许合并(拖动中为 true,松手后首次压栈为 false 由调用方控制)。
     pub merging_enabled: bool,
@@ -45,11 +52,33 @@ impl UndoStack {
         Self {
             undo: Vec::new(),
             redo: Vec::new(),
+            undo_before: Vec::new(),
+            redo_after: Vec::new(),
+            current_state: 0,
+            next_state: 1,
+            saved_state: 0,
             last_merge: None,
             merging_enabled: true,
             session_merge: false,
             cap_bytes: MAX_UNDO_BYTES,
         }
+    }
+
+    /// 文档当前是否偏离最近一次成功保存的历史状态。
+    pub fn is_dirty(&self) -> bool {
+        self.current_state != self.saved_state
+    }
+
+    /// 记录保存点;同时结束命令合并会话,避免后续输入改写已保存历史项。
+    pub fn mark_saved(&mut self) {
+        self.end_session();
+        self.saved_state = self.current_state;
+    }
+
+    fn allocate_state(&mut self) -> u128 {
+        let state = self.next_state;
+        self.next_state = self.next_state.wrapping_add(1).max(1);
+        state
     }
 
     /// 测试注入:小上限复现「单条超大命令清栈」路径(DOC-02)。
@@ -90,6 +119,7 @@ impl UndoStack {
                 None => {
                     let cs = cmd.apply(doc)?;
                     self.undo.push(cmd);
+                    self.undo_before.push(self.current_state);
                     self.enforce_memory_cap();
                     cs
                 }
@@ -97,6 +127,7 @@ impl UndoStack {
         } else {
             let cs = cmd.apply(doc)?;
             self.undo.push(cmd);
+            self.undo_before.push(self.current_state);
             self.enforce_memory_cap();
             cs
         };
@@ -110,7 +141,9 @@ impl UndoStack {
         } else {
             key.map(|(k, t)| (k, t, Instant::now()))
         };
+        self.current_state = self.allocate_state();
         self.redo.clear();
+        self.redo_after.clear();
         doc.rev += 1;
         Ok(cs)
     }
@@ -119,16 +152,23 @@ impl UndoStack {
         let Some(mut cmd) = self.undo.pop() else {
             return Ok(None);
         };
+        let Some(before_state) = self.undo_before.pop() else {
+            self.undo.push(cmd);
+            return Ok(None);
+        };
         match cmd.revert(doc) {
             Ok(_) => {
                 self.redo.push(cmd);
+                self.redo_after.push(self.current_state);
+                self.current_state = before_state;
                 self.last_merge = None;
                 doc.rev += 1;
                 Ok(self.undo.last().map(|c| c.label().to_string()))
             }
-            // 失败时命令推回原栈:丢弃会让该步操作既不能重试也不能重做
+            // 失败时命令和状态标记都推回原栈:可重试也可重做。
             Err(e) => {
                 self.undo.push(cmd);
+                self.undo_before.push(before_state);
                 Err(e)
             }
         }
@@ -138,10 +178,25 @@ impl UndoStack {
     /// 本次拖拽整体作废,不可重做)。栈空或 revert 失败(命令推回)时
     /// 文档保持原状。
     pub fn cancel_top(&mut self, doc: &mut Document) {
-        if let Some(mut cmd) = self.undo.pop() {
-            match cmd.revert(doc) {
-                Ok(_) => doc.rev += 1,
-                Err(_) => self.undo.push(cmd),
+        let Some(mut cmd) = self.undo.pop() else {
+            self.last_merge = None;
+            return;
+        };
+        let Some(before_state) = self.undo_before.pop() else {
+            self.undo.push(cmd);
+            self.last_merge = None;
+            return;
+        };
+        match cmd.revert(doc) {
+            Ok(_) => {
+                self.current_state = before_state;
+                self.redo.clear();
+                self.redo_after.clear();
+                doc.rev += 1;
+            }
+            Err(_) => {
+                self.undo.push(cmd);
+                self.undo_before.push(before_state);
             }
         }
         self.last_merge = None;
@@ -151,15 +206,22 @@ impl UndoStack {
         let Some(mut cmd) = self.redo.pop() else {
             return Ok(None);
         };
+        let Some(after_state) = self.redo_after.pop() else {
+            self.redo.push(cmd);
+            return Ok(None);
+        };
         match cmd.apply(doc) {
             Ok(_) => {
+                self.undo_before.push(self.current_state);
                 self.undo.push(cmd);
+                self.current_state = after_state;
                 self.last_merge = None;
                 doc.rev += 1;
                 Ok(self.undo.last().map(|c| c.label().to_string()))
             }
             Err(e) => {
                 self.redo.push(cmd);
+                self.redo_after.push(after_state);
                 Err(e)
             }
         }
@@ -216,6 +278,7 @@ impl UndoStack {
     /// 清空重做尾(历史跳转的"丢弃其后步骤"语义;不影响文档)。
     pub fn clear_redo(&mut self) {
         self.redo.clear();
+        self.redo_after.clear();
         self.last_merge = None;
     }
 
@@ -249,26 +312,35 @@ impl UndoStack {
 
     /// undo 栈估算字节(历史面板/诊断展示用)。
     pub fn bytes_estimated(&self) -> usize {
-        self.undo.iter().map(command_bytes).sum()
+        self.undo
+            .iter()
+            .map(command_bytes)
+            .sum::<usize>()
+            .saturating_add(
+                self.undo_before
+                    .len()
+                    .saturating_mul(std::mem::size_of::<u128>()),
+            )
     }
 
     /// 内存上限执行:超上限时从栈底(最旧)丢弃。
     /// 只丢 undo 不动 redo——新操作压栈必然清 redo,redo 的存量在下次
     /// push 前仍可重做,属活跃数据;丢弃不计通知(历史面板自然变短)。
     fn enforce_memory_cap(&mut self) {
-        let mut total: usize = self.undo.iter().map(command_bytes).sum();
+        let mut total = self.bytes_estimated();
         if total <= self.cap_bytes {
             return;
         }
         let mut drop_from = 0usize;
         for (i, cmd) in self.undo.iter().enumerate() {
             drop_from = i + 1; // 至少保留当前条目之后的新历史
-            total -= command_bytes(cmd);
+            total = total.saturating_sub(command_bytes(cmd) + std::mem::size_of::<u128>());
             if total <= self.cap_bytes {
                 break;
             }
         }
         self.undo.drain(..drop_from);
+        self.undo_before.drain(..drop_from);
         // DOC-02:整栈清空(单条命令即超限)时合并标记必须同步失效,
         // 否则下一条可合并命令会带着 Some(last_merge) 进 merge 分支,
         // 对空栈取栈顶(旧实现 expect panic)。
@@ -329,6 +401,32 @@ fn command_bytes(cmd: &Command) -> usize {
                         .unwrap_or(0)
             }
             SetNodeAnimation { .. } => 256, // 关键帧/声明快照,量级小,常数计
+            SetAnimationPreset {
+                id,
+                new_metadata,
+                new_keyframes,
+                old,
+            } => {
+                let new_bytes = id.len()
+                    + new_metadata.as_ref().map(String::len).unwrap_or(0)
+                    + new_keyframes.as_ref().map(String::len).unwrap_or(0);
+                let old_bytes = old
+                    .as_ref()
+                    .map(|snapshot| {
+                        snapshot
+                            .metadata
+                            .as_ref()
+                            .map(|(_, block)| block.len())
+                            .unwrap_or(0)
+                            + snapshot
+                                .keyframes
+                                .as_ref()
+                                .map(|(_, block)| block.len())
+                                .unwrap_or(0)
+                    })
+                    .unwrap_or(0);
+                new_bytes + old_bytes + 64
+            }
             PathBoolean {
                 new_path, captured, ..
             } => {
@@ -602,5 +700,59 @@ mod memory_cap_tests {
         )
         .unwrap();
         assert_eq!(st.undo_len(), before, "栈顶存活的合并不得新增条目");
+    }
+
+    #[test]
+    fn savepoint_tracks_undo_redo_and_divergent_branch() {
+        let mut doc = Document::new_default();
+        let root_sid = doc.nodes.get(doc.root).unwrap().sid.as_str().to_string();
+        let mut stack = UndoStack::new();
+        assert!(!stack.is_dirty());
+
+        stack
+            .push(
+                &mut doc,
+                Command::Rename {
+                    sid: root_sid.clone(),
+                    new: "保存点前".into(),
+                    old: None,
+                },
+            )
+            .unwrap();
+        assert!(stack.is_dirty());
+        stack.mark_saved();
+        assert!(!stack.is_dirty());
+
+        stack
+            .push(
+                &mut doc,
+                Command::Rename {
+                    sid: root_sid.clone(),
+                    new: "后续编辑".into(),
+                    old: None,
+                },
+            )
+            .unwrap();
+        assert!(stack.is_dirty());
+        stack.undo(&mut doc).unwrap();
+        assert!(!stack.is_dirty(), "undo 回到已保存历史状态应变干净");
+        stack.redo(&mut doc).unwrap();
+        assert!(stack.is_dirty());
+        stack.undo(&mut doc).unwrap();
+        assert!(!stack.is_dirty());
+
+        stack
+            .push(
+                &mut doc,
+                Command::Rename {
+                    sid: root_sid,
+                    new: "分支编辑".into(),
+                    old: None,
+                },
+            )
+            .unwrap();
+        assert!(stack.is_dirty(), "相同 undo 深度的新分支仍然是脏状态");
+        stack.undo(&mut doc).unwrap();
+        assert!(!stack.is_dirty(), "新分支 undo 回保存点应变干净");
     }
 }

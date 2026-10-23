@@ -9,10 +9,11 @@
 //! - **G-UI2 hex 纪律**(`tests/shell_purity.rs`):hex 颜色字面量只允许
 //!   出现在本文件,组件一律经主题(`theme(cx)`)或令牌取色。
 //!
-//! # 17 色 → sable 15 槽位投影([`vb_colors`])
+//! # VellumBench → Sable 4.0.0 的 19 槽位投影([`vb_colors`])
 //!
-//! sable `ColorTokens` 只有 15 个 UI 色槽,VB 的 17 色(深)/16 色(浅,
-//! 无 accent-hover)按语义投影:
+//! Sable 4.0.0 将 `ColorTokens` 扩展为 19 个槽。原冻结表仍按语义投影，新增
+//! 字段映射到 JSON `color.neutral` / `color.ext` / `state-layer`，不新增
+//! 颜色真相；占位与禁用同映射 `text-3` 是当前设计令牌的明确别名。
 //!
 //! | VB 令牌 | sable 槽位 |
 //! |---|---|
@@ -25,7 +26,10 @@
 //! | border-strong | border_strong |
 //! | text | text_primary |
 //! | text-2 | text_secondary |
-//! | text-3 | text_disabled |
+//! | text-3 | text_disabled / text_placeholder |
+//! | neutral.dark/light.n12 | text_strong |
+//! | neutral.dark/light.n10 | text_tertiary |
+//! | ext.dark/light.info | info |
 //! | accent | accent |
 //! | accent-dim | accent_muted |
 //! | danger / warn / success | danger / warning / success |
@@ -89,6 +93,14 @@ pub mod hex {
     pub const LIGHT_WARN: u32 = 0x8F6700FF;
     pub const LIGHT_SUCCESS: u32 = 0x0E7C42FF;
 
+    // ── color.neutral + color.ext(用于 Sable 4.0.0 新增槽位)──
+    pub const DARK_TEXT_STRONG: u32 = 0xFFFFFFFF; // color.neutral.dark.n12
+    pub const LIGHT_TEXT_STRONG: u32 = 0x1B1B1FFF; // color.neutral.light.n12
+    pub const DARK_TEXT_TERTIARY: u32 = 0x9A9AA4FF; // color.neutral.dark.n10
+    pub const LIGHT_TEXT_TERTIARY: u32 = 0x6B6B6BFF; // color.neutral.light.n10
+    pub const DARK_INFO: u32 = 0x5E5CE6FF; // color.ext.dark.info
+    pub const LIGHT_INFO: u32 = 0x4B49CCFF; // color.ext.light.info
+
     // ── color.semantic(跨主题;immutable 者不可改,禁止当装饰色)──
     pub const SEMANTIC_GUIDE_SMART: u32 = 0xFF00FFFF;
     pub const SEMANTIC_GUIDE_SMART_LIGHT: u32 = 0xE000E0FF;
@@ -104,10 +116,10 @@ fn color(hex: u32) -> Hsla {
 }
 
 // ---------------------------------------------------------------------------
-// 全量调色板(17 色 × 深/浅 + 语义色;无槽位令牌的取色出口)
+// 全量调色板(冻结基础色 + neutral 文本层级 + ext.info + 语义色)
 // ---------------------------------------------------------------------------
 
-/// VB 全量 UI 调色板(与 JSON 17/16 令牌一一对应)。
+/// VB 全量 UI 调色板(旧 17/16 令牌 + neutral 文本层级 + ext.info)。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct VbPalette {
     pub bg_canvas: Hsla,
@@ -121,6 +133,8 @@ pub struct VbPalette {
     pub text: Hsla,
     pub text_2: Hsla,
     pub text_3: Hsla,
+    pub text_strong: Hsla,
+    pub text_tertiary: Hsla,
     pub accent: Hsla,
     /// accent 悬停(JSON 浅色未定义 → `None`;悬停加亮策略 R2 面板批次
     /// 与浅色主题一起裁决,不许先拍)。
@@ -129,10 +143,11 @@ pub struct VbPalette {
     pub danger: Hsla,
     pub warn: Hsla,
     pub success: Hsla,
+    pub info: Hsla,
 }
 
 impl VbPalette {
-    /// 深色(JSON `color.dark`,17 项)。
+    /// 深色(JSON `color.dark` 冻结表 + neutral.dark + ext.dark)。
     pub fn dark() -> Self {
         VbPalette {
             bg_canvas: color(hex::DARK_BG_CANVAS),
@@ -146,16 +161,19 @@ impl VbPalette {
             text: color(hex::DARK_TEXT),
             text_2: color(hex::DARK_TEXT_2),
             text_3: color(hex::DARK_TEXT_3),
+            text_strong: color(hex::DARK_TEXT_STRONG),
+            text_tertiary: color(hex::DARK_TEXT_TERTIARY),
             accent: color(hex::DARK_ACCENT),
             accent_hover: Some(color(hex::DARK_ACCENT_HOVER)),
             accent_dim: color(hex::DARK_ACCENT_DIM),
             danger: color(hex::DARK_DANGER),
             warn: color(hex::DARK_WARN),
             success: color(hex::DARK_SUCCESS),
+            info: color(hex::DARK_INFO),
         }
     }
 
-    /// 浅色(JSON `color.light`,16 项)。
+    /// 浅色(JSON `color.light` 冻结表 + neutral.light + ext.light)。
     pub fn light() -> Self {
         VbPalette {
             bg_canvas: color(hex::LIGHT_BG_CANVAS),
@@ -169,12 +187,15 @@ impl VbPalette {
             text: color(hex::LIGHT_TEXT),
             text_2: color(hex::LIGHT_TEXT_2),
             text_3: color(hex::LIGHT_TEXT_3),
+            text_strong: color(hex::LIGHT_TEXT_STRONG),
+            text_tertiary: color(hex::LIGHT_TEXT_TERTIARY),
             accent: color(hex::LIGHT_ACCENT),
             accent_hover: None,
             accent_dim: color(hex::LIGHT_ACCENT_DIM),
             danger: color(hex::LIGHT_DANGER),
             warn: color(hex::LIGHT_WARN),
             success: color(hex::LIGHT_SUCCESS),
+            info: color(hex::LIGHT_INFO),
         }
     }
 }
@@ -411,7 +432,7 @@ pub mod layout {
 // 投影与注入
 // ---------------------------------------------------------------------------
 
-/// VB 调色板 → sable `ColorTokens` 的 15 槽位投影(映射表见模块文档;
+/// VB 调色板 → Sable 4.0.0 `ColorTokens` 的 19 槽位投影(映射表见模块文档;
 /// bg-raised / accent-hover 不经此路,组件取 [`palette`])。
 pub fn vb_colors(mode: ThemeMode) -> ColorTokens {
     let p = palette(mode);
@@ -423,14 +444,18 @@ pub fn vb_colors(mode: ThemeMode) -> ColorTokens {
         surface_4: p.bg_active,
         border_subtle: p.border,
         border_strong: p.border_strong,
+        text_strong: p.text_strong,
         text_primary: p.text,
         text_secondary: p.text_2,
+        text_tertiary: p.text_tertiary,
         text_disabled: p.text_3,
+        text_placeholder: p.text_3,
         accent: p.accent,
         accent_muted: p.accent_dim,
         danger: p.danger,
         warning: p.warn,
         success: p.success,
+        info: p.info,
     }
 }
 

@@ -11,14 +11,15 @@ name = "vellum-sable"
 path = "src/main.rs"
 
 [dependencies]
-# 宿主底座与面板(22 篇 §3.1:vb_shell 只依赖 sable + vb_kit + vb_session)
-# 【canvas_spike 例外,ADR-0047 裁定后收敛】features 加 backend-auto 是为了开
-# sable-paint/gpu(VelloSink)供路线 (b) 实测;vb_render 提供 DrawList 与既有
-# vello 编码(路线 (a))。两者只被 src/bin/canvas_spike/ 消费,不进 main.rs。
+# 宿主、会话投影与轻量导出;不直接依赖 vb_doc。
+# SVG/PNG 从 ProjectSession 的 DrawList 快照渲染,原子落盘由 vb_common 提供。
+# canvas_spike 仍是独立基准入口,GPUI/Vello 设备依赖不进入项目画布路径。
 sable = { workspace = true, features = ["backend-auto"] }
 vb_kit = { workspace = true }
 vb_session = { workspace = true }
 vb_render = { workspace = true }
+vb_export = { path = "../vb_export" }
+vb_common = { workspace = true }
 # 硬骨头 #13(22 篇 §3.7):gpui 宿主的平台服务 seam(深色探测/剪贴板/
 # 光标/窗口/DPI/对话框),OS 触点归口一处;实现经 sable::gpui 同锁版本
 vb_platform = { path = "../vb_platform", features = ["gpui"] }

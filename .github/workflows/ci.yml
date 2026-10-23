@@ -10,6 +10,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -26,14 +29,17 @@ jobs:
           RUST_BACKTRACE: "1"
 
   # K1 多平台(05-11-1,台账 09-K):非 Windows 平台的编译级 + 测试级验证。
-  # 级别 = cargo check --all-targets + cargo test(不含 tools/ci.ps1 的
-  # Windows 专属门禁,如硬编码颜色棘轮 / UI 截图基线)。
+  # 级别 = cargo check --all-targets + 容量守卫封装的 cargo test(独立 test target,
+  # 10 GB 上限;不含 tools/ci.ps1 的 Windows 专属门禁)。
   # 运行时差异(字体回退 / 窗口 DPI / GPU 画布)不在 CI 判据内 —— 见
   # docs/k1-nonwindows-runtime-checklist.md 的实机验证清单。
   linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
       - uses: dtolnay/rust-toolchain@stable
       # fontconfig 走运行时 dlopen(vb_render 默认特性),构建期不需要 dev
       # 头文件;测试期 fontique 枚举系统字体需要 libfontconfig.so.1 本体。
@@ -48,7 +54,7 @@ jobs:
         run: cargo check --workspace --all-targets
       # --no-fail-fast:单测试二进制失败不中止其余,一次跑出全部平台差异
       - name: Test
-        run: cargo test --workspace --no-fail-fast
+        run: python tools/test_artifact_guard.py run -- cargo test --workspace --no-fail-fast
         env:
           RUST_BACKTRACE: "1"
 
@@ -56,10 +62,13 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
       - uses: dtolnay/rust-toolchain@stable
       - name: Check (all targets)
         run: cargo check --workspace --all-targets
       - name: Test
-        run: cargo test --workspace --no-fail-fast
+        run: python tools/test_artifact_guard.py run -- cargo test --workspace --no-fail-fast
         env:
           RUST_BACKTRACE: "1"

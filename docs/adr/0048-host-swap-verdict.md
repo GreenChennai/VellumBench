@@ -5,12 +5,12 @@
 
 ## 1. 决策
 
-UI 组件库整体切换到自有项目 sable-ui(GPUI 0.2.2 + gpui-component 0.5.1 + Vello 0.10,wgpu 29,rev 锁定 `72d83c6`,与 cutforge 同锁)。迁移方式为**双宿主并行**:新宿主 `vb_shell`(+`vb_kit` 面板与控件)+ 宿主无关 `vb_session`,旧宿主 `vb_app`(egui)冻结只修 P0,门禁全绿满足 G-SWITCH 后切默认,R7 删除旧宿主。
+UI 组件库整体切换到自有项目 sable-ui(GPUI 0.2.2 + gpui-component 0.5.1 + Vello 0.10,wgpu 29,rev 锁定 `270fc6a566ce49959a93d2f6d701bf54afa21451`;Sable 4.0.0 / Rust 1.88)。迁移方式为**双宿主并行**:新宿主 `vb_shell`(+`vb_kit` 面板与控件)+ 宿主无关 `vb_session`,旧宿主 `vb_app`(egui)冻结只修 P0,门禁全绿满足 G-SWITCH 后切默认,R7 删除旧宿主。
 
 ## 2. 依据(推翻 14 篇 Q5 的三点前提变化)
 
 1. gpui 0.2.2 已上 crates.io 正式版;gpui-component 0.5.1 是最后绑定 gpui ^0.2.2 的稳定线。
-2. cutforge 桌面壳已用 sable 全栈生产接入并多轮迭代(rev 72d83c6 起)——"生态不成熟"不再成立。
+2. CutForge 桌面壳从 rev 72d83c6 起已用 sable 全栈生产接入并多轮迭代；VellumBench 当前固定 rev `270fc6a`——"生态不成熟"不再成立。
 3. egui 天花板实锤:无自定义光标图、无合成层、画布文本近似(X-2)、截图纹理 4096 上限、焦点体系全手搓。
 4. 上屏通道最大未知数已由 ADR-0047 spike 消解(GPUI 原生翻译层主线)。
 

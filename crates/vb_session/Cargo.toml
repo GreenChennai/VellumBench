@@ -6,8 +6,16 @@ license-file.workspace = true
 repository.workspace = true
 description = "VellumBench 宿主无关会话态(选中态/工具状态机/能力台账数据;零 UI 依赖)"
 
+[features]
+default = []
+# `vb_kit` 可显式启用渲染投影;默认会话态仍不拉入渲染器。
+canvas-projection = ["dep:vb_render"]
+
 [dependencies]
+vb_render = { workspace = true, optional = true }
 vb_common = { workspace = true }
+# CSS 动画/关键帧纯模型与求值,无 UI/渲染依赖。
+vb_animation = { workspace = true }
 # 吸附引擎下沉(22 篇 §3.3:吸附单源在 vb_session):沿文档祖先链遍历
 # 需要 vb_doc(§3.1 既定方向 vb_doc ← vb_session);画板本地 bbox 口径
 # 复用 vb_tools::abs_bbox(复用而非抄写,防第二份几何)。两者皆无 UI 依赖。

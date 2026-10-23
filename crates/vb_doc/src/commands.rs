@@ -81,6 +81,8 @@ pub enum CmdKind {
     SetPseudoStyle,
     /// 05-9 动效时间轴(09-I):对象动画(@keyframes 块 + animation 声明)。
     SetNodeAnim,
+    /// R4 共享命名动画预设(元数据 + 全局 @keyframes;可撤销)。
+    SetAnimationPreset,
 }
 
 /// 05-9:对象动画的 @keyframes 块名(`vb-anim-<sid>`;小写,解析器按名匹配,
@@ -104,6 +106,144 @@ pub fn find_anim_block(doc: &Document, sid: &str) -> Option<usize> {
     })
 }
 
+fn valid_preset_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 48
+        && id.as_bytes()[0].is_ascii_lowercase()
+        && id
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+        && !id.ends_with('-')
+        && !id.contains("--")
+}
+
+fn preset_metadata_id(block: &str) -> Option<&str> {
+    let rest = block
+        .trim_start()
+        .strip_prefix("@vb-animation-preset-v1 ")?;
+    let mut parts = rest.trim_end_matches(';').split_ascii_whitespace();
+    let id = parts.next()?;
+    let payload = parts.next()?;
+    if parts.next().is_some()
+        || !valid_preset_id(id)
+        || payload.is_empty()
+        || payload.len() % 2 != 0
+        || !payload.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    Some(id)
+}
+
+fn preset_keyframes_id(block: &str) -> Option<&str> {
+    let rest = block
+        .trim_start()
+        .strip_prefix("@keyframes vb-anim-preset-")?;
+    let id = rest
+        .split(|c: char| c.is_ascii_whitespace() || c == '{')
+        .next()?;
+    let boundary = rest[id.len()..].chars().next()?;
+    (valid_preset_id(id) && (boundary.is_ascii_whitespace() || boundary == '{')).then_some(id)
+}
+
+fn capture_animation_preset(doc: &Document, id: &str) -> Result<AnimationPresetSnapshot> {
+    if !valid_preset_id(id) {
+        return Err(VbError::Conflict("命名动画预设 id 无效".into()));
+    }
+    let metadata = doc
+        .raw_css
+        .iter()
+        .enumerate()
+        .filter(|(_, block)| preset_metadata_id(block) == Some(id))
+        .map(|(index, block)| (index, block.clone()))
+        .collect::<Vec<_>>();
+    let keyframes = doc
+        .raw_css
+        .iter()
+        .enumerate()
+        .filter(|(_, block)| preset_keyframes_id(block) == Some(id))
+        .map(|(index, block)| (index, block.clone()))
+        .collect::<Vec<_>>();
+    if metadata.len() > 1 || keyframes.len() > 1 || metadata.len() != keyframes.len() {
+        return Err(VbError::Conflict(format!(
+            "命名动画预设 {id} 的元数据与关键帧块重复或不配对"
+        )));
+    }
+    Ok(AnimationPresetSnapshot {
+        metadata: metadata.into_iter().next(),
+        keyframes: keyframes.into_iter().next(),
+    })
+}
+
+fn remove_animation_preset(doc: &mut Document, id: &str) -> Result<AnimationPresetSnapshot> {
+    let snapshot = capture_animation_preset(doc, id)?;
+    let mut indices = [
+        snapshot.metadata.as_ref().map(|(index, _)| *index),
+        snapshot.keyframes.as_ref().map(|(index, _)| *index),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    indices.sort_unstable_by(|a, b| b.cmp(a));
+    for index in indices {
+        doc.raw_css.remove(index);
+    }
+    Ok(snapshot)
+}
+
+fn restore_animation_preset(doc: &mut Document, snapshot: &AnimationPresetSnapshot) {
+    let mut entries = [snapshot.metadata.clone(), snapshot.keyframes.clone()]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    entries.sort_by_key(|(index, _)| *index);
+    for (index, block) in entries {
+        doc.raw_css.insert(index.min(doc.raw_css.len()), block);
+    }
+}
+
+fn insert_animation_preset_pair(
+    doc: &mut Document,
+    old: &AnimationPresetSnapshot,
+    metadata: String,
+    keyframes: String,
+) {
+    let Some((metadata_index, _)) = &old.metadata else {
+        doc.raw_css.push(metadata);
+        doc.raw_css.push(keyframes);
+        return;
+    };
+    let Some((keyframes_index, _)) = &old.keyframes else {
+        doc.raw_css.push(metadata);
+        doc.raw_css.push(keyframes);
+        return;
+    };
+    let mut entries = vec![(*metadata_index, metadata), (*keyframes_index, keyframes)];
+    entries.sort_by_key(|(index, _)| *index);
+    for (index, block) in entries {
+        doc.raw_css.insert(index.min(doc.raw_css.len()), block);
+    }
+}
+
+fn validate_animation_preset_pair(
+    id: &str,
+    metadata: &Option<String>,
+    keyframes: &Option<String>,
+) -> Result<()> {
+    match (metadata, keyframes) {
+        (None, None) => Ok(()),
+        (Some(metadata), Some(keyframes))
+            if preset_metadata_id(metadata) == Some(id)
+                && preset_keyframes_id(keyframes) == Some(id) =>
+        {
+            Ok(())
+        }
+        _ => Err(VbError::Conflict(
+            "命名动画预设必须同时提供匹配的元数据和关键帧块".into(),
+        )),
+    }
+}
+
 /// `Delete` 的应用快照:槽位 + 子树 + 级联移除的动画 @keyframes 块
 /// (05-9-6④;块按 raw_css 原下标升序留存,撤销时升序插回)。
 #[derive(Debug, Clone)]
@@ -123,6 +263,15 @@ pub struct AnimSnapshot {
     pub raw_block: Option<String>,
     /// 原 animation 声明值(None = 原先无声明)。
     pub animation: Option<String>,
+}
+
+/// 共享命名动画在 Document.raw_css 中的两个配对块快照。
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct AnimationPresetSnapshot {
+    /// `@vb-animation-preset-v1 <id> ...;`
+    pub metadata: Option<(usize, String)>,
+    /// `@keyframes vb-anim-preset-<id>`
+    pub keyframes: Option<(usize, String)>,
 }
 
 /// 多结果事务的插入落点策略(05-3:可配置)。
@@ -344,6 +493,13 @@ pub enum Command {
         /// 应用快照(首次 apply 捕获;revert/redo 复用)。
         old: Option<AnimSnapshot>,
     },
+    /// R4:更新/删除共享命名动画定义(元数据 + 全局 @keyframes,原位可逆)。
+    SetAnimationPreset {
+        id: String,
+        new_metadata: Option<String>,
+        new_keyframes: Option<String>,
+        old: Option<AnimationPresetSnapshot>,
+    },
 }
 
 /// `SetImageSrc` 的旧值快照:kind 源与 attrs 源各自独立(Some/None 都要记,
@@ -411,6 +567,7 @@ impl Command {
             Command::SetMediaStyle { .. } => CmdKind::SetMediaStyle,
             Command::SetPseudoStyle { .. } => CmdKind::SetPseudoStyle,
             Command::SetNodeAnimation { .. } => CmdKind::SetNodeAnim,
+            Command::SetAnimationPreset { .. } => CmdKind::SetAnimationPreset,
         }
     }
 
@@ -572,6 +729,7 @@ impl Command {
             Command::SetMediaStyle { .. } => "修改断点样式",
             Command::SetPseudoStyle { .. } => "修改悬停样式",
             Command::SetNodeAnimation { .. } => "修改对象动画",
+            Command::SetAnimationPreset { .. } => "修改命名动画预设",
         }
     }
 
@@ -1473,6 +1631,54 @@ impl Command {
                     text: false,
                 })
             }
+            Command::SetAnimationPreset {
+                id,
+                new_metadata,
+                new_keyframes,
+                old,
+            } => {
+                validate_animation_preset_pair(id, new_metadata, new_keyframes)?;
+                let current = capture_animation_preset(doc, id)?;
+                if let Some(expected) = old.as_ref() {
+                    if expected != &current {
+                        return Err(VbError::Conflict("命名动画预设在撤销点之外发生变化".into()));
+                    }
+                } else {
+                    *old = Some(current.clone());
+                }
+                let current_metadata = current.metadata.as_ref().map(|(_, block)| block);
+                let current_keyframes = current.keyframes.as_ref().map(|(_, block)| block);
+                if current_metadata == new_metadata.as_ref()
+                    && current_keyframes == new_keyframes.as_ref()
+                {
+                    return Ok(ChangeSet {
+                        structure: false,
+                        style: false,
+                        geometry: false,
+                        text: false,
+                    });
+                }
+                remove_animation_preset(doc, id)?;
+                if let (Some(metadata), Some(keyframes)) =
+                    (new_metadata.as_ref(), new_keyframes.as_ref())
+                {
+                    let snapshot = old
+                        .as_ref()
+                        .ok_or_else(|| VbError::Parse("SetAnimationPreset 未捕获快照".into()))?;
+                    insert_animation_preset_pair(
+                        doc,
+                        snapshot,
+                        metadata.clone(),
+                        keyframes.clone(),
+                    );
+                }
+                Ok(ChangeSet {
+                    structure: false,
+                    style: true,
+                    geometry: false,
+                    text: false,
+                })
+            }
         }
     }
 
@@ -1898,6 +2104,31 @@ impl Command {
                     text: false,
                 })
             }
+            Command::SetAnimationPreset {
+                id,
+                new_metadata,
+                new_keyframes,
+                old,
+            } => {
+                validate_animation_preset_pair(id, new_metadata, new_keyframes)?;
+                let current = capture_animation_preset(doc, id)?;
+                if current.metadata.as_ref().map(|(_, block)| block) != new_metadata.as_ref()
+                    || current.keyframes.as_ref().map(|(_, block)| block) != new_keyframes.as_ref()
+                {
+                    return Err(VbError::Conflict("命名动画预设状态与撤销快照不一致".into()));
+                }
+                let snapshot = old
+                    .as_ref()
+                    .ok_or_else(|| VbError::Parse("SetAnimationPreset 未捕获快照".into()))?;
+                remove_animation_preset(doc, id)?;
+                restore_animation_preset(doc, snapshot);
+                Ok(ChangeSet {
+                    structure: false,
+                    style: true,
+                    geometry: false,
+                    text: false,
+                })
+            }
         }
     }
 }
@@ -1944,5 +2175,100 @@ fn upsert_pseudo(doc: &mut Document, sid: &str, pseudo: &str, new: Vec<vb_css::D
             pseudo: pseudo.to_string(),
             decls: new,
         });
+    }
+}
+
+#[cfg(test)]
+mod animation_preset_command_tests {
+    use super::*;
+
+    fn preset_blocks(id: &str, payload: &str) -> (String, String) {
+        (
+            format!("@vb-animation-preset-v1 {id} {payload};"),
+            format!("@keyframes vb-anim-preset-{id} {{ from {{ opacity: {payload} }} }}"),
+        )
+    }
+
+    fn command(id: &str, blocks: Option<(String, String)>) -> Command {
+        let (new_metadata, new_keyframes) = match blocks {
+            Some((metadata, keyframes)) => (Some(metadata), Some(keyframes)),
+            None => (None, None),
+        };
+        Command::SetAnimationPreset {
+            id: id.to_string(),
+            new_metadata,
+            new_keyframes,
+            old: None,
+        }
+    }
+
+    #[test]
+    fn add_delete_undo_and_redo_restore_preset_pair() {
+        let mut doc = Document::new_default();
+        let before = doc.raw_css.clone();
+        let mut add = command("spring", Some(preset_blocks("spring", "deadbeef")));
+        assert!(add.apply(&mut doc).unwrap().style);
+        assert!(doc.raw_css.iter().any(|block| block.contains("deadbeef")));
+        assert!(doc
+            .raw_css
+            .iter()
+            .any(|block| block.contains("@keyframes vb-anim-preset-spring")));
+        add.revert(&mut doc).unwrap();
+        assert_eq!(doc.raw_css, before);
+        add.apply(&mut doc).unwrap();
+
+        let after_add = doc.raw_css.clone();
+        let mut delete = command("spring", None);
+        assert!(delete.apply(&mut doc).unwrap().style);
+        assert_eq!(doc.raw_css, before);
+        delete.revert(&mut doc).unwrap();
+        assert_eq!(doc.raw_css, after_add);
+    }
+
+    #[test]
+    fn replacing_preset_restores_original_raw_css_positions() {
+        let mut doc = Document::new_default();
+        let (old_metadata, old_keyframes) = preset_blocks("spring", "deadbeef");
+        doc.raw_css = vec![
+            "before".into(),
+            old_metadata,
+            "between".into(),
+            old_keyframes,
+            "after".into(),
+        ];
+        let original = doc.raw_css.clone();
+        let mut replace = command("spring", Some(preset_blocks("spring", "cafebabe")));
+        replace.apply(&mut doc).unwrap();
+        assert_eq!(doc.raw_css[0], "before");
+        assert_eq!(doc.raw_css[1], "@vb-animation-preset-v1 spring cafebabe;");
+        assert_eq!(doc.raw_css[2], "between");
+        assert_eq!(
+            doc.raw_css[3],
+            "@keyframes vb-anim-preset-spring { from { opacity: cafebabe } }"
+        );
+        assert_eq!(doc.raw_css[4], "after");
+        replace.revert(&mut doc).unwrap();
+        assert_eq!(doc.raw_css, original);
+    }
+
+    #[test]
+    fn malformed_or_duplicate_preset_pairs_reject_without_mutation() {
+        let mut doc = Document::new_default();
+        let before = doc.raw_css.clone();
+        let mut unpaired = Command::SetAnimationPreset {
+            id: "spring".into(),
+            new_metadata: Some("@vb-animation-preset-v1 spring deadbeef;".into()),
+            new_keyframes: None,
+            old: None,
+        };
+        assert!(unpaired.apply(&mut doc).is_err());
+        assert_eq!(doc.raw_css, before);
+
+        let (metadata, keyframes) = preset_blocks("spring", "deadbeef");
+        doc.raw_css = vec![metadata.clone(), keyframes.clone(), metadata, keyframes];
+        let duplicate = doc.raw_css.clone();
+        let mut delete = command("spring", None);
+        assert!(delete.apply(&mut doc).is_err());
+        assert_eq!(doc.raw_css, duplicate);
     }
 }

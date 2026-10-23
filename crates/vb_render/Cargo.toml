@@ -18,10 +18,12 @@ default = ["fontconfig-dlopen"]
 fontconfig-dlopen = ["vb_textmeasure/fontconfig-dlopen"]
 
 [dependencies]
+base64 = "0.23.1"
 image.workspace = true
 tiny-skia = "0.12.0"
 vb_common = { workspace = true }
 vb_css = { workspace = true }
+vb_animation = { workspace = true }
 vb_doc = { workspace = true }
 # COUP-01(ADR-0053):fontique/swash/zeno 文本管线整体上收至 vb_textmeasure;
 # `vb_render::text` 保留为纯 re-export 门面(vb_kiln/vb_export/vb_web/vb_app

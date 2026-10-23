@@ -18,6 +18,8 @@
 //! 兄弟 bbox 与画板边是画板本地坐标 —— 引擎内部先换算进画板本地帧
 //! 再比较;参考线统一加画板世界原点输出。
 
+use std::collections::HashSet;
+
 use vb_doc::model::{Document, Geom, NodeKind};
 
 /// 移动节点父级到所属画板之间的累计 geom 偏移(父级即画板时为 0)。
@@ -64,6 +66,19 @@ pub fn smart_snap(
     g: &Geom,
     tol: f64,
 ) -> (f64, f64, Vec<[f64; 4]>) {
+    smart_snap_many(doc, &[moving], parent, artboard, g, tol)
+}
+
+/// 多对象智能参考线吸附;所有移动成员都从候选集合中排除。
+pub fn smart_snap_many(
+    doc: &Document,
+    moving: &[vb_doc::model::NodeId],
+    parent: Option<vb_doc::model::NodeId>,
+    artboard: Option<vb_doc::model::NodeId>,
+    g: &Geom,
+    tol: f64,
+) -> (f64, f64, Vec<[f64; 4]>) {
+    let moving: HashSet<_> = moving.iter().copied().collect();
     let (off_x, off_y) = parent_offset_in_artboard(doc, parent, artboard);
     let (abx, aby) = artboard
         .and_then(|ab| doc.nodes.get(ab))
@@ -90,7 +105,7 @@ pub fn smart_snap(
     if let Some(pid) = parent {
         if let Some(pn) = doc.nodes.get(pid) {
             for &c in &pn.children {
-                if c == moving {
+                if moving.contains(&c) {
                     continue;
                 }
                 // 隐藏/锁定对象不可见不可选,也不得吸走拖动(与拾取口径一致)
@@ -469,6 +484,52 @@ mod tests {
         };
         let (nx2, _, _) = smart_snap(&doc, m2, Some(ab), Some(ab), &g2, 6.0);
         assert_eq!(nx2, 150.0);
+    }
+
+    #[test]
+    fn smart_snap_many_excludes_all_selected_siblings() {
+        let mut doc = Document::new("t", "zh-CN");
+        let artboard = doc.artboards[0];
+        let first = add_box(&mut doc, artboard, 100.0, 100.0, 40.0, 30.0);
+        let second = add_box(&mut doc, artboard, 102.0, 200.0, 40.0, 30.0);
+        let union = Geom {
+            x: 100.0,
+            y: 100.0,
+            w: 42.0,
+            h: 130.0,
+        };
+
+        let (x, y, guides) = smart_snap_many(
+            &doc,
+            &[first, second],
+            Some(artboard),
+            Some(artboard),
+            &union,
+            6.0,
+        );
+        assert_eq!((x, y), (100.0, 100.0));
+        assert!(guides.is_empty(), "selected members are not snap targets");
+
+        let first_geom = Geom {
+            x: 100.0,
+            y: 100.0,
+            w: 40.0,
+            h: 30.0,
+        };
+        let (single_x, _, single_guides) = smart_snap(
+            &doc,
+            first,
+            Some(artboard),
+            Some(artboard),
+            &first_geom,
+            6.0,
+        );
+        assert_eq!(single_x, 102.0, "legacy single-node wrapper keeps behavior");
+        assert_eq!(
+            single_guides.len(),
+            3,
+            "single-node snap keeps position, equal-width and equal-height guides"
+        );
     }
 
     #[test]

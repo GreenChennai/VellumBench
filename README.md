@@ -1,11 +1,11 @@
-﻿<p align="center">
+<p align="center">
   <img src="./assets/readme/hero.svg" width="100%" alt="Vellum Bench 绘台:像用 Illustrator 一样编辑 100% 标准 HTML/CSS,Agent 可读写同一份文件">
 </p>
 
 <p align="center">
   <a href="https://github.com/GreenChennai/VellumBench/actions/workflows/ci.yml"><img src="https://github.com/GreenChennai/VellumBench/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/license-ACL--1.0-E8B84B?style=flat-square" alt="License: ACL-1.0">
-  <img src="https://img.shields.io/badge/rust-1.85%2B-4EA1FF?style=flat-square" alt="Rust 1.85+">
+  <img src="https://img.shields.io/badge/rust-1.88%2B-4EA1FF?style=flat-square" alt="Rust 1.88+">
 </p>
 
 <p align="center">
@@ -113,9 +113,10 @@ pwsh tools/ci.ps1          # 全量档:轻量档再加 画布↔导出像素对�
                            #   ;-UiShots 附带 UI 截图基线比对(报告模式)
 ```
 
-日常开发跑测试用 `tools/test.ps1`(测试 + 自动清理 target/debug 旧哈希
-测试二进制与 incremental 缓存,**每测试一次清一次**,防磁盘塞爆;
-`tools/test-clean.ps1` 单独清理)。
+日常开发通过 `tools/test.ps1` 跑测试；它使用工作区隔离的 Cargo test target，按 Cargo 实际解析的
+`target_directory` 定位，硬上限为 **10 GB(十进制，10,000,000,000 字节)**。运行前后检查容量，超限先清
+`incremental`，仍超限才重置该工作区的测试 target；失败也会清理并保留原测试退出码。`-Fast` 不会在无变更时
+静默回退到全仓测试。守卫要求 Python 3.10+；`tools/test-clean.ps1` 可单独执行容量检查，`-Full` 只清理隔离测试 target。
 
 > Windows 从零部署 / 导出实战 / 磁盘与内存排障(rustc 0xc0000409、
 > target/debug 膨胀、C 盘满截断工件)见 **[docs/windows-guide.md](docs/windows-guide.md)**。
@@ -130,7 +131,7 @@ pwsh tools/ci.ps1          # 全量档:轻量档再加 画布↔导出像素对�
 
 | 模块 | 状态 |
 |---|---|
-| 12 crate workspace,依赖方向受控;`vb_doc` 场景图 + 命令模式 Undo/Redo(sid 寻址) | ✅ |
+| 21 crate workspace,依赖方向受控;`vb_doc` 场景图 + 命令模式 Undo/Redo(sid 寻址) | ✅ |
 | `vb_css` L1 白名单属性表 + 值规范化(canonical 即不动点);`vb_html` 忠实解析 + canonical 序列化 | ✅ |
 | **`vb_layout` 文档流布局**(taffy:flow/flex/absolute、`inset`/`margin`/`padding`、`var()`/`calc()`、`transform: translate()` 折算) | ✅ |
 | **文本引擎**:富文本段样式、`<br>`、贪心断行 + 禁则、字重感知选字、`@font-face` 注册表、真字形光栅 | ✅ |

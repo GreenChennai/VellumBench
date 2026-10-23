@@ -25,7 +25,7 @@ state.normal = 正常
 state.hover = 悬停 (hover)
 state.hover-note = hover 最小闭环:填充/字色/不透明度/字号/显示,落 selector:hover 规则;画布不模拟 hover,以「视图 → 浏览器校对」为准
 
-# ── 新宿主 vb_kit / vb_shell(R0 补缺批;G-UI3:渲染路径禁裸文案)──
+# ── 新宿主 vb_kit / vb_shell(R0/R1 接线;G-UI3:渲染路径禁裸文案)──
 # 手工维护段:在 gen_cmd_ftl.py 的 BEGIN/END 生成块之外,重跑生成器不影响;
 # key 规范:`ui-<面板>-<语义>`,连字符。en 遵守 CONTEXT.md 术语表。
 
@@ -48,9 +48,99 @@ ui-cap-badge-dropped = 不做
 # 壳(vb_shell)
 ui-shell-window-title = VellumBench · sable 预览宿主
 ui-shell-panel-capabilities = 能力台账
-ui-shell-panel-canvas = 画布(R1)
-ui-shell-canvas-placeholder = 画布(R1)— 画布上屏通道按 ADR-0047 裁定后接管
-ui-shell-canvas-subtitle = R0 预览宿主:窗口 / 主题 / dock 布局骨架
+ui-shell-panel-layers = 图层
+ui-shell-panel-canvas = 画布
+ui-shell-panel-inspector = 检查器
+ui-shell-panel-animation = 动画时间轴
+ui-layer-hide-selected = 隐藏所选
+ui-layer-show-selected = 显示所选
+ui-layer-lock-selected = 锁定所选
+ui-layer-unlock-selected = 解锁所选
+ui-layer-group-selected = 编组
+ui-layer-ungroup-selected = 取消编组
+ui-layer-select-all = 全选
+ui-canvas-layers-empty = 当前画板没有图层
+ui-canvas-preview-badge = 预览
+ui-canvas-zoom-out = 缩小
+ui-canvas-zoom-fit = 适合画布
+ui-canvas-zoom-100 = 100%
+ui-canvas-zoom-in = 放大
+ui-canvas-grid = 网格
+ui-canvas-preview-warning = 近似预览：{ $count } 项存在未完整呈现的图像、效果或导入告警
+ui-canvas-load-failed = 无法读取此项目；请检查项目目录和 index.html。
+ui-canvas-command-applied = 命令已执行
+ui-canvas-no-project-session = 当前没有打开的项目会话
+ui-canvas-export-title = 导出画板
+ui-canvas-export-unsupported-format = 仅支持 SVG 或 PNG 格式。
+ui-canvas-exported = 已导出到 { $path }
+ui-canvas-exported-with-warnings = 已导出到 { $path }，其中 { $count } 个图层有近似项。
+ui-canvas-export-invalid-dimensions = 画板尺寸无效或超过边长限制。
+ui-canvas-export-too-large = 画板像素总量超过导出上限。
+ui-canvas-export-render-failed = 渲染导出失败：{ $error }
+ui-canvas-export-write-failed = 写入导出文件失败：{ $error }
+
+ui-command-palette-parse-failed = 命令清单解析失败：{ $error }
+ui-command-palette-not-list = 命令清单格式无效：顶层必须是命令列表
+ui-command-palette-missing-command = 命令清单缺少已支持命令：{ $id }
+ui-command-palette-missing-label = 命令清单缺少命令 { $id } 的文案
+ui-inspector-empty = 选择图层以查看属性
+ui-inspector-multi-selection = 多选属性编辑暂不可用
+ui-inspector-transform = 变换
+ui-inspector-alignment-target = 对齐目标
+ui-inspector-alignment = 对齐
+ui-inspector-appearance = 外观
+ui-inspector-name = 名称
+ui-inspector-name-placeholder = 输入对象名称，按 Enter/Tab 应用
+ui-inspector-name-apply = 应用名称
+ui-inspector-type = 类型
+ui-inspector-x = X
+ui-inspector-y = Y
+ui-inspector-width = 宽度
+ui-inspector-height = 高度
+ui-inspector-fill = 填充
+ui-inspector-text-color = 文字颜色
+ui-inspector-fill-placeholder = 输入 CSS 颜色，如 #f00
+ui-inspector-fill-apply = 应用颜色
+ui-inspector-fill-readonly = 当前填充使用复杂样式，暂不可编辑
+ui-inspector-content = 文本
+ui-inspector-text-placeholder = 输入文字，按 Enter/Tab 应用
+ui-inspector-text-apply = 应用文本
+ui-inspector-rich-text-readonly = 富文本或多行内容保持只读，以保留原格式
+ui-inspector-locked = 图层已锁定，几何字段不可编辑
+
+ui-canvas-image-added = 图像已置入项目
+ui-canvas-place-image-title = 选择要置入的栅格图像
+ui-animation-create-preset = 创建一秒水平动画预设
+ui-animation-no-project = 动画时间轴需要一个已打开的项目。
+ui-animation-select-one = 选择一个未锁定对象以编辑动画。
+ui-animation-foreign-readonly = 外部命名 CSS 动画保持只读。
+ui-animation-no-timeline = 当前选择没有本地动画；可创建一秒水平动画预设。
+ui-animation-playhead = 动画播放头
+ui-animation-frame-rate = 帧率
+ui-animation-snap-to-frames = 吸附到帧
+ui-animation-drag-invalid-distance = 关键帧拖动距离必须是有限数值
+ui-animation-drag-out-of-range = 关键帧拖动超出时间轴范围
+ui-animation-track-position = 位置
+ui-animation-track-scale = 缩放
+ui-animation-track-opacity = 不透明度
+ui-animation-track-rotation = 旋转
+ui-animation-command-applied = 动画命令已执行
+ui-animation-play = 播放
+ui-animation-pause = 暂停
+ui-animation-easing = 缓动
+ui-animation-ease-linear = 线性
+ui-animation-ease-ease = 缓和
+ui-animation-ease-in = 缓入
+ui-animation-ease-out = 缓出
+ui-animation-ease-in-out = 缓入缓出
+ui-animation-ease-custom = 自定义曲线
+ui-animation-custom-bezier = 自定义贝塞尔控制点
+ui-animation-bezier-x1 = X1
+ui-animation-bezier-y1 = Y1
+ui-animation-bezier-x2 = X2
+ui-animation-bezier-y2 = Y2
+ui-animation-apply-bezier = 应用曲线
+ui-animation-bezier-invalid = 贝塞尔曲线控制点无效
 
 # ── BEGIN cmd-catalog(由 tools/gen_cmd_ftl.py 生成;勿手改)──
 cmd-file-new = 新建项目…(对话框,新窗口打开)
@@ -262,16 +352,30 @@ cmd-edit-plugins = 插件管理…(安装/授权/启停/日志/重启;插件 = �
 cmd-view-toggle-plugins-panel = 插件面板显隐(Running 插件的注册面板,受控 UI)
 # ── END cmd-catalog ──
 
+# VellumBench shared animation preset UI labels
+ui-animation-presets = 命名动画预设
+ui-animation-preset-name = 预设名称
+ui-animation-save-preset = 保存为预设
+ui-animation-preset-apply = 应用
+ui-animation-preset-delete = 删除预设
+ui-animation-preset-saved = 动画预设已保存
+ui-animation-preset-applied = 动画预设已应用
+ui-animation-preset-deleted = 动画预设已删除
+ui-animation-presets-empty = 暂无命名预设
+
 # ── vb_shell(R0 启动器/命令行;手工维护段;单行消息——门禁解析器只认单行)──
 ui-shell-usage = vellum-sable — VellumBench 新宿主预览壳(R0)| 用法: vellum-sable 先开启动器窗口 · --project <目录> 直达项目窗口(ADR-0033)· <项目目录> 同 --project · --help | --version
 ui-shell-project-arg-required = vellum-sable: --project 需要一个项目目录参数
 ui-shell-arg-unknown = vellum-sable: 未知参数 {$arg}(--help 查看用法)
 ui-shell-project-dir-missing = vellum-sable: 项目目录不存在
 ui-shell-launcher-title = VellumBench · 启动器
+ui-shell-new-project = 新建项目
+ui-shell-open-project = 打开项目
+ui-shell-new-project-failed = 新建项目失败：{ $error }
 ui-shell-launcher-search-placeholder = 搜索名称或路径…
 ui-shell-launcher-invalid-path = 路径已失效
 ui-shell-launcher-empty = 还没有项目
-ui-shell-launcher-empty-hint = 用 vellum-sable --project <目录> 打开第一个项目;打开后自动进入最近列表
+ui-shell-launcher-empty-hint = 选择“新建项目”并选空目录，或“打开项目”选择已有目录；也可用 vellum-sable --project <目录> 启动
 ui-shell-launcher-no-match = 没有匹配「{$query}」的项目
 ui-shell-launcher-footer = ↑↓ 选择 · Enter 打开 · R 移除记录 · 单击行打开
 
@@ -1865,3 +1969,7 @@ ui-shell-021 = 有未保存的修改,直接退出将丢失。
 ui-shell-022 = 保存全部并退出
 ui-shell-023 = 直接退出
 # ── END ui-extract ──
+
+ui-animation-keyframe-drag-delta = 位移 { $delta }‰
+ui-animation-keyframe-nudge-earlier = 向前移动 1%
+ui-animation-keyframe-nudge-later = 向后移动 1%
